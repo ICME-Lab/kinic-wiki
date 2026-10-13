@@ -1,5 +1,9 @@
 # Wiki retrieval findings and root fixes
 
+Follow-up: [004-read-nodes-and-candid-bom.md](./004-read-nodes-and-candid-bom.md)
+adds the explicitly requested `read_nodes` API and fixes the SDK BOM limitation.
+The record below describes the earlier 07a705a5 implementation.
+
 Reviewed and implemented: 2026-10-13.
 Scope: Wiki MCP retrieval, response formatting, and database SQL authorization.
 No staging/production deployment, remote exploit probe, or remote mutation was performed.

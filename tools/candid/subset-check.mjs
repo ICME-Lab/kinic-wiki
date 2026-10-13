@@ -22,7 +22,7 @@ export function checkCandidSubset({
   rejectUnexpectedMethods = false
 }) {
   const failures = [];
-  const didTypes = parseDidTypes(didSource);
+  const didTypes = parseDidTypes(didSource, didTypeAliases);
   const didMethods = parseDidMethods(didSource, didTypeAliases);
   const idlTypes = parseIdlTypes(idlSource);
   const idlMethods = parseIdlMethods(idlSource, idlResultAliases);
@@ -48,23 +48,23 @@ export function checkCandidSubset({
   return failures;
 }
 
-function parseDidTypes(source) {
+function parseDidTypes(source, aliases) {
   const types = {};
   for (const match of source.matchAll(/^type\s+(\w+)\s*=\s*(record|variant)\s*\{([^]*?)\};/gm)) {
     const [, name, kind, body] = match;
-    types[name] = kind === "record" ? { kind, fields: parseDidFields(body) } : { kind, cases: parseDidFields(body) };
+    types[name] = kind === "record" ? { kind, fields: parseDidFields(body, aliases) } : { kind, cases: parseDidFields(body, aliases) };
   }
   return types;
 }
 
-function parseDidFields(body) {
+function parseDidFields(body, aliases) {
   const fields = {};
   for (const raw of body.split(";")) {
     const line = raw.trim();
     if (!line) continue;
     const match = line.match(/^"?(\w+)"?\s*(?::\s*(.+))?$/);
     if (!match) continue;
-    fields[match[1]] = normalizeShape(match[2] ?? "null");
+    fields[match[1]] = normalizeShape(match[2] ?? "null").replace(/\bResult(?:_\d+)?\b/g, (name) => Object.entries(aliases).find(([, alias]) => alias === name)?.[0] ?? name);
   }
   return fields;
 }

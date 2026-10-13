@@ -10,16 +10,26 @@ const raw = (path: string) => ({ path, content: "\uFEFF日本語\u0000😀", kin
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.createAgent.mockReturnValue({});
-  mocks.createActor.mockImplementation(() => ({ read_node: vi.fn(async (_database: string, path: string) => ({ Ok: [raw(path)] })) }));
+  mocks.createActor.mockImplementation(() => ({ read_node: vi.fn(async (_database: string, path: string) => ({ Ok: [raw(path)] })), read_nodes: vi.fn(async (_database: string, paths: string[]) => ({ Ok: paths.map((path) => ({ Ok: [raw(path)] })) })) }));
 });
 describe("request-scoped authenticated node reader", () => {
   it("shares one actor within a request across databases and preserves raw content", async () => {
     const identity = {} as Identity;
     const reader = await createNodeReader({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: identity });
-    const results = await Promise.all([reader("a", "/first"), reader("b", "/second")]);
+    const results = await Promise.all([reader.readOne("a", "/first"), reader.readOne("b", "/second")]);
     expect(mocks.createActor).toHaveBeenCalledTimes(1);
     expect(mocks.createAgent).toHaveBeenCalledWith(expect.objectContaining({ identity }));
     expect(results.map((value) => value?.content)).toEqual([raw("").content, raw("").content]);
+  });
+  it("uses one batch call and shares that actor with single reads", async () => {
+    const reader = await createNodeReader({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: {} as Identity });
+    const results = await reader.readMany("a", ["/first", "/second"]);
+    await reader.readOne("a", "/first");
+    expect(results.map((result) => result.node?.content)).toEqual([raw("").content, raw("").content]);
+    const actor = mocks.createActor.mock.results[0].value;
+    expect(actor.read_nodes).toHaveBeenCalledOnce();
+    expect(actor.read_nodes).toHaveBeenCalledWith("a", ["/first", "/second"]);
+    expect(mocks.createActor).toHaveBeenCalledOnce();
   });
   it("never shares an authenticated actor between requests or users", async () => {
     const firstIdentity = {} as Identity;

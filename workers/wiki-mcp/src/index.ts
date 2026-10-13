@@ -1136,17 +1136,26 @@ async function readNodeItems(env: RuntimeEnv, requests: NodeReadRequest[]): Prom
     const message = error instanceof Error ? error.message : String(error);
     return requests.map(() => ({ node: null, error: message }));
   }
+  const groups = new Map<string, NodeReadRequest[]>();
+  for (const request of jobs) {
+    const group = groups.get(request.databaseId) ?? [];
+    group.push(request);
+    groups.set(request.databaseId, group);
+  }
+  const batches = [...groups.values()];
   let next = 0;
-  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_NODE_READS, jobs.length) }, async () => {
-    while (next < jobs.length) {
-      const request = jobs[next++];
+  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_NODE_READS, batches.length) }, async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
       try {
-        const node = await reader(request.databaseId, request.path);
-        // Release large raw node strings before retaining the whole batch.
-        results.set(key(request), { node: node ? { ...node, content: clipText(node.content, MAX_FETCH_TEXT_CHARS),
-          contentTruncated: node.content.length > MAX_FETCH_TEXT_CHARS } : null, error: null });
+        const reads = await reader.readMany(batch[0].databaseId, batch.map((request) => request.path));
+        for (const [index, request] of batch.entries()) {
+          const { node, error } = reads[index];
+          results.set(key(request), { node: node ? { ...node, content: clipText(node.content, MAX_FETCH_TEXT_CHARS),
+            contentTruncated: node.content.length > MAX_FETCH_TEXT_CHARS } : null, error });
+        }
       } catch (error) {
-        results.set(key(request), { node: null, error: error instanceof Error ? error.message : String(error) });
+        for (const request of batch) results.set(key(request), { node: null, error: error instanceof Error ? error.message : String(error) });
       }
     }
   }));

@@ -429,6 +429,14 @@ fn read_node(database_id: String, path: String) -> Result<Option<Node>, String> 
 }
 
 #[query]
+fn read_nodes(
+    database_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<Result<Option<Node>, String>>, String> {
+    with_service(|service| service.read_nodes(&database_id, &caller_text(), &paths))
+}
+
+#[query]
 fn get_node_publication(request: PublishNodeRequest) -> Result<Option<NodePublication>, String> {
     require_authenticated_caller()?;
     with_service(|service| service.get_node_publication(&caller_text(), request))

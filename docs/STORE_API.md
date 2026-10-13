@@ -55,6 +55,7 @@ Do not answer from working notes as if they were canonical memory.
 
 - `memory_manifest(MemoryManifestRequest)`: discover the API version, enabled stores, roots, capability summary, canonical roles, limits, and recommended entrypoint.
 - `query_context(QueryContextRequest)`: read task-scoped knowledge context. This is the primary entrypoint for normal agent questions.
+- `read_nodes(database_id, paths)`: read 1–10 arbitrary paths in one database query. Uses the same Reader/marketplace/public access as `read_node`. The outer result reports database access/open failures; each ordered inner result is `Ok(opt Node)` or an item error. Duplicate normalized paths are loaded once. Full content and metadata are preserved; a conservative 1,000,000-byte Candid response budget turns oversized items into errors, preferring earlier inputs.
 - `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON object text rows.
 - `source_evidence(SourceEvidenceRequest)`: read `/Sources` evidence references for one known knowledge node path.
 
@@ -191,3 +192,7 @@ Controller-only operational SQL remains separate in `query_index_sql_json`; data
 - Writes must use CLI commands, VFS mutation APIs, or the shared tool dispatcher.
 - `memory_summary` is not part of v1. Use `query_context` with a summary-style task when a maintained overview is needed.
 - Skill curator, knowledge curator, ambient surfacing, synonyms, and session resume summaries are outside v1.
+
+`read_nodes` is for explicitly selected paths, including pages in unrelated folders.
+`export_snapshot` remains the paginated prefix export API; `fetch_updates` remains
+revision-based synchronization. Neither is used as a fallback for arbitrary-path reads.

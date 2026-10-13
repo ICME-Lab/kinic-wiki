@@ -1,5 +1,9 @@
 # Simplify Wiki retrieval and enforce SQL / MCP response boundaries
 
+Follow-up: [004-read-nodes-and-candid-bom.md](./004-read-nodes-and-candid-bom.md)
+adds the explicitly requested `read_nodes` API and fixes the SDK BOM limitation.
+The record below describes the earlier 07a705a5 implementation.
+
 Status: DONE — local implementation, regression verification and release Wasm build.
 Deployment and post-deployment plugin testing are explicitly excluded by the user.
 Recorded: 2026-10-13. Branch: `fix/wiki-batch-read-sql-validation`.

@@ -13,6 +13,8 @@ when done.
 | [002](./002-ios-shared-work-items.md) | iOS: DB-scoped shared WorkItems (VFS documents + App Group SQLite) | P1 | XL | — | IN PROGRESS (Phase 1–3 implemented; Phase 3 unit-verified, device verification pending) |
 | [003](./003-wiki-batch-read-sql-validation.md) | Simplify Wiki retrieval and enforce SQL / MCP response boundaries | P1 | M | — | DONE (local implementation and verification; deployment excluded) |
 
+| [004](./004-read-nodes-and-candid-bom.md) | Add arbitrary-path batch reads and preserve Candid BOM | P1 | M | — | DONE (local checks passed; deployment excluded) |
+
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED
 (with one-line rationale — finding fixed independently or approach abandoned)
 

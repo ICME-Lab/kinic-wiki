@@ -117,6 +117,7 @@ const typeOrder = [
   "ResultNode",
   "ResultChildren",
   "ResultLinks",
+  "ResultReadNodes",
   "ResultNodeContext",
   "ResultNodePublication",
   "ResultOptionalNodePublication",
@@ -210,6 +211,7 @@ const methodOrder = [
   "query_database_sql_json",
   "query_index_sql_json",
   "read_node",
+  "read_nodes",
   "read_node_context",
   "list_children",
   "outgoing_links",
@@ -429,7 +431,7 @@ function splitShapes(value) {
 }
 
 function normalizeShape(value) {
-  return normalizeBlobAlias(value.trim().replace(/\s+/g, " "));
+  return normalizeBlobAlias(value.trim().replace(/\s+/g, " ")).replace(/\bResult(?:_\d+)?\b/g, (name) => Object.entries(didTypeAliases).find(([, alias]) => alias === name)?.[0] ?? name);
 }
 
 function normalizeBlobAlias(value) {

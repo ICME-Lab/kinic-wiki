@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   queryContext: vi.fn(),
   createNodeReader: vi.fn(),
   readNode: vi.fn(),
+  readMany: vi.fn(),
   resolveCanisterId: vi.fn(),
   searchNodes: vi.fn(),
   writeNodes: vi.fn()
@@ -127,7 +128,14 @@ describe("wiki mcp worker", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.resolveCanisterId.mockReturnValue("canister-a");
-    mocks.createNodeReader.mockImplementation(async (runtimeEnv: RuntimeEnv) => (databaseId: string, path: string) => mocks.readNode(runtimeEnv, databaseId, path));
+    mocks.createNodeReader.mockImplementation(async (runtimeEnv: RuntimeEnv) => ({
+      readOne: (databaseId: string, path: string) => mocks.readNode(runtimeEnv, databaseId, path),
+      readMany: (databaseId: string, paths: string[]) => mocks.readMany(runtimeEnv, databaseId, paths)
+    }));
+    mocks.readMany.mockImplementation(async (runtimeEnv: RuntimeEnv, databaseId: string, paths: string[]) => Promise.all(paths.map(async (path) => {
+      try { return { node: await mocks.readNode(runtimeEnv, databaseId, path), error: null }; }
+      catch (error) { return { node: null, error: error instanceof Error ? error.message : String(error) }; }
+    })));
     mocks.writeNodes.mockResolvedValue([
       {
         node: { path: "/Memory/facts.md", kind: "file", updatedAt: "2", etag: "etag-2" },
@@ -1271,6 +1279,8 @@ describe("wiki mcp worker", () => {
       ]
     });
     expect(mocks.createNodeReader).toHaveBeenCalledTimes(1);
+    expect(mocks.readMany).toHaveBeenCalledTimes(1);
+    expect(mocks.readMany).toHaveBeenCalledWith(env, "db_alpha", ["/Knowledge/a.md", "/Knowledge/b.md"]);
     expect(mocks.readNode).toHaveBeenCalledTimes(2);
   });
 
@@ -1279,6 +1289,7 @@ describe("wiki mcp worker", () => {
     const result = await readPaths(env, { database_id: "db_alpha", paths });
     expect(result).toMatchObject({ metadata: { row_count: 10, batch_error: null } });
     expect(mocks.readNode).toHaveBeenCalledTimes(10);
+    expect(mocks.readMany).toHaveBeenCalledTimes(1);
   });
 
   it("limits concurrency to four across all databases and retains input order", async () => {

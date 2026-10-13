@@ -55,3 +55,18 @@ service : () -> {
     idlResultAliases
   }), ["hand-written IDL method foo output mismatch: Variant({ Ok: idl.Text, Err: idl.Text }) != ResultFoo"]);
 });
+
+test("normalizes aliases inside a vector of results", () => {
+  assert.deepEqual(checkCandidSubset({
+    didSource: `type Result_1 = variant { Ok : text; Err : text };
+type Result_2 = variant { Ok : vec Result_1; Err : text };
+service : () -> {\n}`,
+    idlSource: `const ResultItem = idl.Variant({ Ok: idl.Text, Err: idl.Text });
+const ResultBatch = idl.Variant({ Ok: idl.Vec(ResultItem), Err: idl.Text });`,
+    didTypeAliases: { ResultItem: "Result_1", ResultBatch: "Result_2" },
+    expectedTypes: {
+      ResultItem: { kind: "variant", cases: { Ok: "text", Err: "text" } },
+      ResultBatch: { kind: "variant", cases: { Ok: "vec ResultItem", Err: "text" } },
+    }, expectedMethods: {},
+  }), []);
+});

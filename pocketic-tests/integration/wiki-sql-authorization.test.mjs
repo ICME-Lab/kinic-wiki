@@ -42,9 +42,8 @@ test("real Wasm authorizer protects Reader and public Reader, reused queries, an
       kind: { File: null }, content, metadata_json: "{}", expected_etag });
     const body = "\uFEFF日本語\u0000😀";
     ok(await write(body));
-    // The canister preserves a leading BOM on the Candid wire. The pinned JS
-    // Candid decoder removes it from Text values; that affects every read_node
-    // consumer equally and is separate from the removed batch hex decoder.
+    // The independent npm PocketIC harness retains its original SDK. Verify raw
+    // canister bytes here, then exercise the patched product reader below.
     const wire = await pic.queryCall({ canisterId, sender: owner, method: "read_node",
       arg: IDL.encode([IDL.Text, IDL.Text], [id, "/policy.md"]) });
     assert.ok(Buffer.from(wire).includes(Buffer.from(body)));
@@ -75,6 +74,26 @@ test("real Wasm authorizer protects Reader and public Reader, reused queries, an
       assert.equal(ok(await actor.read_node(id, "/policy.md"))[0].content, decodedBody);
       assert.equal(ok(await actor.query_database_sql_json(id, allowed, 1)).rows.length, 1);
     }
+    // Exercise the actual MCP reader with its workspace-patched SDK, through
+    // PocketIC's live gateway, rather than the test harness's npm SDK copy.
+    const mcpRequire = createRequire(resolve(import.meta.dirname, "../../workers/wiki-mcp/package.json"));
+    const { build } = mcpRequire("esbuild");
+    const output = resolve(import.meta.dirname, "../../.tmp-preview/pocketic-wiki-node-reader.mjs");
+    await build({ entryPoints: [resolve(import.meta.dirname, "../../workers/wiki-mcp/src/vfs.ts")],
+      bundle: true, platform: "node", format: "esm", outfile: output,
+      banner: { js: "import { createRequire as nodeRequire } from 'node:module'; const require = nodeRequire(import.meta.url);" } });
+    const { createNodeReader } = await import(output);
+    const port = await pic.makeLive();
+    const client = await createNodeReader({ KINIC_WIKI_CANISTER_ID: canisterId.toText(), KINIC_WIKI_IC_HOST: `http://127.0.0.1:${port}` });
+    const single = await client.readOne(id, "/policy.md");
+    assert.equal(single.content, body);
+    const batch = await client.readMany(id, ["/policy.md", "/missing.md", "relative", "/policy.md"]);
+    assert.deepEqual(batch[0].node, single);
+    assert.deepEqual(batch[3].node, single);
+    assert.equal(batch[1].node, null);
+    assert.ok(batch[2].error);
+    await assert.rejects(client.readMany(id, Array(11).fill("/policy.md")), /1 to 10/);
+    await pic.stopLive();
   } finally {
     await pic.tearDown();
     await server.stop();

@@ -86,3 +86,6 @@ overrides:
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+
+patchedDependencies:
+  '@icp-sdk/core': patches/@icp-sdk__core-bom.patch

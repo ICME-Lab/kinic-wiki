@@ -4,12 +4,16 @@ Remote MCP Workers for Kinic Wiki recall. The public production Worker remains a
 
 Canonical documentation: `../../docs/mcp.md`.
 
-`read_paths` and `fetch_many` share `read_node` retrieval: at most ten inputs and
-four concurrent queries across the entire request, including multiple databases.
-Duplicate database/path pairs are read once and restored in input order. An authenticated
+`read_paths` and `fetch_many` use `read_nodes`: at most ten inputs, one canister
+query per database, and four concurrent database queries across the request.
+Duplicate database/path pairs are read once and restored in input order. `read_path`
+continues to use `read_node`. Both methods share the same request-scoped client. An authenticated
 actor is reused only within that request. Missing nodes, denied reads, and transport failures
-are item errors; no automatic retries are added. Each page has its own etag and concurrent
-reads do not promise a common snapshot. The MCP Worker no longer uses the SQL API.
+are item errors; no automatic retries are added. Each page has its own etag and reads do not promise a common snapshot. The MCP Worker no longer uses the SQL API.
+`read_nodes` returns complete nodes with a conservative 1,000,000-byte Candid response
+budget; items that exceed it become errors rather than silently shortened pages.
+The workspace SDK patch preserves leading BOM characters in Candid Text (5.4.0 and
+6.0.0, ESM/CommonJS), including page bodies. It retains fatal UTF-8 validation.
 
 Content budgets are 40,000 UTF-16 units per page and 100,000 across pages, with safe
 Unicode boundaries. Both MCP representations use the same shortened body and report

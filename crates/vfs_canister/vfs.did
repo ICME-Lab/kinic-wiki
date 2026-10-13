@@ -621,17 +621,18 @@ type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_40 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
 type Result_41 = variant { Ok : opt Node; Err : text };
 type Result_42 = variant { Ok : opt NodeContext; Err : text };
-type Result_43 = variant { Ok : opt PublicNode; Err : text };
-type Result_44 = variant { Ok : VoiceReservation; Err : text };
-type Result_45 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_46 = variant { Ok : StorageBillingBatchResult; Err : text };
-type Result_47 = variant { Ok : SourceEvidence; Err : text };
-type Result_48 = variant { Ok : DatabaseMetadata; Err : text };
-type Result_49 = variant { Ok : WikiMetrics; Err : text };
+type Result_43 = variant { Ok : vec Result_41; Err : text };
+type Result_44 = variant { Ok : opt PublicNode; Err : text };
+type Result_45 = variant { Ok : VoiceReservation; Err : text };
+type Result_46 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_47 = variant { Ok : StorageBillingBatchResult; Err : text };
+type Result_48 = variant { Ok : SourceEvidence; Err : text };
+type Result_49 = variant { Ok : DatabaseMetadata; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : NodeMutationError };
-type Result_50 = variant { Ok : vec WikiMetricsPoint; Err : text };
-type Result_51 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
-type Result_52 = variant {
+type Result_50 = variant { Ok : WikiMetrics; Err : text };
+type Result_51 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_52 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
+type Result_53 = variant {
   Ok : WriteSourceForGenerationResult;
   Err : NodeMutationError;
 };
@@ -887,28 +888,29 @@ service : (CyclesBillingConfig) -> {
   query_index_sql_json : (text, nat32) -> (Result_40) query;
   read_node : (text, text) -> (Result_41) query;
   read_node_context : (NodeContextRequest) -> (Result_42) query;
-  read_public_node : (text) -> (Result_43) query;
+  read_nodes : (text, vec text) -> (Result_43) query;
+  read_public_node : (text) -> (Result_44) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
-  reserve_voice : (VoiceReserveRequest) -> (Result_44);
+  reserve_voice : (VoiceReserveRequest) -> (Result_45);
   revoke_database_access : (text, text) -> (Result_1);
-  search_node_paths : (SearchNodePathsRequest) -> (Result_45) query;
-  search_nodes : (SearchNodesRequest) -> (Result_45) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_46) query;
+  search_nodes : (SearchNodesRequest) -> (Result_46) query;
   set_voice_policy : (VoicePolicy) -> (Result_1);
   settle_database_storage_charges_batch : (StorageBillingBatchRequest) -> (
-      Result_46,
+      Result_47,
     );
-  settle_voice : (VoiceSettleRequest) -> (Result_44);
-  source_evidence : (SourceEvidenceRequest) -> (Result_47) query;
+  settle_voice : (VoiceSettleRequest) -> (Result_45);
+  source_evidence : (SourceEvidenceRequest) -> (Result_48) query;
   status : (text) -> (Status) query;
-  stop_voice : (VoiceStopRequest) -> (Result_44);
+  stop_voice : (VoiceStopRequest) -> (Result_45);
   unpublish_node : (PublishNodeRequest) -> (Result_1);
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
-  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_48);
-  wiki_metrics : () -> (Result_49) query;
-  wiki_metrics_series : (nat32) -> (Result_50) query;
+  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_49);
+  wiki_metrics : () -> (Result_50) query;
+  wiki_metrics_series : (nat32) -> (Result_51) query;
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_51);
+  write_nodes : (WriteNodesRequest) -> (Result_52);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_52,
+      Result_53,
     );
 }
