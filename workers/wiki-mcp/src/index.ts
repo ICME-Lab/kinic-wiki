@@ -71,8 +71,8 @@ const MAX_CONTEXT_BUDGET_TOKENS = 8000;
 const DEFAULT_CONTEXT_DEPTH = 1;
 const MAX_CONTEXT_DEPTH = 2;
 const MAX_FETCH_TEXT_CHARS = 40_000;
-const MIN_SQL_FETCH_TEXT_CHARS = 8_000;
-const SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS = 220_000;
+const MIN_SQL_FETCH_CONTENT_BYTES = 8_000;
+const SQL_BATCH_CONTENT_BUDGET_BYTES = 220_000;
 const DEFAULT_PREFIX = "/";
 const DEFAULT_CONTEXT_NAMESPACE = "/";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
@@ -1377,14 +1377,14 @@ function fetchedNode(env: RuntimeEnv, id: string, databaseId: string, node: Wiki
       created_at: node.createdAt,
       updated_at: node.updatedAt,
       metadata_json: node.metadataJson,
-      truncated: explicitTruncated ?? text.length !== node.content.length
+      truncated: explicitTruncated === true || text.length !== node.content.length
     }
   };
 }
 
-function readPathsSql(paths: string[], contentCharLimit: number): string {
+function readPathsSql(paths: string[], contentByteLimit: number): string {
   const pathList = paths.map(sqlStringLiteral).join(",");
-  return `SELECT json_object('path', path, 'kind', kind, 'etag', etag, 'created_at', created_at, 'updated_at', updated_at, 'metadata_json', metadata_json, 'content', substr(content, 1, ${contentCharLimit}), 'content_truncated', length(content) > ${contentCharLimit}) FROM fs_nodes WHERE path IN (${pathList}) LIMIT ${paths.length}`;
+  return `SELECT json_object('path', path, 'kind', kind, 'etag', etag, 'created_at', created_at, 'updated_at', updated_at, 'metadata_json', metadata_json, 'content_hex', hex(substr(CAST(content AS BLOB), 1, ${contentByteLimit})), 'content_truncated', length(CAST(content AS BLOB)) > ${contentByteLimit}) FROM fs_nodes WHERE path IN (${pathList}) LIMIT ${paths.length}`;
 }
 
 async function readSqlNodesByPath(env: RuntimeEnv, databaseId: string, paths: string[]): Promise<SqlNodesByPath> {
@@ -1399,8 +1399,8 @@ async function readSqlNodesByPath(env: RuntimeEnv, databaseId: string, paths: st
       batchError: null
     };
   }
-  const contentCharLimit = sqlBatchContentCharLimit(uniquePaths.length);
-  const sql = readPathsSql(uniquePaths, contentCharLimit);
+  const contentByteLimit = sqlBatchContentByteLimit(uniquePaths.length);
+  const sql = readPathsSql(uniquePaths, contentByteLimit);
   let result: Awaited<ReturnType<typeof queryDatabaseSqlJson>>;
   try {
     result = await queryDatabaseSqlJson(env, databaseId, sql, uniquePaths.length);
@@ -1436,9 +1436,9 @@ async function readSqlNodesByPath(env: RuntimeEnv, databaseId: string, paths: st
   };
 }
 
-function sqlBatchContentCharLimit(uniquePathCount: number): number {
-  const fairShare = Math.floor(SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS / Math.max(uniquePathCount, 1));
-  return Math.min(Math.max(fairShare, MIN_SQL_FETCH_TEXT_CHARS), MAX_FETCH_TEXT_CHARS);
+function sqlBatchContentByteLimit(uniquePathCount: number): number {
+  const fairShare = Math.floor(SQL_BATCH_CONTENT_BUDGET_BYTES / Math.max(uniquePathCount, 1));
+  return Math.min(Math.max(fairShare, MIN_SQL_FETCH_CONTENT_BYTES), MAX_FETCH_TEXT_CHARS);
 }
 
 function batchReadError(error: unknown): string {
@@ -1461,12 +1461,17 @@ function parseSqlNodeRow(row: string): SqlWikiNode | null {
   }
   const path = requiredString(decoded.path);
   const kind = requiredString(decoded.kind);
-  const content = requiredString(decoded.content);
+  // The SQL response uses hex of a bounded UTF-8 byte prefix. SQLite TEXT
+  // length/substr stop at NUL, so they cannot report complete node content.
+  const decodedContent = typeof decoded.content_hex === "string"
+    ? decodeSqlContentHex(decoded.content_hex)
+    : null;
+  const content = decodedContent?.text ?? null;
   const etag = requiredString(decoded.etag);
   const metadataJson = requiredString(decoded.metadata_json);
   const createdAt = scalarToString(decoded.created_at);
   const updatedAt = scalarToString(decoded.updated_at);
-  const contentTruncated = scalarToBoolean(decoded.content_truncated);
+  const contentTruncated = scalarToBoolean(decoded.content_truncated) || decodedContent?.trimmed === true;
   if (!path || !kind || content === null || !etag || metadataJson === null || !createdAt || !updatedAt) {
     return null;
   }
@@ -1480,6 +1485,22 @@ function parseSqlNodeRow(row: string): SqlWikiNode | null {
     updatedAt,
     contentTruncated
   };
+}
+
+function decodeSqlContentHex(hex: string): { text: string; trimmed: boolean } | null {
+  if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) return null;
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  // A byte limit can end within a UTF-8 scalar. Drop only that incomplete tail.
+  for (let trimmed = 0; trimmed <= Math.min(3, bytes.length); trimmed += 1) {
+    try {
+      return { text: decoder.decode(bytes.subarray(0, bytes.length - trimmed)), trimmed: trimmed > 0 };
+    } catch { /* Try the next possible UTF-8 boundary. */ }
+  }
+  return null;
 }
 
 function requiredString(value: unknown): string | null {
@@ -1600,7 +1621,12 @@ function clipText(text: string, maxChars: number): string {
   if (text.length <= maxChars) {
     return text;
   }
-  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+  let prefix = text.slice(0, maxChars - 3);
+  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
+    prefix = prefix.slice(0, -1);
+  }
+  return `${prefix.trimEnd()}...`;
 }
 
 type JsonBodyResult =

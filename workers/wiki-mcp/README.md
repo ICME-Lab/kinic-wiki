@@ -28,6 +28,32 @@ Every `write_nodes` item and batch `write` operation is a full replacement and m
 
 ## Local
 
+### Batch-read regression smoke
+
+Run `node scripts/batch-read-smoke.mjs` from this directory to compare both batch
+read tools with single reads of three existing public Hono nodes, including the
+original failing `--` paths and an ordinary companion path. It performs no writes
+and fails on item errors even when the top-level tool result succeeds. The output
+contains success flags only; node content is never printed.
+
+For staging or Private reads, use an isolated OAuth cache and provide 2–10 existing
+paths in an accessible database:
+
+```bash
+node scripts/batch-read-smoke.mjs --authenticated --open \
+  --server-url https://wiki-mcp-staging.kinic.xyz/mcp \
+  --auth-cache /absolute/path/to/staging-batch-smoke-oauth.json \
+  --database-id db_example \
+  --path /Knowledge/ordinary.md \
+  --path /Knowledge/routing--example.md
+```
+
+Include both an ordinary path and a path containing SQL-like characters. Choose
+small stable nodes: truncation or a concurrent edit causes the exact comparison to
+fail. Do not run concurrent authenticated smoke processes against one OAuth cache.
+
+### Development
+
 ```bash
 pnpm install
 pnpm test

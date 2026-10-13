@@ -4356,7 +4356,6 @@ fn database_sql_json_rejects_mutating_multi_statement_and_expensive_sql() {
         "SELECT json_object('ok', count(*)) FROM fs_nodes LIMIT 1",
         "SELECT json_group_array(path) FROM fs_nodes LIMIT 1",
         "SELECT group_concat(path) FROM fs_nodes LIMIT 1",
-        "SELECT json_object('x', hex(content)) FROM fs_nodes LIMIT 1",
         "SELECT json_object('x', randomblob(4)) FROM fs_nodes LIMIT 1",
         "SELECT json_object('x', zeroblob(4)) FROM fs_nodes LIMIT 1",
         "SELECT json_object('x', load_extension('x')) FROM fs_nodes LIMIT 1",
