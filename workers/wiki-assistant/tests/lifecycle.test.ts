@@ -606,4 +606,5 @@ it.each(["live", "native", "delegation", "browser"])("drops retired %s state wit
   await h.user.initialize();
   expect(h.user["state"].conversation).toBeNull();
   expect(h.user["state"].cleanup).toEqual([]);
+  expect((h.storage.get("state") as typeof state).conversation).toBeNull();
 });

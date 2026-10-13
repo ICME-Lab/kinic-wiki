@@ -248,6 +248,50 @@ describe("assistant HTTP and D1 authentication boundary", () => {
     expect(await store.auth(expired)).toBeUndefined();
   });
 
+  it.each([
+    { previousDay: false, includeMessages: true },
+    { previousDay: true, includeMessages: true },
+    { previousDay: false, includeMessages: false },
+    { previousDay: true, includeMessages: false },
+  ])("persists retired browser deletion before returning from initialization: %j", async ({ previousDay, includeMessages }) => {
+    const principal = crypto.randomUUID(), authId = crypto.randomUUID(), id = crypto.randomUUID();
+    const store = new AssistantStore(bindings);
+    const user = await new AssistantUser(bindings, principal).initialize();
+    const today = new Date().toISOString().slice(0, 10);
+    user["state"].day = previousDay
+      ? new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+      : today;
+    user["state"].questions = 3;
+    user["state"].conversation = {
+      id, authId, principal, databaseId: "db", scope: "/Knowledge", native: false,
+      format: 3, sessionId: null, generation: 0, pending: null,
+      activity: 0, seen: 0, status: "ready", error: null,
+      transcripts: [], history: [], utterances: [], delegations: [], deferred: null,
+      messages: [{
+        requestId: crypto.randomUUID(), question: "private question", voice: false,
+        answer: null, error: null, kind: null, trace: null,
+      }],
+    };
+    await store.insertAuth({ id: authId, phase: "active", expiresAt: 0 });
+    await user["save"]();
+
+    await new AssistantUser(bindings, principal).initialize(includeMessages);
+    const persisted = await store.load(principal);
+    expect(persisted.state.conversation).toBeNull();
+    expect(await store.auth(authId)).toBeUndefined();
+    expect(await store.db.prepare("SELECT COUNT(*) AS count FROM assistant_requests WHERE principal=?")
+      .bind(principal).first<{ count: number }>()).toEqual({ count: 0 });
+    expect(await store.db.prepare("SELECT data,conversation_id,auth_id FROM assistant_users WHERE principal=?")
+      .bind(principal).first()).toEqual({ data: null, conversation_id: null, auth_id: null });
+
+    await store.db.prepare("UPDATE assistant_users SET next_attempt=0 WHERE principal=?").bind(principal).run();
+    await sweep(bindings);
+    const afterSweep = await store.load(principal);
+    expect(afterSweep.state.conversation).toBeNull();
+    expect(afterSweep.state.day).toBe(today);
+    expect(afterSweep.state.questions).toBe(previousDay ? 0 : 3);
+  });
+
   it("does not accept a principal as proof of authentication", async () => {
     const response = await SELF.fetch(
       origin +

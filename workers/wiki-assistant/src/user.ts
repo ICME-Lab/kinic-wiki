@@ -105,19 +105,15 @@ export class AssistantUser {
     this.revision = loaded.revision;
     this.state.cleanup = [];
     const stored = this.state.conversation;
-    if (stored && (stored.native !== true || stored.live || stored.pending?.delegationId ||
-      (stored.native && stored.nativeTextProvider !== "deepseek"))) {
-      // Retired browser/voice state is dropped locally; no provider termination or billing.
-      this.state.conversation = null;
-    }
-    // Format 3 adds semantic routing and retrieval traces. Retire earlier
-    // temporary sessions once. Native sessions must use the current provider
-    // contract; retire legacy native sessions before reconnecting to DeepSeek.
     if (
-      this.state.conversation &&
-      this.state.conversation.format !== 3
+      stored && (
+        stored.native !== true || stored.live || stored.pending?.delegationId ||
+        stored.nativeTextProvider !== "deepseek" || stored.format !== 3
+      )
     ) {
-      await this.endOwned(this.state.conversation.authId, this.state.conversation.id);
+      // Persist local retirement before returning, including metadata-only reads.
+      // The normal end path deletes encrypted content and auth atomically without provider calls.
+      await this.endOwned(stored.authId, stored.id);
     }
     this.nextWake = this.wakeDeadline();
     if (this.state.endRequested !== undefined && this.state.conversation)
@@ -758,6 +754,7 @@ export class AssistantUser {
     ) {
       this.state.questions = 0;
       this.state.day = day();
+      await this.save();
     } else if (this.state.conversation && !this.state.conversation.pending && !this.state.cleanup.length) {
       // Idle maintenance changes no answer or control state. Updating its wake
       // time must not re-encrypt all messages or invalidate history revisions.
