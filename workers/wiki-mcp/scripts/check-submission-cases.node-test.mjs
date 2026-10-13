@@ -191,7 +191,14 @@ function mutationFixtureClient() {
   };
   function mutate(type, item) {
     const path = type === "move" ? item.from_path : item.path;
-    if (type === "mkdir") return { created: true, path: write(path, "", "folder").path };
+    if (type === "mkdir") {
+      const existing = nodes.get(path);
+      if (existing) {
+        assert.equal(existing.kind, "folder");
+        return { created: false, path };
+      }
+      return { created: true, path: write(path, "", "folder").path };
+    }
     const node = nodes.get(path);
     assert.ok(node, `missing ${path}`);
     assert.equal(item.expected_etag, node.etag);
@@ -264,7 +271,7 @@ test("submitted mixed scenario keeps edit and delete in one ordered transaction"
   assert.equal(client.nodes.size, 0);
 });
 
-for (const tool of ["append_nodes", "edit_nodes", "multi_edit_nodes", "mutate_nodes_batch"]) {
+for (const tool of ["append_nodes", "edit_nodes", "multi_edit_nodes", "move_nodes", "mutate_nodes_batch"]) {
   for (const failure of ["rejected", "request lost", "response lost"]) {
     test(`${tool} ${failure} preserves the failure and cleans pre/post-mutation artifacts`, async () => {
       const { checkSingleWriteCase, checkBatchWriteCase } = await import("./check-submission-cases.mjs");
@@ -289,6 +296,70 @@ for (const tool of ["append_nodes", "edit_nodes", "multi_edit_nodes", "mutate_no
     });
   }
 }
+
+for (const failure of ["rejected", "request lost", "response lost", "malformed response", "read failed"]) {
+  test(`folder creation ${failure} checks uncertain state without deleting unconfirmed ownership`, async () => {
+    const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+    const client = mutationFixtureClient();
+    const call = client.callTool.bind(client);
+    let folderPath;
+    let inspected = false;
+    const committed = ["response lost", "malformed response", "read failed"].includes(failure);
+    client.callTool = async request => {
+      if (request.name === "create_folders") {
+        folderPath = request.arguments.operations[0].path;
+        if (committed) await call(request);
+        if (failure === "malformed response") return { structuredContent: { results: [] } };
+        if (failure === "rejected") return { isError: true, content: [{ type: "text", text: "injected rejection" }] };
+        throw new Error(`injected ${failure}`);
+      }
+      if (request.name === "read_path" && request.arguments.path === folderPath) {
+        inspected = true;
+        if (failure === "read failed") throw new Error("injected read failure");
+      }
+      return call(request);
+    };
+    await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), error => {
+      assert.match(error.message, failure === "malformed response" ? /scratch folder must be new/u : /injected/u);
+      if (committed) assert.match(error.message, /cleanup failed for 1 review artifact/u);
+      else assert.doesNotMatch(error.message, /cleanup failed/u);
+      return true;
+    });
+    assert.equal(inspected, true);
+    assert.deepEqual([...client.nodes.keys()], committed ? [folderPath] : []);
+    assert.equal(client.calls.some(call => call.name === "delete_nodes" && call.arguments.operations.some(item => item.path === folderPath)), false);
+  });
+}
+
+test("an existing scratch folder is preserved when mkdir reports it was not created", async () => {
+  const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  const call = client.callTool.bind(client);
+  let folderPath;
+  client.callTool = async request => {
+    if (request.name === "create_folders") {
+      folderPath = request.arguments.operations[0].path;
+      client.nodes.set(folderPath, { path: folderPath, kind: "folder", content: "", etag: "foreign" });
+    }
+    return call(request);
+  };
+  await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), /scratch folder must be new/u);
+  assert.deepEqual([...client.nodes.keys()], [folderPath]);
+  assert.equal(client.nodes.get(folderPath).etag, "foreign");
+  assert.equal(client.calls.some(call => call.name === "delete_nodes" && call.arguments.operations.some(item => item.path === folderPath)), false);
+});
+
+test("failed page cleanup counts its confirmed folder as uncollected too", async () => {
+  const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  const call = client.callTool.bind(client);
+  client.callTool = async request => {
+    if (request.name === "delete_nodes") throw new Error("injected delete failure");
+    return call(request);
+  };
+  await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), /Cleanup failed for 2 review artifact/u);
+  assert.equal(client.nodes.size, 2);
+});
 
 test("mixed batch rollback cleans the original pages after a later operation fails", async () => {
   const { checkBatchWriteCase } = await import("./check-submission-cases.mjs");

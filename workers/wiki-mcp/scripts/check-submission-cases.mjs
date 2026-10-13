@@ -456,7 +456,7 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
   let artifact = { path, expectedContent: "OpenAI review single-node check", etag: undefined };
   const artifacts = [artifact];
   const folder = { path: `${SCRATCH_PREFIX}/single-${suffix}`, expectedContent: "", etag: undefined };
-  let folderCreated = false;
+  let folderCreation = "not_attempted";
   let operationError;
   try {
     const created = await callTool(client, mcpUrl, "write_nodes", {
@@ -486,11 +486,14 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
       artifact.expectedContent = content;
       artifact.pendingContent = undefined;
     }
+    folderCreation = "unknown";
     const folders = await callTool(client, mcpUrl, "create_folders", {
       database_id: databaseId, operations: [{ path: folder.path }]
     });
-    folderCreated = folders.structured.results?.[0]?.value?.created === true;
-    assert(folderCreated, `${mcpUrl} scratch folder must be new`);
+    const createdFolder = folders.structured.results?.[0]?.value?.created;
+    if (createdFolder === true) folderCreation = "created";
+    else if (createdFolder === false) folderCreation = "existing";
+    assert(folderCreation === "created", `${mcpUrl} scratch folder must be new`);
     const movedArtifact = { path: `${folder.path}/page.md`, expectedContent: artifact.expectedContent, etag: undefined };
     artifacts.push(movedArtifact);
     const expected_etag = artifact.etag;
@@ -508,7 +511,25 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
     operationError = error;
   }
   let cleanupFailureCount = await cleanupReviewArtifacts(client, mcpUrl, databaseId, artifacts);
-  if (folderCreated && cleanupFailureCount === 0) cleanupFailureCount += await cleanupReviewArtifacts(client, mcpUrl, databaseId, [folder]);
+  if (folderCreation === "created") {
+    // A retained child also leaves its folder uncollected.
+    cleanupFailureCount += cleanupFailureCount === 0
+      ? await cleanupReviewArtifacts(client, mcpUrl, databaseId, [folder])
+      : 1;
+  } else if (folderCreation === "unknown") {
+    // mkdir has no ownership marker. A reread can prove absence, but an empty
+    // folder alone cannot prove this run created it. Preserve and report it.
+    try {
+      const read = await client.callTool(
+        { name: "read_path", arguments: { database_id: databaseId, path: folder.path } },
+        undefined,
+        requestOptions()
+      );
+      if (!isNodeNotFoundResult(read)) cleanupFailureCount += 1;
+    } catch {
+      cleanupFailureCount += 1;
+    }
+  }
   const completionError = reviewCompletionError(operationError, cleanupFailureCount);
   if (completionError) {
     throw completionError;

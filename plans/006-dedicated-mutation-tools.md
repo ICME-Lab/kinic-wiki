@@ -107,6 +107,22 @@ outdated two-tool wording and mixed-batch recommendations from the guides.
 
 ## Scope and later publication
 
+### PR review follow-up: uncertain folder creation
+
+Folder creation now tracks not attempted, unknown, confirmed created, and
+confirmed existing states. Cleanup rereads an unknown result: absence needs no
+cleanup, while an existing node or a failed reread is counted as uncollected.
+An empty folder is not evidence of ownership, so unknown and pre-existing
+folders are never deleted. Confirmed folders are deleted after their pages; a
+folder retained because page cleanup failed is also counted in the failure.
+
+Added ten regression cases: folder rejection/request loss/response loss/malformed
+response/reread failure, preservation of an existing folder, retained parent
+accounting, and move rejection/request loss/response loss. All 105 Node script
+tests passed, including 35 submission smoke tests; `git diff --check` passed.
+This follow-up only changes the smoke script, its tests, and this record. The
+earlier isolated Worker/Rust checks remain applicable; no live writes occurred.
+
 Existing uncommitted search, OAuth, and page work was preserved. This task changes
 mutation registration/metadata, guides/submission artifacts, smoke scripts, and
 related tests. Shared files (`src/index.ts`, `docs/mcp.md`) contain pre-existing
