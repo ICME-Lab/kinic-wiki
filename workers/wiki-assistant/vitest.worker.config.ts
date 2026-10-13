@@ -22,7 +22,6 @@ export default defineConfig({
             "utf8",
           ).replace(/\s+/g, " "),
           ASSISTANT_ENABLED: "true",
-          OPENAI_API_KEY: "test-not-a-real-key",
           DEEPSEEK_API_KEY: "test-not-a-real-key",
           TYPESAFE_API_KEY: "test-not-a-real-key",
           ASSISTANT_KEY_ENCRYPTION_KEY:

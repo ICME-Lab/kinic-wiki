@@ -175,15 +175,15 @@ describe("assistant HTTP and D1 authentication boundary", () => {
       .toEqual({ state: "pending", attempts: 0, next_attempt: 0 });
     await bindings.ASSISTANT_DB.prepare("DELETE FROM assistant_jobs WHERE id=?").bind(id).run();
   });
-  it("requires authentication for private routes", async () => {
+  it("does not expose retired browser routes", async () => {
     const response = await SELF.fetch(origin + "/api/assistant/conversations", {
       method: "POST",
       headers: { origin, "content-type": "application/json" },
       body: JSON.stringify({}),
     });
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(404);
   });
-  it("rejects cross-origin state changes before authentication", async () => {
+  it("does not expose retired browser authentication", async () => {
     const response = await SELF.fetch(origin + "/api/assistant/auth/start", {
       method: "POST",
       headers: {
@@ -192,7 +192,7 @@ describe("assistant HTTP and D1 authentication boundary", () => {
       },
       body: '{"consent":"2026-09-22"}',
     });
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(404);
   });
   it("stores only encrypted registration keys and binds completion to initiating cookie", async () => {
     const id = crypto.randomUUID();
@@ -228,7 +228,70 @@ describe("assistant HTTP and D1 authentication boundary", () => {
       .run();
     await sweep(bindings);
     expect(await auth.ownerForCleanup(pending.token)).toBeNull();
+    expect(await store.auth(id)).toBeUndefined();
   });
+  it("keeps active and unexpired grants when removing expired unused grants", async () => {
+    const store = new AssistantStore(bindings);
+    const active = crypto.randomUUID(), pending = crypto.randomUUID(), expired = crypto.randomUUID();
+    const principals = [crypto.randomUUID(), crypto.randomUUID()];
+    await store.insertAuth({ id: active, phase: "active", expiresAt: 0 });
+    await store.insertAuth({ id: pending, phase: "pending", expiresAt: Date.now() + 60_000 });
+    await store.insertAuth({ id: expired, phase: "pending", expiresAt: 0 });
+    for (const [index, principal] of principals.entries()) {
+      await bindings.ASSISTANT_DB.prepare(
+        "INSERT INTO assistant_users(principal,revision,commit_id,conversation_id,auth_id,usage_day,questions,voice_seconds,seen,activity,next_attempt) VALUES (?,0,'test',?,?,'2026-10-13',0,0,0,0,?)",
+      ).bind(principal, crypto.randomUUID(), index === 0 ? active : null, Date.now() + 60_000).run();
+    }
+    await sweep(bindings);
+    expect(await store.auth(active)).toBeDefined();
+    expect(await store.auth(pending)).toBeDefined();
+    expect(await store.auth(expired)).toBeUndefined();
+  });
+
+  it.each([
+    { previousDay: false, includeMessages: true },
+    { previousDay: true, includeMessages: true },
+    { previousDay: false, includeMessages: false },
+    { previousDay: true, includeMessages: false },
+  ])("persists retired browser deletion before returning from initialization: %j", async ({ previousDay, includeMessages }) => {
+    const principal = crypto.randomUUID(), authId = crypto.randomUUID(), id = crypto.randomUUID();
+    const store = new AssistantStore(bindings);
+    const user = await new AssistantUser(bindings, principal).initialize();
+    const today = new Date().toISOString().slice(0, 10);
+    user["state"].day = previousDay
+      ? new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+      : today;
+    user["state"].questions = 3;
+    user["state"].conversation = {
+      id, authId, principal, databaseId: "db", scope: "/Knowledge", native: false,
+      format: 3, sessionId: null, generation: 0, pending: null,
+      activity: 0, seen: 0, status: "ready", error: null,
+      transcripts: [], history: [], utterances: [], delegations: [], deferred: null,
+      messages: [{
+        requestId: crypto.randomUUID(), question: "private question", voice: false,
+        answer: null, error: null, kind: null, trace: null,
+      }],
+    };
+    await store.insertAuth({ id: authId, phase: "active", expiresAt: 0 });
+    await user["save"]();
+
+    await new AssistantUser(bindings, principal).initialize(includeMessages);
+    const persisted = await store.load(principal);
+    expect(persisted.state.conversation).toBeNull();
+    expect(await store.auth(authId)).toBeUndefined();
+    expect(await store.db.prepare("SELECT COUNT(*) AS count FROM assistant_requests WHERE principal=?")
+      .bind(principal).first<{ count: number }>()).toEqual({ count: 0 });
+    expect(await store.db.prepare("SELECT data,conversation_id,auth_id FROM assistant_users WHERE principal=?")
+      .bind(principal).first()).toEqual({ data: null, conversation_id: null, auth_id: null });
+
+    await store.db.prepare("UPDATE assistant_users SET next_attempt=0 WHERE principal=?").bind(principal).run();
+    await sweep(bindings);
+    const afterSweep = await store.load(principal);
+    expect(afterSweep.state.conversation).toBeNull();
+    expect(afterSweep.state.day).toBe(today);
+    expect(afterSweep.state.questions).toBe(previousDay ? 0 : 3);
+  });
+
   it("does not accept a principal as proof of authentication", async () => {
     const response = await SELF.fetch(
       origin +
@@ -241,15 +304,12 @@ describe("assistant HTTP and D1 authentication boundary", () => {
         },
       },
     );
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(404);
   });
-  it("returns a no-store callback with no dynamic credential interpolation", async () => {
+  it("does not expose the retired browser callback", async () => {
     const response = await SELF.fetch(origin + "/api/assistant/callback");
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("content-security-policy")).toContain(
-      "frame-ancestors 'none'",
-    );
-    expect(await response.text()).toContain("history.replaceState");
+    expect(response.status).toBe(404);
   });
 });
 

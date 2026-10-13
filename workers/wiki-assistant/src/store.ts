@@ -244,15 +244,6 @@ export class AssistantStore {
           `DELETE FROM assistant_requests WHERE principal=?1 AND ${condition}`,
         )
         .bind(principal, commit),
-      this.db
-        .prepare(
-          `INSERT INTO assistant_cleanup(principal,data) SELECT ?1,?3 WHERE ${condition} ON CONFLICT(principal) DO UPDATE SET data=excluded.data`,
-        )
-        .bind(
-          principal,
-          commit,
-          JSON.stringify({ cleanup: state.cleanup }),
-        ),
     ];
     for (const message of c?.messages ?? [])
       statements.push(
