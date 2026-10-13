@@ -739,11 +739,9 @@ async function mutationToolError(
     try {
       const current = await readNode(env, databaseId, conflictPath);
       if (current) {
-        const currentContentSize = current.content.length;
         payload.current_etag = current.etag;
-        payload.current_content = clipText(current.content, MAX_FETCH_TEXT_CHARS);
-        payload.current_content_truncated = currentContentSize > MAX_FETCH_TEXT_CHARS;
-        payload.current_content_size = currentContentSize;
+        payload.current_content = current.content;
+        payload.current_content_size = current.content.length;
       }
     } catch {
       // The stable conflict response remains useful when the follow-up read is unavailable.

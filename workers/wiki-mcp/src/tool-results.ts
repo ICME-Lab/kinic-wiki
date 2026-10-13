@@ -35,10 +35,18 @@ export function toToolResult(payload: ToolPayload | ToolResult): ToolResult {
   });
 }
 export function toolError(message: string, payload: ToolPayload, meta?: Record<string, unknown>): ToolResult {
-  return finalize({
-    content: [{ type: "text", text: JSON.stringify({ ...payload, error: typeof payload.error === "string" ? payload.error : message }) }],
+  const contentPayload: ToolPayload = { ...payload, error: typeof payload.error === "string" ? payload.error : message };
+  const build = (bounded: ToolPayload): ToolResult => ({
+    content: [{ type: "text", text: JSON.stringify(bounded) }],
     ...(meta ? { _meta: meta } : {}), isError: true
   });
+  if (typeof contentPayload.current_content !== "string") return finalize(build(contentPayload));
+  const original = contentPayload.current_content;
+  return fitContent((budget) => {
+    const currentContent = clipText(original, budget);
+    return build({ ...contentPayload, current_content: currentContent,
+      current_content_truncated: contentPayload.current_content_truncated === true || currentContent !== original });
+  }, Math.min(original.length, MAX_NODE_CONTENT_CHARS));
 }
 
 // Search only the content budget. Metadata is never silently shortened.

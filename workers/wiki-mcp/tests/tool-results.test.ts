@@ -85,4 +85,33 @@ describe("bounded MCP responses", () => {
     expect(bytes(error)).toBeLessThan(200);
     expect(toolError("failed", {}, { auth: "keep" })._meta).toEqual({ auth: "keep" });
   });
+  it.each(["\u0000", "\u0001", "😀日本語"])("retains conflict details while fitting %j content by final UTF-8 bytes", (unit) => {
+    const content = unit.repeat(40_000);
+    const result = toolError("etag_conflict", {
+      error: "etag_conflict", database_id: "db", path: "/page", conflict_path: "/page",
+      failed_index: 0, current_etag: "current", current_content: content, current_content_size: content.length
+    }, { auth: "keep" });
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload).toMatchObject({ error: "etag_conflict", database_id: "db", path: "/page", conflict_path: "/page",
+      failed_index: 0, current_etag: "current", current_content_size: content.length, current_content_truncated: true });
+    expect(payload.current_content.length).toBeLessThanOrEqual(40_000);
+    expect(content.startsWith(payload.current_content.slice(0, -3))).toBe(true);
+    expect(hasUnpairedSurrogate(payload.current_content)).toBe(false);
+    expect(bytes(result)).toBeLessThanOrEqual(256_000);
+    expect(result._meta).toEqual({ auth: "keep" });
+  });
+  it("preserves an unshortened conflict body and any prior truncation flag", () => {
+    const content = "\uFEFF日本語\u0000😀";
+    for (const previouslyTruncated of [false, true]) {
+      const result = toolError("etag_conflict", { current_content: content, current_content_truncated: previouslyTruncated });
+      expect(JSON.parse(result.content[0].text)).toMatchObject({
+        error: "etag_conflict", current_content: content, current_content_truncated: previouslyTruncated
+      });
+    }
+  });
+  it("returns a fixed size error when conflict metadata cannot fit with an empty body", () => {
+    const result = toolError("etag_conflict", { current_etag: "x".repeat(300_000), current_content: "body" });
+    expect(JSON.parse(result.content[0].text)).toEqual({ error: "tool result exceeds serialized limit" });
+    expect(bytes(result)).toBeLessThan(200);
+  });
 });

@@ -925,6 +925,29 @@ describe("wiki mcp worker", () => {
     expect(serialized.length).toBeLessThan(256 * 1024);
   });
 
+  it.each(["write_nodes", "mutate_nodes_batch"])("preserves %s conflict metadata when control characters expand the response", async (tool) => {
+    const content = "\u0000".repeat(40_000);
+    const path = "/Memory/control.md";
+    const mutation = tool === "write_nodes" ? mocks.writeNodes : mocks.mutateNodesBatch;
+    mutation.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 0, path));
+    mocks.readNode.mockResolvedValueOnce({ path, kind: "file", content, metadataJson: "{}", updatedAt: "3", etag: "etag-current" });
+    const response = await callPrivateTool({
+      ...privateRequiredEnv, KINIC_WIKI_IDENTITY: {} as Identity,
+      KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
+    }, tool, tool === "write_nodes"
+      ? { database_id: "db_alpha", nodes: [{ path, kind: "file", content: "new", metadata_json: "{}", expected_etag: "stale" }] }
+      : { database_id: "db_alpha", operations: [{ type: "edit", path, old_text: "old", new_text: "new", expected_etag: "stale" }] });
+    const result = response.result;
+    const payload = JSON.parse(result.content[0].text);
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({ error: "etag_conflict", database_id: "db_alpha", path, conflict_path: path,
+      failed_index: 0, current_etag: "etag-current", current_content_size: 40_000, current_content_truncated: true });
+    expect(payload.current_content.length).toBeGreaterThan(0);
+    expect(payload.current_content.length).toBeLessThan(40_000);
+    expect(content.startsWith(payload.current_content.slice(0, -3))).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(256_000);
+  });
+
   it("accepts the documented list limit through MCP JSON-RPC", async () => {
     const response = await postMcp({
       jsonrpc: "2.0",

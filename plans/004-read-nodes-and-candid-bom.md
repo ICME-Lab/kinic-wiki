@@ -43,7 +43,7 @@ Passed locally:
   content, duplicates, missing/invalid paths and input limits for read_nodes.
 - Full vfs-runtime database_service suite: 146 tests, including batch Reader/public
   access, unauthorized access, preserved bodies, item errors and Candid byte budgeting.
-- Wiki MCP: Candid subset, 79 Node tests, 152 Vitest tests, 37 Worker tests, typecheck.
+- Wiki MCP: Candid subset, 79 Node tests, 159 Vitest tests, 37 Worker tests, typecheck.
   Candid Text tests cover SDK 6 ESM/CommonJS and SDK 5.4 CommonJS, single/repeated BOM,
   ordinary/empty text and rejection of malformed UTF-8. Existing parallel/dedup/order
   tests now assert one batch query for a single database.
@@ -62,3 +62,20 @@ The earlier artifact in plan 003 is superseded.
 No staging/production deployment or remote plugin verification was performed. A future
 release must install a canister supporting read_nodes before switching the Worker.
 Unrelated OAuth/assistant/UI changes and their lockfile removals are excluded from this commit.
+
+## Review follow-up: conflict response bytes
+
+Review reproduced an etag conflict with 40,000 NUL characters: the completed
+tool result was 280,324 UTF-8 bytes, so the generic final check replaced both
+the conflict code and current etag with a size error. Conflict bodies now use
+the shared Unicode-safe content fitter at error construction. It measures the
+completed result, including JSON escaping and any auth metadata, and shortens
+only current_content within the 40,000-unit budget. The conflict code, database,
+paths, failed index, current etag and original content size remain intact; the
+truncation flag is set whenever the body changes. Metadata that cannot fit even
+with an empty body still returns the fixed short size error.
+
+Regression coverage checks both write_nodes and mutate_nodes_batch through MCP,
+control characters, Unicode boundaries, untouched BOM text, prior truncation
+flags and oversized metadata. Focused tests: 103 passed. Full MCP tests and
+typecheck also pass; Rust/Wasm sources and the artifact above are unchanged.
