@@ -9,7 +9,11 @@
   },
   "tools": {
     "find_databases": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only lists and ranks database metadata visible to the signed-in user without modifying any database.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -17,7 +21,11 @@
       }
     },
     "search": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only searches node indexes in one database visible to the signed-in user and returns matching metadata.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -25,7 +33,11 @@
       }
     },
     "fetch_many": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only reads up to ten nodes selected from search results and returns item-level errors without changing them.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -33,7 +45,11 @@
       }
     },
     "read_path": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only reads one node at a known path in a database visible to the signed-in user.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -41,7 +57,11 @@
       }
     },
     "read_paths": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only reads two to ten known paths in one database and returns item-level errors without changing them.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -49,7 +69,11 @@
       }
     },
     "list": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only lists node inventory under a prefix without returning or changing node content.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -57,7 +81,11 @@
       }
     },
     "memory_manifest": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only retrieves roots, capabilities, roles, limits, and write policy for one database.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -65,7 +93,11 @@
       }
     },
     "context": {
-      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
       "justifications": {
         "read_only_justification": "Only retrieves task-scoped context, graph links, search hits, and source evidence from one database.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
@@ -73,7 +105,11 @@
       }
     },
     "write_nodes": {
-      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": true },
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
       "justifications": {
         "read_only_justification": "Creates or fully replaces one to one hundred nodes atomically in a database available to the signed-in writer.",
         "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
@@ -81,11 +117,87 @@
       }
     },
     "mutate_nodes_batch": {
-      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": true },
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
       "justifications": {
         "read_only_justification": "Atomically writes, appends, edits, creates folders, moves, or deletes one to one hundred nodes in one database.",
         "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
         "destructive_justification": "Can overwrite, move, or delete node content, using etags and atomic rollback to guard conflicting batches."
+      }
+    },
+    "append_nodes": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Appends content and optionally changes metadata or kind in one atomic batch.",
+        "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
+        "destructive_justification": "Can replace existing metadata or kind; repeated calls can duplicate appended content."
+      }
+    },
+    "edit_nodes": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Replaces exact text in one atomic batch.",
+        "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
+        "destructive_justification": "Replaces existing text with etag protection."
+      }
+    },
+    "multi_edit_nodes": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Applies ordered exact-text edits within nodes in one atomic batch.",
+        "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
+        "destructive_justification": "Replaces existing text with etag protection."
+      }
+    },
+    "create_folders": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Creates folders in one atomic batch.",
+        "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
+        "destructive_justification": "Only creates missing folders; existing folders are unchanged and non-folder collisions fail."
+      }
+    },
+    "move_nodes": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Moves or renames nodes in one atomic batch.",
+        "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
+        "destructive_justification": "Changes paths and can overwrite a destination when explicitly requested with etag protection."
+      }
+    },
+    "delete_nodes": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Deletes selected nodes in one atomic batch.",
+        "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
+        "destructive_justification": "Deletes existing nodes with etag protection."
       }
     }
   },
@@ -115,19 +227,19 @@
       "expected_output_url": null
     },
     {
-      "description": "Create, verify, and remove one isolated review node.",
-      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Explicitly create /OpenAIReview/scratch/single-{suffix}.md with write_nodes using kind file, content \"OpenAI review single-node check\", and metadata_json \"{}\". Read it once with read_path and verify the exact content. Then explicitly delete only that same path with mutate_nodes_batch using the etag returned by read_path. Report that creation, verification, and cleanup all succeeded.",
+      "description": "Exercise dedicated append, edit, multi-edit, folder, move, and delete tools on isolated review artifacts.",
+      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Create /OpenAIReview/scratch/single-{suffix}.md with write_nodes using kind file, content \"OpenAI review single-node check\", and metadata_json \"{}\". Read it with read_path. With the latest returned etag at each step, call append_nodes to append \" appended\" with separator \"\", edit_nodes to replace \"appended\" with \"edited\", then multi_edit_nodes with ordered edits \"edited\" to \"intermediate\" and \"intermediate\" to \"final\". Use create_folders to create /OpenAIReview/scratch/single-{suffix}, then move_nodes to move the file to that folder as page.md without overwriting. Read the moved page and verify \"OpenAI review single-node check final\". Explicitly delete only the moved page with delete_nodes using its current etag; then read and delete the now-empty scratch folder with its current etag. Use operations without type for every dedicated tool. Report successful changes and cleanup.",
       "file_attachment_urls": null,
-      "tools_triggered": "find_databases, write_nodes, read_path, mutate_nodes_batch",
-      "expected_output": "Creates and verifies one uniquely named scratch node, deletes exactly that node with its current etag, and reports successful cleanup.",
+      "tools_triggered": "find_databases, write_nodes, read_path, append_nodes, edit_nodes, multi_edit_nodes, create_folders, move_nodes, delete_nodes",
+      "expected_output": "Creates, appends, edits, multi-edits, and moves the isolated page with the expected final text; deletes only the created page and empty scratch folder with current etags.",
       "expected_output_url": null
     },
     {
-      "description": "Create, batch-read, and atomically remove two isolated review nodes.",
-      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Explicitly create /OpenAIReview/scratch/batch-{suffix}-a.md with content \"review batch A\" and /OpenAIReview/scratch/batch-{suffix}-b.md with content \"review batch B\" together in one write_nodes call; use kind file and metadata_json \"{}\" for both. Read both together with one read_paths call. Then explicitly delete exactly those two paths together with one mutate_nodes_batch call using the etags returned by read_paths. Report both contents and confirm atomic cleanup.",
+      "description": "Create and batch-read two review nodes, then perform a mixed atomic edit/delete and clean up.",
+      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Explicitly create /OpenAIReview/scratch/batch-{suffix}-a.md with content \"review batch A\" and /OpenAIReview/scratch/batch-{suffix}-b.md with content \"review batch B\" together in one write_nodes call; use kind file and metadata_json \"{}\" for both. Read both together with one read_paths call. Then, in one atomic mutate_nodes_batch call, edit the first page from \"review batch A\" to \"review batch A edited\" and delete the second page, using their etags from read_paths. Do not split this mixed transaction. Finally explicitly delete only the remaining first page with delete_nodes using the new etag returned by the edit. Report both original contents and confirm cleanup.",
       "file_attachment_urls": null,
-      "tools_triggered": "find_databases, write_nodes, read_paths, mutate_nodes_batch",
-      "expected_output": "Creates and batch-reads two uniquely named scratch nodes with the expected A and B contents, then deletes exactly both nodes in one successful atomic batch.",
+      "tools_triggered": "find_databases, write_nodes, read_paths, mutate_nodes_batch, delete_nodes",
+      "expected_output": "Creates and reads both scratch pages, atomically edits the first and deletes the second in one mixed batch, then deletes the remaining page using its updated etag.",
       "expected_output_url": null
     }
   ],

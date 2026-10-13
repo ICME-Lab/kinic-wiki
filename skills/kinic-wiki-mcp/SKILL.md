@@ -24,8 +24,9 @@ Read [references/tools.md](references/tools.md) before substantive MCP work.
 5. Before updating, moving, or deleting an existing node, read its current content and etag.
 6. Select exactly one batch tool for each requested change set:
    - creation and full replacement only: use `write_nodes`, even for one node;
-   - if any operation is append, edit, multi-edit, mkdir, move, or delete: use `mutate_nodes_batch` for the entire set, even for one operation.
-7. Keep a batch within one database, preserve user-requested order, and send 1–100 items. The server applies the batch atomically and rolls back every operation on failure.
+   - same-kind changes: use `append_nodes`, `edit_nodes`, `multi_edit_nodes`, `create_folders`, `move_nodes`, or `delete_nodes`, even for one item;
+   - different kinds that must commit together: use `mutate_nodes_batch`. Never split a mixed atomic batch into multiple calls.
+7. Keep a batch within one database, preserve user-requested order, and send 1–100 items within the 256 KiB request limit. Dedicated tools accept `operations` without a `type` field. The server applies the batch atomically and rolls back every operation on failure.
 8. For every `write_nodes` item or batch `write`, explicitly send `path`, `kind`, `content`, and `metadata_json`. Never infer omitted replacement fields.
 9. On `etag_conflict`, use `conflict_path` for the stale node and compare `current_content` and `current_etag` with the intended change. Respect `current_content_truncated` and `current_content_size`; reread when the inline content is incomplete. Retry at most twice, and only when the user's intent is still unambiguous. Otherwise report the current/desired difference instead of overwriting.
 10. Report changed paths and returned etags. For reads, cite the database ID and exact VFS paths used.
@@ -40,3 +41,5 @@ Read [references/tools.md](references/tools.md) before substantive MCP work.
 - Delete only paths explicitly identified by the user or created as disposable artifacts within the same authorized task.
 - Keep item-level read errors attached to their input path or reference.
 - State `insufficient evidence` when retrieved content does not support a claim.
+
+Etags are checked against the state at each operation in a batch. An earlier edit changes the etag; do not reuse the pre-edit etag for a later operation on the same path. Combine text changes with `multi_edit_nodes` when possible. Do not remove etag protection or silently split a requested mixed atomic transaction.

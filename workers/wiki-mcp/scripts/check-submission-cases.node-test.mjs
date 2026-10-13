@@ -127,9 +127,9 @@ test("recovers and batch-cleans a committed single artifact after response loss"
     }
   };
   assert.equal(await cleanupReviewArtifacts(client, "test", "db", [artifact]), 0);
-  assert.equal(calls.filter((call) => call.name === "mutate_nodes_batch").length, 1);
+  assert.equal(calls.filter((call) => call.name === "delete_nodes").length, 1);
   assert.deepEqual(calls.at(-1).arguments.operations, [
-    { type: "delete", path: artifact.path, expected_etag: "etag-single" }
+    { path: artifact.path, expected_etag: "etag-single" }
   ]);
 });
 
@@ -150,7 +150,7 @@ test("recovers and cleans committed batch artifacts in one delete call", async (
     }
   };
   assert.equal(await cleanupReviewArtifacts(client, "test", "db", artifacts), 0);
-  const deletes = calls.filter((call) => call.name === "mutate_nodes_batch");
+  const deletes = calls.filter((call) => call.name === "delete_nodes");
   assert.equal(deletes.length, 1);
   assert.equal(deletes[0].arguments.operations.length, 2);
 });
@@ -167,7 +167,7 @@ test("never deletes a marker-mismatched artifact", async () => {
     { path: "/OpenAIReview/scratch/unknown.md", expectedContent: "owned", etag: undefined }
   ]);
   assert.equal(failures, 1);
-  assert.equal(calls.some((call) => call.name === "mutate_nodes_batch"), false);
+  assert.equal(calls.some((call) => call.name === "delete_nodes"), false);
 });
 
 test("preserves the primary error when cleanup also fails", () => {
@@ -176,4 +176,226 @@ test("preserves the primary error when cleanup also fails", () => {
   const combined = reviewCompletionError(primary, 2);
   assert.match(combined.message, /primary failure; cleanup failed for 2/u);
   assert.equal(combined.cause, primary);
+});
+
+// Exercise the submitted write scenarios locally; do not contact the live review database.
+function mutationFixtureClient() {
+  const nodes = new Map();
+  const calls = [];
+  let revision = 0;
+  const ack = node => ({ path: node.path, etag: node.etag });
+  const write = (path, content, kind = "file") => {
+    const node = { path, content, kind, etag: `v${++revision}` };
+    nodes.set(path, node);
+    return node;
+  };
+  function mutate(type, item) {
+    const path = type === "move" ? item.from_path : item.path;
+    if (type === "mkdir") {
+      const existing = nodes.get(path);
+      if (existing) {
+        assert.equal(existing.kind, "folder");
+        return { created: false, path };
+      }
+      return { created: true, path: write(path, "", "folder").path };
+    }
+    const node = nodes.get(path);
+    assert.ok(node, `missing ${path}`);
+    assert.equal(item.expected_etag, node.etag);
+    if (type === "delete") {
+      assert.ok(![...nodes.keys()].some(p => p.startsWith(path + "/")), "delete children before folder");
+      nodes.delete(path);
+      return { path };
+    }
+    if (type === "move") {
+      assert.equal(item.overwrite, false);
+      assert.ok(!nodes.has(item.to_path));
+      nodes.delete(path);
+      return { node: ack(write(item.to_path, node.content)), from_path: path };
+    }
+    let content = node.content;
+    if (type === "append") content += (item.separator ?? "") + item.content;
+    else if (type === "edit") content = content.replace(item.old_text, item.new_text);
+    else if (type === "multi_edit") for (const edit of item.edits) content = content.replace(edit.old_text, edit.new_text);
+    else assert.fail(`unexpected operation ${type}`);
+    return { node: ack(write(path, content)) };
+  }
+  const types = { append_nodes: "append", edit_nodes: "edit", multi_edit_nodes: "multi_edit", create_folders: "mkdir", move_nodes: "move", delete_nodes: "delete" };
+  return { nodes, calls, async callTool(request) {
+    calls.push(request);
+    const args = request.arguments;
+    if (request.name === "read_path") {
+      const node = nodes.get(args.path);
+      return node ? readResult(node.path, node.content, node.etag) : { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "node not found" }) }] };
+    }
+    if (request.name === "read_paths") {
+      return { structuredContent: { results: args.paths.map(path => ({ metadata: { path, etag: nodes.get(path).etag }, text: nodes.get(path).content })) },
+        content: [{ type: "text", text: args.paths.map((path, i) => `Result ${i + 1}\nPath: ${path}\nTitle: fixture\nContent:\n${nodes.get(path).content}`).join("\n\n") }] };
+    }
+    const before = new Map(nodes);
+    let results;
+    try {
+      results = request.name === "write_nodes"
+      ? args.nodes.map(node => ({ node: ack(write(node.path, node.content, node.kind)), created: true }))
+      : args.operations.map(item => {
+          if (types[request.name]) assert.equal("type" in item, false);
+          const type = types[request.name] ?? item.type;
+          return { type, value: mutate(type, item) };
+        });
+    } catch (error) {
+      nodes.clear();
+      for (const [path, node] of before) nodes.set(path, node);
+      throw error;
+    }
+    return { structuredContent: { results }, content: [{ type: "text", text: JSON.stringify({ results }) }] };
+  } };
+}
+
+test("submitted dedicated scenario exercises all six tools and cleans the page before its folder", async () => {
+  const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  await checkSingleWriteCase(client, "local fixture", "db");
+  assert.equal(client.nodes.size, 0);
+  for (const name of ["append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes"])
+    assert.equal(client.calls.filter(call => call.name === name).length, 1);
+  assert.equal(client.calls.filter(call => call.name === "delete_nodes").length, 2);
+});
+
+test("submitted mixed scenario keeps edit and delete in one ordered transaction", async () => {
+  const { checkBatchWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  await checkBatchWriteCase(client, "local fixture", "db");
+  const mixed = client.calls.filter(call => call.name === "mutate_nodes_batch");
+  assert.equal(mixed.length, 1);
+  assert.deepEqual(mixed[0].arguments.operations.map(item => item.type), ["edit", "delete"]);
+  assert.equal(client.nodes.size, 0);
+});
+
+for (const tool of ["append_nodes", "edit_nodes", "multi_edit_nodes", "move_nodes", "mutate_nodes_batch"]) {
+  for (const failure of ["rejected", "request lost", "response lost"]) {
+    test(`${tool} ${failure} preserves the failure and cleans pre/post-mutation artifacts`, async () => {
+      const { checkSingleWriteCase, checkBatchWriteCase } = await import("./check-submission-cases.mjs");
+      const client = mutationFixtureClient();
+      const call = client.callTool.bind(client);
+      let injected = false;
+      client.callTool = async request => {
+        if (request.name !== tool || injected) return call(request);
+        injected = true;
+        if (failure === "response lost") await call(request);
+        if (failure === "rejected") return { isError: true, content: [{ type: "text", text: "injected rejection" }] };
+        throw new Error(`injected ${failure}`);
+      };
+      const scenario = tool === "mutate_nodes_batch" ? checkBatchWriteCase : checkSingleWriteCase;
+      await assert.rejects(scenario(client, "local fixture", "db"), error => {
+        assert.match(error.message, /injected/u);
+        assert.doesNotMatch(error.message, /cleanup failed/u);
+        return true;
+      });
+      assert.equal(injected, true);
+      assert.equal(client.nodes.size, 0);
+    });
+  }
+}
+
+for (const failure of ["rejected", "request lost", "response lost", "malformed response", "read failed"]) {
+  test(`folder creation ${failure} checks uncertain state without deleting unconfirmed ownership`, async () => {
+    const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+    const client = mutationFixtureClient();
+    const call = client.callTool.bind(client);
+    let folderPath;
+    let inspected = false;
+    const committed = ["response lost", "malformed response", "read failed"].includes(failure);
+    client.callTool = async request => {
+      if (request.name === "create_folders") {
+        folderPath = request.arguments.operations[0].path;
+        if (committed) await call(request);
+        if (failure === "malformed response") return { structuredContent: { results: [] } };
+        if (failure === "rejected") return { isError: true, content: [{ type: "text", text: "injected rejection" }] };
+        throw new Error(`injected ${failure}`);
+      }
+      if (request.name === "read_path" && request.arguments.path === folderPath) {
+        inspected = true;
+        if (failure === "read failed") throw new Error("injected read failure");
+      }
+      return call(request);
+    };
+    await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), error => {
+      assert.match(error.message, failure === "malformed response" ? /scratch folder must be new/u : /injected/u);
+      if (committed) assert.match(error.message, /cleanup failed for 1 review artifact/u);
+      else assert.doesNotMatch(error.message, /cleanup failed/u);
+      return true;
+    });
+    assert.equal(inspected, true);
+    assert.deepEqual([...client.nodes.keys()], committed ? [folderPath] : []);
+    assert.equal(client.calls.some(call => call.name === "delete_nodes" && call.arguments.operations.some(item => item.path === folderPath)), false);
+  });
+}
+
+test("an existing scratch folder is preserved when mkdir reports it was not created", async () => {
+  const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  const call = client.callTool.bind(client);
+  let folderPath;
+  client.callTool = async request => {
+    if (request.name === "create_folders") {
+      folderPath = request.arguments.operations[0].path;
+      client.nodes.set(folderPath, { path: folderPath, kind: "folder", content: "", etag: "foreign" });
+    }
+    return call(request);
+  };
+  await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), /scratch folder must be new/u);
+  assert.deepEqual([...client.nodes.keys()], [folderPath]);
+  assert.equal(client.nodes.get(folderPath).etag, "foreign");
+  assert.equal(client.calls.some(call => call.name === "delete_nodes" && call.arguments.operations.some(item => item.path === folderPath)), false);
+});
+
+test("failed page cleanup counts its confirmed folder as uncollected too", async () => {
+  const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  const call = client.callTool.bind(client);
+  client.callTool = async request => {
+    if (request.name === "delete_nodes") throw new Error("injected delete failure");
+    return call(request);
+  };
+  await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), /Cleanup failed for 2 review artifact/u);
+  assert.equal(client.nodes.size, 2);
+});
+
+test("mixed batch rollback cleans the original pages after a later operation fails", async () => {
+  const { checkBatchWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  const call = client.callTool.bind(client);
+  let rolledBack = false;
+  client.callTool = async request => {
+    if (request.name !== "mutate_nodes_batch") return call(request);
+    const stale = structuredClone(request);
+    stale.arguments.operations[1].expected_etag = "stale";
+    await assert.rejects(call(stale));
+    assert.deepEqual([...client.nodes.values()].map(node => node.content), ["review batch A", "review batch B"]);
+    rolledBack = true;
+    return { isError: true, content: [{ type: "text", text: "injected rollback" }] };
+  };
+  await assert.rejects(checkBatchWriteCase(client, "local fixture", "db"), error => {
+    assert.match(error.message, /injected rollback/u);
+    assert.doesNotMatch(error.message, /cleanup failed/u);
+    return true;
+  });
+  assert.equal(rolledBack, true);
+  assert.equal(client.nodes.size, 0);
+});
+
+test("uncertain mutation cleanup refuses content outside both owned states", async () => {
+  const { checkSingleWriteCase } = await import("./check-submission-cases.mjs");
+  const client = mutationFixtureClient();
+  const call = client.callTool.bind(client);
+  client.callTool = async request => {
+    if (request.name !== "edit_nodes") return call(request);
+    const path = request.arguments.operations[0].path;
+    client.nodes.set(path, { ...client.nodes.get(path), content: "someone else's content", etag: "foreign" });
+    throw new Error("injected response loss with concurrent edit");
+  };
+  await assert.rejects(checkSingleWriteCase(client, "local fixture", "db"), /injected response loss.*cleanup failed for 1/u);
+  assert.equal(client.nodes.size, 1);
+  assert.equal([...client.nodes.values()][0].content, "someone else's content");
+  assert.equal(client.calls.some(call => call.name === "delete_nodes"), false);
 });

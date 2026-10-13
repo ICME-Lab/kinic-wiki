@@ -78,7 +78,7 @@ For routine backward-compatible updates, deploy the canister before the Worker. 
 
 The staging canister is used directly by the staging Wiki Browser and staging MCP Worker. Deploy those three runtimes together. Do not deploy the production-only Skill Registry, Wiki Generator, iOS app, or Wiki Clipper as part of this staging rollout; they remain pinned to the production canister. A Rust CLI or another Candid client can target staging explicitly, so use a binary built from this branch and confirm that no known operator is using an older build against the staging canister.
 
-For this breaking rollout, first build the canister and both staging Workers from the same revision and stop mutation smoke traffic. Upgrade the staging canister, deploy the staging Wiki Browser, deploy the staging MCP Worker, then run the exact 10-tool contract and write smoke checks with the matching CLI/client build. Resume staging writes only after those checks pass.
+For this breaking rollout, first build the canister and both staging Workers from the same revision and stop mutation smoke traffic. Upgrade the staging canister, deploy the staging Wiki Browser, deploy the staging MCP Worker, then run the exact 16-tool contract and write smoke checks with the matching CLI/client build. Resume staging writes only after those checks pass.
 
 Before promoting the same Candid change to the production canister, complete the coordinated production checklist in [`RELEASE.md`](RELEASE.md). That checklist includes the Wiki Clipper, which also decodes node-mutation results, plus externally maintained Candid clients that cannot be discovered from this repository.
 
