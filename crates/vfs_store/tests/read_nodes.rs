@@ -1,9 +1,10 @@
-mod common;
-use common::new_store;
+use vfs_store::FsStore;
 use vfs_types::{NodeKind, WriteNodeRequest};
 #[test]
 fn read_nodes_preserves_order_duplicates_and_text_with_partial_failures() {
-    let (_dir, store) = new_store();
+    let dir = tempfile::tempdir().unwrap();
+    let store = FsStore::new(dir.path().join("wiki.sqlite3"));
+    store.run_fs_migrations().unwrap();
     let body = "\u{feff}日本語\0😀";
     let paths: Vec<String> = (0..10)
         .map(|i| format!("/Knowledge/{}-{i}--';.md", "長".repeat(130)))

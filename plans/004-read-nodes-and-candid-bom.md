@@ -79,3 +79,30 @@ Regression coverage checks both write_nodes and mutate_nodes_batch through MCP,
 control characters, Unicode boundaries, untouched BOM text, prior truncation
 flags and oversized metadata. Focused tests: 103 passed. Full MCP tests and
 typecheck also pass; Rust/Wasm sources and the artifact above are unchanged.
+
+## Review follow-up: strict Rust checks and Wasm CI coverage
+
+- Return the read_nodes collection result directly, removing Clippy's
+  needless_question_mark failure without changing the return contract.
+- Construct the read_nodes test's temporary store locally instead of compiling
+  unused helpers from the shared fixture module. Strict all-targets Clippy no
+  longer reports dead_code from this test.
+- Run test:wiki-sql in CI when canister, SQLite compatibility, MCP or SDK patch
+  files change. The job installs the patched workspace dependencies, uses Node 24
+  for the generated TypeScript IDL, and builds both Wasm artifacts with --locked.
+- Keep PocketIC 10.0.0 for canbench 0.4.1 and its existing probes. Install a
+  separate pinned PocketIC 16.1.0 for the actual SDK 6 reader: PocketIC 10 returns
+  HTTP 404 for SDK 6's v3 read_state gateway. Query verification stays enabled.
+  Locally, set POCKET_IC_BIN to a PocketIC 16.1.0 binary (named pocket-ic) and run
+  pnpm --dir pocketic-tests run test:wiki-sql with workspace dependencies installed.
+
+Validation: cargo fmt --all -- --check and strict locked workspace/all-targets
+Clippy pass. The store read_nodes test and runtime batch reader/access/response
+budget test pass. All five existing Wasm probes pass on PocketIC 10 with Node 24;
+both Wiki SQL/SDK reader integration tests pass on PocketIC 16.1.0. Workflow YAML,
+dependency/runtime configuration and changed-path routing checks pass. The
+canonical locked release Wasm build, including public Candid metadata, passes.
+
+Current artifact SHA-256:
+f8305de1f4fc6a74815b07261732d02a9221c59f2018e34d5955cd01967b5869.
+This supersedes the earlier artifact recorded above. No deployment was performed.

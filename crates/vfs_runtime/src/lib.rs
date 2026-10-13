@@ -424,7 +424,7 @@ impl VfsService {
             // Reserve the outer Candid envelope. Oversized items become errors;
             // successful nodes are never silently shortened or stripped of metadata.
             let mut bytes = 1024 + paths.len() * 128;
-            Ok(results
+            results
                 .into_iter()
                 .map(|result| {
                     let size = candid::encode_one(&result)
@@ -439,7 +439,7 @@ impl VfsService {
                         Ok(result)
                     }
                 })
-                .collect::<Result<Vec<_>, String>>()?)
+                .collect::<Result<Vec<_>, String>>()
         })
     }
 
