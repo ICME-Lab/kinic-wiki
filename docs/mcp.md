@@ -1,6 +1,6 @@
 # Kinic Wiki Remote MCP
 
-> Local implementation contract: 15 private / 7 read-only tools. This change is not deployed; the published plugin remains at 16 tools with no bundled skill. See [migration](mcp-tool-selection-migration.md).
+This document describes the repository implementation: 15 Private tools and 7 read-only tools. Use `tools/list` to inspect the contract exposed by a deployed endpoint.
 
 `workers/wiki-mcp` provides three isolated deployments:
 
@@ -104,6 +104,7 @@ Private Workers log only a random trace id, the connection, per-app delegation, 
 - `read_paths`
   - Input: `{ "database_id": "db_...", "paths": ["/Knowledge/a.md", "/Knowledge/b.md"] }`
   - Reads 1 to 10 known paths with one `read_nodes` call
+  - For one page, pass a one-element `paths` array. The response still contains `structuredContent.results` and `structuredContent.metadata`. Check top-level `isError` and each item's `is_error` before using `results[0].text` or `results[0].metadata.etag`.
   - Use for known paths from `list`, `context`, or `search` metadata
 - `list`
   - Input: `{ "database_id": "db_...", "prefix": "/", "recursive": false, "limit": 99 }`

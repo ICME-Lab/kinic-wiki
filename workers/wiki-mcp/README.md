@@ -2,11 +2,7 @@
 
 Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with seven tools. The Private production and staging Workers require OAuth at MCP connection and expose those seven reads plus eight atomic mutation tools. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
 
-**Local contract change, not deployed:** this checkout uses 15 private / 7 read-only tools.
-The published plugin still has 16 tools and no bundled skill. See
-[the migration guide](../../docs/mcp-tool-selection-migration.md) before publishing.
-
-Canonical documentation: `../../docs/mcp.md`.
+See [MCP documentation](../../docs/mcp.md) for the repository contract and client usage. Inspect a deployed endpoint with `tools/list`.
 
 `read_paths` and `fetch_many` use `read_nodes`: at most ten inputs, one canister
 query per database, and four concurrent database queries across the request.

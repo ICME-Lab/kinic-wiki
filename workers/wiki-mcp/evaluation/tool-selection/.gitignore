@@ -6,7 +6,6 @@
 # below: tests use its descriptor hash, and its evidence permits offline regrading.
 /reports/*
 !/reports/RESULTS.md
-!/reports/development-findings.md
 !/reports/environment.json
 !/reports/dev-approved-runtime.json
 !/reports/pilot.jsonl
@@ -37,7 +36,6 @@
 # Compact final history-audit summary and decision; detailed audits are generated.
 !/reports/summary-history.json
 !/reports/selection-history.json
-!/reports/REVIEW-FIXES.md
 
 # Detailed audits are reproducible from the retained measurements/evidence.
 /reports/*-audited.json
