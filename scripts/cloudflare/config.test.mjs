@@ -35,9 +35,20 @@ for (const [project, mode, fixture, filename] of targets) {
       // The migration fixture predates the native assistant connection added
       // after migration. Require that exact new binding in both modes while
       // continuing to compare every other resource against the fixture.
-      const expected = project === "workers/wiki-assistant" && field === "durable_objects"
+      let expected = project === "workers/wiki-assistant" && field === "durable_objects"
         ? { bindings: [{ name: "ASSISTANT_CONNECTION", class_name: "AssistantConnection" }] }
         : legacy[field];
+      // Reviewer login was closed after migration. Preserve the historical
+      // fixtures and require the exact new defaults in all four Private modes;
+      // every other variable, binding and migration remains compared above/below.
+      if (project === "workers/wiki-mcp" && field === "vars" &&
+          ["private", "staging", "private-v5-unbind", "staging-v5-unbind"].includes(mode)) {
+        expected = {
+          ...legacy.vars,
+          MCP_REVIEW_LOGIN_ENABLED: "false",
+          MCP_REVIEW_ACCESS_VERSION: "review-closed-20261014"
+        };
+      }
       assert.deepEqual(normalized(field, native[field], native.name), normalized(field, expected, legacy.name), field);
     }
     if (project === "workers/wiki-assistant") {

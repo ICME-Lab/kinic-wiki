@@ -3,6 +3,7 @@
 // What: Idempotently seeds the private OpenAI review fixture through the authenticated MCP contract.
 // Why: Review tests need stable evidence without overwriting unrelated user content or exposing credentials.
 
+import { readSingle } from "./read-single.mjs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -48,7 +49,7 @@ export function fixtureWritePlan(readResults) {
       writes.push({ path: fixture.path, kind: "file", content: fixture.content, metadata_json: fixture.metadata_json });
       continue;
     }
-    assertToolSucceeded(`read_path ${fixture.path}`, result);
+    assertToolSucceeded(`read_paths ${fixture.path}`, result);
     if (exactNodeContent(result) !== fixture.content) {
       throw new Error(`Refusing to overwrite non-fixture content at ${fixture.path}`);
     }
@@ -101,10 +102,7 @@ async function main() {
 
     const reads = [];
     for (const fixture of REVIEW_FILES) {
-      reads.push(await session.client.callTool({
-        name: "read_path",
-        arguments: { database_id: databaseId, path: fixture.path }
-      }));
+      reads.push(await readSingle(session.client, databaseId, fixture.path));
     }
     const writes = fixtureWritePlan(reads);
     if (writes.length > 0) {
@@ -116,10 +114,7 @@ async function main() {
     }
     const verificationReads = [];
     for (const fixture of REVIEW_FILES) {
-      verificationReads.push(await session.client.callTool({
-        name: "read_path",
-        arguments: { database_id: databaseId, path: fixture.path }
-      }));
+      verificationReads.push(await readSingle(session.client, databaseId, fixture.path));
     }
     const remainingWrites = fixtureWritePlan(verificationReads);
     if (remainingWrites.length > 0) {

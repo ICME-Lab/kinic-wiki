@@ -115,3 +115,19 @@ describe("bounded MCP responses", () => {
     expect(bytes(result)).toBeLessThan(200);
   });
 });
+
+
+it.each(["a", "é", "日本語", "😀", "\ud800", "\0\n\t\\\""])("UTF-8 admission agrees with TextEncoder near the limit for %j", (unit) => {
+  let low = 0, high = 130_000;
+  while (low + 1 < high) {
+    const n = Math.floor((low + high) / 2);
+    const payload = { value: unit.repeat(n) };
+    const full = { content: [{type: "text", text: JSON.stringify(payload)}], structuredContent: payload };
+    if (bytes(full) <= 256_000) low = n; else high = n;
+  }
+  for (const n of [low - 1, low, high, high + 1]) {
+    const payload = { value: unit.repeat(n) };
+    const full = { content: [{type: "text", text: JSON.stringify(payload)}], structuredContent: payload };
+    expect(toToolResult(payload).isError === true).toBe(bytes(full) > 256_000);
+  }
+});

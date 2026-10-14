@@ -1,5 +1,7 @@
 # Kinic Wiki Remote MCP
 
+This document describes the repository implementation: 15 Private tools and 7 read-only tools. Use `tools/list` to inspect the contract exposed by a deployed endpoint.
+
 `workers/wiki-mcp` provides three isolated deployments:
 
 - public production is anonymous and read-only;
@@ -9,7 +11,7 @@
 ## Boundary
 
 - Public production reads public databases only and queries the canister anonymously.
-- Private production and Private staging expose exactly the existing eight read tools plus eight mutation tools (`write_nodes`, `mutate_nodes_batch`, `append_nodes`, `edit_nodes`, `multi_edit_nodes`, `create_folders`, `move_nodes`, `delete_nodes`). `initialize`, `tools/list`, and `tools/call` all require OAuth.
+- Private production and Private staging expose exactly the seven read tools plus eight mutation tools (`write_nodes`, `mutate_nodes_batch`, `append_nodes`, `edit_nodes`, `multi_edit_nodes`, `create_folders`, `move_nodes`, `delete_nodes`). `initialize`, `tools/list`, and `tools/call` all require OAuth.
 - After connection, all data tools use only the delegated principal. Anonymous public database results are never merged into private results.
 - A supplied but invalid, expired, revoked, or wrong-resource Bearer token returns `401`; it never falls back to anonymous.
 - Private database authorization remains in the Kinic canister; the Worker does not accept a database owner principal as input.
@@ -36,7 +38,7 @@ Route behavior:
 - `GET /`: human-readable info JSON with endpoint and tool names.
 - `POST /`: not an MCP alias.
 
-On both Private endpoints, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; both batch mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
+On both Private endpoints, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
 
 ## Private authentication
 
@@ -66,9 +68,9 @@ Discovery and OAuth endpoints:
 
 OAuth uses authorization code with mandatory S256 PKCE and DCR. The scopes are `mcp:read`, `mcp:write`, and `offline_access`; each audience is fixed to its exact Private MCP URL. Authorization codes expire after at most ten minutes, access tokens last at most one hour, refresh tokens rotate on every use, and the local session cannot exceed eight hours or the II grant expiration. Reuse of an authorization code or rotated refresh token revokes the active local session. A session also requires a fresh connection after 64 refresh rotations.
 
-The authorization page offers the normal Internet Identity connection and a production-review-only username/password path. Review credentials authorize a dedicated Ed25519 service identity whose private key and expected principal are stored as Cloudflare Secrets; all MCP tools still call the real canister. For that identity, the Worker enforces the environment-specific `MCP_REVIEW_DATABASE_ID` and `MCP_REVIEW_WRITE_PREFIX` before every write, including both sides of a move, while the service principal remains limited to `writer` on `openai-review-fixture`. Reviewer sessions use the same PKCE, code, token, scope, expiration, and refresh-replay controls as II sessions. `MCP_REVIEW_ACCESS_VERSION` is checked before authorization-code exchange, refresh rotation, and access-token use, providing explicit credential-session revocation; earlier version values must not be reused.
+The authorization page offers Internet Identity. A review-only username/password path is available when `MCP_REVIEW_LOGIN_ENABLED=true`; checked-in native cf configurations disable it after review completion. `MCP_REVIEW_ACCESS_VERSION` was changed to invalidate earlier reviewer sessions when deployed. Review credentials authorize a dedicated Ed25519 service identity whose private key and expected principal are stored as Cloudflare Secrets; all MCP tools still call the real canister. For that identity, the Worker enforces the environment-specific `MCP_REVIEW_DATABASE_ID` and `MCP_REVIEW_WRITE_PREFIX` before every write, including both sides of a move, while the service principal remains limited to `writer` on `openai-review-fixture`. Reviewer sessions use the same PKCE, code, token, scope, expiration, and refresh-replay controls as II sessions. `MCP_REVIEW_ACCESS_VERSION` is checked before authorization-code exchange, refresh rotation, and access-token use, providing explicit credential-session revocation; earlier version values must not be reused.
 
-The authorization, II callback, and connect-error pages share one inline stylesheet allowed only by its CSP hash (`PAGE_STYLE_HASH` in `workers/wiki-mcp/src/auth/pages.ts`). They render in Japanese or English: the authorize request's `ui_locales` wins, then `Accept-Language`, and the choice is carried through the flow in a short-lived `__Host-kinic-mcp-locale` cookie. The reviewer section always stays in English to match the submitted review instructions. The page summarizes the requested access (read, or read and edit when `mcp:write` is requested); II consent still decides the final permission. Browser form posts to `/oauth/connect/*` return HTML error cards for expired sessions (400), reviewer rate limits (429, `Retry-After: 60`), and unavailable sign-in (503); OAuth API endpoints keep their JSON errors.
+The authorization, II callback, and connect-error pages share one inline stylesheet allowed only by its CSP hash (`PAGE_STYLE_HASH` in `workers/wiki-mcp/src/auth/pages.ts`). They render in English only; `ui_locales` and `Accept-Language` are ignored, which keeps the reviewer section aligned with the submitted review instructions. The page summarizes the requested access (read, or read and edit when `mcp:write` is requested); II consent still decides the final permission. Browser form posts to `/oauth/connect/*` return HTML error cards for expired sessions (400), reviewer rate limits (429, `Retry-After: 60`), and unavailable sign-in (503); OAuth API endpoints keep their JSON errors.
 
 DCR applies a best-effort limit of ten registration attempts per connecting IP per minute in each Cloudflare location. Cloudflare's rate limiter is eventually consistent, so concurrent requests can temporarily exceed that limit. A rejected request returns `429` with `Retry-After: 60`; a rate-limiter failure returns `503`. Registered clients expire after 180 days without use and extend that deadline when an unexpired client ID is referenced by an OAuth request.
 
@@ -97,15 +99,13 @@ Private Workers log only a random trace id, the connection, per-app delegation, 
   - Returns fetchable opaque ids
 - `fetch_many`
   - Input: `{ "ids": ["<id-or-public-url-from-search>"] }`
-  - Fetches 1 to 10 search results by the exact opaque `id` or public `url` returned by `search`, and returns item-level errors for invalid or stale references
+  - Fetches 1 to 10 exact opaque search IDs or public Wiki URLs, including user-provided URLs and results from multiple databases, and returns item-level errors for invalid or stale references
   - Do not pass ChatGPT citation tokens such as `turn0file0`; if an opaque id is hidden, construct `https://wiki.kinic.xyz/db/{database_id}{path}` from the result metadata
-- `read_path`
-  - Input: `{ "database_id": "db_...", "path": "/Knowledge/index.md" }`
-  - Calls canister `read_node` for a known path without requiring a search result id
 - `read_paths`
   - Input: `{ "database_id": "db_...", "paths": ["/Knowledge/a.md", "/Knowledge/b.md"] }`
-  - Reads 2 to 10 known paths with one restricted `query_database_sql_json` call
-  - Use for multiple paths from `list`, `context`, or `search` metadata
+  - Reads 1 to 10 known paths with one `read_nodes` call
+  - For one page, pass a one-element `paths` array. The response still contains `structuredContent.results` and `structuredContent.metadata`. Check top-level `isError` and each item's `is_error` before using `results[0].text` or `results[0].metadata.etag`.
+  - Use for known paths from `list`, `context`, or `search` metadata
 - `list`
   - Input: `{ "database_id": "db_...", "prefix": "/", "recursive": false, "limit": 99 }`
   - Calls canister `list_nodes`
@@ -124,8 +124,8 @@ Private Workers log only a random trace id, the connection, per-app delegation, 
   - Atomically creates or replaces 1 to 100 nodes in one database, in order
   - Every item requires `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` is optional
 - `append_nodes`: Append content; optionally change metadata or kind. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
-- `edit_nodes`: Replace exact text with etag protection. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
-- `multi_edit_nodes`: Apply ordered exact-text edits within each node. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `edit_nodes`: Replace exact text with etag protection; multiple matches fail unless `replace_all: true`. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `multi_edit_nodes`: Apply ordered exact-text edits within each node, replacing every match at each step. Include unique surrounding text for a limited replacement. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
 - `create_folders`: Create folders; existing folders are unchanged. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
 - `move_nodes`: Move or rename nodes with etag protection. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
 - `delete_nodes`: Delete explicitly selected nodes with etag protection. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
@@ -140,7 +140,7 @@ Read tools keep read-only annotations. All mutation tools use `readOnlyHint: fal
 
 ## Agent Write Workflow
 
-1. Read task-scoped private context with `context`, `read_path`, or `read_paths`.
+1. Read each existing target and its etag with `read_paths`. Known paths need no preliminary search or context call.
 2. Write only when the user explicitly requests a change. Automatic skill invocation does not authorize writes.
 3. Use `write_nodes` for create/full replacement only, even for one node. Use the dedicated tool for same-kind changes, even for one item. Use `mutate_nodes_batch` when different operation kinds must execute atomically; never split such a batch into multiple calls.
 4. Keep each 1–100 item batch in one database and preserve returned etags.
@@ -150,7 +150,9 @@ The node mutation Candid methods return `NodeMutationError { code; message; fail
 
 ## Agent Read Workflows
 
-For normal question answering, call `context` first and answer from returned nodes and evidence. Treat `search_hits` as routing data, not final evidence.
+For normal question answering without a specified page, call `context` first and answer from returned nodes and evidence. Treat `search_hits` as routing data, not final evidence.
+
+Known paths go directly to `read_paths` (1–10). Known search IDs or public Wiki URLs go directly to `fetch_many` (1–10, including multiple databases). `search` accepts 1–20 results (default 10); `list` accepts 1–99 (default 99). Use `memory_manifest` for capabilities and limits.
 
 For broad, list, or classification tasks:
 
@@ -158,7 +160,7 @@ For broad, list, or classification tasks:
 2. Use `preview_mode: "content-start"` when search result previews are used for candidate classification.
 3. Use `list` with `prefix: "/"` to discover top-level prefixes, then narrow later searches to `/Knowledge`, `/Sources`, or a discovered wiki prefix such as `/Wiki` when useful.
 4. Separate title/path matches from topic or ability-term matches before synthesis. Do not mix another work's ability evidence into a title-matched work.
-5. Use `fetch_many` for one or more exact search result ids or public URLs. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `read_path` for a single known-path evidence check. Use returned `context.evidence` for source-reference trust checks.
+5. Use `fetch_many` for one or more exact search result ids or public URLs. Use `read_paths` for 1–10 known paths from the user, `list`, `context`, or `search` metadata. Use returned `context.evidence` for source-reference trust checks.
 6. Report coverage limits: search queries, prefixes checked, fetched count, excluded candidates, and any `truncated: true` results.
 
 Recipe list example:
@@ -221,7 +223,7 @@ MCP_STAGING_AUTH_CACHE="${XDG_STATE_HOME:-$HOME/.local/state}/kinic-wiki/mcp-pri
   --open
 ```
 
-The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to isolate the cache for each endpoint. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 16-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
+The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to isolate the cache for each endpoint. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 15-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
 
 ## Configuration
 
@@ -264,16 +266,15 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
 
 1. In II Settings, add `https://wiki-private-mcp.kinic.xyz/mcp` as the trusted connector. Use the staging URL only for staging validation.
 2. Configure the same MCP URL in ChatGPT/Codex and confirm the initial connection starts OAuth from the HTTP `401` challenge.
-3. Refresh tools and confirm the exact 16-tool list contains eight reads plus the eight mutation tools listed above, with no `connect_private` or single-mutation tools.
-4. Complete II consent with either `Questions only` or `Actions & questions`, then run authenticated `find_databases`, `context`, and `read_path`.
+3. Refresh tools and confirm the exact 15-tool list contains seven reads plus the eight mutation tools listed above, with no `connect_private` or single-mutation tools.
+4. Complete II consent with either `Questions only` or `Actions & questions`, then run authenticated `find_databases`, `context`, and `read_paths`.
 5. Run review test cases:
    - `find_databases` can select `KINIC-WIKI`.
    - `context` returns task-scoped nodes and evidence for a known public DB.
    - `search` for `clipper usage` returns an evidence node with `preview_mode: "content-start"`.
    - `list` with `prefix: "/"` discovers top-level prefixes.
    - `fetch_many` returns node text for one or more search result ids.
-   - `read_path` returns node text for a known path.
-   - `read_paths` returns multiple known path bodies and item-level missing-path errors.
+   - `read_paths` returns one or multiple known path bodies and item-level missing-path errors.
    - a known owner private database is visible and readable;
    - the same database stays unavailable anonymously and to another principal;
    - unknown or stale ids return a common unavailable error.
@@ -282,7 +283,7 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
    - a stale etag returns the failed operation index plus current content and etag, and does not partially commit the batch.
 6. Disable or remove the connector in II Settings and verify the next MCP request returns `invalid_token`.
 
-Private production has its own OAuth settings, storage, connector registration, and skill URL. Staging OAuth clients, sessions, and tokens are never migrated or shared. Public search remains anonymous with eight read tools and is not the app represented by the current submission file.
+Private production has its own OAuth settings, storage, connector registration, and skill URL. Staging OAuth clients, sessions, and tokens are never migrated or shared. Public search remains anonymous with seven read tools and is not the app represented by the current submission file.
 
 `skills/kinic-wiki-mcp/` points only to Private production. Do not attach or republish it in the public search plugin.
 
@@ -309,3 +310,9 @@ Then run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-s
 - Responses do not include user ids, internal request/session ids, or secrets.
 - `https://mcp.kinic.xyz/mcp` remains unchanged.
 - `https://wiki.kinic.xyz` browser routes remain unchanged.
+
+### Tool selection and replacement scope
+
+Use `context` for normal questions, `list`/`search` and fetched bodies for broad investigations, and path reads directly for known pages. `fetch_many` accepts exact search IDs or public page URLs, including references across databases.
+
+`edit_nodes` rejects multiple matches by default; `replace_all: true` opts into replacing every occurrence. `multi_edit_nodes` applies edits in order and replaces all matches at each step. Include unique surrounding text to restrict a replacement. Dedicated tools handle same-kind work; `mutate_nodes_batch` preserves a requested mixed transaction.

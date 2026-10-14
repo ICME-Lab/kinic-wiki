@@ -25,14 +25,8 @@ import {
   authorizationChoicePage,
   connectCallbackPage,
   connectErrorPage,
-  localeCookie,
-  localeFromAcceptLanguage,
-  localeFromUiLocales,
-  LOCALE_COOKIE_NAME,
   PAGE_STYLE_HASH,
-  parseLocaleCookie,
-  type ConnectErrorKind,
-  type PageLocale
+  type ConnectErrorKind
 } from "./pages.js";
 import {
   OAUTH_CLIENT_IDLE_TTL_MS,
@@ -148,7 +142,7 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
     return completeReviewConnect(request, env);
   }
   if (url.pathname === CALLBACK_PATH && request.method === "GET") {
-    return connectPage(request);
+    return connectPage();
   }
   if (url.pathname === CALLBACK_PATH && request.method === "POST") {
     return completeConnect(request, env);
@@ -423,15 +417,11 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!created) {
     return oauthJsonError("server_error", 500);
   }
-  const locale = localeFromUiLocales(url.searchParams.get("ui_locales")) ??
-    localeFromAcceptLanguage(request.headers.get("accept-language")) ?? requestLocale(request);
   const headers = new Headers(authorizationPageHeaders(redirectUri));
   headers.append("set-cookie", `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
-  headers.append("set-cookie", localeCookie(locale));
   return new Response(
     authorizationChoicePage({
       connectState,
-      locale,
       writeRequested: scopeIncludesWrite(scope),
       reviewEnabled: reviewLoginEnabled(env)
     }),
@@ -442,7 +432,7 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
 async function startInternetIdentityConnect(request: Request, env: RuntimeEnv): Promise<Response> {
   const input = await pendingConnectInput(request, env);
   if (!input) {
-    return connectErrorResponse(request, "expired", 400);
+    return connectErrorResponse("expired", 400);
   }
   const origin = requiredOauthOrigin(env);
   const iiUrl = new URL("/mcp", INTERNET_IDENTITY_ORIGIN);
@@ -460,7 +450,7 @@ async function startInternetIdentityConnect(request: Request, env: RuntimeEnv): 
 
 async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!reviewLoginEnabled(env) || !reviewLoginConfigured(env)) {
-    return connectErrorResponse(request, "unavailable", 503);
+    return connectErrorResponse("unavailable", 503);
   }
   let rateLimitAllowed: boolean;
   try {
@@ -469,10 +459,10 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
       key: `review-login:${clientAddress}`
     })).success;
   } catch {
-    return connectErrorResponse(request, "unavailable", 503);
+    return connectErrorResponse("unavailable", 503);
   }
   if (!rateLimitAllowed) {
-    return connectErrorResponse(request, "rateLimited", 429, { "retry-after": "60" });
+    return connectErrorResponse("rateLimited", 429, { "retry-after": "60" });
   }
 
   const form = await limitedForm(request);
@@ -481,16 +471,16 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   const password = form?.get("password") ?? null;
   const cookieValue = readCookie(request.headers.get("cookie"), COOKIE_NAME);
   if (!connectState || !username || !password || !cookieValue) {
-    return connectErrorResponse(request, "expired", 400);
+    return connectErrorResponse("expired", 400);
   }
   const sessionId = cookieValue.split(".", 1)[0];
   if (!sessionId || !/^[A-Za-z0-9_-]+$/u.test(sessionId)) {
-    return connectErrorResponse(request, "expired", 400);
+    return connectErrorResponse("expired", 400);
   }
   const stub = authNamespace(env).getByName(sessionName(sessionId));
   const pending = await stub.inspectPendingConnect(connectState, cookieValue, Date.now());
   if (!pending || pending.sessionId !== sessionId) {
-    return connectErrorResponse(request, "expired", 400);
+    return connectErrorResponse("expired", 400);
   }
   const [usernameMatches, passwordMatches] = await Promise.all([
     secretEquals(env.MCP_REVIEW_USERNAME_HASH!.trim(), username),
@@ -500,7 +490,6 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
     return new Response(
       authorizationChoicePage({
         connectState,
-        locale: requestLocale(request),
         writeRequested: scopeIncludesWrite(pending.scope),
         reviewEnabled: true,
         reviewError: "Sign-in failed."
@@ -510,7 +499,7 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   }
   const claimed = await stub.claimConnect(connectState, cookieValue, Date.now());
   if (!claimed || claimed.sessionId !== sessionId) {
-    return connectErrorResponse(request, "expired", 400);
+    return connectErrorResponse("expired", 400);
   }
   const completed = await stub.completeReviewConnect(
     env.MCP_REVIEW_ACCESS_VERSION!.trim(),
@@ -519,7 +508,7 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   );
   if (!completed) {
     await stub.invalidate();
-    return connectErrorResponse(request, "expired", 400);
+    return connectErrorResponse("expired", 400);
   }
   const redirect = new URL(completed.redirectUri);
   redirect.searchParams.set("code", completed.code);
@@ -563,16 +552,16 @@ function authorizationPageHeaders(redirectUri: string): HeadersInit {
   return {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "content-security-policy": `default-src 'none'; style-src '${PAGE_STYLE_HASH}'; form-action 'self' ${INTERNET_IDENTITY_ORIGIN} ${redirectOrigin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; img-src data:; style-src '${PAGE_STYLE_HASH}'; form-action 'self' ${INTERNET_IDENTITY_ORIGIN} ${redirectOrigin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "no-referrer"
   };
 }
 
-function connectPage(request: Request): Response {
-  return new Response(connectCallbackPage(requestLocale(request)), {
+function connectPage(): Response {
+  return new Response(connectCallbackPage(), {
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "content-security-policy": `default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`,
+      "content-security-policy": `default-src 'none'; img-src data:; script-src 'unsafe-inline'; connect-src 'self'; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`,
       "referrer-policy": "no-referrer",
       "cache-control": "no-store"
     }
@@ -581,29 +570,20 @@ function connectPage(request: Request): Response {
 
 // Browser form posts get an HTML error card instead of a raw OAuth JSON body.
 function connectErrorResponse(
-  request: Request,
   kind: ConnectErrorKind,
   status: 400 | 429 | 503,
   extraHeaders: Record<string, string> = {}
 ): Response {
-  return new Response(connectErrorPage(requestLocale(request), kind), {
+  return new Response(connectErrorPage(kind), {
     status,
     headers: {
       ...extraHeaders,
       "content-type": "text/html; charset=utf-8",
-      "content-security-policy": `default-src 'none'; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`,
+      "content-security-policy": `default-src 'none'; img-src data:; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`,
       "referrer-policy": "no-referrer",
       "cache-control": "no-store"
     }
   });
-}
-
-function requestLocale(request: Request): PageLocale {
-  return (
-    parseLocaleCookie(readCookie(request.headers.get("cookie"), LOCALE_COOKIE_NAME)) ??
-    localeFromAcceptLanguage(request.headers.get("accept-language")) ??
-    "en"
-  );
 }
 
 function scopeIncludesWrite(scope: string): boolean {

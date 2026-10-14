@@ -48,6 +48,7 @@ const expectedAddedMethods = [
   "initialize_voice_policy",
   "read_nodes",
   "reserve_voice",
+  "search_nodes_for_retrieval",
   "set_voice_policy",
   "settle_voice",
   "stop_voice",

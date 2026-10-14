@@ -307,7 +307,6 @@ describe("wiki mcp worker", () => {
         "find_databases",
         "search",
         "fetch_many",
-        "read_path",
         "read_paths",
         "list",
         "memory_manifest",
@@ -341,7 +340,6 @@ describe("wiki mcp worker", () => {
       "find_databases",
       "list",
       "memory_manifest",
-      "read_path",
       "read_paths",
       "search"
     ]);
@@ -371,7 +369,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.listDatabases).not.toHaveBeenCalled();
   });
 
-  it("advertises exactly eight reads and eight batch writes after staging authentication", async () => {
+  it("advertises exactly seven reads and eight batch writes after staging authentication", async () => {
     const server = createServer(privateRequiredEnv, { accessPolicy: "private_required", writesAvailable: true });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
@@ -394,7 +392,6 @@ describe("wiki mcp worker", () => {
       "find_databases",
       "search",
       "fetch_many",
-      "read_path",
       "read_paths",
       "list",
       "memory_manifest",
@@ -402,12 +399,12 @@ describe("wiki mcp worker", () => {
       "write_nodes",
       "mutate_nodes_batch", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"
     ]);
-    for (const tool of tools.slice(0, 8)) {
+    for (const tool of tools.slice(0, 7)) {
       expect(tool._meta?.securitySchemes).toEqual([
         { type: "oauth2", scopes: ["mcp:read"] }
       ]);
     }
-    for (const tool of tools.slice(8)) {
+    for (const tool of tools.slice(7)) {
       expect(tool._meta?.securitySchemes).toEqual([
         { type: "oauth2", scopes: ["mcp:read", "mcp:write"] }
       ]);
@@ -1621,15 +1618,67 @@ describe("wiki mcp worker", () => {
       jsonrpc: "2.0",
       id: 8,
       method: "tools/call",
-      params: { name: "read_path", arguments: { database_id: "db_alpha", path: "/Knowledge/index.md" } }
+      params: { name: "read_paths", arguments: { database_id: "db_alpha", paths: ["/Knowledge/index.md"] } }
     });
 
     expect(response.result.content[0].text).toContain("Path: /Knowledge/index.md");
     expect(response.result.content[0].text).toContain("Content:\nAgent memory body");
     expect(response.result.structuredContent).toMatchObject({
-      text: "Agent memory body",
-      metadata: { path: "/Knowledge/index.md" }
+      results: [{ text: "Agent memory body", metadata: { path: "/Knowledge/index.md" } }],
+      metadata: { row_count: 1, limit: 1, parse_error_count: 0, batch_error: null }
     });
+  });
+
+  it.each(["missing", "denied", "transport"])("returns a single %s path as an item error", async (failure) => {
+    if (failure === "missing") mocks.readNode.mockResolvedValueOnce(null);
+    else mocks.readNode.mockRejectedValueOnce(new Error(failure));
+    const response = await postMcp({ jsonrpc: "2.0", id: 81, method: "tools/call",
+      params: { name: "read_paths", arguments: { database_id: "db_alpha", paths: ["/Knowledge/a.md"] } } });
+    expect(response.result.isError).not.toBe(true);
+    expect(response.result.structuredContent.results).toEqual([{ path: "/Knowledge/a.md", is_error: true,
+      error: failure === "missing" ? "node not found" : `read failed: ${failure}` }]);
+    expect(response.result.structuredContent.metadata).toMatchObject({ row_count: 0, limit: 1 });
+  });
+
+  it("accepts ten paths with duplicates and rejects zero or eleven before reading", async () => {
+    for (const count of [0, 11, 10]) {
+      mocks.readMany.mockClear();
+      const response = await postMcp({ jsonrpc: "2.0", id: 82, method: "tools/call",
+        params: { name: "read_paths", arguments: { database_id: "db_alpha", paths: Array(count).fill("/Knowledge/a.md") } } });
+      if (count === 10) {
+        expect(response.result.structuredContent.results).toHaveLength(10);
+        expect(response.result.structuredContent.metadata).toMatchObject({ row_count: 1, unique_paths: 1, limit: 1 });
+        expect(mocks.readMany).toHaveBeenCalledTimes(1);
+        expect(mocks.readMany.mock.calls[0][2]).toEqual(["/Knowledge/a.md"]);
+      } else {
+        expect(response.result.isError).toBe(true);
+        expect(mocks.readMany).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("preserves a single Unicode body and reports oversized metadata as an item error", async () => {
+    for (const huge of [false, true]) {
+      mocks.readNode.mockResolvedValueOnce({ path: "/Knowledge/a.md", kind: "file", content: "\uFEFF日本語\0😀",
+        createdAt: "1", updatedAt: "2", etag: "v1", metadataJson: huge ? "x".repeat(300_000) : "{}" });
+      const response = await postMcp({ jsonrpc: "2.0", id: 83, method: "tools/call",
+        params: { name: "read_paths", arguments: { database_id: "db_alpha", paths: ["/Knowledge/a.md"] } } });
+      expect(new TextEncoder().encode(JSON.stringify(response.result)).length).toBeLessThanOrEqual(256_000);
+      const item = response.result.structuredContent.results[0];
+      if (huge) expect(item).toMatchObject({ path: "/Knowledge/a.md", is_error: true });
+      else {
+        expect(item.text).toBe("\uFEFF日本語\0😀");
+        expect(item.metadata.truncated).toBe(false);
+        expect(response.result.content[0].text).toContain(item.text);
+      }
+    }
+  });
+
+  it("does not retain an unlisted read_path compatibility tool", async () => {
+    const response = await postMcp({ jsonrpc: "2.0", id: 84, method: "tools/call",
+      params: { name: "read_path", arguments: { database_id: "db_alpha", path: "/Knowledge/a.md" } } });
+    expect(response.result.isError).toBe(true);
+    expect(mocks.readNode).not.toHaveBeenCalled();
   });
 
   it("returns batch path text as explicit model-facing content", async () => {
@@ -1738,14 +1787,12 @@ describe("wiki mcp worker", () => {
       ])
     );
 
-    for (const name of ["fetch_many", "read_path", "read_paths"]) {
+    for (const name of ["fetch_many", "read_paths"]) {
       const schema = tools.get(name);
       expect(schema).toBeDefined();
       if (!schema) throw new Error(`missing output schema for ${name}`);
       const nodeSchema =
-        name === "read_path"
-          ? schema
-          : schema.properties.results.items.anyOf.find(
+        schema.properties.results.items.anyOf.find(
               (item: Record<string, any>) => item.properties?.text
             );
       expect(nodeSchema.properties.text).toEqual({ type: "string" });

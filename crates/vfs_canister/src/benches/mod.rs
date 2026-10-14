@@ -1,6 +1,7 @@
 // Where: crates/vfs_canister/src/benches/mod.rs
 // What: Scale-oriented canbench entrypoints for the FS-first canister API.
 // Why: Design review needs operation-by-size growth curves rather than one fixed tiny benchmark.
+mod retrieval;
 mod scale;
 
 use canbench_rs::{BenchResult, bench};

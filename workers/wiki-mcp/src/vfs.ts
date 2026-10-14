@@ -1,8 +1,9 @@
+import { boundedResponse } from "./bounded-response.js";
 // Where: workers/wiki-mcp/src/vfs.ts
 // What: Minimal Kinic Wiki canister client for anonymous or delegated read-only MCP tools.
 // Why: Authenticated identities stay request-scoped while the anonymous production actor may be reused.
 
-import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
+import { Actor, HttpAgent, RejectError, type Identity } from "@icp-sdk/core/agent";
 import { readNodeRaw } from "@kinic/ii-server/read";
 import { Principal } from "@icp-sdk/core/principal";
 import {
@@ -25,6 +26,8 @@ type RawNodeMutationError = {
 type MutationResult<T> = { Ok: T } | { Err: RawNodeMutationError };
 
 export type RuntimeEnv = {
+  MCP_SEARCH_RERANK_ENABLED?: string;
+  TYPESAFE_API_KEY?: string;
   KINIC_WIKI_CANISTER_ID?: string;
   KINIC_WIKI_IC_HOST?: string;
   KINIC_WIKI_MCP_TARGET_ORIGIN?: string;
@@ -72,6 +75,8 @@ export type SearchHit = {
   preview: SearchPreview | null;
   matchReasons: string[];
 };
+
+export type RetrievalSearchHit = { hit: SearchHit; rerankExcerpt: string };
 
 export type SearchPreview = {
   excerpt: string | null;
@@ -403,6 +408,9 @@ type RawQueryContext = {
 };
 
 type VfsActor = {
+  search_nodes_for_retrieval: (request: {
+    database_id: string; query_text: string; intent: string; prefix: [] | [string]; top_k: number;
+  }) => Promise<Result<Array<{ hit: RawSearchHit; rerank_excerpt: string }>>>;
   list_databases: () => Promise<Result<RawDatabaseSummary[]>>;
   list_nodes: (request: { database_id: string; prefix: string; recursive: boolean; limit: number }) => Promise<Result<RawNodeEntry[]>>;
   search_nodes: (request: {
@@ -466,6 +474,52 @@ export async function searchNodes(
     env
   );
   return raw.map(normalizeSearchHit);
+}
+
+export class RetrievalSearchUnavailable extends Error {
+  constructor() { super("retrieval_search_unavailable"); }
+}
+
+// The closure is request-scoped, including for delegated/private identities.
+export async function createRetrievalSearcher(env: RuntimeEnv) {
+  let actor: VfsActor;
+  try {
+    const host = resolveIcHost(env);
+    const agent = HttpAgent.createSync({ host, identity: env.KINIC_WIKI_IDENTITY, retryTimes: 0,
+      fetch: async (url, options) => {
+        const response = await fetch(url, options);
+        return String(url).endsWith("/query") ? boundedResponse(response, 256 * 1024) : response;
+      }
+    });
+    if (isLocalHost(host)) await agent.fetchRootKey();
+    actor = Actor.createActor<VfsActor>((idl) => idlFactory(idl), {
+      agent, canisterId: Principal.fromText(resolveCanisterId(env))
+    });
+  } catch (error) {
+    if (!env.KINIC_WIKI_IDENTITY) throw error;
+    logAuthenticatedVfsFailure(env, "retrieval_actor");
+    throw new Error("Kinic Wiki database is unavailable");
+  }
+  return async (databaseId: string, query: string, intent: string, prefix: string): Promise<RetrievalSearchHit[]> => {
+    const raw = await callVfs(env, "search_nodes_for_retrieval", async () => {
+      try {
+        return await actor.search_nodes_for_retrieval({ database_id: databaseId, query_text: query,
+          intent, prefix: candidOptional(prefix), top_k: 20 });
+      } catch (error) {
+        if (error instanceof RejectError && "rejectErrorCode" in error.code &&
+            error.code.rejectErrorCode === "IC0536" && "rejectMessage" in error.code &&
+            String(error.code.rejectMessage).includes("search_nodes_for_retrieval")) {
+          throw new RetrievalSearchUnavailable();
+        }
+        throw error;
+      }
+    });
+    const hits = unwrap(raw, env);
+    if (hits.length > 20 || hits.some(item => item.rerank_excerpt.length > 512)) {
+      throw new Error("invalid_retrieval_response");
+    }
+    return hits.map(item => ({ hit: normalizeSearchHit(item.hit), rerankExcerpt: item.rerank_excerpt }));
+  };
 }
 
 export async function listNodes(env: RuntimeEnv, databaseId: string, prefix: string, recursive: boolean, limit: number): Promise<NodeEntry[]> {
@@ -677,7 +731,7 @@ async function callVfs<T, E = string>(
     }
     return result;
   } catch (error) {
-    if (!env.KINIC_WIKI_IDENTITY) {
+    if (!env.KINIC_WIKI_IDENTITY || error instanceof RetrievalSearchUnavailable) {
       throw error;
     }
     logAuthenticatedVfsFailure(env, `${stage}_call`);
@@ -1185,6 +1239,14 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     score: idl.Float32,
     match_reasons: idl.Vec(idl.Text)
   });
+  const SearchNodesForRetrievalRequest = idl.Record({
+    database_id: idl.Text, query_text: idl.Text, intent: idl.Text,
+    prefix: idl.Opt(idl.Text), top_k: idl.Nat32
+  });
+  const RetrievalSearchHit = idl.Record({
+    hit: SearchNodeHit, rerank_excerpt: idl.Text
+  });
+  const ResultRetrievalSearch = idl.Variant({ Ok: idl.Vec(RetrievalSearchHit), Err: idl.Text });
   const SearchNodesRequest = idl.Record({
     database_id: idl.Text,
     query_text: idl.Text,
@@ -1282,6 +1344,7 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   return idl.Service({
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_nodes: idl.Func([ListNodesRequest], [ResultNodes], ["query"]),
+    search_nodes_for_retrieval: idl.Func([SearchNodesForRetrievalRequest], [ResultRetrievalSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     memory_manifest: idl.Func([DatabaseIdRequest], [ResultMemoryManifest], ["query"]),
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),

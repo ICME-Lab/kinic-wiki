@@ -45,6 +45,14 @@ function toolErrorResult(detail) {
   };
 }
 
+function singleReadResult(path, display, etag) {
+  const text = display.slice(display.indexOf("Content:\n") + "Content:\n".length);
+  return {
+    content: [{ type: "text", text: display }],
+    structuredContent: { results: [{ text, metadata: { path, etag } }], metadata: { batch_error: null } }
+  };
+}
+
 test("keeps staging on its canonical custom domain and permission-aware SDK", () => {
   assert.equal(stagingConfig.workers_dev, false);
   assert.deepEqual(stagingConfig.routes, [
@@ -295,12 +303,8 @@ test("cleans a committed single artifact when the write response is lost", async
         committedContent = request.arguments.nodes[0].content;
         throw new Error("single response lost");
       }
-      if (request.name === "read_path") {
-        return {
-          isError: false,
-          content: [{ type: "text", text: `Content:\n${committedContent}` }],
-          structuredContent: { metadata: { etag: "etag-recovered" } }
-        };
+      if (request.name === "read_paths") {
+        return singleReadResult(request.arguments.paths[0], `Content:\n${committedContent}`, "etag-recovered");
       }
       return { isError: false };
     }
@@ -310,7 +314,7 @@ test("cleans a committed single artifact when the write response is lost", async
     smokeWriteBatchDelete(client, "db_private", "/Knowledge/response-loss.md"),
     /single response lost/u
   );
-  assert.deepEqual(calls.map((call) => call.name), ["write_nodes", "read_path", "delete_nodes"]);
+  assert.deepEqual(calls.map((call) => call.name), ["write_nodes", "read_paths", "delete_nodes"]);
   assert.deepEqual(calls[2].arguments.operations, [
     {
       path: "/Knowledge/response-loss.md",
@@ -352,22 +356,14 @@ test("cleans every committed batch artifact when the batch response is lost", as
         }
         throw new Error("batch response lost");
       }
-      if (request.name === "read_path") {
-        if (request.arguments.path === mainPath) {
-          return {
-            isError: false,
-            content: [{ type: "text", text: `Content:\n${initialContent}` }],
-            structuredContent: { metadata: { etag: "etag-main" } }
-          };
+      if (request.name === "read_paths") {
+        if (request.arguments.paths[0] === mainPath) {
+          return singleReadResult(request.arguments.paths[0], `Content:\n${initialContent}`, "etag-main");
         }
-        const artifact = committed.get(request.arguments.path);
+        const artifact = committed.get(request.arguments.paths[0]);
         return artifact
-          ? {
-              isError: false,
-              content: [{ type: "text", text: `Content:\n${artifact.content}` }],
-              structuredContent: { metadata: { etag: artifact.etag } }
-            }
-          : toolErrorResult({ error: "node not found" });
+          ? singleReadResult(request.arguments.paths[0], `Content:\n${artifact.content}`, artifact.etag)
+          : { structuredContent: { results: [{ path: request.arguments.paths[0], is_error: true, error: "node not found" }] } };
       }
       deletedPaths.push(request.arguments.operations[0].path);
       return { isError: false };
@@ -406,18 +402,10 @@ test("recovers a missing cleanup etag only for marker-matched content", async ()
   const deletedPaths = [];
   const client = {
     async callTool(request) {
-      if (request.name === "read_path") {
-        return request.arguments.path.endsWith("owned.md")
-          ? {
-              isError: false,
-              content: [{ type: "text", text: "Content:\nsmoke-marker:owned" }],
-              structuredContent: { metadata: { etag: "etag-owned" } }
-            }
-          : {
-              isError: false,
-              content: [{ type: "text", text: "Content:\nunrelated" }],
-              structuredContent: { metadata: { etag: "etag-foreign" } }
-            };
+      if (request.name === "read_paths") {
+        return request.arguments.paths[0].endsWith("owned.md")
+          ? singleReadResult(request.arguments.paths[0], "Content:\nsmoke-marker:owned", "etag-owned")
+          : singleReadResult(request.arguments.paths[0], "Content:\nunrelated", "etag-foreign");
       }
       deletedPaths.push(request.arguments.operations[0].path);
       return { isError: false };
@@ -438,12 +426,8 @@ test("attempts every artifact cleanup when a batch result omits etags", async ()
   const client = {
     async callTool(request) {
       calls.push(request);
-      if (request.name === "read_path") {
-        return {
-          isError: false,
-          content: [{ type: "text", text: `Content:\nowned-${request.arguments.path}` }],
-          structuredContent: { metadata: { etag: `etag-${calls.length}` } }
-        };
+      if (request.name === "read_paths") {
+        return singleReadResult(request.arguments.paths[0], `Content:\nowned-${request.arguments.paths[0]}`, `etag-${calls.length}`);
       }
       return { isError: false };
     }
@@ -465,12 +449,12 @@ test("attempts every artifact cleanup when a batch result omits etags", async ()
   assert.equal(failureCount, 0);
   assert.deepEqual(
     calls.map((call) =>
-      `${call.name}:${call.name === "read_path" ? call.arguments.path : call.arguments.operations[0].path}`
+      `${call.name}:${call.name === "read_paths" ? call.arguments.paths[0] : call.arguments.operations[0].path}`
     ),
     [
-      "read_path:/Knowledge/marker-batch-a.md",
+      "read_paths:/Knowledge/marker-batch-a.md",
       "delete_nodes:/Knowledge/marker-batch-a.md",
-      "read_path:/Knowledge/marker-batch-b.md",
+      "read_paths:/Knowledge/marker-batch-b.md",
       "delete_nodes:/Knowledge/marker-batch-b.md"
     ]
   );
@@ -486,7 +470,7 @@ test("preserves the primary smoke failure when cleanup also fails", () => {
   assert.equal(smokeCompletionError(primary, 0), primary);
 });
 
-test("recognizes only the explicit read_path node not found error", () => {
+test("recognizes only the explicit read_paths node not found error", () => {
   const toolError = (error) => ({
     isError: true,
     content: [{ type: "text", text: JSON.stringify({ error }) }]
@@ -530,7 +514,7 @@ test("does not treat authentication errors as completed cleanup", async () => {
   ]);
 
   assert.equal(failureCount, 1);
-  assert.deepEqual(calls.map((call) => call.name), ["read_path"]);
+  assert.deepEqual(calls.map((call) => call.name), ["read_paths"]);
 });
 
 test("treats a normalized mutation not_found result as completed cleanup", async () => {

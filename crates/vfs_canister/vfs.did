@@ -625,14 +625,15 @@ type Result_43 = variant { Ok : vec Result_41; Err : text };
 type Result_44 = variant { Ok : opt PublicNode; Err : text };
 type Result_45 = variant { Ok : VoiceReservation; Err : text };
 type Result_46 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_47 = variant { Ok : StorageBillingBatchResult; Err : text };
-type Result_48 = variant { Ok : SourceEvidence; Err : text };
-type Result_49 = variant { Ok : DatabaseMetadata; Err : text };
+type Result_47 = variant { Ok : vec RetrievalSearchHit; Err : text };
+type Result_48 = variant { Ok : StorageBillingBatchResult; Err : text };
+type Result_49 = variant { Ok : SourceEvidence; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : NodeMutationError };
-type Result_50 = variant { Ok : WikiMetrics; Err : text };
-type Result_51 = variant { Ok : vec WikiMetricsPoint; Err : text };
-type Result_52 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
-type Result_53 = variant {
+type Result_50 = variant { Ok : DatabaseMetadata; Err : text };
+type Result_51 = variant { Ok : WikiMetrics; Err : text };
+type Result_52 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_53 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
+type Result_54 = variant {
   Ok : WriteSourceForGenerationResult;
   Err : NodeMutationError;
 };
@@ -640,6 +641,7 @@ type Result_6 = variant { Ok : EditNodeResult; Err : NodeMutationError };
 type Result_7 = variant { Ok : ExportSnapshotResponse; Err : text };
 type Result_8 = variant { Ok : FetchUpdatesResponse; Err : text };
 type Result_9 = variant { Ok : CyclesBillingConfig; Err : text };
+type RetrievalSearchHit = record { hit : SearchNodeHit; rerank_excerpt : text };
 type SearchNodeHit = record {
   preview : opt SearchPreview;
   kind : NodeKind;
@@ -652,6 +654,14 @@ type SearchNodePathsRequest = record {
   top_k : nat32;
   database_id : text;
   preview_mode : opt SearchPreviewMode;
+  prefix : opt text;
+  query_text : text;
+};
+// Bounded retrieval search; intent remains the original question across auxiliary searches.
+type SearchNodesForRetrievalRequest = record {
+  top_k : nat32;
+  intent : text;
+  database_id : text;
   prefix : opt text;
   query_text : text;
 };
@@ -895,22 +905,25 @@ service : (CyclesBillingConfig) -> {
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_46) query;
   search_nodes : (SearchNodesRequest) -> (Result_46) query;
+  search_nodes_for_retrieval : (SearchNodesForRetrievalRequest) -> (
+      Result_47,
+    ) query;
   set_voice_policy : (VoicePolicy) -> (Result_1);
   settle_database_storage_charges_batch : (StorageBillingBatchRequest) -> (
-      Result_47,
+      Result_48,
     );
   settle_voice : (VoiceSettleRequest) -> (Result_45);
-  source_evidence : (SourceEvidenceRequest) -> (Result_48) query;
+  source_evidence : (SourceEvidenceRequest) -> (Result_49) query;
   status : (text) -> (Status) query;
   stop_voice : (VoiceStopRequest) -> (Result_45);
   unpublish_node : (PublishNodeRequest) -> (Result_1);
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
-  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_49);
-  wiki_metrics : () -> (Result_50) query;
-  wiki_metrics_series : (nat32) -> (Result_51) query;
+  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_50);
+  wiki_metrics : () -> (Result_51) query;
+  wiki_metrics_series : (nat32) -> (Result_52) query;
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_52);
+  write_nodes : (WriteNodesRequest) -> (Result_53);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_53,
+      Result_54,
     );
 }

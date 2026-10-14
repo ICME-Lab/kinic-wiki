@@ -42,7 +42,7 @@ function validFetched() {
 function readResult(path, content, etag) {
   return {
     content: [{ type: "text", text: `Path: ${path}\nTitle: review\nContent:\n${content}` }],
-    structuredContent: { metadata: { path, etag } }
+    structuredContent: { results: [{ text: content, metadata: { path, etag } }], metadata: { batch_error: null } }
   };
 }
 
@@ -122,7 +122,7 @@ test("recovers and batch-cleans a committed single artifact after response loss"
   const client = {
     async callTool(request) {
       calls.push(request);
-      if (request.name === "read_path") return readResult(artifact.path, artifact.expectedContent, "etag-single");
+      if (request.name === "read_paths") return readResult(artifact.path, artifact.expectedContent, "etag-single");
       return { content: [{ type: "text", text: "{}" }], structuredContent: { results: [{}] } };
     }
   };
@@ -142,8 +142,8 @@ test("recovers and cleans committed batch artifacts in one delete call", async (
   const client = {
     async callTool(request) {
       calls.push(request);
-      if (request.name === "read_path") {
-        const artifact = artifacts.find((candidate) => candidate.path === request.arguments.path);
+      if (request.name === "read_paths") {
+        const artifact = artifacts.find((candidate) => candidate.path === request.arguments.paths[0]);
         return readResult(artifact.path, artifact.expectedContent, `etag-${artifact.path.at(-4)}`);
       }
       return { content: [{ type: "text", text: "{}" }], structuredContent: { results: [{}, {}] } };
@@ -160,7 +160,7 @@ test("never deletes a marker-mismatched artifact", async () => {
   const client = {
     async callTool(request) {
       calls.push(request);
-      return readResult(request.arguments.path, "someone else's content", "etag-other");
+      return readResult(request.arguments.paths[0], "someone else's content", "etag-other");
     }
   };
   const failures = await cleanupReviewArtifacts(client, "test", "db", [
@@ -224,13 +224,16 @@ function mutationFixtureClient() {
   return { nodes, calls, async callTool(request) {
     calls.push(request);
     const args = request.arguments;
-    if (request.name === "read_path") {
-      const node = nodes.get(args.path);
-      return node ? readResult(node.path, node.content, node.etag) : { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "node not found" }) }] };
-    }
     if (request.name === "read_paths") {
-      return { structuredContent: { results: args.paths.map(path => ({ metadata: { path, etag: nodes.get(path).etag }, text: nodes.get(path).content })) },
-        content: [{ type: "text", text: args.paths.map((path, i) => `Result ${i + 1}\nPath: ${path}\nTitle: fixture\nContent:\n${nodes.get(path).content}`).join("\n\n") }] };
+      const results = args.paths.map(path => {
+        const node = nodes.get(path);
+        return node ? { metadata: { path, etag: node.etag }, text: node.content }
+          : { path, is_error: true, error: "node not found" };
+      });
+      return { structuredContent: { results, metadata: { batch_error: null } },
+        content: [{ type: "text", text: results.map((item, i) => item.is_error
+          ? `Result ${i + 1}\nError: ${item.error}`
+          : `Result ${i + 1}\nPath: ${item.metadata.path}\nTitle: fixture\nContent:\n${item.text}`).join("\n\n") }] };
     }
     const before = new Map(nodes);
     let results;
@@ -313,7 +316,7 @@ for (const failure of ["rejected", "request lost", "response lost", "malformed r
         if (failure === "rejected") return { isError: true, content: [{ type: "text", text: "injected rejection" }] };
         throw new Error(`injected ${failure}`);
       }
-      if (request.name === "read_path" && request.arguments.path === folderPath) {
+      if (request.name === "read_paths" && request.arguments.paths[0] === folderPath) {
         inspected = true;
         if (failure === "read failed") throw new Error("injected read failure");
       }

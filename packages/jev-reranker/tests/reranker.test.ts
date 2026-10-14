@@ -302,3 +302,24 @@ test("routing rejects incomplete probabilities and never logs private state", as
   for (const privateValue of ["private question", "/private.md", "private-key"])
     assert.equal(log.includes(privateValue), false);
 });
+
+for (const count of [1, 10, 20]) test(`MCP sorts ${count} candidates even within selection count`, async () => {
+  let calls = 0;
+  const input = candidates(count);
+  const result = await rerankWithJev({ intent: "intent", candidates: input, apiKey: "fixture", workflow: "mcp_search",
+    selectionCount: count, rerankEvenIfWithinLimit: true, logMetric: () => {},
+    fetchImpl: async () => { calls++; return response(input.map((_,i) => i / count)); } });
+  assert.equal(calls, 1);
+  assert.deepEqual(result.candidates, [...input].reverse());
+});
+
+test("MCP bounds actual request bytes before fetch and streamed response bytes", async () => {
+  let calls = 0;
+  const options = { intent: "意図", candidates: candidates(10), apiKey: "fixture", workflow: "mcp_search" as const,
+    rerankEvenIfWithinLimit: true, logMetric: () => {} };
+  await assert.rejects(rerankWithJev({ ...options, maxRequestBytes: 10,
+    fetchImpl: async () => { calls++; return response([]); } }), (e: unknown) => e instanceof JevError && e.code === "jev_request_size");
+  assert.equal(calls, 0);
+  await assert.rejects(rerankWithJev({ ...options, maxResponseBytes: 100,
+    fetchImpl: async () => new Response(" ".repeat(101)) }), (e: unknown) => e instanceof JevError && e.code === "jev_incomplete_response");
+});

@@ -409,6 +409,41 @@ pub(crate) fn build_previews_for_hits(
     }
 }
 
+/// Preserve Light output while sharing its content read with the bounded rerank excerpt.
+pub(crate) fn build_retrieval_previews(
+    conn: &Connection,
+    candidates: &mut [SearchCandidate],
+    plan: &SearchQueryPlan,
+    intent: &str,
+) -> Result<Vec<String>, String> {
+    let mut full_ids = Vec::new();
+    let mut prefix_ids = Vec::new();
+    for candidate in candidates.iter_mut() {
+        candidate.preview = build_path_preview(candidate, plan);
+        if candidate.preview.is_none() && candidate.has_content_match {
+            full_ids.push(candidate.row_id);
+        } else {
+            prefix_ids.push(candidate.row_id);
+        }
+    }
+    // Light content anchors may be anywhere in the body. Only those need the
+    // same full read as legacy search; path-only hits need a bounded prefix.
+    let mut contents = load_contents_by_id(conn, &full_ids)?;
+    contents.extend(load_content_prefixes_by_id(conn, &prefix_ids)?);
+    let mut excerpts = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let content = contents
+            .get(&candidate.row_id)
+            .map(String::as_str)
+            .unwrap_or("");
+        if candidate.preview.is_none() && candidate.has_content_match {
+            candidate.preview = build_content_preview(candidate, content, plan);
+        }
+        excerpts.push(crate::retrieval_excerpt::excerpt(intent, content));
+    }
+    Ok(excerpts)
+}
+
 fn build_match_previews_for_hits(
     conn: &Connection,
     candidates: &mut [SearchCandidate],
@@ -554,6 +589,21 @@ fn find_path_offset(path: &str, reason: &str, plan: &SearchQueryPlan) -> Option<
 }
 
 fn load_contents_by_id(conn: &Connection, ids: &[i64]) -> Result<BTreeMap<i64, String>, String> {
+    load_selected_contents(conn, ids, false)
+}
+
+fn load_content_prefixes_by_id(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<BTreeMap<i64, String>, String> {
+    load_selected_contents(conn, ids, true)
+}
+
+fn load_selected_contents(
+    conn: &Connection,
+    ids: &[i64],
+    prefix_only: bool,
+) -> Result<BTreeMap<i64, String>, String> {
     if ids.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -561,13 +611,29 @@ fn load_contents_by_id(conn: &Connection, ids: &[i64]) -> Result<BTreeMap<i64, S
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let sql = format!("SELECT id, content FROM fs_nodes WHERE id IN ({placeholders})");
+    // Blob slicing preserves embedded NUL. 160K UTF-8 bytes cover the entire
+    // 40K UTF-16 scan budget; any split code point at the far end is discarded.
+    let column = if prefix_only {
+        "substr(CAST(content AS BLOB), 1, 160000)"
+    } else {
+        "content"
+    };
+    let sql = format!("SELECT id, {column} FROM fs_nodes WHERE id IN ({placeholders})");
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(&mut stmt, crate::sqlite::params_from_i64s(ids), |row| {
-        Ok((
-            crate::sqlite::row_get::<i64>(row, 0)?,
-            crate::sqlite::row_get::<String>(row, 1)?,
-        ))
+        let content = if prefix_only {
+            let bytes = crate::sqlite::row_get::<Option<Vec<u8>>>(row, 1)?.unwrap_or_default();
+            let valid = match std::str::from_utf8(&bytes) {
+                Ok(text) => text,
+                Err(error) => {
+                    std::str::from_utf8(&bytes[..error.valid_up_to()]).expect("valid UTF-8 prefix")
+                }
+            };
+            valid.to_owned()
+        } else {
+            crate::sqlite::row_get::<String>(row, 1)?
+        };
+        Ok((crate::sqlite::row_get::<i64>(row, 0)?, content))
     })
     .map_err(|error| error.to_string())?;
     Ok(rows.into_iter().collect())

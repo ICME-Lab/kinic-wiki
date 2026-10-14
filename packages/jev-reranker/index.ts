@@ -9,7 +9,7 @@ export type JevCandidate = {
   preview: string;
 };
 
-export type JevWorkflow = "generator" | "ask_ai" | "ask_ai_route" | "recall";
+export type JevWorkflow = "generator" | "ask_ai" | "ask_ai_route" | "recall" | "mcp_search";
 
 export type JevMetric = {
   workflow: JevWorkflow;
@@ -84,6 +84,9 @@ export type JevRerankOptions<T extends JevCandidate> = {
   apiKey: string;
   workflow: JevWorkflow;
   selectionCount?: number;
+  rerankEvenIfWithinLimit?: boolean;
+  maxRequestBytes?: number;
+  maxResponseBytes?: number;
   timeoutMs?: number;
   fetchImpl?: Fetch;
   logMetric?: LogMetric;
@@ -94,8 +97,8 @@ export async function rerankWithJev<T extends JevCandidate>(
 ): Promise<JevRerankResult<T>> {
   const candidates = options.candidates.slice(0, JEV_MAX_CANDIDATES);
   const selectionCount = Math.min(
-    JEV_DEFAULT_SELECTIONS,
-    Math.max(1, options.selectionCount ?? JEV_DEFAULT_SELECTIONS),
+    JEV_MAX_CANDIDATES,
+    Math.max(1, Math.floor(options.selectionCount ?? JEV_DEFAULT_SELECTIONS)),
   );
   const inputCharacters =
     options.intent.length +
@@ -103,7 +106,7 @@ export async function rerankWithJev<T extends JevCandidate>(
       (total, candidate) => total + candidate.path.length + candidate.preview.length,
       0,
     );
-  if (candidates.length <= selectionCount) {
+  if (candidates.length === 0 || (!options.rerankEvenIfWithinLimit && candidates.length <= selectionCount)) {
     log(options, {
       workflow: options.workflow,
       candidateCount: candidates.length,
@@ -164,28 +167,33 @@ export async function rerankWithJev<T extends JevCandidate>(
         },
       ]),
     );
+    const requestBody = JSON.stringify({
+      model: JEV_MODEL,
+      state: {
+        search_intent: options.intent,
+        candidates: candidates.map((candidate, index) => ({
+          id: `candidate_${index}`,
+          path: candidate.path,
+          preview: candidate.preview,
+        })),
+      },
+      questions,
+    });
+    if (options.maxRequestBytes !== undefined && new TextEncoder().encode(requestBody).byteLength > options.maxRequestBytes) {
+      throw new JevError("jev_request_size", false, null, Date.now() - started, inputCharacters);
+    }
     const response = await (options.fetchImpl ?? fetch)(JEV_ENDPOINT, {
       method: "POST",
       headers: {
         authorization: `Bearer ${options.apiKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        model: JEV_MODEL,
-        state: {
-          search_intent: options.intent,
-          candidates: candidates.map((candidate, index) => ({
-            id: `candidate_${index}`,
-            path: candidate.path,
-            preview: candidate.preview,
-          })),
-        },
-        questions,
-      }),
+      body: requestBody,
       signal: controller.signal,
     });
     httpStatus = response.status;
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
       throw new JevError(
         `jev_http_${response.status}`,
         response.status === 429 || response.status === 529 || response.status >= 500,
@@ -194,7 +202,7 @@ export async function rerankWithJev<T extends JevCandidate>(
         inputCharacters,
       );
     }
-    const body = await readBoundedJson(response);
+    const body = await readBoundedJson(response, options.maxResponseBytes);
     const probabilities = parseProbabilities(body, candidates.length);
     const selected = candidates
       .map((candidate, index) => ({ candidate, index, probability: probabilities[index]! }))
@@ -315,6 +323,7 @@ export async function classifyWithJev<T extends string>(
     });
     httpStatus = response.status;
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
       throw new JevError(
         `jev_http_${response.status}`,
         response.status === 429 ||
@@ -405,10 +414,10 @@ function log(
   (options.logMetric ?? ((value) => console.log(JSON.stringify(value))))(metric);
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
-  const maximumBytes = 256 * 1024;
+async function readBoundedJson(response: Response, maximumBytes = 256 * 1024): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    await response.body?.cancel().catch(() => {});
     throw new JevError("jev_incomplete_response", true, response.status, 0, 0);
   }
   if (!response.body) {
@@ -417,15 +426,19 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    totalBytes += value.byteLength;
-    if (totalBytes > maximumBytes) {
-      await reader.cancel();
-      throw new JevError("jev_incomplete_response", true, response.status, 0, 0);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maximumBytes) {
+        await reader.cancel();
+        throw new JevError("jev_incomplete_response", true, response.status, 0, 0);
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } finally {
+    reader.releaseLock();
   }
   const bytes = new Uint8Array(totalBytes);
   let offset = 0;

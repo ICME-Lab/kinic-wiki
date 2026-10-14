@@ -14,13 +14,29 @@ const MAX_NODE_CONTENT_CHARS = 40_000;
 const MAX_MULTI_NODE_CONTENT_CHARS = 100_000;
 const MAX_SERIALIZED_TOOL_RESULT_BYTES = 256_000;
 const SIZE_ERROR = "tool result exceeds serialized limit";
-const encoder = new TextEncoder();
 
 function sizeError(): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify({ error: SIZE_ERROR }) }], isError: true };
 }
 function fits(result: ToolResult): boolean {
-  return encoder.encode(JSON.stringify(result)).byteLength <= MAX_SERIALIZED_TOOL_RESULT_BYTES;
+  const json = JSON.stringify(result);
+  // Count UTF-8 bytes without allocating a second buffer for every candidate
+  // response. This matters during size fitting and oversized-metadata errors.
+  let bytes = json.length;
+  if (bytes > MAX_SERIALIZED_TOOL_RESULT_BYTES) return false;
+  for (let i = 0; i < json.length; i++) {
+    const code = json.charCodeAt(i);
+    if (code > 0x7f) {
+      if (code <= 0x7ff) bytes += 1;
+      else if (code >= 0xd800 && code <= 0xdbff && i + 1 < json.length &&
+        json.charCodeAt(i + 1) >= 0xdc00 && json.charCodeAt(i + 1) <= 0xdfff) {
+        bytes += 2;
+        i++;
+      } else bytes += 2;
+      if (bytes > MAX_SERIALIZED_TOOL_RESULT_BYTES) return false;
+    }
+  }
+  return true;
 }
 function finalize(result: ToolResult): ToolResult {
   return fits(result) ? result : sizeError();

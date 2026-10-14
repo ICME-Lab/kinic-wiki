@@ -1,6 +1,6 @@
 interface:
   display_name: "Kinic Wiki MCP"
-  short_description: "Read and explicitly batch-edit private Kinic Wiki data."
+  short_description: "Find wiki evidence and apply precise, explicit changes."
   default_prompt: "Use $kinic-wiki-mcp to read private Kinic Wiki evidence and use batch mutations only for changes I explicitly request."
 dependencies:
   tools:

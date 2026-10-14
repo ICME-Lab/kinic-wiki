@@ -26,7 +26,6 @@ export const MCP_TOOL_NAMES = [
   "find_databases",
   "search",
   "fetch_many",
-  "read_path",
   "read_paths",
   "list",
   "memory_manifest",

@@ -16,9 +16,13 @@
     "review:seed": "node scripts/seed-review-fixture.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
     "test": "node scripts/check-candid-drift.mjs && node --test scripts/*.node-test.mjs scripts/staging-smoke.test.mjs && vitest run && vitest run --config vitest.worker.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:retrieval:live": "node evaluation/run-retrieval.mjs --live",
+    "test:retrieval": "node evaluation/run-retrieval.mjs",
+    "bench:retrieval": "node evaluation/benchmark-worker.mjs"
   },
   "dependencies": {
+    "@kinic/jev-reranker": "workspace:*",
     "@icp-sdk/core": "6.0.0",
     "@kinic/vfs-client-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",

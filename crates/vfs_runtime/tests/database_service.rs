@@ -6118,3 +6118,50 @@ fn batch_read_nodes_enforces_reader_access_order_and_response_budget() {
         );
     }
 }
+
+#[test]
+fn retrieval_search_obeys_reader_and_public_reader_access() {
+    let service = service();
+    service.create_database("retrieval", "owner", 1).unwrap();
+    cycle_database(&service, "retrieval", "owner", 1_000_000, 1, 2);
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "retrieval".into(),
+                path: "/cors.md".into(),
+                kind: NodeKind::File,
+                content: "## Content\nCORS credentials".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .unwrap();
+    let request = || vfs_types::SearchNodesForRetrievalRequest {
+        database_id: "retrieval".into(),
+        query_text: "CORS".into(),
+        intent: "credentials".into(),
+        prefix: None,
+        top_k: 20,
+    };
+    assert!(
+        service
+            .search_nodes_for_retrieval("reader", request())
+            .is_err()
+    );
+    assert!(
+        service
+            .search_nodes_for_retrieval("2vxsx-fae", request())
+            .is_err()
+    );
+    for caller in ["reader", "2vxsx-fae"] {
+        service
+            .grant_database_access("retrieval", "owner", caller, DatabaseRole::Reader, 4)
+            .unwrap();
+        let hits = service
+            .search_nodes_for_retrieval(caller, request())
+            .unwrap();
+        assert_eq!(hits[0].rerank_excerpt, "CORS credentials");
+    }
+}
