@@ -3,6 +3,7 @@
 // What: Measures read-only Kinic Wiki remote MCP tool latency over Streamable HTTP JSON-RPC.
 // Why: MCP read strategy changes should be checked against actual tool-call costs.
 import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_MCP_URL = "http://127.0.0.1:8787/mcp";
 const DEFAULT_DATABASE_QUERY = "hono-docs";
@@ -11,11 +12,12 @@ const DEFAULT_PREFIX = "/Wiki";
 const DEFAULT_ITERATIONS = 5;
 const DEFAULT_WARMUP = 1;
 
-const args = parseArgs(process.argv.slice(2));
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const args = parseArgs(isMain ? process.argv.slice(2) : []);
 let jsonRpcId = 0;
 let activeMcpUrl = args.mcpUrl;
 
-main().catch((error) => {
+if (isMain) main().catch((error) => {
   const failure = {
     ok: false,
     error: error instanceof Error ? error.message : String(error)
@@ -140,12 +142,12 @@ async function discoverScenarioInputs(databaseId, capabilities) {
   };
 }
 
-function buildScenarios(databaseId, setup, capabilities) {
+export function buildScenarios(databaseId, setup, capabilities, call = callTool) {
   const scenarios = [
     scenario("tools_list", () => mcpRequest("tools/list", {})),
-    scenario("find_databases", () => callTool("find_databases", { query: args.databaseQuery, limit: 10 })),
+    scenario("find_databases", () => call("find_databases", { query: args.databaseQuery, limit: 10 })),
     capabilities.tools.has("context") ? scenario("context", () =>
-      callTool("context", {
+      call("context", {
         database_id: databaseId,
         task: args.query,
         namespace: args.prefix,
@@ -155,7 +157,7 @@ function buildScenarios(databaseId, setup, capabilities) {
       })
     ) : null,
     scenario("search_light", () =>
-      callTool("search", compactObject({
+      call("search", compactObject({
         database_id: databaseId,
         query: args.query,
         prefix: args.prefix,
@@ -164,7 +166,7 @@ function buildScenarios(databaseId, setup, capabilities) {
       }))
     ),
     capabilities.search_preview_mode ? scenario("search_content_start", () =>
-      callTool("search", {
+      call("search", {
         database_id: databaseId,
         query: args.query,
         prefix: args.prefix,
@@ -172,20 +174,21 @@ function buildScenarios(databaseId, setup, capabilities) {
         preview_mode: "content-start"
       })
     ) : null,
-    capabilities.tools.has("list") ? scenario("list_root_shallow", () => callTool("list", { database_id: databaseId, prefix: "/", recursive: false, limit: 99 })) : null,
-    capabilities.tools.has("list") ? scenario("list_prefix_recursive", () => callTool("list", { database_id: databaseId, prefix: args.prefix, recursive: true, limit: 99 })) : null,
-    capabilities.tools.has("fetch_many") ? scenario("fetch_many", () => callTool("fetch_many", { ids: setup.fetch_ids })) : null,
-    capabilities.tools.has("read_path") ? scenario("read_path", () => callTool("read_path", { database_id: databaseId, path: setup.primary_path })) : null,
-    capabilities.tools.has("read_paths") && setup.paths.length >= 2 ? scenario("read_paths", () => callTool("read_paths", { database_id: databaseId, paths: setup.paths })) : null,
-    capabilities.tools.has("read_path") ? scenario("read_path_sequential_same_count", async () => {
+    capabilities.tools.has("list") ? scenario("list_root_shallow", () => call("list", { database_id: databaseId, prefix: "/", recursive: false, limit: 99 })) : null,
+    capabilities.tools.has("list") ? scenario("list_prefix_recursive", () => call("list", { database_id: databaseId, prefix: args.prefix, recursive: true, limit: 99 })) : null,
+    capabilities.tools.has("fetch_many") ? scenario("fetch_many", () => call("fetch_many", { ids: setup.fetch_ids })) : null,
+    capabilities.tools.has("read_paths") ? scenario("read_paths_single", () => call("read_paths", { database_id: databaseId, paths: [setup.primary_path] })) : null,
+    capabilities.tools.has("read_paths") && setup.paths.length >= 1 ? scenario("read_paths", () => call("read_paths", { database_id: databaseId, paths: setup.paths })) : null,
+    capabilities.tools.has("read_paths") ? scenario("read_paths_sequential_same_count", async () => {
       const started = performance.now();
       const calls = [];
       for (const path of setup.paths) {
-        calls.push(await callTool("read_path", { database_id: databaseId, path }));
+        calls.push(await call("read_paths", { database_id: databaseId, paths: [path] }));
       }
       const elapsedMs = performance.now() - started;
       return {
         ok: calls.every((call) => call.ok),
+        error: calls.find((call) => !call.ok)?.error,
         http_status: 200,
         bytes: calls.reduce((sum, call) => sum + call.bytes, 0),
         elapsed_ms_override: elapsedMs,
@@ -252,13 +255,28 @@ async function measureCall(run) {
 
 async function callTool(name, toolArgs) {
   const response = await mcpRequest("tools/call", { name, arguments: toolArgs });
+  return toolCallResult(name, toolArgs, response);
+}
+
+export function toolCallResult(name, toolArgs, response) {
   const content = response.result?.content;
   const text = Array.isArray(content) && content[0]?.type === "text" ? content[0].text : "";
-  return {
-    ...response,
-    payload: safeJson(text),
-    ok: response.ok && response.result?.isError !== true
-  };
+  const payload = response.result?.structuredContent ?? safeJson(text);
+  let error = response.error;
+  let ok = response.ok && response.result?.isError !== true;
+  if (ok && (name === "read_paths" || name === "fetch_many")) {
+    const inputs = name === "read_paths" ? toolArgs.paths : toolArgs.ids;
+    const items = payload?.results;
+    if (!Array.isArray(items) || items.length !== inputs.length || payload?.metadata?.batch_error != null) {
+      ok = false;
+      error = `${name} returned an invalid result envelope`;
+    } else if (items.some((item, i) => item?.is_error === true || typeof item?.text !== "string" ||
+      (name === "read_paths" ? item?.metadata?.path !== inputs[i] : item?.id !== inputs[i]))) {
+      ok = false;
+      error = `${name} returned an item error or mismatched page`;
+    }
+  }
+  return { ...response, payload, ok, error };
 }
 
 async function mcpRequest(method, params) {
@@ -324,14 +342,14 @@ function percentile(sorted, p) {
   return sorted[index];
 }
 
-function compareResults(results) {
+export function compareResults(results) {
   const byName = Object.fromEntries(results.map((result) => [result.name, result]));
   return {
-    fetch_many_vs_sequential_read_path_avg_ratio: ratio(byName.fetch_many, byName.read_path_sequential_same_count),
+    fetch_many_vs_sequential_read_paths_avg_ratio: ratio(byName.fetch_many, byName.read_paths_sequential_same_count),
     read_paths_vs_fetch_many_avg_ratio: ratio(byName.read_paths, byName.fetch_many),
-    read_paths_vs_sequential_read_path_avg_ratio: ratio(byName.read_paths, byName.read_path_sequential_same_count),
+    read_paths_vs_sequential_read_paths_avg_ratio: ratio(byName.read_paths, byName.read_paths_sequential_same_count),
     context_vs_search_content_start_avg_ratio: ratio(byName.context, byName.search_content_start),
-    read_path_vs_fetch_many_avg_ratio: ratio(byName.read_path, byName.fetch_many)
+    read_paths_single_vs_fetch_many_avg_ratio: ratio(byName.read_paths_single, byName.fetch_many)
   };
 }
 
@@ -480,7 +498,7 @@ function summarizePayloadMetrics(samples) {
   return Object.keys(summary).length > 0 ? summary : null;
 }
 
-function toolCapabilities(tools) {
+export function toolCapabilities(tools) {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const searchProperties = byName.get("search")?.inputSchema?.properties ?? {};
   return {

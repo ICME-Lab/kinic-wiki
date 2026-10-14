@@ -1,0 +1,23 @@
+{
+  "model": "gpt-6-astra",
+  "reasoning": "medium",
+  "cli": "codex-cli 0.162.0-alpha.17.2",
+  "timeoutMs": 180000,
+  "callLimit": 12,
+  "round": "r2",
+  "corpus": {
+    "baselineCommit": "9a0b6aa7cc1a95f0c4a081586c8c3a465998f158",
+    "count": 32,
+    "sha256": "60ce3e75439d14875dce6dce22b5037b2d69fc8f7d6ab6247039bfda46989062"
+  },
+  "variants": [
+    "B",
+    "C"
+  ],
+  "modes": [
+    "none",
+    "skill"
+  ],
+  "repeats": 2,
+  "readOnly": true
+}

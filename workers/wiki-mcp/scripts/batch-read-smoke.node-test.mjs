@@ -10,12 +10,11 @@ function fakeClient(failure) {
   }));
   return {
     async callTool({ name, arguments: args }) {
-      if (name === "read_path") return { structuredContent: nodes[paths.indexOf(args.path)] };
       const result = {
-        results: structuredClone(nodes),
+        results: structuredClone(name === "read_paths" ? args.paths.map(path => nodes[paths.indexOf(path)]) : nodes),
         ...(name === "read_paths" ? { metadata: { batch_error: null, parse_error_count: 0 } } : {})
       };
-      if (name === failure?.tool) failure.change(result);
+      if (name === failure?.tool && result.results.length > 1) failure.change(result);
       return { isError: false, structuredContent: result };
     }
   };

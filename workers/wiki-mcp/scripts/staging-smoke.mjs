@@ -1,3 +1,4 @@
+import { readSingle } from "./read-single.mjs";
 import { createServer } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -26,7 +27,6 @@ const EXPECTED_TOOLS = [
   "list",
   "memory_manifest",
   "mutate_nodes_batch",
-  "read_path",
   "read_paths",
   "search",
   "write_nodes"
@@ -206,20 +206,17 @@ export async function cleanupSmokeArtifacts(client, databaseId, artifacts) {
     try {
       let etag = artifact.etag;
       if (typeof etag !== "string") {
-        const read = await client.callTool({
-          name: "read_path",
-          arguments: { database_id: databaseId, path: artifact.path }
-        });
+        const read = await readSingle(client, databaseId, artifact.path);
         if (isReadPathNotFoundResult(read)) {
           continue;
         }
-        assertToolSucceeded("smoke cleanup read_path", read);
+        assertToolSucceeded("smoke cleanup read_paths", read);
         if (!toolResultText(read).includes(artifact.expectedContent)) {
           throw new Error("smoke cleanup content marker did not match");
         }
         etag = read.structuredContent?.metadata?.etag;
         if (typeof etag !== "string") {
-          throw new Error("smoke cleanup read_path did not return an etag");
+          throw new Error("smoke cleanup read_paths did not return an etag");
         }
       }
       const deleted = await client.callTool({
@@ -380,12 +377,9 @@ async function main() {
     }
 
     if (options.databaseId && options.path) {
-      const readResult = await client.callTool({
-        name: "read_path",
-        arguments: { database_id: options.databaseId, path: options.path }
-      });
-      assertToolSucceeded("read_path", readResult);
-      summary.read_path = summarizeToolResult(readResult);
+      const readResult = await readSingle(client, options.databaseId, options.path);
+      assertToolSucceeded("read_paths", readResult);
+      summary.read_paths = summarizeToolResult(readResult);
     }
 
     if (options.writeSmokePath) {
@@ -494,10 +488,7 @@ export async function smokeWriteBatchDelete(client, databaseId, path) {
     if (rollbackDetail.failed_index !== 1) {
       throw new Error("write_nodes did not identify the failed batch index");
     }
-    const currentAfterConflict = await client.callTool({
-      name: "read_path",
-      arguments: { database_id: databaseId, path }
-    });
+    const currentAfterConflict = await readSingle(client, databaseId, path);
     assertToolSucceeded("write_nodes conflict reread", currentAfterConflict);
     if (
       currentAfterConflict.structuredContent?.metadata?.etag !== etag ||
@@ -505,10 +496,7 @@ export async function smokeWriteBatchDelete(client, databaseId, path) {
     ) {
       throw new Error("write_nodes conflict reread did not return the unchanged current node");
     }
-    const rolledBackRead = await client.callTool({
-      name: "read_path",
-      arguments: { database_id: databaseId, path: rollbackPath }
-    });
+    const rolledBackRead = await readSingle(client, databaseId, rollbackPath);
     if (!isReadPathNotFoundResult(rolledBackRead)) {
       throw new Error(
         rolledBackRead?.isError === true

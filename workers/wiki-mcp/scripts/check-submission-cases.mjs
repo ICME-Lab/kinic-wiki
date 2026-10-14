@@ -3,6 +3,7 @@
 // What: Validates the review submission and exercises deployed endpoints with the official MCP client.
 // Why: Review checks must cover the real initialization/session/streaming protocol and deployed contracts.
 
+import { readSingle } from "./read-single.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -37,7 +38,6 @@ const EXPECTED_READ_TOOLS = [
   "find_databases",
   "list",
   "memory_manifest",
-  "read_path",
   "read_paths",
   "search"
 ];
@@ -47,7 +47,7 @@ const EXPECTED_CASE_TOOLS = [
   "find_databases, memory_manifest, list",
   "find_databases, context",
   "find_databases, search, fetch_many",
-  "find_databases, write_nodes, read_path, append_nodes, edit_nodes, multi_edit_nodes, create_folders, move_nodes, delete_nodes",
+  "find_databases, write_nodes, read_paths, append_nodes, edit_nodes, multi_edit_nodes, create_folders, move_nodes, delete_nodes",
   "find_databases, write_nodes, read_paths, mutate_nodes_batch, delete_nodes"
 ];
 const DEFAULT_MCP_URLS = [
@@ -464,7 +464,7 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
       nodes: [{ path, kind: "file", content: artifact.expectedContent, metadata_json: "{}" }]
     });
     artifact.etag = created.structured.results?.[0]?.node?.etag ?? created.structured.results?.[0]?.value?.node?.etag;
-    const read = await callTool(client, mcpUrl, "read_path", { database_id: databaseId, path });
+    const read = await readSingleChecked(client, mcpUrl, databaseId, path);
     assert(exactModelFacingContent(read.raw) === artifact.expectedContent, `${mcpUrl} single write content must roundtrip exactly`);
     artifact.etag = read.structured.metadata?.etag;
     assert(typeof artifact.etag === "string", `${mcpUrl} single write read must return an etag`);
@@ -503,7 +503,7 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
     });
     movedArtifact.etag = moved.structured.results?.[0]?.value?.node?.etag;
     artifact = movedArtifact;
-    const verified = await callTool(client, mcpUrl, "read_path", { database_id: databaseId, path: artifact.path });
+    const verified = await readSingleChecked(client, mcpUrl, databaseId, artifact.path);
     assert(exactModelFacingContent(verified.raw) === artifact.expectedContent, `${mcpUrl} dedicated mutations must roundtrip exactly`);
     artifact.etag = verified.structured.metadata?.etag;
 
@@ -520,11 +520,7 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
     // mkdir has no ownership marker. A reread can prove absence, but an empty
     // folder alone cannot prove this run created it. Preserve and report it.
     try {
-      const read = await client.callTool(
-        { name: "read_path", arguments: { database_id: databaseId, path: folder.path } },
-        undefined,
-        requestOptions()
-      );
+      const read = await readSingle(client, databaseId, folder.path, requestOptions());
       if (!isNodeNotFoundResult(read)) cleanupFailureCount += 1;
     } catch {
       cleanupFailureCount += 1;
@@ -596,20 +592,16 @@ export async function cleanupReviewArtifacts(client, mcpUrl, databaseId, artifac
     try {
       let etag = artifact.etag;
       if (typeof etag !== "string") {
-        const read = await client.callTool(
-          { name: "read_path", arguments: { database_id: databaseId, path: artifact.path } },
-          undefined,
-          requestOptions()
-        );
+        const read = await readSingle(client, databaseId, artifact.path, requestOptions());
         if (isNodeNotFoundResult(read)) continue;
-        if (read.isError === true) throw new Error(`${mcpUrl} cleanup read_path failed`);
+        if (read.isError === true) throw new Error(`${mcpUrl} cleanup read_paths failed`);
         const content = exactModelFacingContent(read);
         if (content !== artifact.expectedContent &&
             !(typeof artifact.pendingContent === "string" && content === artifact.pendingContent)) {
           throw new Error(`${mcpUrl} cleanup content marker did not match for ${artifact.path}`);
         }
         etag = read.structuredContent?.metadata?.etag;
-        if (typeof etag !== "string") throw new Error(`${mcpUrl} cleanup read_path omitted etag`);
+        if (typeof etag !== "string") throw new Error(`${mcpUrl} cleanup read_paths omitted etag`);
       }
       operations.push({ path: artifact.path, expected_etag: etag });
     } catch {
@@ -639,11 +631,12 @@ export function reviewCompletionError(operationError, cleanupFailureCount) {
 }
 
 async function checkInvalidCalls(client, mcpUrl, databaseId) {
+  const missing = await readSingle(client, databaseId, MISSING_PATH, requestOptions());
+  assert(isNodeNotFoundResult(missing), `${mcpUrl} missing read_paths item must report node not found`);
   const invalidCases = [
     ["find_databases", { limit: 0 }],
     ["search", { database_id: "", query: "agent" }],
     ["fetch_many", { ids: [] }],
-    ["read_path", { database_id: databaseId, path: MISSING_PATH }],
     ["read_paths", { database_id: databaseId, paths: [] }],
     ["list", { database_id: "", prefix: "/" }],
     ["memory_manifest", { database_id: "" }],
@@ -656,6 +649,12 @@ async function checkInvalidCalls(client, mcpUrl, databaseId) {
     const result = await callTool(client, mcpUrl, name, toolArgs, { expectError: true });
     assert(result.raw.structuredContent === undefined, `${mcpUrl} ${name} errors must omit structuredContent`);
   }
+}
+
+async function readSingleChecked(client, mcpUrl, databaseId, path) {
+  const raw = await readSingle(client, databaseId, path, requestOptions());
+  assert(raw.isError !== true, `${mcpUrl} read_paths item must succeed`);
+  return { raw, structured: raw.structuredContent, text: toolResultText(raw) };
 }
 
 async function callTool(client, mcpUrl, name, toolArgs, options = {}) {

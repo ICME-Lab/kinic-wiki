@@ -15,15 +15,28 @@ function stableJson(value: unknown): string {
 }
 
 for (const privateMode of [false, true]) {
-  it(`preserves the ${privateMode ? "private 16" : "public 8"}-tool descriptor contract`, async () => {
+  it(`preserves the ${privateMode ? "private 15" : "public 7"}-tool descriptor contract`, async () => {
     const server = createServer({}, { accessPolicy: privateMode ? "private_required" : "public", writesAvailable: privateMode });
     const client = new Client({ name: "descriptor-contract", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    let wireDescriptorHash: string | undefined;
+    const send = serverTransport.send.bind(serverTransport);
+    serverTransport.send = async (message, options) => {
+      if ("result" in message && message.result && typeof message.result === "object" && "tools" in message.result) {
+        wireDescriptorHash = createHash("sha256").update(JSON.stringify(message.result)).digest("hex");
+      }
+      return send(message, options);
+    };
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(privateMode ? 16 : 8);
+      expect(tools).toHaveLength(privateMode ? 15 : 7);
+      if (privateMode) {
+        const rows = readFileSync(new URL("../evaluation/tool-selection/reports/holdout-final.jsonl", import.meta.url), "utf8").trim().split("\n").map(line => JSON.parse(line));
+        const evaluated = rows.find(row => row.variant === "C");
+        expect(wireDescriptorHash).toBe(evaluated.descriptorHash);
+      }
       const snapshot = {
         instructions: client.getInstructions(),
         // In-memory transport retains undefined fields that HTTP JSON omits.

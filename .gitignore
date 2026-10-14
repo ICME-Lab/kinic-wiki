@@ -54,7 +54,6 @@ __pycache__/
 *.pyc
 
 # Frontend build and test artifacts
-**/.next/
 **/.open-next/
 **/.tmp-test/
 **/dist/
@@ -67,10 +66,24 @@ __pycache__/
 **/coverage/
 **/next-env.d.ts
 **/cloudflare-env.d.ts
-**/.env.local
-**/.env.e2e.local
-**/.env.testflight.local
-**/.dev.vars
+
+# Local environment values; retain secret-free setup templates.
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
+!.dev.vars.example
+!.dev.vars.*.example
+!.dev.vars.template
+!.dev.vars.*.template
+
+# OAuth cache if a smoke run places its default-named cache inside the checkout.
+mcp-staging-smoke-oauth.json
+mcp-staging-smoke-oauth.json.*
 
 # Generated copies and store assets
 /extensions/wiki-clipper/store-listing/assets/*.png

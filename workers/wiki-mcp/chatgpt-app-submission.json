@@ -39,19 +39,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Only reads up to ten nodes selected from search results and returns item-level errors without changing them.",
-        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
-      }
-    },
-    "read_path": {
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false,
-        "destructiveHint": false
-      },
-      "justifications": {
-        "read_only_justification": "Only reads one node at a known path in a database visible to the signed-in user.",
+        "read_only_justification": "Only reads one to ten exact search IDs or public Wiki URLs, including user-provided URLs across databases, and returns item-level errors without changing nodes.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
       }
@@ -63,7 +51,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Only reads two to ten known paths in one database and returns item-level errors without changing them.",
+        "read_only_justification": "Only reads one to ten known paths in one database and returns item-level errors without changing them.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
       }
@@ -147,7 +135,7 @@
         "destructiveHint": true
       },
       "justifications": {
-        "read_only_justification": "Replaces exact text in one atomic batch.",
+        "read_only_justification": "Replaces exact text in one atomic batch; multiple matches fail by default and replace_all: true replaces all occurrences.",
         "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
         "destructive_justification": "Replaces existing text with etag protection."
       }
@@ -159,7 +147,7 @@
         "destructiveHint": true
       },
       "justifications": {
-        "read_only_justification": "Applies ordered exact-text edits within nodes in one atomic batch.",
+        "read_only_justification": "Applies exact-text edits sequentially within nodes in one atomic batch; each edit replaces every matching occurrence in the preceding result.",
         "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
         "destructive_justification": "Replaces existing text with etag protection."
       }
@@ -228,15 +216,15 @@
     },
     {
       "description": "Exercise dedicated append, edit, multi-edit, folder, move, and delete tools on isolated review artifacts.",
-      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Create /OpenAIReview/scratch/single-{suffix}.md with write_nodes using kind file, content \"OpenAI review single-node check\", and metadata_json \"{}\". Read it with read_path. With the latest returned etag at each step, call append_nodes to append \" appended\" with separator \"\", edit_nodes to replace \"appended\" with \"edited\", then multi_edit_nodes with ordered edits \"edited\" to \"intermediate\" and \"intermediate\" to \"final\". Use create_folders to create /OpenAIReview/scratch/single-{suffix}, then move_nodes to move the file to that folder as page.md without overwriting. Read the moved page and verify \"OpenAI review single-node check final\". Explicitly delete only the moved page with delete_nodes using its current etag; then read and delete the now-empty scratch folder with its current etag. Use operations without type for every dedicated tool. Report successful changes and cleanup.",
+      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Create /OpenAIReview/scratch/single-{suffix}.md with write_nodes using kind file, content \"OpenAI review single-node check\", and metadata_json \"{}\". Read it with read_paths using a one-element paths array; inspect results[0] and its is_error before using its etag. With the latest returned etag at each step, call append_nodes to append \" appended\" with separator \"\", edit_nodes to replace \"appended\" with \"edited\", then multi_edit_nodes with ordered edits \"edited\" to \"intermediate\" and \"intermediate\" to \"final\". Use create_folders to create /OpenAIReview/scratch/single-{suffix}, then move_nodes to move the file to that folder as page.md without overwriting. Read the moved page and verify \"OpenAI review single-node check final\". Explicitly delete only the moved page with delete_nodes using its current etag; then read and delete the now-empty scratch folder with its current etag. Use operations without type for every dedicated tool. Report successful changes and cleanup. edit_nodes must reject multiple matches by default; multi_edit_nodes replaces all matches at each sequential step. Keep old_text unique to restrict each edit to the intended text.",
       "file_attachment_urls": null,
-      "tools_triggered": "find_databases, write_nodes, read_path, append_nodes, edit_nodes, multi_edit_nodes, create_folders, move_nodes, delete_nodes",
+      "tools_triggered": "find_databases, write_nodes, read_paths, append_nodes, edit_nodes, multi_edit_nodes, create_folders, move_nodes, delete_nodes",
       "expected_output": "Creates, appends, edits, multi-edits, and moves the isolated page with the expected final text; deletes only the created page and empty scratch folder with current etags.",
       "expected_output_url": null
     },
     {
       "description": "Create and batch-read two review nodes, then perform a mixed atomic edit/delete and clean up.",
-      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Explicitly create /OpenAIReview/scratch/batch-{suffix}-a.md with content \"review batch A\" and /OpenAIReview/scratch/batch-{suffix}-b.md with content \"review batch B\" together in one write_nodes call; use kind file and metadata_json \"{}\" for both. Read both together with one read_paths call. Then, in one atomic mutate_nodes_batch call, edit the first page from \"review batch A\" to \"review batch A edited\" and delete the second page, using their etags from read_paths. Do not split this mixed transaction. Finally explicitly delete only the remaining first page with delete_nodes using the new etag returned by the edit. Report both original contents and confirm cleanup.",
+      "user_prompt": "Using Kinic Wiki, call find_databases once to find \"openai-review-fixture\". Generate an 8-character lowercase hexadecimal suffix. Explicitly create /OpenAIReview/scratch/batch-{suffix}-a.md with content \"review batch A\" and /OpenAIReview/scratch/batch-{suffix}-b.md with content \"review batch B\" together in one write_nodes call; use kind file and metadata_json \"{}\" for both. Read both together with one read_paths call. Then, in one atomic mutate_nodes_batch call, edit the first page from \"review batch A\" to \"review batch A edited\" and delete the second page, using their etags from read_paths. Do not split this mixed transaction. Finally explicitly delete only the remaining first page with delete_nodes using the new etag returned by the edit. Report both original contents and confirm cleanup. The paths are known: no preliminary search or context call is needed before read_paths.",
       "file_attachment_urls": null,
       "tools_triggered": "find_databases, write_nodes, read_paths, mutate_nodes_batch, delete_nodes",
       "expected_output": "Creates and reads both scratch pages, atomically edits the first and deletes the second in one mixed batch, then deletes the remaining page using its updated etag.",

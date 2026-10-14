@@ -16,7 +16,11 @@
     "review:seed": "node scripts/seed-review-fixture.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
     "test": "node scripts/check-candid-drift.mjs && node --test scripts/*.node-test.mjs scripts/staging-smoke.test.mjs && vitest run && vitest run --config vitest.worker.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:tool-selection": "node --test evaluation/tool-selection/*.test.mjs",
+    "eval:tool-selection": "node evaluation/tool-selection/run.mjs",
+    "eval:tool-selection:build": "node evaluation/tool-selection/build.mjs",
+    "eval:tool-selection:report": "node evaluation/tool-selection/report.mjs --history --write"
   },
   "dependencies": {
     "@icp-sdk/core": "6.0.0",

@@ -1,0 +1,18 @@
+{
+  "round": "r2",
+  "files": {
+    "cases.mjs": "8d00bc173c1ebec504175df309309c38e74a9c2a99e2c8058a9f41c892057c6d",
+    "corpus-lock.json": "9a7e7a51859f7a23fc5064c76038faf33e51b873cb58c3fdcc21d0b43dec0398",
+    "grade.mjs": "d132b73c4ad17077d4f6078484975d76352853918157935d91abd31c800a56bf",
+    "select.mjs": "c5dcaaac3fd18d989f9b9aad212c1be05b776630263fb4f91228f7c4d42e8e15",
+    "backend.mjs": "4cc26d946427e5e024b3536459f8f06a83ad58a01b1fbe1aae429596c847cd2e",
+    "build.mjs": "cdd8e2d67db21d91bb62578a49eae9f63854bafc0b6a231f31cd11d7422c97f9",
+    "server.mjs": "e4edbf1ef2ac3672d547fc6dcf1027d176fd08e1b7ee2414c62e1b174a2f27b6",
+    "run.mjs": "62423b593fe23821c87a0d2383d454047824283bcaa1c9c34282e9cb1640fdf5",
+    "baseline/SKILL.md": "fe784afd82b26ac38710dee36fb57f0825bc610b45abd8b362351199ec4ae303",
+    "baseline/tools.md": "2ff8af1f62d972a9e342bc6bb8f12b077f4f07a374a61132ee949fe41a0e50c8",
+    "variants/r2/index.ts.txt": "79146f59163779b713fd381bf4fe31352ccafe2e44b7f3a369f054119f09f8b7",
+    "variants/r2/SKILL.md": "29c218f29e807a48b2998aabd2febb963cefca2965834cf85b62b052552be24e",
+    "variants/r2/tools.md": "20e4c2f4a9390910cf23dd6c6032011f9831c6b3e4fed1fc569016dd35a14679"
+  }
+}

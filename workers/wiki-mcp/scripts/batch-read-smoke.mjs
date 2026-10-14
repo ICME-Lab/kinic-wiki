@@ -20,7 +20,10 @@ export async function verifyBatchReads(client, databaseId, paths) {
   assert.ok(paths.length >= 2 && paths.length <= 10, "Provide 2–10 paths");
   const singles = [];
   for (const path of paths) {
-    const single = await call(client, "read_path", { database_id: databaseId, path });
+    const one = await call(client, "read_paths", { database_id: databaseId, paths: [path] });
+    assert.equal(one.results?.length, 1, "single read result count mismatch");
+    const single = one.results[0];
+    assert.notEqual(single.is_error, true, "single read item failed");
     assert.equal(single.metadata?.path, path, "single read path mismatch");
     assert.equal(single.metadata?.truncated, false, "single read was truncated");
     assert.equal(typeof single.text, "string", "single read omitted content");

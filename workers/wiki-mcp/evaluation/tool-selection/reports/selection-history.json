@@ -1,0 +1,68 @@
+{
+  "selected": "C",
+  "developmentComplete": true,
+  "cNoWorse": true,
+  "metrics": {
+    "A": {
+      "none": {
+        "complete": true,
+        "n": 32,
+        "completion": 1,
+        "unsafe": 0,
+        "infrastructure": 0,
+        "inputErrors": 7,
+        "meanCalls": 2
+      },
+      "skill": {
+        "complete": true,
+        "n": 32,
+        "completion": 1,
+        "unsafe": 0,
+        "infrastructure": 0,
+        "inputErrors": 3,
+        "meanCalls": 2.03125
+      }
+    },
+    "B": {
+      "none": {
+        "complete": true,
+        "n": 32,
+        "completion": 1,
+        "unsafe": 0,
+        "infrastructure": 0,
+        "inputErrors": 0,
+        "meanCalls": 1.84375
+      },
+      "skill": {
+        "complete": true,
+        "n": 32,
+        "completion": 1,
+        "unsafe": 0,
+        "infrastructure": 0,
+        "inputErrors": 0,
+        "meanCalls": 1.90625
+      }
+    },
+    "C": {
+      "none": {
+        "complete": true,
+        "n": 32,
+        "completion": 1,
+        "unsafe": 0,
+        "infrastructure": 0,
+        "inputErrors": 0,
+        "meanCalls": 1.84375
+      },
+      "skill": {
+        "complete": true,
+        "n": 32,
+        "completion": 1,
+        "unsafe": 0,
+        "infrastructure": 0,
+        "inputErrors": 0,
+        "meanCalls": 1.875
+      }
+    }
+  },
+  "reason": "C meets acceptance and is no worse than B in both skill conditions."
+}
