@@ -1,9 +1,10 @@
 import { retrievalSearch } from "./retrieval-search.js";
 import { RetrievalSearchUnavailable } from "./vfs.js";
 // Where: workers/wiki-mcp/src/index.ts
-// What: Remote MCP entrypoint exposing Kinic Wiki database discovery, search, and read tools.
-// Why: Production stays anonymous/read-only while staging requires a request-scoped II delegation for all access.
+// What: MCP handler shared by the public Worker and private session Durable Objects.
+// Why: Tool contracts and authorization stay identical across execution paths.
 
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
@@ -20,6 +21,7 @@ import {
   type McpAccessPolicy
 } from "./auth/oauth.js";
 export { McpAuthStateV5 } from "./auth/state.js";
+import type { McpAuthStateV5 } from "./auth/state.js";
 import {
   listDatabases,
   listNodes,
@@ -74,7 +76,6 @@ const MAX_CONTEXT_BUDGET_TOKENS = 8000;
 const DEFAULT_CONTEXT_DEPTH = 1;
 const MAX_CONTEXT_DEPTH = 2;
 const MAX_FETCH_TEXT_CHARS = 40_000;
-const MAX_CONCURRENT_NODE_READS = 4;
 const DEFAULT_PREFIX = "/";
 const DEFAULT_CONTEXT_NAMESPACE = "/";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
@@ -324,8 +325,102 @@ const batchOperationSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+// This validator owns schema machinery only; requests and identities stay local.
+const sharedJsonSchemaValidator = new AjvJsonSchemaValidator();
+
+// Tool schemas are immutable and independent of the caller. Servers and handlers
+// remain request-local so concurrent sessions never share an identity.
+const findDatabasesInputSchema = z.object({
+  query: z.string().optional(),
+  limit: z.number().int().min(1).max(MAX_DATABASE_LIMIT).optional()
+});
+
+const searchInputSchema = z.object({
+  database_id: z.string().min(1),
+  query: z.string().min(1),
+  prefix: z.string().optional(),
+  limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional().describe("Result count, 1-20. Omit for 10."),
+  preview_mode: z.enum(["light", "content-start", "none"]).optional()
+});
+
+const fetchManyInputSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
+});
+
+const readPathsInputSchema = z.object({
+  database_id: z.string().min(1),
+  paths: z.array(z.string().min(1)).min(1).max(MAX_READ_PATHS)
+});
+
+const listInputSchema = z.object({
+  database_id: z.string().min(1),
+  prefix: z.string().optional(),
+  recursive: z.boolean().optional(),
+  limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional().describe("Entry count, 1-99. Omit for 99.")
+});
+
+const memoryManifestInputSchema = z.object({
+  database_id: z.string().min(1)
+});
+
+const contextInputSchema = z.object({
+  database_id: z.string().min(1),
+  task: z.string().min(1),
+  entities: z.array(z.string()).optional(),
+  namespace: z.string().optional(),
+  budget_tokens: z.number().int().min(1).max(MAX_CONTEXT_BUDGET_TOKENS).optional(),
+  include_evidence: z.boolean().optional(),
+  depth: z.number().int().min(0).max(MAX_CONTEXT_DEPTH).optional()
+});
+
+const writeNodesInputSchema = z.object({
+  database_id: z.string().min(1),
+  nodes: z.array(z.object(withoutDatabaseId(writeNodeInputSchema))).min(1).max(MAX_MUTATION_BATCH_ITEMS)
+});
+
+const mutateNodesBatchInputSchema = z.object({
+  database_id: z.string().min(1),
+  operations: z.array(batchOperationSchema).min(1).max(MAX_MUTATION_BATCH_ITEMS)
+});
+
+const [, append, edit, multiEdit, mkdir, move, remove] = batchOperationSchema.options;
+const dedicatedTools = [
+  { name: "append_nodes", type: "append", schema: append.omit({ type: true }),
+    description: "Append content to nodes, optionally setting metadata or kind. Repeating a call can append duplicate content.",
+    annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
+  { name: "edit_nodes", type: "edit", schema: edit.omit({ type: true }),
+    description: "Replace exact text using the current expected_etag. By default old_text must match exactly once; multiple matches fail. Set replace_all=true only when every occurrence should change. Include unique surrounding text to target one occurrence.",
+    annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
+  { name: "multi_edit_nodes", type: "multi_edit", schema: multiEdit.omit({ type: true }),
+    description: "Apply several exact-text replacements in one node with one current expected_etag. Edits run in order on the preceding result; EACH edit replaces ALL matching occurrences. Include unique surrounding text when only one occurrence should change. A missing match fails the entire batch.",
+    annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
+  { name: "create_folders", type: "mkdir", schema: mkdir.omit({ type: true }),
+    description: "Create folders. An existing folder is left unchanged; an existing non-folder is an error. Parents must exist or precede children in the batch.",
+    annotations: { ...DESTRUCTIVE_TOOL_ANNOTATIONS, destructiveHint: false, idempotentHint: true } },
+  { name: "move_nodes", type: "move", schema: move.omit({ type: true }),
+    description: "Move or rename nodes using source expected_etag. Set overwrite only when explicitly requested; an existing destination also requires expected_target_etag.",
+    annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
+  { name: "delete_nodes", type: "delete", schema: remove.omit({ type: true }),
+    description: "Delete only explicitly selected nodes using current expected_etag. Folder deletion may also require expected_folder_index_etag.",
+    annotations: DESTRUCTIVE_TOOL_ANNOTATIONS }
+] as const;
+const dedicatedToolInputs = dedicatedTools.map(tool => ({
+  ...tool,
+  inputSchema: z.object({
+    database_id: z.string().min(1),
+    operations: z.array(tool.schema.strict()).min(1).max(MAX_MUTATION_BATCH_ITEMS)
+  })
+}));
+
 export default {
-  async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
+  fetch(request: Request, env: RuntimeEnv) { return handleMcpRequest(request, env); }
+} satisfies ExportedHandler<RuntimeEnv>;
+
+export async function handleMcpRequest(
+  request: Request,
+  env: RuntimeEnv,
+  localSession?: Pick<McpAuthStateV5, "authenticateAccessToken">
+): Promise<Response> {
     const url = new URL(request.url);
     const authMode = authenticationMode(request, env);
     const authBoundaryResponse = authenticationBoundaryResponse(authMode);
@@ -382,7 +477,7 @@ export default {
           mcpUnauthorizedResponse(env, "mcp:read")
         );
       }
-      const authenticated = await authenticateMcpRequest(request, env, mcpBodyCallsTool(parsedBody));
+      const authenticated = await authenticateMcpRequest(request, env, mcpBodyCallsTool(parsedBody), localSession);
       if ("response" in authenticated) {
         return withCors(authenticated.response);
       }
@@ -400,8 +495,7 @@ export default {
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     return withCors(await transport.handleRequest(request, { parsedBody }));
-  }
-} satisfies ExportedHandler<RuntimeEnv>;
+}
 
 function rootInfo(url: URL, authMode: AuthenticationMode, writesAvailable: boolean) {
   return {
@@ -442,6 +536,7 @@ export function createServer(
       version: "0.1.0"
     },
     {
+      jsonSchemaValidator: sharedJsonSchemaValidator,
       instructions:
         "Resolve the database with find_databases only if its id is unknown. Choose reads by intent: context for a normal question; search plus list for broad investigations; fetch_many in one call for known search ids or page URLs, even across databases (no preliminary search or conversion to paths); read_paths for 1-10 known paths. Known paths need no preceding search or context call. Use memory_manifest only for database capabilities and limits. Search limit is 1-20 (default 10); list limit is 1-99 (default 99). Omit limit to use its default. For broad investigations search across relevant prefixes (including /Sources), fetch candidate bodies, and report coverage and truncation. Search previews and list entries alone are not evidence. " +
         (writesAvailable ? "Write only when the user explicitly requests a change. Use write_nodes for creation/full replacement; use the dedicated tool for each same-kind change set. edit_nodes rejects multiple matches unless replace_all=true. multi_edit_nodes applies edits sequentially and replaces ALL matches at each step: include unique surrounding text to restrict a replacement. Read current nodes and preserve etags. Use mutate_nodes_batch only when different operation kinds must commit together; never split that transaction. Each 1-100 item batch targets one database. Etags are checked at each operation: an earlier edit invalidates the old etag for that same node. On etag_conflict preserve concurrent changes and retry at most twice only if the intended change remains unambiguous. " : "") +
@@ -453,10 +548,7 @@ export function createServer(
     "find_databases",
     {
       description: "Use this when you need to discover which Kinic Wiki database visible to the current caller matches a user task.",
-      inputSchema: {
-        query: z.string().optional(),
-        limit: z.number().int().min(1).max(MAX_DATABASE_LIMIT).optional()
-      },
+      inputSchema: findDatabasesInputSchema,
       outputSchema: findDatabasesOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -469,13 +561,7 @@ export function createServer(
     {
       description:
         "Find candidate pages for a topic or broad investigation in one database. limit accepts 1-20; default 10. Use prefix / to include all roots, /Knowledge for notes, or /Sources for source documents. For broad coverage vary queries and inspect list when needed. Fetch selected result bodies with fetch_many before answering; previews are not complete evidence. For an ordinary question use context; for known paths use path reads.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        query: z.string().min(1),
-        prefix: z.string().optional(),
-        limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional().describe("Result count, 1-20. Omit for 10."),
-        preview_mode: z.enum(["light", "content-start", "none"]).optional()
-      },
+      inputSchema: searchInputSchema,
       outputSchema: searchOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -488,9 +574,7 @@ export function createServer(
     "fetch_many",
     {
       description: "Read 1 to 10 exact page references: search result ids OR public Kinic Wiki page URLs supplied by the user or another tool. References may belong to different databases; send them together in one call. Known references need no preceding search, context, or path conversion. Never pass ChatGPT citation tokens such as turn0file0. If only database_id and path are known, use path reads. Returns page bodies, etags, and item-level errors.",
-      inputSchema: {
-        ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
-      },
+      inputSchema: fetchManyInputSchema,
       outputSchema: fetchManyOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -503,10 +587,7 @@ export function createServer(
     {
       description:
         "Read 1 to 10 exact known paths in one database, with current etags and item-level errors. No preceding search or context call is needed. Preserve successful items when another path fails. For search ids or URLs use fetch_many.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        paths: z.array(z.string().min(1)).min(1).max(MAX_READ_PATHS)
-      },
+      inputSchema: readPathsInputSchema,
       outputSchema: readPathsOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -519,12 +600,7 @@ export function createServer(
     {
       description:
         "List nodes under a prefix without reading content. limit accepts 1-99; default 99. A truncated result is not a complete inventory. Use prefix / for root inventory and prefix discovery, /Knowledge for curated notes, and /Sources for raw evidence inventory.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        prefix: z.string().optional(),
-        recursive: z.boolean().optional(),
-        limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional().describe("Entry count, 1-99. Omit for 99.")
-      },
+      inputSchema: listInputSchema,
       outputSchema: listOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -537,9 +613,7 @@ export function createServer(
     "memory_manifest",
     {
       description: "Discover Store API roots, capabilities, roles, and limits for one Kinic Wiki database visible to the current caller.",
-      inputSchema: {
-        database_id: z.string().min(1)
-      },
+      inputSchema: memoryManifestInputSchema,
       outputSchema: memoryManifestOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -552,15 +626,7 @@ export function createServer(
     {
       description:
         "Answer a normal question from task-scoped page bodies, links, and source evidence. Start here when the question does not identify exact pages. For known paths use path reads directly. For inventories or exhaustive investigations use list/search and fetch candidate bodies. Do not answer from search hits alone; report insufficient or truncated evidence.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        task: z.string().min(1),
-        entities: z.array(z.string()).optional(),
-        namespace: z.string().optional(),
-        budget_tokens: z.number().int().min(1).max(MAX_CONTEXT_BUDGET_TOKENS).optional(),
-        include_evidence: z.boolean().optional(),
-        depth: z.number().int().min(0).max(MAX_CONTEXT_DEPTH).optional()
-      },
+      inputSchema: contextInputSchema,
       outputSchema: contextOutputSchema,
       annotations: TOOL_ANNOTATIONS,
       _meta: readToolMeta
@@ -596,10 +662,7 @@ function registerMutationTools(
     {
       description:
         "Preferred for every create/full-replacement request, including one node. Create or replace 1 to 100 nodes in order and atomically in one database; any failure rolls back the whole batch. Changes to a public database or published node can become publicly visible.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        nodes: z.array(z.object(withoutDatabaseId(writeNodeInputSchema))).min(1).max(MAX_MUTATION_BATCH_ITEMS)
-      },
+      inputSchema: writeNodesInputSchema,
       outputSchema: mutationBatchOutputSchema,
       annotations: DESTRUCTIVE_TOOL_ANNOTATIONS,
       _meta: writeToolMeta
@@ -626,10 +689,7 @@ function registerMutationTools(
     {
       description:
         "Use when different operation kinds must execute in one transaction. Apply 1 to 100 ordered operations atomically in one database; any failure rolls back the whole batch. Operations and dedicated tools: write (write_nodes), append (append_nodes), edit (edit_nodes), multi_edit (multi_edit_nodes), mkdir (create_folders), move (move_nodes), delete (delete_nodes). Prefer the dedicated tool for same-kind operations; never split a mixed atomic batch into separate calls. Changes to a public database or published node can become publicly visible.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        operations: z.array(batchOperationSchema).min(1).max(MAX_MUTATION_BATCH_ITEMS)
-      },
+      inputSchema: mutateNodesBatchInputSchema,
       outputSchema: mutationBatchOutputSchema,
       annotations: DESTRUCTIVE_TOOL_ANNOTATIONS,
       _meta: writeToolMeta
@@ -637,34 +697,10 @@ function registerMutationTools(
     async ({ database_id, operations }) => executeNodeMutations(env, database_id, operations)
   );
 
-  const [, append, edit, multiEdit, mkdir, move, remove] = batchOperationSchema.options;
-  const dedicatedTools = [
-    { name: "append_nodes", type: "append", schema: append.omit({ type: true }),
-      description: "Append content to nodes, optionally setting metadata or kind. Repeating a call can append duplicate content.",
-      annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
-    { name: "edit_nodes", type: "edit", schema: edit.omit({ type: true }),
-      description: "Replace exact text using the current expected_etag. By default old_text must match exactly once; multiple matches fail. Set replace_all=true only when every occurrence should change. Include unique surrounding text to target one occurrence.",
-      annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
-    { name: "multi_edit_nodes", type: "multi_edit", schema: multiEdit.omit({ type: true }),
-      description: "Apply several exact-text replacements in one node with one current expected_etag. Edits run in order on the preceding result; EACH edit replaces ALL matching occurrences. Include unique surrounding text when only one occurrence should change. A missing match fails the entire batch.",
-      annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
-    { name: "create_folders", type: "mkdir", schema: mkdir.omit({ type: true }),
-      description: "Create folders. An existing folder is left unchanged; an existing non-folder is an error. Parents must exist or precede children in the batch.",
-      annotations: { ...DESTRUCTIVE_TOOL_ANNOTATIONS, destructiveHint: false, idempotentHint: true } },
-    { name: "move_nodes", type: "move", schema: move.omit({ type: true }),
-      description: "Move or rename nodes using source expected_etag. Set overwrite only when explicitly requested; an existing destination also requires expected_target_etag.",
-      annotations: DESTRUCTIVE_TOOL_ANNOTATIONS },
-    { name: "delete_nodes", type: "delete", schema: remove.omit({ type: true }),
-      description: "Delete only explicitly selected nodes using current expected_etag. Folder deletion may also require expected_folder_index_etag.",
-      annotations: DESTRUCTIVE_TOOL_ANNOTATIONS }
-  ] as const;
-  for (const tool of dedicatedTools) {
+  for (const tool of dedicatedToolInputs) {
     server.registerTool(tool.name, {
       description: `${tool.description} Accepts 1 to 100 same-kind operations in one database, executed in input order and atomically; any failure rolls back the whole batch. The complete request must fit 256 KiB. Changes to a public database or published node can become publicly visible.`,
-      inputSchema: {
-        database_id: z.string().min(1),
-        operations: z.array(tool.schema.strict()).min(1).max(MAX_MUTATION_BATCH_ITEMS)
-      },
+      inputSchema: tool.inputSchema,
       outputSchema: mutationBatchOutputSchema,
       annotations: tool.annotations,
       _meta: writeToolMeta
@@ -1154,7 +1190,7 @@ function decodeSearchResultReference(env: RuntimeEnv, reference: string): Search
   }
 }
 
-// One actor and one concurrency limit for the entire tool invocation.
+// One request-local actor; consume each DB response before fetching the next.
 async function readNodeItems(env: RuntimeEnv, requests: NodeReadRequest[]): Promise<NodeReadResult[]> {
   const key = ({ databaseId, path }: NodeReadRequest) => JSON.stringify([databaseId, path]);
   const jobs = [...new Map(requests.map((request) => [key(request), request])).values()];
@@ -1173,23 +1209,20 @@ async function readNodeItems(env: RuntimeEnv, requests: NodeReadRequest[]): Prom
     group.push(request);
     groups.set(request.databaseId, group);
   }
-  const batches = [...groups.values()];
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_NODE_READS, batches.length) }, async () => {
-    while (next < batches.length) {
-      const batch = batches[next++];
-      try {
-        const reads = await reader.readMany(batch[0].databaseId, batch.map((request) => request.path));
-        for (const [index, request] of batch.entries()) {
-          const { node, error } = reads[index];
-          results.set(key(request), { node: node ? { ...node, content: clipText(node.content, MAX_FETCH_TEXT_CHARS),
-            contentTruncated: node.content.length > MAX_FETCH_TEXT_CHARS } : null, error });
-        }
-      } catch (error) {
-        for (const request of batch) results.set(key(request), { node: null, error: error instanceof Error ? error.message : String(error) });
+  // A DB may return nearly 1 MB. Finish decoding and bounding that reply before
+  // starting the next DB, including when multiple MCP requests run concurrently.
+  for (const batch of groups.values()) {
+    try {
+      const reads = await reader.readMany(batch[0].databaseId, batch.map((request) => request.path));
+      for (const [index, request] of batch.entries()) {
+        const { node, error } = reads[index];
+        results.set(key(request), { node: node ? { ...node, content: clipText(node.content, MAX_FETCH_TEXT_CHARS),
+          contentTruncated: node.content.length > MAX_FETCH_TEXT_CHARS } : null, error });
       }
+    } catch (error) {
+      for (const request of batch) results.set(key(request), { node: null, error: error instanceof Error ? error.message : String(error) });
     }
-  }));
+  }
   return requests.map((request) => results.get(key(request))!);
 }
 

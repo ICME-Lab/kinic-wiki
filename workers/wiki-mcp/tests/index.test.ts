@@ -1376,7 +1376,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.readMany).toHaveBeenCalledTimes(1);
   });
 
-  it("limits concurrency to four across all databases and retains input order", async () => {
+  it("consumes one database response at a time and retains input order", async () => {
     let active = 0;
     let peak = 0;
     mocks.readNode.mockImplementation(async (_env: RuntimeEnv, db: string, path: string) => {
@@ -1388,7 +1388,7 @@ describe("wiki mcp worker", () => {
     });
     const ids = Array.from({ length: 10 }, (_, index) => encodeSearchResultId({ version: 1, canister_id: "canister-a", database_id: `db_${index}`, path: "/same.md" }));
     const result = await fetchManySearchResults(env, { ids });
-    expect(peak).toBe(4);
+    expect(peak).toBe(1);
     expect(mocks.readNode).toHaveBeenCalledTimes(10);
     expect(result.results.map((item) => item?.text)).toEqual(ids.map((_, index) => `db_${index}`));
   });

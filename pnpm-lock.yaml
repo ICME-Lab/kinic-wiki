@@ -31,7 +31,8 @@ overrides:
   ws: 8.21.0
 
 patchedDependencies:
-  '@icp-sdk/core': d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242
+  '@icp-sdk/core@5.4.0': f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2
+  '@icp-sdk/core@6.0.0': 1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e
 
 importers:
 
@@ -54,10 +55,10 @@ importers:
     dependencies:
       '@icp-sdk/auth':
         specifier: ^5.0.0
-        version: 5.0.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
+        version: 5.0.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
       '@icp-sdk/core':
         specifier: ^5.4.0
-        version: 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../../packages/source-contracts
@@ -88,7 +89,7 @@ importers:
     dependencies:
       '@icp-sdk/core':
         specifier: 6.0.0
-        version: 6.0.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 6.0.0(patch_hash=1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e)
 
   packages/jev-reranker:
     devDependencies:
@@ -105,7 +106,7 @@ importers:
     dependencies:
       '@icp-sdk/core':
         specifier: ^5.4.0
-        version: 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
 
   packages/vfs-client-core: {}
 
@@ -113,10 +114,10 @@ importers:
     dependencies:
       '@icp-sdk/auth':
         specifier: 5.0.0
-        version: 5.0.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
+        version: 5.0.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
       '@icp-sdk/core':
         specifier: ^5.4.0
-        version: 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       '@kinic/vfs-candid':
         specifier: workspace:*
         version: link:../packages/vfs-candid
@@ -200,22 +201,22 @@ importers:
         version: 6.42.1
       '@dfinity/oisy-wallet-signer':
         specifier: 4.1.3
-        version: 4.1.3(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3))(@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3)
+        version: 4.1.3(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3))(@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3)
       '@dfinity/utils':
         specifier: ^4.2.1
-        version: 4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
+        version: 4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
       '@dfinity/zod-schemas':
         specifier: ^3.2.0
-        version: 3.2.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3)
+        version: 3.2.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3)
       '@icp-sdk/auth':
         specifier: 5.0.0
-        version: 5.0.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
+        version: 5.0.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
       '@icp-sdk/canisters':
         specifier: ^3.6.0
-        version: 3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
+        version: 3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
       '@icp-sdk/core':
         specifier: ^5.4.0
-        version: 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       '@kinic/jev-reranker':
         specifier: workspace:*
         version: link:../packages/jev-reranker
@@ -366,7 +367,7 @@ importers:
     dependencies:
       '@icp-sdk/core':
         specifier: ^5.4.0
-        version: 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
     devDependencies:
       '@types/node':
         specifier: 24.10.1
@@ -385,7 +386,7 @@ importers:
     dependencies:
       '@icp-sdk/core':
         specifier: 6.0.0
-        version: 6.0.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 6.0.0(patch_hash=1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e)
       '@kinic/ii-server':
         specifier: workspace:*
         version: link:../../packages/ii-server
@@ -422,7 +423,7 @@ importers:
     dependencies:
       '@icp-sdk/core':
         specifier: ^5.4.0
-        version: 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       '@kinic/jev-reranker':
         specifier: workspace:*
         version: link:../../packages/jev-reranker
@@ -477,7 +478,7 @@ importers:
     dependencies:
       '@icp-sdk/core':
         specifier: 6.0.0
-        version: 6.0.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+        version: 6.0.0(patch_hash=1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e)
       '@kinic/ii-server':
         specifier: workspace:*
         version: link:../../packages/ii-server
@@ -5226,21 +5227,21 @@ snapshots:
     dependencies:
       '@playwright/test': 1.61.1
 
-  '@dfinity/oisy-wallet-signer@4.1.3(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3))(@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3)':
+  '@dfinity/oisy-wallet-signer@4.1.3(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3))(@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3)':
     dependencies:
-      '@dfinity/utils': 4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
-      '@dfinity/zod-schemas': 3.2.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3)
-      '@icp-sdk/canisters': 3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
-      '@icp-sdk/core': 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+      '@dfinity/utils': 4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
+      '@dfinity/zod-schemas': 3.2.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3)
+      '@icp-sdk/canisters': 3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
+      '@icp-sdk/core': 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       zod: 4.4.3
 
-  '@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))':
+  '@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))':
     dependencies:
-      '@icp-sdk/core': 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+      '@icp-sdk/core': 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
 
-  '@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))(zod@4.4.3)':
+  '@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.4.3)':
     dependencies:
-      '@icp-sdk/core': 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+      '@icp-sdk/core': 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       zod: 4.4.3
 
   '@emnapi/core@1.11.1':
@@ -5367,21 +5368,21 @@ snapshots:
     dependencies:
       hono: 4.13.7
 
-  '@icp-sdk/auth@5.0.0(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))':
+  '@icp-sdk/auth@5.0.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))':
     dependencies:
-      '@icp-sdk/core': 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+      '@icp-sdk/core': 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       idb: 7.1.1
 
-  '@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)))(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))':
+  '@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))':
     dependencies:
-      '@dfinity/utils': 4.2.1(@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242))
-      '@icp-sdk/core': 5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)
+      '@dfinity/utils': 4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
+      '@icp-sdk/core': 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
       '@noble/hashes': 1.8.0
       base58-js: 3.0.3
       bech32: 2.0.0
       mime: 3.0.0
 
-  '@icp-sdk/core@5.4.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)':
+  '@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)':
     dependencies:
       '@dfinity/cbor': 0.2.3
       '@noble/curves': 1.9.7
@@ -5390,7 +5391,7 @@ snapshots:
       '@scure/bip39': 1.6.0
       asn1js: 3.0.10
 
-  '@icp-sdk/core@6.0.0(patch_hash=d43bd394d665903d57028f353fe60bcc30adb6b9784ac8bbe1301b0610dfb242)':
+  '@icp-sdk/core@6.0.0(patch_hash=1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e)':
     dependencies:
       '@dfinity/cbor': 0.2.3
       '@noble/curves': 2.2.0

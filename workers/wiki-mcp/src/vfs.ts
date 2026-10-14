@@ -1,3 +1,4 @@
+import { boundedNodeText } from "./bounded-node-text.js";
 import { boundedResponse } from "./bounded-response.js";
 // Where: workers/wiki-mcp/src/vfs.ts
 // What: Minimal Kinic Wiki canister client for anonymous or delegated read-only MCP tools.
@@ -5,6 +6,7 @@ import { boundedResponse } from "./bounded-response.js";
 
 import { Actor, HttpAgent, RejectError, type Identity } from "@icp-sdk/core/agent";
 import { readNodeRaw } from "@kinic/ii-server/read";
+import { scopedVerifiedNodeKeys } from "@kinic/ii-server/verified-node-key-store";
 import { Principal } from "@icp-sdk/core/principal";
 import {
   candidOptional,
@@ -486,6 +488,7 @@ export async function createRetrievalSearcher(env: RuntimeEnv) {
   try {
     const host = resolveIcHost(env);
     const agent = HttpAgent.createSync({ host, identity: env.KINIC_WIKI_IDENTITY, retryTimes: 0,
+      subnetNodeKeyExpirableStore: scopedVerifiedNodeKeys(host, () => agent.rootKey),
       fetch: async (url, options) => {
         const response = await fetch(url, options);
         return String(url).endsWith("/query") ? boundedResponse(response, 256 * 1024) : response;
@@ -677,7 +680,9 @@ async function createVfsActor(env: RuntimeEnv): Promise<VfsActor> {
 }
 
 async function createVfsActorUncached(host: string, canisterId: string, identity?: Identity): Promise<VfsActor> {
-  const agent = HttpAgent.createSync({ host, identity });
+  const agent = HttpAgent.createSync({ host, identity,
+    subnetNodeKeyExpirableStore: scopedVerifiedNodeKeys(host, () => agent.rootKey)
+  });
   if (isLocalHost(host)) {
     await agent.fetchRootKey();
   }
@@ -1060,7 +1065,7 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const Node = idl.Record({
     path: idl.Text,
     kind: NodeKind,
-    content: idl.Text,
+    content: boundedNodeText(idl.Text),
     created_at: idl.Int64,
     updated_at: idl.Int64,
     etag: idl.Text,

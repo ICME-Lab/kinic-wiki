@@ -1,6 +1,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { JsonnableEd25519KeyIdentity } from "@icp-sdk/core/identity";
 import type { RuntimeEnv } from "../vfs.js";
+import { parseRoutedToken, sessionName } from "./routing.js";
 import {
   base64UrlEncode,
   decryptJson,
@@ -156,7 +157,8 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
 export async function authenticateMcpRequest(
   request: Request,
   env: RuntimeEnv,
-  requireDelegation: boolean
+  requireDelegation: boolean,
+  localSession?: Pick<McpAuthStateV5, "authenticateAccessToken">
 ): Promise<
   | { identity?: Identity; scopes: string[]; actionPermission: "queries" | "all"; identitySource: IdentitySource }
   | { response: Response }
@@ -183,7 +185,7 @@ export async function authenticateMcpRequest(
   if (!sessionId) {
     return { response: unauthorized() };
   }
-  const stub = authNamespace(env).getByName(sessionName(sessionId));
+  const stub = localSession ?? authNamespace(env).getByName(sessionName(sessionId));
   const authenticated = await stub.authenticateAccessToken(tokenValue, resource, Date.now(), requireDelegation);
   if (authenticated.kind === "invalid") {
     return { response: unauthorized() };
@@ -961,17 +963,8 @@ function clientName(clientId: string): string {
   return `client:${clientId}`;
 }
 
-function sessionName(sessionId: string): string {
-  return `session:${sessionId}`;
-}
-
 function registrationKeyContext(sessionId: string): string {
   return `session:${sessionId}:registration-key:v1`;
-}
-
-function parseRoutedToken(token: string, prefix: string): string | null {
-  const parts = token.split(".");
-  return parts.length === 3 && parts[0] === prefix && /^[A-Za-z0-9_-]+$/u.test(parts[1]) ? parts[1] : null;
 }
 
 function normalizeScope(value: string | null): string | null {

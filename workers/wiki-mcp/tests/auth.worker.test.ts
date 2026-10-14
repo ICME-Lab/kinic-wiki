@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { encryptJson, sha256 } from "@kinic/ii-server/crypto";
 import { generateIiKey, type KinicDelegationMaterialV1 } from "@kinic/ii-server/internet-identity";
 import { handleAuthRoute } from "../src/auth/oauth.js";
+import entry from "../src/entry.js";
 import {
   DELEGATION_REFRESH_MARGIN_MS,
   OAUTH_CLIENT_IDLE_TTL_MS,
@@ -30,6 +31,60 @@ const encryptedValue = {
   iv: "AAAAAAAAAAAAAAAA",
   ciphertext: "AA"
 };
+
+describe("MCP inside the session Durable Object", () => {
+  async function activeSession(id: string, scope = "mcp:read") {
+    const now = Date.now(), verifier = "v".repeat(43);
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
+    await stub.createSession({ ...await session(id, verifier, now), scope });
+    await stub.claimConnect("connect-state", `${id}.cookie`, now);
+    const completed = await stub.completeReviewConnect("review-v1", now, id);
+    const issued = await stub.exchangeCode({
+      code: completed!.code, clientId: "client", redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier, issueRefreshToken: false, now
+    });
+    return { stub, token: issued!.accessToken };
+  }
+  function mcpRequest(token: string, method = "tools/list", params = {}, url = resource) {
+    return new Request(url, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json",
+        accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-11-25" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+    });
+  }
+  async function result(response: Response) {
+    const text = await response.text();
+    return JSON.parse(text.startsWith("event:") ? text.split("\n").find(line => line.startsWith("data: "))!.slice(6) : text);
+  }
+
+  it("serves the real 15-tool contract, rejects forged/cross-session tokens and observes revocation", async () => {
+    const a = await activeSession("mcp-a"), b = await activeSession("mcp-b");
+    const responses = await Promise.all([a, b].map(({ token }) => entry.fetch(mcpRequest(token), env)));
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      expect((await result(response)).result.tools).toHaveLength(15);
+    }
+    expect((await a.stub.fetch(mcpRequest(b.token))).status).toBe(401);
+    expect((await entry.fetch(mcpRequest(a.token + "forged"), env)).status).toBe(401);
+    expect((await entry.fetch(mcpRequest(a.token, "tools/list", {}, "https://wrong.example/mcp"), env)).status).toBe(404);
+    await a.stub.invalidate();
+    expect((await entry.fetch(mcpRequest(a.token), env)).status).toBe(401);
+    expect((await entry.fetch(mcpRequest(b.token), env)).status).toBe(200);
+  });
+
+  it("retains the request byte limit and read-only scope enforcement inside the DO", async () => {
+    const { token } = await activeSession("mcp-readonly");
+    const tooLarge = mcpRequest(token, "tools/list", { padding: "a".repeat(300_000) });
+    expect((await entry.fetch(tooLarge, env)).status).toBe(413);
+    const response = await entry.fetch(mcpRequest(token, "tools/call", {
+      name: "delete_nodes", arguments: { database_id: "db_abcdefghijkl",
+        operations: [{ path: "/OpenAIReview/scratch/test", expected_etag: "v1" }] }
+    }), env);
+    const body = await result(response);
+    expect(body.result.isError).toBe(true);
+    expect(JSON.stringify(body)).toContain("insufficient_scope");
+  });
+});
 
 describe("authorization pages", () => {
   it("matches the CSP style hash", async () => {

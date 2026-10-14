@@ -114,6 +114,35 @@ describe("bounded MCP responses", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ error: "tool result exceeds serialized limit" });
     expect(bytes(result)).toBeLessThan(200);
   });
+
+  it.each(["ascii", "😀日本語", "\u0000\u0001\b\f\n\r\t\"\\", "\ud800x\udc00", "\uFEFF", "x\u00a0\u2028\u2029\uFEFF "])(
+    "keeps complete batch bodies at the exact UTF-8 limit for %j", unit => {
+      const text = unit.repeat(100);
+      const input = { results: [node("", "", "/empty"), node(text, "", "/body")] };
+      const unpadded = toFetchManyToolResult(input);
+      input.results[1].metadata.extra = "x".repeat(256_000 - bytes(unpadded));
+      const exact = toFetchManyToolResult(input);
+      expect(bytes(exact)).toBe(256_000);
+      expect(exact.structuredContent?.results).toEqual(input.results);
+      input.results[1].metadata.extra += "x";
+      const clipped = toFetchManyToolResult(input);
+      const items = clipped.structuredContent?.results as ReturnType<typeof node>[];
+      expect(bytes(clipped)).toBeLessThanOrEqual(256_000);
+      expect(items[0].metadata.truncated).toBe(false);
+      expect(items[1].metadata.truncated).toBe(true);
+      expect(items[1].metadata.extra).toBe(input.results[1].metadata.extra);
+      expect(items[1].text).not.toBe(text);
+    }
+  );
+
+  it("preserves nulls, item errors and existing truncation flags in a mixed batch", () => {
+    const clipped = node("body", "", "/clipped");
+    clipped.metadata.truncated = true;
+    const input = { results: [null, { id: "missing", error: "\ud800\n\0", is_error: true }, clipped, node("")] };
+    const result = toFetchManyToolResult(input);
+    expect(result.structuredContent?.results).toEqual(input.results);
+    expect(result.content[0].text).toContain("Result 1\nError: missing result");
+  });
 });
 
 

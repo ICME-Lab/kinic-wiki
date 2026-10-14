@@ -1,0 +1,255 @@
+diff --git a/lib/cjs/candid/idl.js b/lib/cjs/candid/idl.js
+index 8f7a6d455daf506febac8b3918dc082ae53654d4..f3ce7b6e0bff7aa3cb2dd50b825a937cab77fac6 100644
+--- a/lib/cjs/candid/idl.js
++++ b/lib/cjs/candid/idl.js
+@@ -515,7 +515,7 @@ class TextClass extends PrimitiveType {
+         this.checkType(t);
+         const len = (0, leb128_ts_1.lebDecode)(b);
+         const buf = (0, leb128_ts_1.safeRead)(b, Number(len));
+-        const decoder = new TextDecoder('utf8', { fatal: true });
++        const decoder = new TextDecoder('utf8', { fatal: true, ignoreBOM: true });
+         return decoder.decode(buf);
+     }
+     get name() {
+diff --git a/lib/esm/candid/idl.js b/lib/esm/candid/idl.js
+index a45ecccbb151cbda3a9861301faba4b01849e211..e5a1fc3a1cf018c0680827d974bb6d475105c02c 100644
+--- a/lib/esm/candid/idl.js
++++ b/lib/esm/candid/idl.js
+@@ -490,7 +490,7 @@ export class TextClass extends PrimitiveType {
+         this.checkType(t);
+         const len = lebDecode(b);
+         const buf = safeRead(b, Number(len));
+-        const decoder = new TextDecoder('utf8', { fatal: true });
++        const decoder = new TextDecoder('utf8', { fatal: true, ignoreBOM: true });
+         return decoder.decode(buf);
+     }
+     get name() {
+diff --git a/lib/cjs/candid/utils/hash.js b/lib/cjs/candid/utils/hash.js
+--- a/lib/cjs/candid/utils/hash.js
++++ b/lib/cjs/candid/utils/hash.js
+@@ -7,12 +7,22 @@
+  * @param s - string to hash
+  * @returns number representing hashed string
+  */
++// Candid field labels are schema, not response values. Bound both the entry
++// count and label length so dynamically constructed schemas cannot grow this
++// cache indefinitely. Numeric wire labels still take the existing fast path.
++const labelHashes = new Map();
++const utf8encoder = new TextEncoder();
+ function idlHash(s) {
+-    const utf8encoder = new TextEncoder();
++    const cached = labelHashes.get(s);
++    if (cached !== undefined) return cached;
+     const array = utf8encoder.encode(s);
+     let h = 0;
+     for (const c of array) {
+         h = (h * 223 + c) % 2 ** 32;
++    }
++    if (s.length <= 128) {
++        if (labelHashes.size >= 512) labelHashes.delete(labelHashes.keys().next().value);
++        labelHashes.set(s, h);
+     }
+     return h;
+ }
+diff --git a/lib/esm/candid/utils/hash.js b/lib/esm/candid/utils/hash.js
+--- a/lib/esm/candid/utils/hash.js
++++ b/lib/esm/candid/utils/hash.js
+@@ -4,12 +4,22 @@
+  * @param s - string to hash
+  * @returns number representing hashed string
+  */
++// Candid field labels are schema, not response values. Bound both the entry
++// count and label length so dynamically constructed schemas cannot grow this
++// cache indefinitely. Numeric wire labels still take the existing fast path.
++const labelHashes = new Map();
++const utf8encoder = new TextEncoder();
+ function idlHash(s) {
+-    const utf8encoder = new TextEncoder();
++    const cached = labelHashes.get(s);
++    if (cached !== undefined) return cached;
+     const array = utf8encoder.encode(s);
+     let h = 0;
+     for (const c of array) {
+         h = (h * 223 + c) % 2 ** 32;
++    }
++    if (s.length <= 128) {
++        if (labelHashes.size >= 512) labelHashes.delete(labelHashes.keys().next().value);
++        labelHashes.set(s, h);
+     }
+     return h;
+ }
+diff --git a/lib/cjs/candid/utils/leb128.js b/lib/cjs/candid/utils/leb128.js
+--- a/lib/cjs/candid/utils/leb128.js
++++ b/lib/cjs/candid/utils/leb128.js
+@@ -131,24 +131,25 @@
+  * @param pipe A Buffer containing the signed leb encoded bits.
+  */
+ function slebDecode(pipe) {
+-    // Get the size of the buffer, then cut a buffer of that size.
+-    const pipeView = new Uint8Array(pipe.buffer);
+-    let len = 0;
+-    for (; len < pipeView.byteLength; len++) {
+-        if (pipeView[len] < 0x80) {
+-            // If it's a positive number, we reuse lebDecode.
+-            if ((pipeView[len] & 0x40) === 0) {
+-                return lebDecode(pipe);
+-            }
+-            break;
+-        }
+-    }
+-    const bytes = new Uint8Array(safeRead(pipe, len + 1));
+-    let value = BigInt(0);
+-    for (let i = bytes.byteLength - 1; i >= 0; i--) {
+-        value = value * BigInt(0x80) + BigInt(0x80 - (bytes[i] & 0x7f) - 1);
+-    }
+-    return -value - BigInt(1);
++    // Read only the encoded integer. pipe.buffer copies the entire remaining
++    // payload, which can contain megabytes of unrelated text or blobs.
++    const checkpoint = pipe.save();
++    try {
++        let value = BigInt(0);
++        let shift = BigInt(0);
++        let byte;
++        do {
++            byte = safeReadUint8(pipe);
++            value |= BigInt(byte & 0x7f) << shift;
++            shift += BigInt(7);
++        } while (byte >= 0x80);
++        return (byte & 0x40) === 0 ? value : value - (BigInt(1) << shift);
++    }
++    catch (error) {
++        // Preserve the original reader position for an unterminated integer.
++        pipe.restore(checkpoint);
++        throw error;
++    }
+ }
+ /**
+  *
+diff --git a/lib/esm/candid/utils/leb128.js b/lib/esm/candid/utils/leb128.js
+--- a/lib/esm/candid/utils/leb128.js
++++ b/lib/esm/candid/utils/leb128.js
+@@ -119,24 +119,25 @@
+  * @param pipe A Buffer containing the signed leb encoded bits.
+  */
+ export function slebDecode(pipe) {
+-    // Get the size of the buffer, then cut a buffer of that size.
+-    const pipeView = new Uint8Array(pipe.buffer);
+-    let len = 0;
+-    for (; len < pipeView.byteLength; len++) {
+-        if (pipeView[len] < 0x80) {
+-            // If it's a positive number, we reuse lebDecode.
+-            if ((pipeView[len] & 0x40) === 0) {
+-                return lebDecode(pipe);
+-            }
+-            break;
+-        }
+-    }
+-    const bytes = new Uint8Array(safeRead(pipe, len + 1));
+-    let value = BigInt(0);
+-    for (let i = bytes.byteLength - 1; i >= 0; i--) {
+-        value = value * BigInt(0x80) + BigInt(0x80 - (bytes[i] & 0x7f) - 1);
+-    }
+-    return -value - BigInt(1);
++    // Read only the encoded integer. pipe.buffer copies the entire remaining
++    // payload, which can contain megabytes of unrelated text or blobs.
++    const checkpoint = pipe.save();
++    try {
++        let value = BigInt(0);
++        let shift = BigInt(0);
++        let byte;
++        do {
++            byte = safeReadUint8(pipe);
++            value |= BigInt(byte & 0x7f) << shift;
++            shift += BigInt(7);
++        } while (byte >= 0x80);
++        return (byte & 0x40) === 0 ? value : value - (BigInt(1) << shift);
++    }
++    catch (error) {
++        // Preserve the original reader position for an unterminated integer.
++        pipe.restore(checkpoint);
++        throw error;
++    }
+ }
+ /**
+  *
+diff --git a/lib/esm/agent/request_id.js b/lib/esm/agent/request_id.js
+--- a/lib/esm/agent/request_id.js
++++ b/lib/esm/agent/request_id.js
+@@ -1,3 +1,4 @@
++import { createHash } from 'node:crypto';
+ import { lebEncode, compare } from '../candid/index.js';
+ import { HashValueErrorCode, InputError } from "./errors.js";
+ import { uint8FromBufLike } from "./utils/buffer.js";
+@@ -16,7 +17,12 @@
+         return sha256(lebEncode(value));
+     }
+     if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+-        return sha256(uint8FromBufLike(value));
++        const bytes = uint8FromBufLike(value);
++        // SDK 6 is used by this repository's Node/nodejs_compat servers.
++        // Native hashing avoids an async copy of large signed query replies.
++        return bytes.byteLength >= 16384
++            ? new Uint8Array(createHash('sha256').update(bytes).digest())
++            : sha256(bytes);
+     }
+     if (Array.isArray(value)) {
+         const vals = value.map(hashValue);
+diff --git a/lib/cjs/agent/request_id.js b/lib/cjs/agent/request_id.js
+--- a/lib/cjs/agent/request_id.js
++++ b/lib/cjs/agent/request_id.js
+@@ -3,6 +3,7 @@
+ exports.hashValue = hashValue;
+ exports.requestIdOf = requestIdOf;
+ exports.hashOfMap = hashOfMap;
++const node_crypto = require('node:crypto');
+ const _candid_1 = require("../candid/index.js");
+ const errors_ts_1 = require("./errors.js");
+ const buffer_ts_1 = require("./utils/buffer.js");
+@@ -21,7 +22,12 @@
+         return (0, sha2_js_1.sha256)((0, _candid_1.lebEncode)(value));
+     }
+     if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+-        return (0, sha2_js_1.sha256)((0, buffer_ts_1.uint8FromBufLike)(value));
++        const bytes = (0, buffer_ts_1.uint8FromBufLike)(value);
++        // SDK 6 is used by this repository's Node/nodejs_compat servers.
++        // Native hashing avoids an async copy of large signed query replies.
++        return bytes.byteLength >= 16384
++            ? new Uint8Array(node_crypto.createHash('sha256').update(bytes).digest())
++            : (0, sha2_js_1.sha256)(bytes);
+     }
+     if (Array.isArray(value)) {
+         const vals = value.map(hashValue);
+diff --git a/lib/esm/agent/agent/http/index.js b/lib/esm/agent/agent/http/index.js
+--- a/lib/esm/agent/agent/http/index.js
++++ b/lib/esm/agent/agent/http/index.js
+@@ -637,7 +637,12 @@
+             }
+             throw ProtocolError.fromCode(new HttpErrorCode(fetchResponse.status, fetchResponse.statusText, headers, responseText));
+         }
+-        const queryResponse = cbor.decode(uint8FromBufLike(await fetchResponse.arrayBuffer()));
++        const responseBytes = uint8FromBufLike(await fetchResponse.arrayBuffer());
++        const queryResponse = cbor.decode(responseBytes);
++        // The pinned @dfinity/cbor decoder copies byte strings. The transport
++        // owns this input buffer; release it after decoding instead of keeping
++        // a second megabyte-sized copy alive until garbage collection.
++        if (typeof responseBytes.buffer.transfer === 'function') responseBytes.buffer.transfer(0);
+         const response = {
+             ...queryResponse,
+             httpDetails: {
+diff --git a/lib/cjs/agent/agent/http/index.js b/lib/cjs/agent/agent/http/index.js
+--- a/lib/cjs/agent/agent/http/index.js
++++ b/lib/cjs/agent/agent/http/index.js
+@@ -675,7 +675,12 @@
+             }
+             throw errors_ts_1.ProtocolError.fromCode(new errors_ts_1.HttpErrorCode(fetchResponse.status, fetchResponse.statusText, headers, responseText));
+         }
+-        const queryResponse = cbor.decode((0, buffer_ts_1.uint8FromBufLike)(await fetchResponse.arrayBuffer()));
++        const responseBytes = (0, buffer_ts_1.uint8FromBufLike)(await fetchResponse.arrayBuffer());
++        const queryResponse = cbor.decode(responseBytes);
++        // The pinned @dfinity/cbor decoder copies byte strings. The transport
++        // owns this input buffer; release it after decoding instead of keeping
++        // a second megabyte-sized copy alive until garbage collection.
++        if (typeof responseBytes.buffer.transfer === 'function') responseBytes.buffer.transfer(0);
+         const response = {
+             ...queryResponse,
+             httpDetails: {
