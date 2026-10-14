@@ -1,4 +1,0 @@
-{
-  "runtimeGraderHash": "cf3614da2b39b63c83d161f81e9c54cfb3e0501be08916a385b532c5a1d737d2",
-  "note": "The running process imported this grader at startup. Its per-row graderHash read the file at completion; the audited result uses the final grader. Future runs capture the runtime hash once."
-}

@@ -33,9 +33,9 @@ for (const privateMode of [false, true]) {
       const { tools } = await client.listTools();
       expect(tools).toHaveLength(privateMode ? 15 : 7);
       if (privateMode) {
-        const rows = readFileSync(new URL("../evaluation/tool-selection/reports/holdout-final.jsonl", import.meta.url), "utf8").trim().split("\n").map(line => JSON.parse(line));
-        const evaluated = rows.find(row => row.variant === "C");
-        expect(wireDescriptorHash).toBe(evaluated.descriptorHash);
+        // Keep evaluation provenance independent of archived session transcripts.
+        const evaluated = JSON.parse(readFileSync(new URL("../schemas/mcp-evaluated-descriptor.json", import.meta.url), "utf8"));
+        expect(wireDescriptorHash).toBe(evaluated.privateDescriptorSha256);
       }
       const snapshot = {
         instructions: client.getInstructions(),

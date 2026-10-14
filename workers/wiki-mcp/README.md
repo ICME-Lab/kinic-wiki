@@ -98,3 +98,6 @@ Use `context` for normal questions, `list`/`search` and fetched bodies for broad
 `edit_nodes` rejects multiple matches by default; `replace_all: true` opts into replacing every occurrence. `multi_edit_nodes` applies edits in order and replaces all matches at each step. Include unique surrounding text to restrict a replacement. Dedicated tools handle same-kind work; `mutate_nodes_batch` preserves a requested mixed transaction.
 
 Known search IDs or user-provided public Wiki URLs can be fetched together across databases with `fetch_many` (1–10), without a preceding search. `search` accepts 1–20 results (default 10); `list` accepts 1–99 (default 99).
+
+Search replay and resource-test commands are documented in
+[retrieval verification](../../docs/mcp-search-retrieval.md#verification).
