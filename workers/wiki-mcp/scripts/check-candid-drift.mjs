@@ -36,6 +36,9 @@ const expectedTypes = {
     "SearchPreview",
     "SearchNodeHit",
     "SearchNodesRequest",
+    "SearchNodesForRetrievalRequest",
+    "RetrievalSearchHit",
+    "ResultRetrievalSearch",
     "SourceEvidenceRef",
     "SourceEvidence",
     "MemoryRoot",
@@ -158,6 +161,7 @@ const expectedTypes = {
 };
 
 const expectedMethods = {
+  search_nodes_for_retrieval: { input: ["SearchNodesForRetrievalRequest"], output: "ResultRetrievalSearch", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_nodes: { input: ["ListNodesRequest"], output: "ResultNodes", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },

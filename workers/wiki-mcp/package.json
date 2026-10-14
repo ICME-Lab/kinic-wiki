@@ -20,9 +20,13 @@
     "test:tool-selection": "node --test evaluation/tool-selection/*.test.mjs",
     "eval:tool-selection": "node evaluation/tool-selection/run.mjs",
     "eval:tool-selection:build": "node evaluation/tool-selection/build.mjs",
-    "eval:tool-selection:report": "node evaluation/tool-selection/report.mjs --history --write"
+    "eval:tool-selection:report": "node evaluation/tool-selection/report.mjs --history --write",
+    "test:retrieval:live": "node evaluation/run-retrieval.mjs --live",
+    "test:retrieval": "node evaluation/run-retrieval.mjs",
+    "bench:retrieval": "node evaluation/benchmark-worker.mjs"
   },
   "dependencies": {
+    "@kinic/jev-reranker": "workspace:*",
     "@icp-sdk/core": "6.0.0",
     "@kinic/vfs-client-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -481,6 +481,9 @@ importers:
       '@kinic/ii-server':
         specifier: workspace:*
         version: link:../../packages/ii-server
+      '@kinic/jev-reranker':
+        specifier: workspace:*
+        version: link:../../packages/jev-reranker
       '@kinic/vfs-client-core':
         specifier: workspace:*
         version: link:../../packages/vfs-client-core
@@ -656,6 +659,7 @@ packages:
 
   '@cloudflare/vitest-pool-workers@0.20.2':
     resolution: {integrity: sha512-2oLnP0B2E71S6BHig2jdgUvgxDLFD8hXp5TViALnyb5eob1UDCD+72vi547Ryy2SJBdY/H5jiA40ICS7Cm/Ntw==}
+    deprecated: '@cloudflare/vitest-pool-workers has been renamed to @cloudflare/vitest-plugin. This package will not receive future updates.'
     peerDependencies:
       '@vitest/runner': ^4.1.0
       '@vitest/snapshot': ^4.1.0

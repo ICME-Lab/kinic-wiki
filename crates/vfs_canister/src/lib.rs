@@ -59,11 +59,12 @@ use vfs_types::{
     NodeContextRequest, NodeEntry, NodeMutationError, NodeMutationResult, NodePublication,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    RenameDatabaseRequest, RetrievalSearchHit, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesForRetrievalRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -1455,6 +1456,13 @@ fn multi_edit_node(
 #[query]
 fn search_nodes(request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, String> {
     with_service(|service| service.search_nodes(&caller_text(), request))
+}
+
+#[query]
+fn search_nodes_for_retrieval(
+    request: SearchNodesForRetrievalRequest,
+) -> Result<Vec<RetrievalSearchHit>, String> {
+    with_service(|service| service.search_nodes_for_retrieval(&caller_text(), request))
 }
 
 #[query]

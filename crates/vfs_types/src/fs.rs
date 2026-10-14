@@ -924,6 +924,22 @@ pub struct SearchNodesRequest {
     pub preview_mode: Option<SearchPreviewMode>,
 }
 
+/// Bounded retrieval search; intent remains the original question across auxiliary searches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct SearchNodesForRetrievalRequest {
+    pub database_id: String,
+    pub query_text: String,
+    pub intent: String,
+    pub prefix: Option<String>,
+    pub top_k: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, CandidType)]
+pub struct RetrievalSearchHit {
+    pub hit: SearchNodeHit,
+    pub rerank_excerpt: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct SearchNodePathsRequest {
     pub database_id: String,

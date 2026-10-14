@@ -30,9 +30,10 @@ use vfs_types::{
     MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node,
     NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind, NodeMutation,
     NodeMutationError, NodeMutationResult, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
-    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    RetrievalSearchHit, SearchNodeHit, SearchNodePathsRequest, SearchNodesForRetrievalRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidence, SourceEvidenceRef,
+    SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 use crate::{
@@ -47,10 +48,10 @@ use crate::{
         load_outgoing_links, sync_node_links,
     },
     fs_search::{
-        SearchCandidate, build_previews_for_hits, build_search_query_plan,
-        filter_candidates_on_short_terms, finalize_hits, load_content_substring_candidates,
-        load_path_candidates, load_ranked_fts_candidates, path_match_score, rerank_candidates,
-        sort_candidates,
+        SearchCandidate, build_previews_for_hits, build_retrieval_previews,
+        build_search_query_plan, filter_candidates_on_short_terms, finalize_hits,
+        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
+        path_match_score, rerank_candidates, sort_candidates,
     },
     fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
@@ -519,6 +520,45 @@ impl FsStore {
     }
 
     pub fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, String> {
+        Ok(self
+            .search_nodes_impl(request, None)?
+            .into_iter()
+            .map(|item| item.hit)
+            .collect())
+    }
+
+    pub fn search_nodes_for_retrieval(
+        &self,
+        request: SearchNodesForRetrievalRequest,
+    ) -> Result<Vec<RetrievalSearchHit>, String> {
+        if !(1..=20).contains(&request.top_k) {
+            return Err("retrieval top_k must be between 1 and 20".into());
+        }
+        if request.query_text.encode_utf16().count() > 512
+            || request.intent.encode_utf16().count() > 512
+        {
+            return Err("retrieval query and intent must not exceed 512 UTF-16 units".into());
+        }
+        if request.intent.trim().is_empty() {
+            return Err("retrieval intent must not be empty".into());
+        }
+        self.search_nodes_impl(
+            SearchNodesRequest {
+                database_id: request.database_id,
+                query_text: request.query_text,
+                prefix: request.prefix,
+                top_k: request.top_k,
+                preview_mode: Some(SearchPreviewMode::Light),
+            },
+            Some(&request.intent),
+        )
+    }
+
+    fn search_nodes_impl(
+        &self,
+        request: SearchNodesRequest,
+        intent: Option<&str>,
+    ) -> Result<Vec<RetrievalSearchHit>, String> {
         let prefix = request
             .prefix
             .as_ref()
@@ -557,8 +597,20 @@ impl FsStore {
                 sort_candidates(candidates.into_values().collect())
             };
             ranked.truncate(top_k as usize);
-            build_previews_for_hits(conn, &mut ranked, &plan, preview_mode)?;
-            Ok(finalize_hits(ranked, top_k))
+            let excerpts = if let Some(intent) = intent {
+                build_retrieval_previews(conn, &mut ranked, &plan, intent)?
+            } else {
+                build_previews_for_hits(conn, &mut ranked, &plan, preview_mode)?;
+                vec![String::new(); ranked.len()]
+            };
+            Ok(finalize_hits(ranked, top_k)
+                .into_iter()
+                .zip(excerpts)
+                .map(|(hit, rerank_excerpt)| RetrievalSearchHit {
+                    hit,
+                    rerank_excerpt,
+                })
+                .collect())
         })
     }
 

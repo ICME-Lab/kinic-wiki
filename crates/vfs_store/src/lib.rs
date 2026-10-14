@@ -8,6 +8,7 @@ mod fs_search_bench;
 mod fs_store;
 mod glob_match;
 mod hashing;
+mod retrieval_excerpt;
 mod schema;
 mod sqlite;
 

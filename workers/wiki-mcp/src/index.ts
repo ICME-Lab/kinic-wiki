@@ -1,3 +1,5 @@
+import { retrievalSearch } from "./retrieval-search.js";
+import { RetrievalSearchUnavailable } from "./vfs.js";
 // Where: workers/wiki-mcp/src/index.ts
 // What: Remote MCP entrypoint exposing Kinic Wiki database discovery, search, and read tools.
 // Why: Production stays anonymous/read-only while staging requires a request-scoped II delegation for all access.
@@ -946,10 +948,19 @@ export async function searchDatabase(env: RuntimeEnv, input: SearchInput) {
   const limit = clampInt(input.limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
   const previewMode = input.preview_mode ?? "light";
   const canisterId = resolveCanisterId(env);
-  const hits = await searchNodes(env, databaseId, query, prefix, limit, previewMode);
-  return {
-    results: orderSearchHitsForRetrieval(hits).map((hit) => searchResult(env, canisterId, databaseId, hit))
-  };
+  let hits: SearchHit[];
+  if (env.MCP_SEARCH_RERANK_ENABLED === "true" && env.TYPESAFE_API_KEY?.trim() && previewMode === "light" && query.length <= 512) {
+    try {
+      hits = await retrievalSearch(env, databaseId, query, prefix, limit, orderSearchHitsForRetrieval);
+    } catch (error) {
+      if (!(error instanceof RetrievalSearchUnavailable)) throw error;
+      console.log(JSON.stringify({ event: "mcp_search_fallback", reason: "retrieval_method_unavailable" }));
+      hits = orderSearchHitsForRetrieval(await searchNodes(env, databaseId, query, prefix, limit, previewMode));
+    }
+  } else {
+    hits = orderSearchHitsForRetrieval(await searchNodes(env, databaseId, query, prefix, limit, previewMode));
+  }
+  return { results: hits.map((hit) => searchResult(env, canisterId, databaseId, hit)) };
 }
 
 export async function fetchManySearchResults(env: RuntimeEnv, input: FetchManyInput) {

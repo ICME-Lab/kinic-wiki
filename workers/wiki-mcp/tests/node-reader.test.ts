@@ -45,3 +45,40 @@ describe("request-scoped authenticated node reader", () => {
     await expect(createNodeReader({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: {} as Identity })).rejects.toThrow("Kinic Wiki database is unavailable");
   });
 });
+
+
+describe("request-scoped retrieval search client", () => {
+  it("shares one actor across auxiliary queries but never across users", async () => {
+    const { createRetrievalSearcher } = await import("../src/vfs.js");
+    const query = vi.fn(async () => ({ Ok: [] }));
+    mocks.createActor.mockReturnValue({ search_nodes_for_retrieval: query });
+    const identity = {} as Identity;
+    const search = await createRetrievalSearcher({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: identity });
+    await Promise.all([search("a", "first", "intent", "/"), search("a", "second", "intent", "/")]);
+    expect(mocks.createActor).toHaveBeenCalledTimes(1);
+    expect(mocks.createAgent).toHaveBeenCalledWith(expect.objectContaining({ identity, retryTimes: 0, fetch: expect.any(Function) }));
+    await createRetrievalSearcher({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: {} as Identity });
+    expect(mocks.createActor).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+  it("redacts private construction errors and rejects unbounded canister output", async () => {
+    const { createRetrievalSearcher } = await import("../src/vfs.js");
+    mocks.createAgent.mockImplementationOnce(() => { throw new Error("private detail"); });
+    await expect(createRetrievalSearcher({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: {} as Identity })).rejects.toThrow("Kinic Wiki database is unavailable");
+    mocks.createActor.mockReturnValue({ search_nodes_for_retrieval: async () => ({Ok:Array(21).fill({})}) });
+    const search = await createRetrievalSearcher({KINIC_WIKI_CANISTER_ID:"aaaaa-aa"});
+    await expect(search("db","q","q","/")).rejects.toThrow("invalid_retrieval_response");
+  });
+});
+
+it("distinguishes a replica missing-method reject from a private application error", async () => {
+  const { RejectError, UncertifiedRejectErrorCode } = await import("@icp-sdk/core/agent");
+  const { createRetrievalSearcher, RetrievalSearchUnavailable } = await import("../src/vfs.js");
+  const missing = new RejectError(new UncertifiedRejectErrorCode(new Uint8Array(32) as import("@icp-sdk/core/agent").RequestId, 3,
+    "Canister has no query method 'search_nodes_for_retrieval'", "IC0536", undefined));
+  const query = vi.fn().mockRejectedValueOnce(missing).mockResolvedValueOnce({Err:"private database denied: search_nodes_for_retrieval"});
+  mocks.createActor.mockReturnValue({search_nodes_for_retrieval:query});
+  const search = await createRetrievalSearcher({KINIC_WIKI_CANISTER_ID:"aaaaa-aa",KINIC_WIKI_IDENTITY:{} as Identity});
+  await expect(search("db","q","q","/")).rejects.toBeInstanceOf(RetrievalSearchUnavailable);
+  await expect(search("db","q","q","/")).rejects.toThrow("Kinic Wiki database is unavailable");
+});

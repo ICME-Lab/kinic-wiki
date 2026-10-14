@@ -329,6 +329,15 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     snippet: idl.Opt(idl.Text),
     score: idl.Float32
   });
+  const SearchNodesForRetrievalRequest = idl.Record({
+    database_id: idl.Text,
+    query_text: idl.Text,
+    intent: idl.Text,
+    prefix: idl.Opt(idl.Text),
+    top_k: idl.Nat32
+  });
+  const RetrievalSearchHit = idl.Record({ hit: SearchNodeHit, rerank_excerpt: idl.Text });
+  const ResultRetrievalSearch = idl.Variant({ Ok: idl.Vec(RetrievalSearchHit), Err: idl.Text });
   const MemoryCapability = idl.Record({ name: idl.Text, description: idl.Text });
   const MemoryRoot = idl.Record({ kind: idl.Text, path: idl.Text });
   const CanonicalRole = idl.Record({ name: idl.Text, path_pattern: idl.Text, purpose: idl.Text });
@@ -585,6 +594,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
+    search_nodes_for_retrieval: idl.Func([SearchNodesForRetrievalRequest], [ResultRetrievalSearch], ["query"]),
     settle_database_storage_charges_batch: idl.Func([StorageBillingBatchRequest], [ResultStorageBillingBatch], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     unpublish_node: idl.Func([PublishNodeRequest], [ResultUnit], []),

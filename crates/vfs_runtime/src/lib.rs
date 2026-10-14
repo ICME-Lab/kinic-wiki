@@ -54,11 +54,12 @@ use vfs_types::{
     NodeContextRequest, NodeEntry, NodeKind, NodeMutation, NodeMutationError, NodeMutationResult,
     NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
     OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    QueryContextRequest, RetrievalSearchHit, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesForRetrievalRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -822,6 +823,17 @@ impl VfsService {
         let database_id = request.database_id.clone();
         self.with_market_read_database_store(&database_id, caller, |store| {
             store.search_nodes(request)
+        })
+    }
+
+    pub fn search_nodes_for_retrieval(
+        &self,
+        caller: &str,
+        request: SearchNodesForRetrievalRequest,
+    ) -> Result<Vec<RetrievalSearchHit>, String> {
+        let database_id = request.database_id.clone();
+        self.with_market_read_database_store(&database_id, caller, |store| {
+            store.search_nodes_for_retrieval(request)
         })
     }
 

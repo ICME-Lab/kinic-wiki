@@ -1,4 +1,9 @@
 export const expectedTypes = {
+  SearchNodesForRetrievalRequest: { kind: "record", fields: {
+    database_id: "text", query_text: "text", intent: "text", prefix: "opt text", top_k: "nat32"
+  } },
+  RetrievalSearchHit: { kind: "record", fields: { hit: "SearchNodeHit", rerank_excerpt: "text" } },
+  ResultRetrievalSearch: { kind: "variant", cases: { Ok: "vec RetrievalSearchHit", Err: "text" } },
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
   DatabaseStatus: { kind: "variant", cases: { Active: "null", Deleted: "null", Pending: "null" } },
@@ -801,18 +806,20 @@ export const didTypeAliases = {
   ResultReadNodes: "Result_43",
   ResultPublicNode: "Result_44",
   ResultSearch: "Result_46",
-  ResultStorageBillingBatch: "Result_47",
-  ResultSourceEvidence: "Result_48",
+  ResultRetrievalSearch: "Result_47",
+  ResultStorageBillingBatch: "Result_48",
+  ResultSourceEvidence: "Result_49",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteNodes: "Result_52",
-  ResultDatabaseMetadata: "Result_49",
-  ResultWikiMetrics: "Result_50",
-  ResultWikiMetricsSeries: "Result_51",
-  ResultWriteSourceForGeneration: "Result_53"
+  ResultWriteNodes: "Result_53",
+  ResultDatabaseMetadata: "Result_50",
+  ResultWikiMetrics: "Result_51",
+  ResultWikiMetricsSeries: "Result_52",
+  ResultWriteSourceForGeneration: "Result_54"
 };
 
 export const expectedMethods = {
+  search_nodes_for_retrieval: { input: ["SearchNodesForRetrievalRequest"], output: "ResultRetrievalSearch", mode: "query" },
   authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
   authorize_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },

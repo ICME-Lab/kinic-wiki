@@ -1,0 +1,3904 @@
+{
+  "date": "2026-10-13",
+  "baseCommit": "2158f692409e18d438760d71c57a2aae7e204a5f",
+  "deployment": "none; feature defaults disabled",
+  "accuracy": {
+    "live": true,
+    "fixtureSha256": "7b2c22456b0da3953778add4d0e121d14235a607e55d8fe8de791a941bf0b579",
+    "metrics": {
+      "questions": 20,
+      "hit10": 19,
+      "p3": 0.65,
+      "confirmation": 7
+    },
+    "observations": [
+      {
+        "id": "dev-exact-api",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/app-hono-request--5b485d82511c.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0003.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0004.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--dce2fa17a42f.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0002.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--part-02--5e18b76b4d75.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-4220e0bb9436-request-s0622-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--part-04--133d67c99023.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--part-05--d86020133baf.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "queryCount": 1,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-http-testing",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0002.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--part-03--6be68a7f069c.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--dce2fa17a42f.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0003.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0004.md",
+          "/Knowledge/sources/honojs__hono/llms-full/app-hono-request--5b485d82511c.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0001.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--part-02--5e18b76b4d75.md",
+          "/Knowledge/sources/honojs__hono/llms-full/testing-request-and-response--part-04--133d67c99023.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-cors-settings",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-usage--part-02--ec0bb10fe71f.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-options-allowmethods-string-origin-string-c-context-string--6a892698083a.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-allowmethods-string-aa80e81729ce-allowmethods-string-origin-string-c-context-string-s0190-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0187-c0001.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-usage--f0c6ae594bc5.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0187-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-options-origin-string-string-origin-string-c-context-string--f811d06219f5.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-origin-string-strin-b096aaec8082-origin-string-string-origin-string-c-context-string-s0189-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cors-middleware-519263615057-cors-middleware-s0185-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-context-access-insi-13462583ab34-context-access-inside-middleware-arguments-s0117-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-cors-credentials",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-usage--f0c6ae594bc5.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0187-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-options-credentials-boolean--22371b0755dc.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cookies-48c23d5a7b20-cookies-s0049-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-credentials-boolean-6a570a32133b-credentials-boolean-s0193-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/rpc-client-cookies--5f2de04acd0d.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware--6973ff46d1ce.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cors-middleware-519263615057-cors-middleware-s0185-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-environment-depende-18872da82b15-environment-dependent-cors-configuration-s0195-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-environment-dependent-cors-configuration--286b4e18c99b.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-parse-json",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-json--9f4971c0f9a6.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-json-5ad55eae8120-json-s0578-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-hono-main-c2c1e8930e87-c-req-parsebody-does-not-parse-json-text-and-arraybuffer-s0019-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/aws-lambda-access-requestcontext--a0182e63e377.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-access-requestconte-797d8b9a3718-access-requestcontext-s0426-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/aws-lambda-access-requestcontext-before-v3-10-0-deprecated--a8c5d2f12bb1.md",
+          "/Knowledge/sources/honojs__hono/llms-full/context-req--9ad87dcd5089.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-access-aws-lambda-o-84854b1baa8e-access-aws-lambda-object-s0425-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-before-v3-10-0-depr-ca2328ab714e-before-v3-10-0-deprecated-s0427-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-context-4142a008a6bb-context-s0550-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-jwt-auth",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-jwt-auth-middleware-53b789b17bc4-jwt-auth-middleware-s0154-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/jwt-auth-middleware--560728be6928.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-headername-string-0686c4c8e254-headername-string-s0161-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/jwt-auth-middleware-options-headername-string--410bb10997e6.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-headername-string-0686c4c8e254-headername-string-s0330-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-headername-string-0686c4c8e254-headername-string-s0255-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-what-this-middlewar-8c5fc4d19bd4-what-this-middleware-validates-s0319-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/bearer-auth-middleware-usage--6d6322d0eaa7.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-bearer-auth-middlew-4fa8f93d1a96-bearer-auth-middleware-s0248-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/bearer-auth-middleware--b029b86b2336.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-body-limit",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0263-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-with-bun-for--c3c5aa65d526-usage-with-bun-for-large-requests-s0267-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/body-limit-middleware-usage-with-bun-for-large-requests--d84a57d46dc5.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0262-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-clonerawrequest--1546694ace8e.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-clonerawrequest-dfdca621584b-clonerawrequest-s0590-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-honorequest-9e082de6e321-honorequest-s0569-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest--9a72da5631bc.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0004.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-4220e0bb9436-request-s0622-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-sse",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-streamsse-70b21b1829ef-streamsse-s0676-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/streaming-helper-streamsse--9617015a2682.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-notes-5db8cf5c2e2e-notes-s0350-c0001.md",
+          "/Knowledge/sources/honojs__hono/llms-full/streaming-helper-import--f1a71b4e6568.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0673-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/timeout-middleware-notes--part-02--820d0abe53bd.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-streaming-helper-7776ac111ec0-streaming-helper-s0672-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/streaming-helper--7ccf816719cf.md",
+          "/Knowledge/sources/honojs__hono/llms-full/streaming-helper-error-handling--914f782659b8.md",
+          "/Knowledge/sources/honojs__hono/llms-full/streaming-helper-error-handling--part-02--cd8d1db5f03c.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-node-runtime",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-access-the-raw-node-09008ee149ba-access-the-raw-node-js-apis-s0457-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-node-js-b2c4a1ea47d3-node-js-s0451-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/node-js--7fbdcaa4e031.md",
+          "/Knowledge/sources/honojs__hono/llms-full/next-js-pages-router--cf1f95447668.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-web-standards-e92e9d43dbab-web-standards-s0011-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-pages-router-bf00796e62fb-pages-router-s0404-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/hono-web-standards--4708a7e92d5a.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-http2-a2f674017375-http2-s0460-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-hono-main-03cebe5c15a9-servestatic-is-provided-from-the-adapter-s0011-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-server-adapter-5eee6e09a1b9-server-adapter-s0127-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-workers-bindings",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/cloudflare-workers-bindings--aaa762002df4.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-bindings-26f7bca63763-bindings-s0388-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cloudflare-workers-bindings-generating-bindings-types-automatically--a0665b2d08e2.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-generating-bindings-ac44753760bf-generating-bindings-types-automatically-s0389-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-env-cc88a78c427a-env-s0566-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-bindings-26f7bca63763-bindings-s0501-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-generics-f8dc028c3a9c-generics-s0626-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cloudflare-workers-vite-bindings--092767153bdd.md",
+          "/Knowledge/sources/honojs__hono/llms-full/app-hono-generics--1313a8283c80.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-hono-main-8eb7fa90328d-the-arguments-of-generics-for-new-hono-have-been-changed-s0020-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-errors",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-handling-httpexcept-2ba5163e4026-handling-httpexceptions-s0615-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/httpexception-handling-httpexceptions--7491af6f337e.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-handling-httpexcept-2ba5163e4026-handling-httpexceptions-s0615-c0001.md",
+          "/Knowledge/sources/honojs__hono/llms-full/httpexception-handling-httpexceptions--part-02--e2d00a5d2a04.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-error-handling-d0290d4d7fcb-error-handling-s0619-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/app-hono-error-handling--bd141d257dd4.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-httpexception-54668a8c39c6-httpexception-s0610-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/httpexception--c35a23f0d106.md",
+          "/Knowledge/sources/honojs__hono/llms-full/middleware-execution-order--part-02--5931cfb16ce1.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-execution-order-ac5c5c97d2bf-execution-order-s0113-c0001.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-middleware-order",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/middleware-execution-order--f4c201d53758.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-execution-order-ac5c5c97d2bf-execution-order-s0113-c0000.md",
+          "/Knowledge/sources/honojs__hono/curated/middleware--100fe22a25ff.md",
+          "/Knowledge/sources/honojs__hono/llms-full/middleware-execution-order--part-02--5931cfb16ce1.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-execution-order-ac5c5c97d2bf-execution-order-s0113-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-modify-the-response-d1d6194283fc-modify-the-response-after-next-s0116-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/secure-headers-middleware-middleware-conflict--b4141254c782.md",
+          "/Knowledge/sources/honojs__hono/llms-full/middleware-custom-middleware-modify-the-response-after-next--65b6c9d76c80.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-middleware-conflict-f5f73abcd53a-middleware-conflict-s0230-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/combine-middleware-usage-every--417bca37840d.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-durable-websocket",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/websocket-helper--28db900812a2.md",
+          "/Knowledge/sources/honojs__hono/llms-full/websocket-helper-import--52fa62501edd.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-websocket-helper-021eda096461-websocket-helper-s0706-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-upgradewebsocket-d765fc004f6f-upgradewebsocket-s0708-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0707-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/websocket-helper-upgradewebsocket--f2fb40df9e52.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-examples--a63371c103f7-hono-example-durable-objects-s0000-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-websocket-53cba97c14ed-websocket-s0456-c0000.md",
+          "/Knowledge/sources/honojs__hono/examples/durable-objects-src-counter-ts--397c76c3d1ea.md",
+          "/Knowledge/sources/honojs__hono/examples/durable-objects-src-index-ts--86650932b37d.md"
+        ],
+        "rel": [
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-japanese-mixed",
+        "split": "development",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-options-origin-string-string-origin-string-c-context-string--f811d06219f5.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-origin-string-strin-b096aaec8082-origin-string-string-origin-string-c-context-string-s0189-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-usage--f0c6ae594bc5.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0187-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-environment-depende-18872da82b15-environment-dependent-cors-configuration-s0195-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0187-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-usage--part-02--ec0bb10fe71f.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cors-middleware-environment-dependent-cors-configuration--286b4e18c99b.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-context-access-insi-13462583ab34-context-access-inside-middleware-arguments-s0117-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cors-middleware-519263615057-cors-middleware-s0185-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-absent-revenue",
+        "split": "development",
+        "absent": true,
+        "paths": [
+          "/Wiki/sources/honojs__hono/index.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-other-resources-d9c02b6f7d5c-other-resources-s0044-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-npm-and-jsr-14630453b7a6-npm-and-jsr-s0443-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-examples--2e7998bc7bc8-hono-examples-s0000-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-links-references-fcb5a47c9c21-links-references-s0038-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0629-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0181-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0616-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-hono-tiny-dae7b2790aaa-hono-tiny-s0608-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-hono-06fd5a0d5628-hono-s0606-c0000.md"
+        ],
+        "rel": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "dev-absent-staff",
+        "split": "development",
+        "absent": true,
+        "paths": [
+          "/Wiki/sources/honojs__hono/index.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-other-resources-d9c02b6f7d5c-other-resources-s0044-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/philosophy-motivation--00a2031eb293.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0629-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0181-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0616-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-hono-tiny-dae7b2790aaa-hono-tiny-s0608-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-npm-and-jsr-14630453b7a6-npm-and-jsr-s0443-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-hono-06fd5a0d5628-hono-s0606-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-2-hello-world-a0ae090da402-2-hello-world-s0395-c0000.md"
+        ],
+        "rel": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-timeout",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/timeout-middleware-usage--part-02--8639b987d502.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0349-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-timeout-middleware-08319723e9de-timeout-middleware-s0347-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/timeout-middleware--44a01c4512ea.md",
+          "/Knowledge/sources/honojs__hono/llms-full/timeout-middleware-usage--21e1d50ecd07.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-handling-httpexcept-2ba5163e4026-handling-httpexceptions-s0615-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0349-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-error-handling-d0290d4d7fcb-error-handling-s0619-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/app-hono-error-handling--bd141d257dd4.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-custom-error-types-346cebcb34be-custom-error-types-s0653-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-cache",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/cache-middleware-usage--cf6431f6bda3.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0276-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cachename-string-c--25424069cc0e-cachename-string-c-context-string-promise-s0278-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cache-middleware-options-cachename-string-c-context-string-promise--25c312f404a0.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cache-middleware-9ac8b3a8da2a-cache-middleware-s0274-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cacheablestatuscode-5e8711487120-cacheablestatuscodes-number-s0283-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-executionctx-9dc415b929d1-executionctx-s0564-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cache-middleware-options-keygenerator-c-context-string-promise--12eea26409c4.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cache-middleware-options-cacheablestatuscodes-number--f89ca7750d88.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cache-middleware-options-oncachenotavailable-void-promise-false--4ee7b690cd80.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-nonce",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/secure-headers-middleware-setting-content-security-policy-nonce-attribute--part-02--cfb8e0811cde.md",
+          "/Knowledge/sources/honojs__hono/llms-full/secure-headers-middleware-setting-content-security-policy-nonce-attribute--b7816d7ce222.md",
+          "/Knowledge/sources/honojs__hono/llms-full/secure-headers-middleware-setting-content-security-policy-nonce-attribute--part-03--c5a94cdb134f.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-nonce-attribute-499828ea2804-nonce-attribute-s0232-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-nonce-attribute-499828ea2804-nonce-attribute-s0232-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-nonce-attribute-499828ea2804-nonce-attribute-s0232-c0002.md",
+          "/Knowledge/sources/honojs__hono/llms-full/css-helper-usage-in-combination-with-secure-headers-docs-middleware-builtin-secure-headers--part-02--50f29f6d2411.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-in-combinatio-121a77c27666-usage-in-combination-with-secure-headers-docs-middleware-builtin-secure-heade-s0700-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-in-combinatio-121a77c27666-usage-in-combination-with-secure-headers-docs-middleware-builtin-secure-heade-s0700-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/css-helper-usage-in-combination-with-secure-headers-docs-middleware-builtin-secure-headers--cb91e4a9b73f.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-basic",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/basic-auth-middleware-usage--5e60666ce105.md",
+          "/Knowledge/sources/honojs__hono/examples/basic-src-index-ts--cd3269d6210e.md",
+          "/Knowledge/sources/honojs__hono/llms-full/basic-auth-middleware-options-onauthsuccess-c-context-username-string-void-promise--0162b7d8f932.md",
+          "/Knowledge/sources/honojs__hono/llms-full/basic-auth-middleware-recipes-defining-multiple-users--c1df464b03f2.md",
+          "/Knowledge/sources/honojs__hono/llms-full/basic-auth-middleware--dc020e558999.md",
+          "/Knowledge/sources/honojs__hono/llms-full/basic-auth-middleware-import--0092f7a50720.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-examples--2e7998bc7bc8-hono-examples-s0000-c0000.md",
+          "/Knowledge/sources/honojs__hono/examples/basic-src-index-test-ts--8bfeddeaacde.md",
+          "/Knowledge/sources/honojs__hono/examples/basic-src-index-ts--part-02--c0b78191072a.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0616-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 2,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-etag",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/etag-middleware-the-retained-headers--d65edd65dd15.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-etag-middleware-2a7cfbe9d43f-etag-middleware-s0168-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-weak-boolean-c112d6e3cee5-weak-boolean-s0173-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/etag-middleware-options-weak-boolean--cdd2183c1989.md",
+          "/Knowledge/sources/honojs__hono/llms-full/etag-middleware-usage--49dc208331e7.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-middleware-helpers-621ffdda4db6-middleware-helpers-s0012-c0002.md",
+          "/Knowledge/sources/honojs__hono/llms-full/hono-middleware-helpers--part-03--30c2e46649bc.md",
+          "/Knowledge/sources/honojs__hono/llms-full/etag-middleware-import--9c776012681b.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-honorequest-9e082de6e321-honorequest-s0569-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest--9a72da5631bc.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-upload",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-parsebody-multiple-files--40fa878291f7.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-multiple-files-or-f-50e720a86cb2-multiple-files-or-fields-with-same-name-s0576-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-parsebody-multiple-files-or-fields-with-same-name--9a85191dcb6f.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-multiple-files-8c23142f4bc4-multiple-files-s0575-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-parsebody--eb6d640e9517.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-parsebody-646640370143-parsebody-s0574-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0263-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-hono-main-c2c1e8930e87-c-req-parsebody-does-not-parse-json-text-and-arraybuffer-s0019-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/body-limit-middleware-usage--66792265e934.md",
+          "/Wiki/sources/honojs__hono/2026/https-raw-githubusercontent-com-honojs-hono-main-412c4676f95a-body-parse-middleware-is-obsolete-s0024-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 2,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-pretty",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/pretty-json-middleware--b7ffd0aa90c0.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-pretty-json-middlew-eb0fbecc2ea6-pretty-json-middleware-s0219-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/pretty-json-middleware-usage--22b950ee8bfb.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0221-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/pretty-json-middleware-import--9e962ecce0f9.md",
+          "/Knowledge/sources/honojs__hono/llms-full/pretty-json-middleware-options-force-boolean--9922cc1853fd.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-return-json-10610e412306-return-json-s0518-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/context-json--824a4e43bae9.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-json-5ad55eae8120-json-s0556-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/getting-started-return-json--2eb97bef6b2b.md"
+        ],
+        "rel": [
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 2,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-slash",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/trailing-slash-middleware-options-alwaysredirect-boolean--768299275ea9.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-alwaysredirect-bool-4a9af190a9e1-alwaysredirect-boolean-s0304-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/trailing-slash-middleware-usage--7a29060fd138.md",
+          "/Knowledge/sources/honojs__hono/llms-full/trailing-slash-middleware--0169cbd25cce.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-trailing-slash-midd-de42a87bd445-trailing-slash-middleware-s0300-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-492647be7ffd-usage-s0302-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/trailing-slash-middleware-note--635d40683acd.md",
+          "/Knowledge/sources/honojs__hono/llms-full/trailing-slash-middleware-options-skip-path-string-boolean--0fb7b7b77923.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-skip-path-string-bo-b24eba8b09f7-skip-path-string-boolean-s0305-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/trailing-slash-middleware-import--65d8d2ef00a1.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-reqid",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/request-id-middleware-options-headername-string--42ebacb0c116.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-headername-string-0686c4c8e254-headername-string-s0343-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-set-request-id-11d449df7da5-set-request-id-s0340-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/request-id-middleware-usage-set-request-id--156a9f395a66.md",
+          "/Knowledge/sources/honojs__hono/llms-full/jwt-auth-middleware-options-headername-string--410bb10997e6.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-headername-string-0686c4c8e254-headername-string-s0161-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-jwt-auth-middleware-53b789b17bc4-jwt-auth-middleware-s0154-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-custom-middleware-548ca91069fb-custom-middleware-s0115-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-headers-a933751569bb-headers-s0056-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-request-and-respons-0be913dc4750-request-and-response-s0098-c0002.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-rpctype",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/rpc-infer--c3dddd5d754b.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-infer-8d2202f9c258-infer-s0064-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/rpc-global-response--part-02--85a95534aa59.md",
+          "/Knowledge/sources/honojs__hono/llms-full/rpc-status-code--part-02--5df4ade0e4cb.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-global-response-f433bf2f2622-global-response-s0051-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-rpc-2b36eb2658d0-rpc-s0046-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/rpc-not-found--part-03--20428152b7b8.md",
+          "/Knowledge/sources/honojs__hono/llms-full/rpc--8b07b95d1ba4.md",
+          "/Knowledge/sources/honojs__hono/llms-full/rpc-global-response--8d100ecc17ad.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-global-response-f433bf2f2622-global-response-s0051-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-signed-cookie",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-signed-cookies-ceef96b311bd-signed-cookies-s0718-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cookie-helper-usage-signed-cookies--3a097e0df02d.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-secure-and-host-pre-f7fb5b5d83a4-secure-and-host-prefix-s0725-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-setcookie-setsigned-a7ed3e658818-setcookie-setsignedcookie-s0723-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cookie-helper-options-setcookie-setsignedcookie--fee41216e7ad.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0715-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cookie-helper-255ddb82c8d4-cookie-helper-s0714-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-generatesignedcooki-29e4f74f1e00-generatesignedcookie-s0721-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/cookie-helper-usage-cookie-generation-generatesignedcookie--239d205d7d39.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-verification-verify-97978ea41410-verification-verifyoptions-s0162-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-zod",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-with-zod-1ad56311b0d3-with-zod-s0106-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/validation-standard-schema-validator-middleware-with-zod--3bd1b70f70f9.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-zod-validator-middl-861fe8deda52-zod-validator-middleware-s0104-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/validation-zod-validator-middleware--fd8800b22d16.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-with-zod-1ad56311b0d3-with-zod-s0103-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-validation-with-zod-b87d1b266f44-validation-with-zod-s0528-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/hono-stacks-validation-with-zod--a975335f4533.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-with-zod-1ad56311b0d3-with-zod-s0103-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-npm-and-jsr-14630453b7a6-npm-and-jsr-s0443-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-npm-and-jsr-14630453b7a6-npm-and-jsr-s0443-c0001.md"
+        ],
+        "rel": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-finality",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/2016573486655828099.md",
+          "/Sources/raw/twitter/1367530952897957888.md",
+          "/Sources/raw/twitter/1452299007745744900.md",
+          "/Sources/raw/twitter/1367524031616876545.md",
+          "/Sources/raw/twitter/1684896001683759104.md",
+          "/Sources/raw/twitter/1413500301760294915.md",
+          "/Sources/raw/twitter/1724760502021050565.md",
+          "/Sources/raw/twitter/1717619832760283464.md",
+          "/Sources/raw/twitter/1723718528866332994.md",
+          "/Sources/raw/twitter/1625135780694818821.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-stable",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/1805920805672415354.md",
+          "/Sources/raw/twitter/1831824664026612134.md",
+          "/Sources/raw/twitter/1278480417679499264.md",
+          "/Sources/raw/twitter/1277744629828317184.md",
+          "/Sources/raw/twitter/1277745663883665411.md",
+          "/Sources/raw/twitter/1277735804295471104.md",
+          "/Sources/raw/twitter/1423446480711520260.md",
+          "/Sources/raw/twitter/1283904002216701952.md",
+          "/Sources/raw/twitter/1593003752172457984.md",
+          "/Sources/raw/twitter/2054184500318326792.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-mcp",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/2066580383567622439.md",
+          "/Knowledge/facts.md",
+          "/Sources/raw/twitter/2036756587050655753.md",
+          "/Sources/raw/twitter/2066554512744108292.md",
+          "/Sources/raw/twitter/2034282507038798139.md",
+          "/Sources/raw/twitter/2045525031447417049.md",
+          "/Sources/raw/twitter/2024344198133272769.md",
+          "/Sources/raw/twitter/2019873994212569339.md",
+          "/Sources/raw/twitter/2039662296708895046.md",
+          "/Sources/raw/twitter/2017177853607960592.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-free",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/2062237303544914309.md",
+          "/Sources/raw/twitter/2048751623866810456.md",
+          "/Sources/raw/twitter/2019452642586394653.md",
+          "/Sources/raw/twitter/2047003300218679451.md",
+          "/Sources/raw/twitter/2053467213533708659.md",
+          "/Sources/raw/twitter/1955428115838275669.md",
+          "/Sources/raw/twitter/2055280014581547210.md",
+          "/Sources/raw/twitter/2055280543651025165.md",
+          "/Sources/raw/twitter/2042982573417136158.md",
+          "/Sources/raw/twitter/2006338989318623244.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-ai-speed",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/1781348066345255291.md",
+          "/Sources/raw/twitter/1755986833282912444.md",
+          "/Knowledge/facts.md",
+          "/Knowledge/timeline.md",
+          "/Sources/raw/twitter/1668732333111771136.md",
+          "/Knowledge/thought.md",
+          "/Sources/raw/twitter/1374811081554632704.md",
+          "/Sources/raw/twitter/1303421318977650688.md",
+          "/Sources/raw/twitter/1725813250988658988.md",
+          "/Sources/raw/twitter/1880725729828315475.md"
+        ],
+        "rel": [
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-throughput",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/1999446458098155575.md",
+          "/Sources/raw/twitter/1435316803329200139.md",
+          "/Sources/raw/twitter/1488927600445689860.md",
+          "/Sources/raw/twitter/1712804869071905152.md",
+          "/Sources/raw/twitter/1490354250148245504.md",
+          "/Sources/raw/twitter/1435313420803379209.md",
+          "/Sources/raw/twitter/1490349135249035264.md",
+          "/Sources/raw/twitter/1367554204030492673.md",
+          "/Sources/raw/twitter/1938224415654723821.md",
+          "/Sources/raw/twitter/1818354918543310995.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-signing",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/2062265668779544771.md",
+          "/Knowledge/facts.md",
+          "/Sources/raw/twitter/2039811259046990326.md",
+          "/Sources/raw/twitter/2024378354875715777.md",
+          "/Sources/raw/twitter/2033899416998830531.md",
+          "/Sources/raw/twitter/1984267130083451199.md",
+          "/Sources/raw/twitter/2053467213533708659.md",
+          "/Sources/raw/twitter/2029856155082567767.md",
+          "/Sources/raw/twitter/2019117086401049073.md",
+          "/Sources/raw/twitter/1404618196095668226.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-dom-ckbtc",
+        "split": "holdout",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/2010437250270756901.md",
+          "/Sources/raw/twitter/1717619832760283464.md",
+          "/Sources/raw/twitter/1716484302530048211.md",
+          "/Sources/raw/twitter/1612602551903428608.md",
+          "/Sources/raw/twitter/1625135780694818821.md",
+          "/Sources/raw/twitter/1412422053551030288.md",
+          "/Sources/raw/twitter/1642894205058990080.md",
+          "/Sources/raw/twitter/1756670514158801158.md",
+          "/Sources/raw/twitter/1450895230467727367.md",
+          "/Sources/raw/twitter/1489244776331296791.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-absent-hono",
+        "split": "holdout",
+        "absent": true,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-connection-header-p-4bd16aaa34fd-connection-header-processing-s0682-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-hono-tiny-dae7b2790aaa-hono-tiny-s0608-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-npm-and-jsr-14630453b7a6-npm-and-jsr-s0443-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/proxy-helper-proxy-connection-header-processing--806a1e3bed32.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-which-preset-should-c96a19a06be6-which-preset-should-i-use-s0609-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0629-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0181-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0616-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/presets-which-preset-should-i-use--part-02--09dbc3a7f827.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-streamsse-70b21b1829ef-streamsse-s0676-c0000.md"
+        ],
+        "rel": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "holdout-absent-dom",
+        "split": "holdout",
+        "absent": true,
+        "paths": [
+          "/Sources/raw/twitter/1280295393163481088.md",
+          "/Sources/raw/twitter/2033549116064571712.md",
+          "/Sources/raw/twitter/1881082443786322291.md",
+          "/Sources/raw/twitter/1750938188401578278.md",
+          "/Sources/raw/twitter/1538173794157731843.md",
+          "/Sources/raw/twitter/1976373278626423135.md",
+          "/Sources/raw/twitter/2002526394212069708.md",
+          "/Sources/raw/twitter/1841120398663889073.md",
+          "/Sources/raw/twitter/747131499988684801.md",
+          "/Sources/raw/twitter/1453721611538894848.md"
+        ],
+        "rel": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "headers",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-handling-httpexcept-2ba5163e4026-handling-httpexceptions-s0615-c0001.md",
+          "/Knowledge/sources/honojs__hono/llms-full/httpexception-handling-httpexceptions--part-02--e2d00a5d2a04.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-handling-httpexcept-2ba5163e4026-handling-httpexceptions-s0615-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/httpexception-handling-httpexceptions--7491af6f337e.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-custom-response-2267684b66cf-custom-response-s0613-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/httpexception-throwing-httpexceptions-custom-response--682d34edd20c.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-context-4142a008a6bb-context-s0550-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/context--d90470f5416d.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-throwing-httpexcept-9e254b54a874-throwing-httpexceptions-s0611-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-httpexception-54668a8c39c6-httpexception-s0610-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "clone",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-clonerawrequest-dfdca621584b-clonerawrequest-s0590-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-clonerawrequest--1546694ace8e.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-blob--fb9e00ab9193.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-json--9f4971c0f9a6.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-arraybuffer--bd2890cf476e.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-parsebody--eb6d640e9517.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-text--369cbaf98d65.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-formdata--bdec26f67ab6.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-body-limit-middlewa-8992dc6c9e22-body-limit-middleware-s0261-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/honorequest-parsebody-multiple-files--40fa878291f7.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "process-env",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/cloudflare-workers-load-env-when-local-development--part-02--25cefbfe21d7.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-load-env-when-local-5141a6e05b26-load-env-when-local-development-s0392-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-env-cc88a78c427a-env-s0686-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-env-cc88a78c427a-env-s0686-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/adapter-helper-env--part-02--c46f3353bba2.md",
+          "/Knowledge/sources/honojs__hono/llms-full/adapter-helper-env--a54079299f51.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-logging-details-526baaf9fe4d-logging-details-s0149-c0001.md",
+          "/Knowledge/sources/honojs__hono/llms-full/logger-middleware-logging-details--part-02--e06c53842f6b.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-usage-with-bun-for--c3c5aa65d526-usage-with-bun-for-large-requests-s0267-c0001.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-cloudflare-workers-aff4ad90d4fa-cloudflare-workers-s0378-c0000.md"
+        ],
+        "rel": [
+          true,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 2,
+        "modelCalls": 1
+      },
+      {
+        "id": "sse-close",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Knowledge/sources/honojs__hono/llms-full/streaming-helper-streamsse--9617015a2682.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-import-974fc5cc4f52-import-s0629-c0000.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0616-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/webassembly-w-wasi-hello-wasm--4be61cee6e96.md",
+          "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-app-hono-c45fe9edb3d1-app-hono-s0181-c0000.md",
+          "/Knowledge/sources/honojs__hono/llms-full/webassembly-w-wasi-hello-wasm--part-02--09a71473f88b.md",
+          "/Knowledge/sources/honojs__hono/llms-full/webassembly-w-wasi-setup--1c8d4e9fc2e4.md",
+          "/Knowledge/sources/honojs__hono/llms-full/webassembly-w-wasi--dce39b701b5a.md",
+          "/Knowledge/sources/honojs__hono/llms-full/webassembly-w-wasi-more-information--part-02--8a8bcb4a9b92.md",
+          "/Knowledge/sources/honojs__hono/llms-full/webassembly-w-wasi-setup--part-02--dcb701448a30.md"
+        ],
+        "rel": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 2,
+        "modelCalls": 1
+      },
+      {
+        "id": "throughput",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/1656309344458223619.md",
+          "/Knowledge/facts.md",
+          "/Sources/raw/twitter/1641867455717859353.md",
+          "/Sources/raw/twitter/1641870076818194432.md",
+          "/Sources/raw/twitter/1636098416227786756.md",
+          "/Sources/raw/twitter/1858644686291796101.md",
+          "/Sources/raw/twitter/1835727847580668264.md",
+          "/Sources/raw/twitter/1829534688966226171.md",
+          "/Sources/raw/twitter/1839327769639223734.md",
+          "/Sources/raw/twitter/1632754559343796228.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "discard-blocks",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/1371520326572634112.md",
+          "/Sources/raw/twitter/1371269327056334852.md",
+          "/Sources/raw/twitter/1367631294780207108.md",
+          "/Sources/raw/twitter/1366258817768460288.md",
+          "/Sources/raw/twitter/1347709156787056642.md",
+          "/Sources/raw/twitter/1316511847281905664.md",
+          "/Sources/raw/twitter/1361421794826014720.md",
+          "/Sources/raw/twitter/1394498632234110980.md",
+          "/Sources/raw/twitter/1475367728181563396.md",
+          "/Sources/raw/twitter/1349222404719972354.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "roadmap",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/1994493645974900942.md",
+          "/Sources/raw/twitter/1978845353030955267.md",
+          "/Sources/raw/twitter/2009957288530817133.md",
+          "/Sources/raw/twitter/2030575227961307236.md",
+          "/Sources/raw/twitter/2031362174254247964.md",
+          "/Sources/raw/twitter/2017216456400764937.md",
+          "/Sources/raw/twitter/2030574611868299542.md",
+          "/Sources/raw/twitter/1937577282157129844.md",
+          "/Sources/raw/twitter/1907877563516727652.md",
+          "/Sources/raw/twitter/1367553707248816129.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      },
+      {
+        "id": "multidex",
+        "split": "confirmation",
+        "absent": false,
+        "paths": [
+          "/Sources/raw/twitter/2066554512744108292.md",
+          "/Knowledge/months/2026-06.md",
+          "/Knowledge/thought.md",
+          "/Sources/raw/twitter/2048751623866810456.md",
+          "/Sources/raw/twitter/2047230578924142989.md",
+          "/Sources/raw/twitter/1899524675165630537.md",
+          "/Knowledge/months/2026-04.md",
+          "/Sources/raw/twitter/2027238642297839657.md",
+          "/Sources/raw/twitter/2029856749503578362.md",
+          "/Sources/raw/twitter/2053467213533708659.md"
+        ],
+        "rel": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "queryCount": 3,
+        "modelCalls": 1
+      }
+    ]
+  },
+  "resources": {
+    "completed": true,
+    "signatureVerification": true,
+    "integrity": [
+      {
+        "fault": "query",
+        "rejected": true
+      },
+      {
+        "fault": "certificate",
+        "rejected": true
+      }
+    ],
+    "passed": true,
+    "results": [
+      {
+        "variant": "baseline",
+        "scenario": "normal",
+        "parallel": 1,
+        "repeats": 8,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 32854376,
+          "totalSize": 57212928,
+          "embedderHeapUsedSize": 515872,
+          "backingStorageSize": 621771
+        },
+        "cpuMs": 146.157875,
+        "cpuMsPerRequest": 18.269734375,
+        "largestHeap": 31632124,
+        "largestBacking": 612643,
+        "runs": [
+          {
+            "wallMs": 18.329958000000033,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 18.260499999999865,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 16.482582999999977,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 16.67854199999988,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 17.178249999999935,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 18.307874999999967,
+            "bytes": 19844,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 16.50654200000008,
+            "bytes": 19844,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 17.144250000000056,
+            "bytes": 19844,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "reads": 0,
+        "readState": 9,
+        "rootKeyFetches": 9,
+        "signedQueries": 9,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 1
+      },
+      {
+        "variant": "combined",
+        "scenario": "normal",
+        "parallel": 1,
+        "repeats": 8,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 36680148,
+          "totalSize": 61407232,
+          "embedderHeapUsedSize": 644832,
+          "backingStorageSize": 4922485
+        },
+        "cpuMs": 292.2066249999999,
+        "cpuMsPerRequest": 36.52582812499999,
+        "largestHeap": 36396764,
+        "largestBacking": 4891436,
+        "runs": [
+          {
+            "wallMs": 223.4587919999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 251.20333299999993,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 240.56620900000007,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 241.77525000000014,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 227.82554200000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 244.22012500000028,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 244.01724999999988,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.0935840000002,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 27,
+        "reads": 0,
+        "readState": 9,
+        "rootKeyFetches": 9,
+        "signedQueries": 27,
+        "jevCalls": 9,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 2
+      },
+      {
+        "variant": "combined",
+        "scenario": "normal",
+        "parallel": 8,
+        "repeats": 12,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 21745168,
+          "totalSize": 105971712,
+          "embedderHeapUsedSize": 489296,
+          "backingStorageSize": 1284887
+        },
+        "cpuMs": 1999.8827083333333,
+        "cpuMsPerRequest": 20.83211154513889,
+        "largestHeap": 45977304,
+        "largestBacking": 25954852,
+        "runs": [
+          {
+            "wallMs": 349.75570800000014,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 344.2920419999996,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 348.04429200000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.2051670000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 349.4650830000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.7808329999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.50729200000023,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 349.97254100000055,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.4738750000006,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 360.42512499999975,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 361.75658399999975,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 360.6263749999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 360.8615,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 361.1918749999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 361.4929170000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 360.1944170000006,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 318.14987500000007,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 337.9970409999996,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 340.55712500000027,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 335.92612499999996,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 338.2024999999994,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 342.12058400000024,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 337.7524169999997,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 341.88445799999954,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 325.74633300000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 343.1524580000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.7766249999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.2483750000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.51750000000084,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 346.8570829999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.994917,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 348.25183300000026,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 342.0326249999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.28833400000076,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 344.8221659999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.058,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 344.5050419999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.0701660000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.51416599999993,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 348.1155840000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 337.8806250000007,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 338.2294160000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 340.2893329999997,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 341.12083299999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 341.3393339999993,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 346.9862499999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 347.85620800000015,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 348.09208299999955,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 339.5432500000006,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 340.4307920000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 343.4043750000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.49324999999953,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 345.8439579999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 346.1482079999996,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 346.56837499999983,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 346.9736669999993,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 355.8659170000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.51691700000083,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.6814169999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.8274999999994,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.96970800000054,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 358.30383399999937,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 358.56924999999956,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 358.79008299999987,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 401.8124579999994,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 403.1204580000003,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 402.9027500000002,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 408.74470799999926,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 411.15637499999957,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 410.9830000000002,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 410.81233299999985,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 411.54204200000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 329.56674999999996,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 333.31325000000015,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 332.7775419999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 333.0562920000002,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 333.8568750000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 334.81104199999936,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 335.5090829999999,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 336.2796250000001,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 351.4680420000004,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 353.07937499999935,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 353.4319999999998,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 353.75887499999953,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 356.1032500000001,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.57954100000006,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.4345409999996,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 357.2629589999997,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 253.57933400000002,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 334.13487499999974,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 351.6385829999999,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 352.207042,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 353.5682080000006,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 354.93925000000036,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 355.255083,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 355.72904199999994,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 312,
+        "reads": 0,
+        "readState": 104,
+        "rootKeyFetches": 104,
+        "signedQueries": 312,
+        "jevCalls": 104,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 16
+      },
+      {
+        "variant": "combined",
+        "scenario": "longpaths",
+        "parallel": 1,
+        "repeats": 2,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 37034632,
+          "totalSize": 107511808,
+          "embedderHeapUsedSize": 489296,
+          "backingStorageSize": 22473687
+        },
+        "cpuMs": 57.99449999999979,
+        "cpuMsPerRequest": 28.997249999999894,
+        "largestHeap": 28039644,
+        "largestBacking": 8215921,
+        "runs": [
+          {
+            "wallMs": 42.70379099999991,
+            "bytes": 165,
+            "error": true
+          },
+          {
+            "wallMs": 39.801124999999956,
+            "bytes": 165,
+            "error": true
+          }
+        ],
+        "queries": 9,
+        "reads": 0,
+        "readState": 3,
+        "rootKeyFetches": 3,
+        "signedQueries": 9,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 2
+      },
+      {
+        "variant": "combined",
+        "scenario": "oversize",
+        "parallel": 1,
+        "repeats": 2,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 49390816,
+          "totalSize": 106233856,
+          "embedderHeapUsedSize": 489296,
+          "backingStorageSize": 1413752
+        },
+        "cpuMs": 34.87412499999982,
+        "cpuMsPerRequest": 17.43706249999991,
+        "largestHeap": 49286188,
+        "largestBacking": 1413580,
+        "runs": [
+          {
+            "wallMs": 16.451375000000553,
+            "bytes": 147,
+            "error": true
+          },
+          {
+            "wallMs": 17.802999999999884,
+            "bytes": 147,
+            "error": true
+          }
+        ],
+        "queries": 3,
+        "reads": 0,
+        "readState": 3,
+        "rootKeyFetches": 3,
+        "signedQueries": 3,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 1
+      },
+      {
+        "variant": "combined",
+        "scenario": "provider-error",
+        "parallel": 1,
+        "repeats": 2,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 50176336,
+          "totalSize": 106233856,
+          "embedderHeapUsedSize": 489296,
+          "backingStorageSize": 5319429
+        },
+        "cpuMs": 33.05929166666647,
+        "cpuMsPerRequest": 16.529645833333234,
+        "largestHeap": 47124004,
+        "largestBacking": 5317826,
+        "runs": [
+          {
+            "wallMs": 31.72283299999981,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 29.28583299999991,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "reads": 0,
+        "readState": 3,
+        "rootKeyFetches": 3,
+        "signedQueries": 9,
+        "jevCalls": 3,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 2
+      },
+      {
+        "variant": "combined",
+        "scenario": "provider-large",
+        "parallel": 1,
+        "repeats": 2,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 51288016,
+          "totalSize": 106233856,
+          "embedderHeapUsedSize": 489296,
+          "backingStorageSize": 5389577
+        },
+        "cpuMs": 33.09983333333321,
+        "cpuMsPerRequest": 16.549916666666604,
+        "largestHeap": 49318084,
+        "largestBacking": 5387974,
+        "runs": [
+          {
+            "wallMs": 30.77758399999948,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 28.887165999998615,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "reads": 0,
+        "readState": 3,
+        "rootKeyFetches": 3,
+        "signedQueries": 9,
+        "jevCalls": 3,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 2
+      },
+      {
+        "variant": "combined",
+        "scenario": "timeout",
+        "parallel": 1,
+        "repeats": 2,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 52230848,
+          "totalSize": 106233856,
+          "embedderHeapUsedSize": 489296,
+          "backingStorageSize": 5319551
+        },
+        "cpuMs": 57.26445833333355,
+        "cpuMsPerRequest": 28.632229166666775,
+        "largestHeap": 51953684,
+        "largestBacking": 5339542,
+        "runs": [
+          {
+            "wallMs": 1042.1230410000007,
+            "bytes": 19921,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 1049.028459000001,
+            "bytes": 19921,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "reads": 0,
+        "readState": 3,
+        "rootKeyFetches": 3,
+        "signedQueries": 9,
+        "jevCalls": 3,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 2
+      },
+      {
+        "variant": "baseline",
+        "scenario": "heavyread",
+        "parallel": 4,
+        "repeats": 10,
+        "read": true,
+        "passesGate": true,
+        "retainedBefore": {
+          "usedSize": 60348304,
+          "totalSize": 125812736,
+          "embedderHeapUsedSize": 231744,
+          "backingStorageSize": 74918243
+        },
+        "cpuMs": 1343.0522916666673,
+        "cpuMsPerRequest": 33.57630729166668,
+        "largestHeap": 67850852,
+        "largestBacking": 74918243,
+        "runs": [
+          {
+            "wallMs": 119.94725000000108,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 120.86291699999856,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 157.71491699999933,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 139.56737500000054,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 125.61558399999922,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 126.38287500000115,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 127.14866599999914,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 127.89233400000012,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 75.67795900000056,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 133.77333299999918,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 134.54183300000113,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 135.2827500000003,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 137.01204199999847,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 137.82420900000034,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 138.55374999999913,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 139.64279200000055,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 84.4439999999995,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 141.81637500000033,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 141.0648340000007,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 140.30854199999885,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 127.02408300000025,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 127.7651249999999,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 128.51529200000004,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 126.18375000000015,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 47.29241600000023,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 93.41775000000052,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 131.67954199999986,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 132.67587500000081,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 105.72612499999923,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 106.46808400000009,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 107.16699999999946,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 124.58420899999874,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 129.73516700000073,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 91.76249999999891,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 92.60933299999851,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 130.63433299999997,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 127.25275000000147,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 90.39699999999903,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 128.01208399999996,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 89.65250000000015,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 0,
+        "reads": 44,
+        "readState": 44,
+        "rootKeyFetches": 44,
+        "signedQueries": 44,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 4
+      }
+    ],
+    "metrics": {
+      "queries": 393,
+      "reads": 44,
+      "jev": 123,
+      "rewrite": 0,
+      "active": 0,
+      "maxActive": 4,
+      "status": 185,
+      "readState": 186,
+      "signedQueries": 437
+    },
+    "note": "Actual private MCP HTTP, review OAuth, SQLite Durable Object, Ed25519 signing, Candid/CBOR and response formatter. Real SDK BLS verification of root/subnet certificates and Ed25519 query signatures enabled; local root key fetched via status. Both corrupt query signatures and corrupt certificates are rejected before measurement. Search candidates simulate producer-side improved previews. The product retrieval pipeline and shared Jev implementation run unchanged except for the local Jev endpoint. Provider replies and network waits are fixture-controlled; live provider quality/latency measured separately. CPU is owned workerd process kernel CPU including DO, not Cloudflare billed isolate CPU. Heap is sampled main-isolate V8 use, not a strict true peak or full isolate-memory measurement."
+  },
+  "wasm": [
+    {
+      "query": "normal",
+      "retrieval": false,
+      "hits": 20,
+      "instructions": "3779430",
+      "response_bytes": "2313"
+    },
+    {
+      "query": "normal",
+      "retrieval": true,
+      "hits": 20,
+      "instructions": "5617777",
+      "response_bytes": "3226"
+    },
+    {
+      "query": "huge",
+      "retrieval": false,
+      "hits": 20,
+      "instructions": "3456410",
+      "response_bytes": "2233"
+    },
+    {
+      "query": "huge",
+      "retrieval": true,
+      "hits": 20,
+      "instructions": "234884532",
+      "response_bytes": "15286"
+    }
+  ],
+  "notes": [
+    "Accuracy uses public source snapshots, fixed corrected labels and 46 actual Jev calls. P@3 measures retrieved relevance, not generated-answer correctness.",
+    "First 38 candidate selections/excerpts also match the frozen experiment exactly. Confirmation candidate lists were recaptured, gold targets unchanged.",
+    "Resource CPU is local workerd process CPU including DO, not Cloudflare billed isolate CPU. Main-isolate heap/backing sampling is not a strict peak or full production-memory measure.",
+    "Model/canister responses and network waits are fixtures only in the resource run; accuracy uses the real provider.",
+    "The 96 MiB regression gate applies to every new retrieval-search scenario, including failures. Existing ten-body-read control measured 136.2 MiB in the signed verification run (164.2 MiB in the first signed run); this remains a separate resource concern, outside the search gate.",
+    "Wasm instruction measurements use the same store/runtime code in a diagnostic feature build. The final production Wasm omits the benchmark query.",
+    "Review correction: resources is the signed run with root/subnet BLS certificates, 13 node public keys, Ed25519 query verification, and corrupt-signature/certificate rejection checks. The prior unsigned run is retained only under resourcesWithoutSignatureVerification and is not acceptance evidence for the production verification path. Production Worker/SDK code is not rewritten by the benchmark; only the Jev URL points to a local fixture. Each of the 104 concurrent-search requests fetched its own certificate and local root key; all 312 queries were signed."
+  ],
+  "resourcesWithoutSignatureVerification": {
+    "completed": true,
+    "results": [
+      {
+        "variant": "baseline",
+        "scenario": "normal",
+        "parallel": 1,
+        "repeats": 8,
+        "retainedBefore": {
+          "usedSize": 18196028,
+          "totalSize": 31047680,
+          "embedderHeapUsedSize": 644832,
+          "backingStorageSize": 685209
+        },
+        "cpuMs": 36.46550000000002,
+        "cpuMsPerRequest": 4.5581875000000025,
+        "largestHeap": 18196028,
+        "largestBacking": 685209,
+        "runs": [
+          {
+            "wallMs": 17.277500000000032,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 14.853583000000071,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 14.762500000000045,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 16.479332999999997,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 14.606291000000056,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 14.250999999999976,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 14.098375000000033,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 17.14391599999999,
+            "bytes": 19843,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 1
+      },
+      {
+        "variant": "combined",
+        "scenario": "normal",
+        "parallel": 1,
+        "repeats": 8,
+        "retainedBefore": {
+          "usedSize": 31468484,
+          "totalSize": 40681472,
+          "embedderHeapUsedSize": 773792,
+          "backingStorageSize": 12872144
+        },
+        "cpuMs": 187.08454166666667,
+        "cpuMsPerRequest": 23.385567708333333,
+        "largestHeap": 31175384,
+        "largestBacking": 12841095,
+        "runs": [
+          {
+            "wallMs": 226.262333,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 233.59424999999987,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 246.76975000000016,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 236.78537499999993,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 237.46733300000028,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 241.59074999999984,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 241.16583300000002,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 234.01649999999972,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 27,
+        "jevCalls": 9,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 2
+      },
+      {
+        "variant": "combined",
+        "scenario": "normal",
+        "parallel": 8,
+        "repeats": 12,
+        "retainedBefore": {
+          "usedSize": 14487056,
+          "totalSize": 85508096,
+          "embedderHeapUsedSize": 49576,
+          "backingStorageSize": 402929
+        },
+        "cpuMs": 841.3858750000002,
+        "cpuMsPerRequest": 8.764436197916668,
+        "largestHeap": 52183984,
+        "largestBacking": 27082980,
+        "runs": [
+          {
+            "wallMs": 240.48083300000008,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 242.79933399999982,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 241.40029099999992,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.91858300000013,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.67487500000016,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 249.22408300000006,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 254.3457910000002,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 254.85741700000017,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 245.47545900000023,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.57933300000013,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 249.92262500000015,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 251.7928750000001,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 256.16041700000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.95166599999993,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.5039999999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.18591700000025,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 246.3622919999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 247.72308299999986,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 251.19999999999982,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.70116700000017,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 256.67949999999973,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 255.8555419999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 249.85062500000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 256.27554199999986,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 236.95008299999972,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.72079200000007,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 251.43770799999947,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 251.72129200000018,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.04341700000032,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 263.2066670000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 262.88541600000053,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 263.7183329999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 242.26429199999984,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 245.36104200000045,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 246.3301249999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 249.29333399999996,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 250.06058399999984,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 250.9567079999997,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.08908299999985,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.027333,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.6200830000007,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 249.87883299999976,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.09791700000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.4322920000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 260.9969169999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 261.46820800000023,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 262.0705420000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 263.05883300000005,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 242.99745799999982,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 246.95545799999945,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.08937499999956,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.60270899999978,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.08550000000014,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.49020800000017,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.7541250000004,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.12308399999984,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 237.7519999999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 243.16691699999956,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 244.64016700000047,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.02662500000042,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.95908300000065,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 251.74879200000032,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.15720800000054,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.55054199999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.51950000000033,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 255.87804199999937,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.20037499999944,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.5402920000006,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 274.1335829999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 277.707042,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 277.0013749999998,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 277.4197090000007,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 238.01333299999988,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 239.11312499999985,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 241.6604159999997,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 246.17162499999995,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 248.2723329999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 247.8862079999999,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 249.71404200000052,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 250.6063749999994,
+            "bytes": 19846,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 235.9150409999993,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 242.1709580000006,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 246.25874999999996,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 252.25437499999953,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.91604199999983,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.0779170000005,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 258.4857089999996,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.58145800000057,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 257.3630000000003,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 263.1892090000001,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 261.9576670000006,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 262.4010420000004,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 262.79449999999997,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 266.8268330000001,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 267.782792,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 268.82716600000003,
+            "bytes": 19847,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 312,
+        "jevCalls": 104,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      },
+      {
+        "variant": "combined",
+        "scenario": "longpaths",
+        "parallel": 1,
+        "repeats": 2,
+        "retainedBefore": {
+          "usedSize": 14987164,
+          "totalSize": 87080960,
+          "embedderHeapUsedSize": 324536,
+          "backingStorageSize": 364411
+        },
+        "cpuMs": 29.548416666666753,
+        "cpuMsPerRequest": 14.774208333333377,
+        "largestHeap": 39888136,
+        "largestBacking": 57234535,
+        "runs": [
+          {
+            "wallMs": 35.90795799999978,
+            "bytes": 165,
+            "error": true
+          },
+          {
+            "wallMs": 33.41387500000019,
+            "bytes": 165,
+            "error": true
+          }
+        ],
+        "queries": 9,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      },
+      {
+        "variant": "combined",
+        "scenario": "oversize",
+        "parallel": 1,
+        "repeats": 2,
+        "retainedBefore": {
+          "usedSize": 18887832,
+          "totalSize": 87080960,
+          "embedderHeapUsedSize": 324536,
+          "backingStorageSize": 1220947
+        },
+        "cpuMs": 6.521250000000009,
+        "cpuMsPerRequest": 3.2606250000000045,
+        "largestHeap": 18783176,
+        "largestBacking": 954560,
+        "runs": [
+          {
+            "wallMs": 15.112417000000278,
+            "bytes": 147,
+            "error": true
+          },
+          {
+            "wallMs": 15.485666000000492,
+            "bytes": 147,
+            "error": true
+          }
+        ],
+        "queries": 3,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      },
+      {
+        "variant": "combined",
+        "scenario": "provider-error",
+        "parallel": 1,
+        "repeats": 2,
+        "retainedBefore": {
+          "usedSize": 29751056,
+          "totalSize": 87080960,
+          "embedderHeapUsedSize": 463856,
+          "backingStorageSize": 13777213
+        },
+        "cpuMs": 12.084916666666686,
+        "cpuMsPerRequest": 6.042458333333343,
+        "largestHeap": 29751056,
+        "largestBacking": 13777213,
+        "runs": [
+          {
+            "wallMs": 29.130709000000024,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 27.24829199999931,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "jevCalls": 3,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      },
+      {
+        "variant": "combined",
+        "scenario": "provider-large",
+        "parallel": 1,
+        "repeats": 2,
+        "retainedBefore": {
+          "usedSize": 40661100,
+          "totalSize": 87080960,
+          "embedderHeapUsedSize": 764776,
+          "backingStorageSize": 26542375
+        },
+        "cpuMs": 8.096791666666604,
+        "cpuMsPerRequest": 4.048395833333302,
+        "largestHeap": 40347452,
+        "largestBacking": 26450122,
+        "runs": [
+          {
+            "wallMs": 27.956167000000278,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 27.25145800000064,
+            "bytes": 20381,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "jevCalls": 3,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      },
+      {
+        "variant": "combined",
+        "scenario": "timeout",
+        "parallel": 1,
+        "repeats": 2,
+        "retainedBefore": {
+          "usedSize": 27038324,
+          "totalSize": 87867392,
+          "embedderHeapUsedSize": 799584,
+          "backingStorageSize": 11449929
+        },
+        "cpuMs": 27.76904166666668,
+        "cpuMsPerRequest": 13.88452083333334,
+        "largestHeap": 27038324,
+        "largestBacking": 11449929,
+        "runs": [
+          {
+            "wallMs": 1043.8871659999995,
+            "bytes": 19921,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 1039.5855419999998,
+            "bytes": 19921,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 9,
+        "jevCalls": 3,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      },
+      {
+        "variant": "baseline",
+        "scenario": "heavyread",
+        "parallel": 4,
+        "repeats": 10,
+        "read": true,
+        "retainedBefore": {
+          "usedSize": 34014996,
+          "totalSize": 97484800,
+          "embedderHeapUsedSize": 245256,
+          "backingStorageSize": 20596449
+        },
+        "cpuMs": 478.1279166666666,
+        "cpuMsPerRequest": 11.953197916666664,
+        "largestHeap": 47612836,
+        "largestBacking": 65134631,
+        "runs": [
+          {
+            "wallMs": 38.09179200000108,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 72.90379200000098,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 73.72387499999968,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 74.44674999999916,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 25.22033399999964,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 51.90799999999945,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 52.66545899999983,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.37537500000144,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 25.16858300000058,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.16370800000004,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.96366699999999,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 54.7132500000007,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 25.50591700000041,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 55.40379199999916,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 56.13354199999958,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 54.6440419999999,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 24.553625000000466,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 52.56737500000054,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 51.79879200000141,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 51.07787500000086,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 24.42566699999952,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 55.12475000000086,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 54.327415999998266,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 55.911958000000595,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 24.912874999999985,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 52.402375000001484,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 34.919832999999926,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.2315409999992,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 24.181957999999213,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 52.98512499999924,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 52.204791000000114,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.75795900000048,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 26.52008300000125,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 35.78637499999968,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.23883399999977,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 54.009374999999636,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 24.200166999999055,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 51.5598340000015,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 52.35908300000119,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          },
+          {
+            "wallMs": 53.24733300000116,
+            "bytes": 256007,
+            "error": false,
+            "count": 10
+          }
+        ],
+        "queries": 0,
+        "jevCalls": 0,
+        "rewriteCalls": 0,
+        "maxConcurrentCanisterRequests": 14
+      }
+    ],
+    "metrics": {
+      "queries": 388,
+      "reads": 44,
+      "jev": 122,
+      "rewrite": 0,
+      "active": 0,
+      "maxActive": 14
+    },
+    "note": "Actual private MCP HTTP, review OAuth, SQLite Durable Object, Ed25519 signing, Candid/CBOR and response formatter. Only query-response signatures are disabled for local fake canister. Search candidates simulate producer-side improved previews. The product retrieval pipeline and shared Jev implementation run unchanged except for local endpoint/signature adapters. Provider replies and network waits are fixture-controlled; live provider quality/latency measured separately. CPU is owned workerd process kernel CPU including DO, not Cloudflare billed isolate CPU. Heap is sampled main-isolate V8 use, not a strict true peak or full isolate-memory measurement."
+  }
+}
