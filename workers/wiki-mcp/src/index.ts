@@ -801,7 +801,7 @@ async function mutationToolError(
       if (current) {
         payload.current_etag = current.etag;
         payload.current_content = current.content;
-        payload.current_content_size = current.content.length;
+        payload.current_content_size = current.contentSize;
       }
     } catch {
       // The stable conflict response remains useful when the follow-up read is unavailable.

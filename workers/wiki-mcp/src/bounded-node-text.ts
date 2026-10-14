@@ -8,9 +8,24 @@ const RETAIN_UNITS = 40_001;
 // code point crossing that byte boundary. Decode only this bounded prefix.
 const PREFIX_BYTES = RETAIN_UNITS * 3 + 3;
 
+export type BoundedNodeContent = { text: string; originalLength: number };
+
+// Input has already passed isUtf8. Count Unicode scalars directly from their
+// leading bytes; supplementary scalars occupy two UTF-16 units. No tail string
+// or byte copy is needed, even when nearly the whole body is omitted.
+function utf16Length(bytes: Uint8Array): number {
+  let units = 0;
+  for (let i = 0; i < bytes.length;) {
+    const byte = bytes[i];
+    units += byte >= 0xf0 ? 2 : 1;
+    i += byte < 0x80 ? 1 : byte < 0xe0 ? 2 : byte < 0xf0 ? 3 : 4;
+  }
+  return units;
+}
+
 /** Candid text on the wire, with bounded storage for MCP node bodies only. */
-export function boundedNodeText(textType: IDL.TextClass): IDL.TextClass {
-  const type = Object.create(textType) as IDL.TextClass;
+export function boundedNodeText(textType: IDL.TextClass): IDL.Type<BoundedNodeContent> {
+  const type = Object.create(textType) as IDL.Type<BoundedNodeContent>;
   type.decodeValue = (pipe: PipeArrayBuffer, wireType: IDL.Type) => {
     textType.checkType(wireType);
     const length = Number(lebDecode(pipe));
@@ -25,7 +40,7 @@ export function boundedNodeText(textType: IDL.TextClass): IDL.TextClass {
     const prefix = decoder.decode(bytes.subarray(0, PREFIX_BYTES), { stream: length > PREFIX_BYTES });
     let end = RETAIN_UNITS;
     if (prefix.charCodeAt(end - 1) >= 0xd800 && prefix.charCodeAt(end - 1) <= 0xdbff) end++;
-    return prefix.slice(0, end);
+    return { text: prefix.slice(0, end), originalLength: length <= PREFIX_BYTES ? prefix.length : utf16Length(bytes) };
   };
   return type;
 }

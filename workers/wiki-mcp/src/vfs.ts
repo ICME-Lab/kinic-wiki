@@ -1,4 +1,4 @@
-import { boundedNodeText } from "./bounded-node-text.js";
+import { boundedNodeText, type BoundedNodeContent } from "./bounded-node-text.js";
 import { boundedResponse } from "./bounded-response.js";
 // Where: workers/wiki-mcp/src/vfs.ts
 // What: Minimal Kinic Wiki canister client for anonymous or delegated read-only MCP tools.
@@ -89,6 +89,8 @@ export type WikiNode = {
   path: string;
   kind: string;
   content: string;
+  /** Original UTF-16 length, before the Candid adapter bounds content. */
+  contentSize: number;
   createdAt: string;
   updatedAt: string;
   etag: string;
@@ -302,7 +304,7 @@ type RawSearchHit = {
 type RawNode = {
   path: string;
   kind: Variant;
-  content: string;
+  content: BoundedNodeContent;
   created_at: bigint;
   updated_at: bigint;
   etag: string;
@@ -809,7 +811,8 @@ function normalizeNode(raw: RawNode): WikiNode {
   return {
     path: raw.path,
     kind: variantName(raw.kind),
-    content: raw.content,
+    content: raw.content.text,
+    contentSize: raw.content.originalLength,
     createdAt: raw.created_at.toString(),
     updatedAt: raw.updated_at.toString(),
     etag: raw.etag,

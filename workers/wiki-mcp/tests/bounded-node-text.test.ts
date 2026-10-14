@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { IDL, PipeArrayBuffer, lebEncode } from "@icp-sdk/core/candid";
-import { boundedNodeText } from "../src/bounded-node-text.js";
+import { boundedNodeText, type BoundedNodeContent } from "../src/bounded-node-text.js";
 import { clipText } from "../src/text.js";
 
 const type = boundedNodeText(IDL.Text);
-const decode = (text: string) => IDL.decode([type], IDL.encode([IDL.Text], [text]))[0] as string;
+const decode = (text: string) => IDL.decode([type], IDL.encode([IDL.Text], [text]))[0] as BoundedNodeContent;
 function textPipe(bytes: Uint8Array, declaredLength = bytes.length) {
   const length = lebEncode(declaredLength);
   const message = new Uint8Array(length.length + bytes.length);
@@ -14,9 +14,11 @@ function textPipe(bytes: Uint8Array, declaredLength = bytes.length) {
 
 describe("bounded MCP Candid node text", () => {
   it.each(["", "\uFEFF日本語\0😀", "a".repeat(39_999), "a".repeat(40_000),
-    "a".repeat(40_001), "😀".repeat(20_001), "日".repeat(40_000) + "😀abc", "日".repeat(40_001) + "😀x", "a".repeat(16_383) + "😀\uFEFF日本語",
+    "a".repeat(40_001), "é".repeat(80_000), "😀".repeat(20_001), "日".repeat(40_000) + "😀abc", "日".repeat(40_001) + "😀x", "a".repeat(16_383) + "😀\uFEFF日本語",
     "\uFEFF" + "😀日本語\0 ".repeat(70_000)])("preserves the existing visible body and truncation decision (%#)", original => {
-    const result = decode(original);
+    const decoded = decode(original);
+    expect(decoded.originalLength).toBe(original.length);
+    const result = decoded.text;
     expect(result.length).toBeLessThanOrEqual(40_002);
     expect(clipText(result, 40_000)).toBe(clipText(original, 40_000));
     expect(result.length > 40_000).toBe(original.length > 40_000);
@@ -38,7 +40,7 @@ describe("bounded MCP Candid node text", () => {
     const pipe = textPipe(new Uint8Array(1_000_000).fill(97));
     const read = vi.spyOn(pipe, "read");
     Object.defineProperty(pipe, "buffer", { get() { throw new Error("full buffer copy"); } });
-    expect(type.decodeValue(pipe, IDL.Text)).toBe("a".repeat(40_001));
+    expect(type.decodeValue(pipe, IDL.Text)).toEqual({ text: "a".repeat(40_001), originalLength: 1_000_000 });
     expect(pipe.byteLength).toBe(0);
     expect(read).not.toHaveBeenCalled();
   });

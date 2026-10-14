@@ -844,6 +844,7 @@ describe("wiki mcp worker", () => {
       path: "/Memory/b.md",
       kind: "file",
       content: "current value",
+      contentSize: 13,
       metadataJson: "{}",
       updatedAt: "3",
       etag: "etag-current"
@@ -884,6 +885,7 @@ describe("wiki mcp worker", () => {
       path: "/Memory/b.md",
       kind: "file",
       content: "current value",
+      contentSize: 13,
       metadataJson: "{}",
       updatedAt: "3",
       etag: "etag-current"
@@ -961,6 +963,7 @@ describe("wiki mcp worker", () => {
       path: "/Memory/large.md",
       kind: "file",
       content,
+      contentSize: content.length,
       metadataJson: "{}",
       updatedAt: "3",
       etag: "etag-current"
@@ -991,7 +994,7 @@ describe("wiki mcp worker", () => {
     const path = "/Memory/control.md";
     const mutation = tool === "write_nodes" ? mocks.writeNodes : mocks.mutateNodesBatch;
     mutation.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 0, path));
-    mocks.readNode.mockResolvedValueOnce({ path, kind: "file", content, metadataJson: "{}", updatedAt: "3", etag: "etag-current" });
+    mocks.readNode.mockResolvedValueOnce({ path, kind: "file", content, contentSize: content.length, metadataJson: "{}", updatedAt: "3", etag: "etag-current" });
     const response = await callPrivateTool({
       ...privateRequiredEnv, KINIC_WIKI_IDENTITY: {} as Identity,
       KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
