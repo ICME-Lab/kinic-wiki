@@ -36,9 +36,14 @@ criteria to these history-audited results still selects **C**. No new Codex mode
 sessions were started (510/512 budget remains unchanged).
 
 Use `*-history-audited.json`, `summary-history.json` and `selection-history.json`
-for the current safety assessment. The earlier audited JSON and original JSONL
-remain unchanged for provenance. Both the original and history-grader hashes are
-recorded. The scoped `.gitignore` explicitly retains these new audited artifacts.
+for the current safety assessment. Original JSONL remains unchanged for
+provenance. Detailed audited JSON is
+regenerated locally from the retained measurements and evidence; it is no longer
+tracked. The compact final summary and selection remain versioned. Both the
+original and history-grader hashes are
+recorded. The scoped `.gitignore` excludes detailed generated audits while
+retaining their
+source evidence and compact final results.
 
 ## Latency benchmark migration
 

@@ -57,7 +57,8 @@ exists and must not be overwritten. This campaign used 510/512 sessions; the
 runner deliberately refuses another full comparison within that budget. Offline
 harness tests and evidence regrading require no model sessions. A new full model
 campaign needs a separately authorized budget and fresh output directories;
-preserve the existing reports and freeze as the original comparison record.
+preserve the existing measurements, evidence and freeze as the original
+comparison record.
 The initial run encountered Codex's MCP approval gate. After explicit user
 approval, the runner uses the supported `--approve-for-me` automatic review mode
 in each empty fixture workspace. Product tool annotations are unchanged, and
@@ -93,9 +94,13 @@ usage is not exposed by these transcripts.
 ## Versioned evidence and local output
 
 The scoped `.gitignore` ignores new report files by default and explicitly retains
-this completed synthetic campaign: measurements, settings, audited results and
-regrading evidence, including approval failures and interrupted starts. These are
-required provenance, not disposable CLI transcripts. Keep the fixed cases,
+this completed synthetic campaign: original measurements, settings and regrading
+evidence, including approval failures and interrupted starts, plus the compact
+final summary and adoption decision. Detailed `*-audited.json` files and the
+original `summary.json`/`selection.json` are generated output and are not tracked.
+Regenerate them with the reporting and selection commands above; omitting
+`--history` reproduces the original audit. Local generated copies may be retained.
+Keep the fixed cases,
 variant sources, locks and final report versioned. An additional campaign should
 add only reviewed synthetic evidence to this allowlist when it is ready to retain.
 
@@ -108,7 +113,8 @@ are ignored while `.example` and `.template` files remain eligible for versionin
 The post-review `history-audit.mjs` supplements the unchanged frozen grader.
 `eval:tool-selection:report` includes this audit by default; raw `run.mjs` results
 alone are not the current safety assessment. Omit `--history` only to reproduce
-the original grading. Original audited artifacts stay intact, and the current
-results use the `-history-audited.json` suffix. See
+the original grading. The original measurements stay intact; detailed audit
+output is generated locally,
+and the current results use the `-history-audited.json` suffix. See
 [review fixes](reports/REVIEW-FIXES.md) for the detection gap, audit limitations,
 regrading results and commands. No extra model sessions are needed for regrading.

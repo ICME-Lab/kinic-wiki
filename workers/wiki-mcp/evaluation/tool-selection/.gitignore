@@ -8,30 +8,21 @@
 !/reports/RESULTS.md
 !/reports/development-findings.md
 !/reports/environment.json
-!/reports/selection.json
-!/reports/summary.json
 !/reports/dev-approved-runtime.json
 !/reports/pilot.jsonl
 !/reports/pilot-settings.json
-!/reports/pilot-audited.json
 !/reports/dev-r0.jsonl
 !/reports/dev-r0-settings.json
-!/reports/dev-r0-audited.json
 !/reports/dev-r1-read.jsonl
 !/reports/dev-r1-read-settings.json
-!/reports/dev-r1-read-audited.json
 !/reports/dev-r2-read.jsonl
 !/reports/dev-r2-read-settings.json
-!/reports/dev-r2-read-audited.json
 !/reports/approved-pilot.jsonl
 !/reports/approved-pilot-settings.json
-!/reports/approved-pilot-audited.json
 !/reports/dev-approved.jsonl
 !/reports/dev-approved-settings.json
-!/reports/dev-approved-audited.json
 !/reports/holdout-final.jsonl
 !/reports/holdout-final-settings.json
-!/reports/holdout-final-audited.json
 
 !/reports/evidence/
 /reports/evidence/*
@@ -43,14 +34,12 @@
 !/reports/evidence/dev-approved.jsonl
 !/reports/evidence/holdout-final.jsonl
 
-# Post-review history audit; original frozen measurements stay versioned above.
+# Compact final history-audit summary and decision; detailed audits are generated.
 !/reports/summary-history.json
 !/reports/selection-history.json
 !/reports/REVIEW-FIXES.md
-!/reports/pilot-history-audited.json
-!/reports/dev-r0-history-audited.json
-!/reports/dev-r1-read-history-audited.json
-!/reports/dev-r2-read-history-audited.json
-!/reports/approved-pilot-history-audited.json
-!/reports/dev-approved-history-audited.json
-!/reports/holdout-final-history-audited.json
+
+# Detailed audits are reproducible from the retained measurements/evidence.
+/reports/*-audited.json
+/reports/summary.json
+/reports/selection.json

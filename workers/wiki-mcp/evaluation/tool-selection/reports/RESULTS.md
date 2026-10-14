@@ -4,14 +4,16 @@
 > are complete. All 510 records were regraded; final comparison remains 384/384,
 > with no additional unsafe operation and C still selected. Use the
 > `*-history-audited.json`, `summary-history.json`, and `selection-history.json`
-> artifacts for the current safety assessment; the original audit is preserved.
+> artifacts for the current safety assessment. Detailed audit JSON is generated
+> locally from retained measurements/evidence; the compact final summary and
+> selection remain versioned. See the evaluation README for replay commands.
 
 ## Decision
 
 Adopt **C-r2: 15 Private / 7 read-only tools**. The final comparison meets the
 predeclared acceptance criteria: 100% completion with and without the supplied
 skill, zero observed unsafe operations, and no increase versus B in input errors
-or mean calls in either condition. `selection.json` computes this decision from
+or mean calls in either condition. `selection-history.json` records this decision from
 the audited development/holdout rows. No criteria or labels were changed after
 seeing holdout results.
 
@@ -128,7 +130,8 @@ supplies the skill and reference, so automatic discovery is not evaluated. The
 post-selection reference adds a client migration example; the tested selection
 rules remain unchanged. Codex results are not ChatGPT plugin accuracy guarantees.
 
-Use `*-audited.json` and `summary.json`. Original JSONL measurements are preserved.
+The original grading can be regenerated as `*-audited.json` and `summary.json`.
+Original JSONL measurements are preserved.
 `evidence/*.jsonl` retains synthetic requests, responses, state and undelivered
 attempts for regrading without ignored raw CLI logs. The grader checks whole final
 data, read evidence, requested text/answer facts, partial errors, atomicity, etags
