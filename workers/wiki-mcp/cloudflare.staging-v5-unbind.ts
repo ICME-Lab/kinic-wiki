@@ -30,8 +30,8 @@ export default defineConfig({
 			MCP_ACCESS_POLICY: bindings.text("private_required"),
 			MCP_WRITE_POLICY: bindings.text("private"),
 			MCP_PUBLIC_ORIGIN: bindings.text("https://wiki-mcp-staging.kinic.xyz"),
-			MCP_REVIEW_LOGIN_ENABLED: bindings.text("true"),
-			MCP_REVIEW_ACCESS_VERSION: bindings.text("review-v1"),
+			MCP_REVIEW_LOGIN_ENABLED: bindings.text("false"),
+			MCP_REVIEW_ACCESS_VERSION: bindings.text("review-closed-20261014"),
 			MCP_REVIEW_WRITE_PREFIX: bindings.text("/OpenAIReview/scratch"),
 			OPENAI_APPS_CHALLENGE_TOKEN: bindings.text("U3C-sqKN0SbnEf0lSfTGWrkMABESA3cacw1i74cr8oU"),
 			MCP_REGISTRATION_RATE_LIMIT: bindings.rateLimit({
