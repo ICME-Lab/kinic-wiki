@@ -25,10 +25,9 @@ export async function createSignedReplica(canisterText) {
   const subnetKey = publicKey(subnetSecret);
   const subnetId = Principal.selfAuthenticating(subnetKey).toUint8Array();
   const canister = Principal.fromText(canisterText).toUint8Array();
-  const nodes = Array.from({ length: 13 }, () => Ed25519KeyIdentity.generate())
+  const makeNodes = () => Array.from({ length: 13 }, () => Ed25519KeyIdentity.generate())
     .sort((a, b) => Buffer.compare(a.getPrincipal().toUint8Array(), b.getPrincipal().toUint8Array()));
-  const nodeTree = fork(nodes.map(node => label(node.getPrincipal().toUint8Array(),
-    label('public_key', leaf(node.getPublicKey().toDer())))));
+  let nodes = makeNodes();
   async function certificate(tree, secret, delegation) {
     const message = Buffer.concat([domain('ic-state-root'), await reconstruct(tree)]);
     const signature = bls.sign(bls.hash(message), secret).toBytes();
@@ -37,6 +36,7 @@ export async function createSignedReplica(canisterText) {
   let cachedCertificate, certificateTime = 0;
   return {
     rootKey,
+    rotateNodeKeys() { nodes = makeNodes(); certificateTime = 0; },
     async readState(corrupt = false) {
       if (Date.now() - certificateTime > 5_000) {
         certificateTime = Date.now();
@@ -48,6 +48,8 @@ export async function createSignedReplica(canisterText) {
           ]))), time
         ]);
         const delegation = { subnet_id: subnetId, certificate: await certificate(delegationTree, rootSecret) };
+        const nodeTree = fork(nodes.map(node => label(node.getPrincipal().toUint8Array(),
+          label('public_key', leaf(node.getPublicKey().toDer())))));
         cachedCertificate = await certificate(fork([
           label('subnet', label(subnetId, label('node', nodeTree))), time
         ]), subnetSecret, delegation);

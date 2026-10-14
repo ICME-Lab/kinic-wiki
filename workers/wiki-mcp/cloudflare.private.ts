@@ -8,7 +8,7 @@ export default defineConfig({
 		compatibilityFlags: [
 			"nodejs_compat",
 		],
-		entrypoint: "src/index.ts",
+		entrypoint: "src/entry.ts",
 		workersDev: false,
 		observability: {
 			enabled: true,

@@ -1,5 +1,5 @@
 // Both MCP representations are built from the same bounded payload.
-import { clipText } from "./text.js";
+import { clipText, clippedTextPrefixEnd } from "./text.js";
 
 type ToolPayload = Record<string, unknown>;
 type ToolResult = {
@@ -19,11 +19,13 @@ function sizeError(): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify({ error: SIZE_ERROR }) }], isError: true };
 }
 function fits(result: ToolResult): boolean {
-  const json = JSON.stringify(result);
+  return serializedBytes(result) <= MAX_SERIALIZED_TOOL_RESULT_BYTES;
+}
+function serializedBytes(value: unknown): number {
+  const json = JSON.stringify(value);
   // Count UTF-8 bytes without allocating a second buffer for every candidate
   // response. This matters during size fitting and oversized-metadata errors.
   let bytes = json.length;
-  if (bytes > MAX_SERIALIZED_TOOL_RESULT_BYTES) return false;
   for (let i = 0; i < json.length; i++) {
     const code = json.charCodeAt(i);
     if (code > 0x7f) {
@@ -33,10 +35,28 @@ function fits(result: ToolResult): boolean {
         bytes += 2;
         i++;
       } else bytes += 2;
-      if (bytes > MAX_SERIALIZED_TOOL_RESULT_BYTES) return false;
     }
   }
-  return true;
+  return bytes;
+}
+
+// Size of a JSON string's contents, without quotes or an intermediate encoded
+// string/buffer. JSON escapes lone surrogates, but emits valid pairs as UTF-8.
+function escapedTextBytes(text: string, end = text.length): number {
+  let bytes = 0;
+  for (let i = 0; i < end; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 34 || code === 92) bytes += 2;
+    else if (code < 32) bytes += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 2 : 6;
+    else if (code <= 0x7f) bytes++;
+    else if (code <= 0x7ff) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (i + 1 < end && next >= 0xdc00 && next <= 0xdfff) { bytes += 4; i++; }
+      else bytes += 6;
+    } else bytes += code >= 0xdc00 && code <= 0xdfff ? 6 : 3;
+  }
+  return bytes;
 }
 function finalize(result: ToolResult): ToolResult {
   return fits(result) ? result : sizeError();
@@ -67,11 +87,13 @@ export function toolError(message: string, payload: ToolPayload, meta?: Record<s
 
 // Search only the content budget. Metadata is never silently shortened.
 function fitContent(build: (budget: number) => ToolResult, maximum: number): ToolResult {
+  const full = build(maximum);
+  if (fits(full)) return full;
   const empty = build(0);
   if (!fits(empty)) return sizeError();
   let best = empty;
   let low = 1;
-  let high = maximum;
+  let high = maximum - 1;
   while (low <= high) {
     const budget = Math.floor((low + high) / 2);
     const result = build(budget);
@@ -114,14 +136,51 @@ function boundedNodeResults(results: Array<ToolPayload | null>, metadata?: ToolP
   // Reserve every item's mandatory identity first, then admit metadata in input
   // order. A large item cannot discard another item's successful result.
   const admitted = results.map((item) => item ? oversizedItem(item, metadata !== undefined) : item);
-  if (!fits(nodeResults(admitted, 0, metadata))) return sizeError();
+  let emptyBytes = serializedBytes(nodeResults(admitted, 0, metadata));
+  if (emptyBytes > MAX_SERIALIZED_TOOL_RESULT_BYTES) return sizeError();
   for (const [index, item] of results.entries()) {
     if (!item) continue;
     const fallback = admitted[index];
-    admitted[index] = item;
-    if (!fits(nodeResults(admitted, 0, metadata))) admitted[index] = fallback;
+    const emptyItem = item.is_error === true ? item : clippedNode(item, 0);
+    const delta = serializedBytes(emptyItem) - serializedBytes(fallback)
+      + escapedTextBytes(nodeResultHeader(item, index)) - escapedTextBytes(nodeResultHeader(fallback, index));
+    if (emptyBytes + delta <= MAX_SERIALIZED_TOOL_RESULT_BYTES) {
+      admitted[index] = item;
+      emptyBytes += delta;
+    }
   }
-  return fitContent((budget) => nodeResults(admitted, budget, metadata), MAX_MULTI_NODE_CONTENT_CHARS);
+  const layout = nodeResultLayout(admitted);
+  const bodies = admitted.filter((item): item is ToolPayload => item !== null && item.is_error !== true)
+    .map(item => ({ text: String(item.text ?? ""), truncated: isRecord(item.metadata) && item.metadata.truncated === true }));
+  const fitsBudget = (budget: number) => {
+    const perItem = nodeContentBudget(layout, budget);
+    let bytes = emptyBytes;
+    for (const body of bodies) {
+      const limit = Math.min(perItem, MAX_NODE_CONTENT_CHARS);
+      const complete = body.text.length <= limit;
+      const bodyBytes = complete ? escapedTextBytes(body.text) : limit <= 3 ? limit
+        : escapedTextBytes(body.text, clippedTextPrefixEnd(body.text, limit)) + 3;
+      // The same body occurs in the display text and structured content. When
+      // an originally nonempty body fits entirely, true becomes false (+1 byte).
+      bytes += 2 * bodyBytes;
+      if (body.text.length > 0 && complete && !body.truncated) bytes++;
+      if (bytes > MAX_SERIALIZED_TOOL_RESULT_BYTES) return false;
+    }
+    return true;
+  };
+  let best = MAX_MULTI_NODE_CONTENT_CHARS;
+  if (!fitsBudget(best)) {
+    best = 0;
+    let low = 1, high = MAX_MULTI_NODE_CONTENT_CHARS - 1;
+    while (low <= high) {
+      const budget = Math.floor((low + high) / 2);
+      if (fitsBudget(budget)) { best = budget; low = budget + 1; }
+      else high = budget - 1;
+    }
+  }
+  // Only construct the combined text and response once; retain the final
+  // serialized check as a safety boundary independent of the size calculation.
+  return finalize(nodeResults(admitted, best, metadata, layout));
 }
 function nodeResultHeader(item: ToolPayload | null, index: number): string {
   if (!item) return `Result ${index + 1}\nError: missing result`;
@@ -129,11 +188,19 @@ function nodeResultHeader(item: ToolPayload | null, index: number): string {
   const metadata = isRecord(item.metadata) ? item.metadata : {};
   return `Result ${index + 1}\nPath: ${String(metadata.path ?? "")}\nTitle: ${String(item.title ?? "")}\nContent:\n`;
 }
-function nodeResults(results: Array<ToolPayload | null>, budget: number, metadata?: ToolPayload): ToolResult {
+function nodeResultLayout(results: Array<ToolPayload | null>) {
   const headers = results.map(nodeResultHeader);
   const count = results.filter((item) => item && item.is_error !== true).length;
   const overhead = headers.reduce((total, header) => total + header.length, 0) + Math.max(0, results.length - 1) * 2;
-  const perItem = count ? Math.floor(Math.max(0, budget - overhead) / count) : 0;
+  return { headers, count, overhead };
+}
+function nodeContentBudget(layout: ReturnType<typeof nodeResultLayout>, budget: number): number {
+  return layout.count ? Math.floor(Math.max(0, budget - layout.overhead) / layout.count) : 0;
+}
+function nodeResults(results: Array<ToolPayload | null>, budget: number, metadata?: ToolPayload,
+  layout = nodeResultLayout(results)): ToolResult {
+  const { headers } = layout;
+  const perItem = nodeContentBudget(layout, budget);
   const structured = results.map((item) => item && item.is_error !== true ? clippedNode(item, perItem) : item);
   const text = structured.map((item, index) => headers[index] + (item && item.is_error !== true ? String(item.text) : "")).join("\n\n");
   return { content: [{ type: "text", text }], structuredContent: { results: structured, ...(metadata ? { metadata } : {}) } };

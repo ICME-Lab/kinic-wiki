@@ -24,3 +24,151 @@ index a45ecccbb151cbda3a9861301faba4b01849e211..e5a1fc3a1cf018c0680827d974bb6d47
          return decoder.decode(buf);
      }
      get name() {
+diff --git a/lib/cjs/candid/utils/hash.js b/lib/cjs/candid/utils/hash.js
+--- a/lib/cjs/candid/utils/hash.js
++++ b/lib/cjs/candid/utils/hash.js
+@@ -7,12 +7,22 @@
+  * @param s - string to hash
+  * @returns number representing hashed string
+  */
++// Candid field labels are schema, not response values. Bound both the entry
++// count and label length so dynamically constructed schemas cannot grow this
++// cache indefinitely. Numeric wire labels still take the existing fast path.
++const labelHashes = new Map();
++const utf8encoder = new TextEncoder();
+ function idlHash(s) {
+-    const utf8encoder = new TextEncoder();
++    const cached = labelHashes.get(s);
++    if (cached !== undefined) return cached;
+     const array = utf8encoder.encode(s);
+     let h = 0;
+     for (const c of array) {
+         h = (h * 223 + c) % 2 ** 32;
++    }
++    if (s.length <= 128) {
++        if (labelHashes.size >= 512) labelHashes.delete(labelHashes.keys().next().value);
++        labelHashes.set(s, h);
+     }
+     return h;
+ }
+diff --git a/lib/esm/candid/utils/hash.js b/lib/esm/candid/utils/hash.js
+--- a/lib/esm/candid/utils/hash.js
++++ b/lib/esm/candid/utils/hash.js
+@@ -4,12 +4,22 @@
+  * @param s - string to hash
+  * @returns number representing hashed string
+  */
++// Candid field labels are schema, not response values. Bound both the entry
++// count and label length so dynamically constructed schemas cannot grow this
++// cache indefinitely. Numeric wire labels still take the existing fast path.
++const labelHashes = new Map();
++const utf8encoder = new TextEncoder();
+ function idlHash(s) {
+-    const utf8encoder = new TextEncoder();
++    const cached = labelHashes.get(s);
++    if (cached !== undefined) return cached;
+     const array = utf8encoder.encode(s);
+     let h = 0;
+     for (const c of array) {
+         h = (h * 223 + c) % 2 ** 32;
++    }
++    if (s.length <= 128) {
++        if (labelHashes.size >= 512) labelHashes.delete(labelHashes.keys().next().value);
++        labelHashes.set(s, h);
+     }
+     return h;
+ }
+diff --git a/lib/cjs/candid/utils/leb128.js b/lib/cjs/candid/utils/leb128.js
+--- a/lib/cjs/candid/utils/leb128.js
++++ b/lib/cjs/candid/utils/leb128.js
+@@ -131,24 +131,25 @@
+  * @param pipe A Buffer containing the signed leb encoded bits.
+  */
+ function slebDecode(pipe) {
+-    // Get the size of the buffer, then cut a buffer of that size.
+-    const pipeView = new Uint8Array(pipe.buffer);
+-    let len = 0;
+-    for (; len < pipeView.byteLength; len++) {
+-        if (pipeView[len] < 0x80) {
+-            // If it's a positive number, we reuse lebDecode.
+-            if ((pipeView[len] & 0x40) === 0) {
+-                return lebDecode(pipe);
+-            }
+-            break;
+-        }
+-    }
+-    const bytes = new Uint8Array(safeRead(pipe, len + 1));
+-    let value = BigInt(0);
+-    for (let i = bytes.byteLength - 1; i >= 0; i--) {
+-        value = value * BigInt(0x80) + BigInt(0x80 - (bytes[i] & 0x7f) - 1);
+-    }
+-    return -value - BigInt(1);
++    // Read only the encoded integer. pipe.buffer copies the entire remaining
++    // payload, which can contain megabytes of unrelated text or blobs.
++    const checkpoint = pipe.save();
++    try {
++        let value = BigInt(0);
++        let shift = BigInt(0);
++        let byte;
++        do {
++            byte = safeReadUint8(pipe);
++            value |= BigInt(byte & 0x7f) << shift;
++            shift += BigInt(7);
++        } while (byte >= 0x80);
++        return (byte & 0x40) === 0 ? value : value - (BigInt(1) << shift);
++    }
++    catch (error) {
++        // Preserve the original reader position for an unterminated integer.
++        pipe.restore(checkpoint);
++        throw error;
++    }
+ }
+ /**
+  *
+diff --git a/lib/esm/candid/utils/leb128.js b/lib/esm/candid/utils/leb128.js
+--- a/lib/esm/candid/utils/leb128.js
++++ b/lib/esm/candid/utils/leb128.js
+@@ -119,24 +119,25 @@
+  * @param pipe A Buffer containing the signed leb encoded bits.
+  */
+ export function slebDecode(pipe) {
+-    // Get the size of the buffer, then cut a buffer of that size.
+-    const pipeView = new Uint8Array(pipe.buffer);
+-    let len = 0;
+-    for (; len < pipeView.byteLength; len++) {
+-        if (pipeView[len] < 0x80) {
+-            // If it's a positive number, we reuse lebDecode.
+-            if ((pipeView[len] & 0x40) === 0) {
+-                return lebDecode(pipe);
+-            }
+-            break;
+-        }
+-    }
+-    const bytes = new Uint8Array(safeRead(pipe, len + 1));
+-    let value = BigInt(0);
+-    for (let i = bytes.byteLength - 1; i >= 0; i--) {
+-        value = value * BigInt(0x80) + BigInt(0x80 - (bytes[i] & 0x7f) - 1);
+-    }
+-    return -value - BigInt(1);
++    // Read only the encoded integer. pipe.buffer copies the entire remaining
++    // payload, which can contain megabytes of unrelated text or blobs.
++    const checkpoint = pipe.save();
++    try {
++        let value = BigInt(0);
++        let shift = BigInt(0);
++        let byte;
++        do {
++            byte = safeReadUint8(pipe);
++            value |= BigInt(byte & 0x7f) << shift;
++            shift += BigInt(7);
++        } while (byte >= 0x80);
++        return (byte & 0x40) === 0 ? value : value - (BigInt(1) << shift);
++    }
++    catch (error) {
++        // Preserve the original reader position for an unterminated integer.
++        pipe.restore(checkpoint);
++        throw error;
++    }
+ }
+ /**
+  *

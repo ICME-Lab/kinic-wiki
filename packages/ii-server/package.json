@@ -6,7 +6,8 @@
   "exports": {
     "./internet-identity": "./internet-identity.ts",
     "./crypto": "./crypto.ts",
-    "./read": "./read.ts"
+    "./read": "./read.ts",
+    "./verified-node-key-store": "./verified-node-key-store.ts"
   },
   "dependencies": {
     "@icp-sdk/core": "6.0.0"

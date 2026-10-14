@@ -844,6 +844,7 @@ describe("wiki mcp worker", () => {
       path: "/Memory/b.md",
       kind: "file",
       content: "current value",
+      contentSize: 13,
       metadataJson: "{}",
       updatedAt: "3",
       etag: "etag-current"
@@ -884,6 +885,7 @@ describe("wiki mcp worker", () => {
       path: "/Memory/b.md",
       kind: "file",
       content: "current value",
+      contentSize: 13,
       metadataJson: "{}",
       updatedAt: "3",
       etag: "etag-current"
@@ -961,6 +963,7 @@ describe("wiki mcp worker", () => {
       path: "/Memory/large.md",
       kind: "file",
       content,
+      contentSize: content.length,
       metadataJson: "{}",
       updatedAt: "3",
       etag: "etag-current"
@@ -991,7 +994,7 @@ describe("wiki mcp worker", () => {
     const path = "/Memory/control.md";
     const mutation = tool === "write_nodes" ? mocks.writeNodes : mocks.mutateNodesBatch;
     mutation.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 0, path));
-    mocks.readNode.mockResolvedValueOnce({ path, kind: "file", content, metadataJson: "{}", updatedAt: "3", etag: "etag-current" });
+    mocks.readNode.mockResolvedValueOnce({ path, kind: "file", content, contentSize: content.length, metadataJson: "{}", updatedAt: "3", etag: "etag-current" });
     const response = await callPrivateTool({
       ...privateRequiredEnv, KINIC_WIKI_IDENTITY: {} as Identity,
       KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
@@ -1376,7 +1379,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.readMany).toHaveBeenCalledTimes(1);
   });
 
-  it("limits concurrency to four across all databases and retains input order", async () => {
+  it("consumes one database response at a time and retains input order", async () => {
     let active = 0;
     let peak = 0;
     mocks.readNode.mockImplementation(async (_env: RuntimeEnv, db: string, path: string) => {
@@ -1388,7 +1391,7 @@ describe("wiki mcp worker", () => {
     });
     const ids = Array.from({ length: 10 }, (_, index) => encodeSearchResultId({ version: 1, canister_id: "canister-a", database_id: `db_${index}`, path: "/same.md" }));
     const result = await fetchManySearchResults(env, { ids });
-    expect(peak).toBe(4);
+    expect(peak).toBe(1);
     expect(mocks.readNode).toHaveBeenCalledTimes(10);
     expect(result.results.map((item) => item?.text)).toEqual(ids.map((_, index) => `db_${index}`));
   });

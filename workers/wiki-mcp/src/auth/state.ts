@@ -143,6 +143,15 @@ export type AccessTokenAuthentication =
 export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
   private readonly delegationMint = new SingleFlight<AccessTokenAuthentication>();
 
+  async fetch(request: Request): Promise<Response> {
+    if (this.env.MCP_ACCESS_POLICY !== "private_required" || request.method !== "POST" ||
+        new URL(request.url).pathname !== "/mcp") {
+      return new Response("not found", { status: 404 });
+    }
+    const { handleMcpRequest } = await import("../index.js");
+    return handleMcpRequest(request, this.env, this);
+  }
+
   async createClient(record: OAuthClientRecordV2): Promise<boolean> {
     const existing = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
     if (existing) {

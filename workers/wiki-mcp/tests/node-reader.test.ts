@@ -6,7 +6,7 @@ vi.mock("@icp-sdk/core/agent", async (original) => ({
   Actor: { createActor: mocks.createActor }, HttpAgent: { createSync: mocks.createAgent }
 }));
 import { createNodeReader } from "../src/vfs.js";
-const raw = (path: string) => ({ path, content: "\uFEFF日本語\u0000😀", kind: { File: null }, created_at: 1n, updated_at: 2n, etag: "etag", metadata_json: "{}" });
+const raw = (path: string) => ({ path, content: { text: "\uFEFF日本語\u0000😀", originalLength: 7 }, kind: { File: null }, created_at: 1n, updated_at: 2n, etag: "etag", metadata_json: "{}" });
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.createAgent.mockReturnValue({});
@@ -19,13 +19,13 @@ describe("request-scoped authenticated node reader", () => {
     const results = await Promise.all([reader.readOne("a", "/first"), reader.readOne("b", "/second")]);
     expect(mocks.createActor).toHaveBeenCalledTimes(1);
     expect(mocks.createAgent).toHaveBeenCalledWith(expect.objectContaining({ identity }));
-    expect(results.map((value) => value?.content)).toEqual([raw("").content, raw("").content]);
+    expect(results.map((value) => value?.content)).toEqual([raw("").content.text, raw("").content.text]);
   });
   it("uses one batch call and shares that actor with single reads", async () => {
     const reader = await createNodeReader({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", KINIC_WIKI_IDENTITY: {} as Identity });
     const results = await reader.readMany("a", ["/first", "/second"]);
     await reader.readOne("a", "/first");
-    expect(results.map((result) => result.node?.content)).toEqual([raw("").content, raw("").content]);
+    expect(results.map((result) => result.node?.content)).toEqual([raw("").content.text, raw("").content.text]);
     const actor = mocks.createActor.mock.results[0].value;
     expect(actor.read_nodes).toHaveBeenCalledOnce();
     expect(actor.read_nodes).toHaveBeenCalledWith("a", ["/first", "/second"]);

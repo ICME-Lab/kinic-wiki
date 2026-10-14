@@ -36,3 +36,23 @@ export class VerifiedNodeKeyStore implements NodeKeyStore {
 }
 
 export const verifiedNodeKeys = new VerifiedNodeKeyStore();
+
+// Agents may fetch a different trust root in local environments. Partition by
+// both endpoint and the agent's CURRENT root, not just the canister/subnet ID.
+export function scopedVerifiedNodeKeys(
+  host: string,
+  rootKey: () => Uint8Array | null,
+  store: NodeKeyStore = verifiedNodeKeys
+): NodeKeyStore {
+  const endpoint = new URL(host).href;
+  const scoped = (key: string) => {
+    const root = rootKey();
+    return root ? JSON.stringify([endpoint, Array.from(root, (byte) => byte.toString(16).padStart(2, "0")).join(""), key]) : null;
+  };
+  return {
+    expirationTime: store.expirationTime,
+    async get(key) { const name = scoped(key); return name === null ? undefined : store.get(name); },
+    async set(key, value) { const name = scoped(key); if (name !== null) await store.set(name, value); },
+    async delete(key) { const name = scoped(key); if (name !== null) await store.delete(name); }
+  };
+}

@@ -88,4 +88,7 @@ auditConfig:
     - GHSA-vfj7-8cjw-p6xm
 
 patchedDependencies:
-  '@icp-sdk/core': patches/@icp-sdk__core-bom.patch
+  # SDK 6 is used by Node/nodejs_compat servers; its native hash patch is not
+  # applied to the SDK 5.4 browser clients.
+  '@icp-sdk/core@5.4.0': patches/@icp-sdk__core-bom.patch
+  '@icp-sdk/core@6.0.0': patches/@icp-sdk__core-6.patch

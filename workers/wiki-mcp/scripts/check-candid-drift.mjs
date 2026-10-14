@@ -9,7 +9,10 @@ import {
 } from "@kinic/candid-tools/shapes";
 
 const did = readFileSync(new URL("../../../crates/vfs_canister/vfs.did", import.meta.url), "utf8");
-const idl = readFileSync(new URL("../src/vfs.ts", import.meta.url), "utf8");
+// boundedNodeText preserves the Text wire type; its encoding and malformed-input
+// behavior are checked in bounded-node-text.test.ts. Normalize only that adapter.
+const idl = readFileSync(new URL("../src/vfs.ts", import.meta.url), "utf8")
+  .replaceAll("boundedNodeText(idl.Text)", "idl.Text");
 
 const didTypeAliases = {
   ...sharedAliases,
