@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -53,7 +54,9 @@ describe.each([["ESM", esmAgent.Cbor], ["CommonJS", cjsAgent.Cbor]])("CBOR buffe
       const buffer = wire.buffer as ArrayBuffer & { transfer: (length: number) => ArrayBuffer };
       buffer.transfer(0);
       expect(buffer.byteLength).toBe(0);
-      expect(decoded).toEqual(original);
+      // Node compares typed-array bytes directly; Vitest's recursive comparison
+      // of these megabyte arrays can exceed its timeout on shared CI runners.
+      assert.deepStrictEqual(decoded, original);
     }
   });
 });

@@ -38,6 +38,12 @@ for (const [project, mode, fixture, filename] of targets) {
       let expected = project === "workers/wiki-assistant" && field === "durable_objects"
         ? { bindings: [{ name: "ASSISTANT_CONNECTION", class_name: "AssistantConnection" }] }
         : legacy[field];
+      // Private MCP now forwards to the existing session DO. Keep the legacy
+      // migration fixtures intact and require the precise new entrypoint only
+      // in the two live private modes, preserving all resource comparisons.
+      if (project === "workers/wiki-mcp" && field === "main" && ["private", "staging"].includes(mode)) {
+        expected = "src/entry.ts";
+      }
       // Reviewer login was closed after migration. Preserve the historical
       // fixtures and require the exact new defaults in all four Private modes;
       // every other variable, binding and migration remains compared above/below.
