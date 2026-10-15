@@ -38,7 +38,7 @@ const STRINGS = {
   scopeHeading: "Requested access",
   scopeRead: "Read your wiki content.",
   scopeWrite: "Read and edit your wiki content.",
-  scopeNote: "You choose the final access level in Internet Identity.",
+  scopeNote: "You choose the final access level and connection duration in Internet Identity. Compatible clients can renew this connection automatically until that approved expiry.",
   continueIi: "Internet Identity",
   connectingTitle: "Connecting Kinic Wiki",
   connecting: "Connecting…",

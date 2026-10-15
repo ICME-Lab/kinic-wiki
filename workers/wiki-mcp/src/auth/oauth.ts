@@ -2,6 +2,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import type { JsonnableEd25519KeyIdentity } from "@icp-sdk/core/identity";
 import type { RuntimeEnv } from "../vfs.js";
 import { parseRoutedToken, sessionName } from "./routing.js";
+import { II_SESSION_TTL_MS } from "./session-policy.js";
 import {
   base64UrlEncode,
   decryptJson,
@@ -46,7 +47,6 @@ const REVIEW_CONNECT_PATH = "/oauth/connect/reviewer";
 const REVIEW_DATABASE_ID_PATTERN = /^db_[a-z2-7]{12}$/u;
 const CLIENT_PREFIX = "mcl1.";
 const COOKIE_NAME = "__Host-kinic-mcp-connect";
-const SESSION_CAP_MS = 8 * 60 * 60 * 1000;
 const CONNECT_TTL_MS = 10 * 60 * 1000;
 const CLIENT_SECRET_TTL_SECONDS = 0;
 const MAX_AUTH_BODY_BYTES = 16_384;
@@ -340,6 +340,7 @@ async function registerClient(request: Request, env: RuntimeEnv): Promise<Respon
   if (!created) {
     return oauthJsonError("server_error", 500);
   }
+  console.log(JSON.stringify({ event: "mcp_oauth", stage: "registration", clientSupportsRefresh: record.grantTypes.includes("refresh_token") }));
   return json(
     {
       client_id: clientId,
@@ -412,13 +413,14 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
     registrationKey: await encryptJson(registrationKey.toJSON(), key, registrationKeyContext(sessionId)),
     sessionKey: await encryptJson(sessionKey.toJSON(), key, sessionKeyContext(sessionId)),
     createdAt: now,
-    sessionCapAt: now + SESSION_CAP_MS,
+    sessionCapAt: now + II_SESSION_TTL_MS,
     connectExpiresAt: now + CONNECT_TTL_MS
   };
   const created = await authNamespace(env).getByName(sessionName(sessionId)).createSession(input);
   if (!created) {
     return oauthJsonError("server_error", 500);
   }
+  console.log(JSON.stringify({ event: "mcp_oauth", stage: "authorization", clientSupportsRefresh: client.grantTypes.includes("refresh_token"), offlineAccessRequested: scope.split(/\s+/u).includes("offline_access") }));
   const headers = new Headers(authorizationPageHeaders(redirectUri));
   headers.append("set-cookie", `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
   return new Response(
@@ -442,7 +444,7 @@ async function startInternetIdentityConnect(request: Request, env: RuntimeEnv): 
     registration_key: input.pending.registrationPublicKey,
     callback: `${origin}${CALLBACK_PATH}`,
     state: input.connectState,
-    ttl: String(SESSION_CAP_MS / 1000)
+    ttl: String(II_SESSION_TTL_MS / 1000)
   }).toString();
   return new Response(null, {
     status: 302,
@@ -787,13 +789,18 @@ async function token(request: Request, env: RuntimeEnv): Promise<Response> {
       clientId: authenticated.clientId,
       redirectUri,
       codeVerifier: verifier,
-      issueRefreshToken:
-        authenticated.grantTypes.includes("refresh_token") && form.get("scope")?.split(/\s+/u).includes("offline_access") !== false,
+      issueRefreshToken: authenticated.grantTypes.includes("refresh_token"),
+      exchangeScope: form.get("scope") ?? undefined,
       now
     });
+    logOAuthTokenResult("authorization_code", issued, authenticated.grantTypes.includes("refresh_token"));
     return issued ? tokenResponse(issued, now) : oauthJsonError("invalid_grant", 400);
   }
   if (form.get("grant_type") === "refresh_token") {
+    if (!authenticated.grantTypes.includes("refresh_token")) {
+      logOAuthTokenResult("refresh_token", null, false, "unauthorized_client");
+      return oauthJsonError("unauthorized_client", 400);
+    }
     const refreshToken = form.get("refresh_token");
     const resource = form.get("resource") ?? expectedResource;
     const sessionId = refreshToken ? parseRoutedToken(refreshToken, "mkr1") : null;
@@ -806,6 +813,7 @@ async function token(request: Request, env: RuntimeEnv): Promise<Response> {
       resource,
       now
     });
+    logOAuthTokenResult("refresh_token", issued, true);
     return issued ? tokenResponse(issued, now) : oauthJsonError("invalid_grant", 400);
   }
   return oauthJsonError("unsupported_grant_type", 400);
@@ -842,6 +850,20 @@ async function authenticateClient(
   return suppliedSecret && client.clientSecretHash && (await secretEquals(client.clientSecretHash, suppliedSecret))
     ? client
     : null;
+}
+
+function logOAuthTokenResult(
+  grantType: "authorization_code" | "refresh_token",
+  issued: TokenIssueResult | null,
+  clientSupportsRefresh: boolean,
+  reason = "invalid_grant"
+): void {
+  console.log(JSON.stringify({
+    event: "mcp_oauth", stage: grantType, clientSupportsRefresh,
+    outcome: issued ? "issued" : reason,
+    ...(issued ? { refreshIssued: issued.refreshToken !== null,
+      offlineAccessGranted: issued.scope.split(/\s+/u).includes("offline_access") } : {})
+  }));
 }
 
 function tokenResponse(issued: TokenIssueResult, now: number): Response {

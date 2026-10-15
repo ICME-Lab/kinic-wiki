@@ -64,7 +64,10 @@ import { clipText } from "./text.js";
 
 const DEFAULT_DATABASE_LIMIT = 10;
 const profileInputSchema = z.strictObject({});
-const profileOutputSchema = z.strictObject({ id: z.string().min(1).regex(/\S/u) });
+const profileOutputSchema = z.strictObject({
+  id: z.string().min(1).regex(/\S/u),
+  nickname: z.string().min(1).optional()
+});
 const MAX_DATABASE_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -653,7 +656,7 @@ export function createServer(
 
   if (accessPolicy === "private_required") {
     server.registerTool("get_profile", {
-      description: "Return the stable profile ID represented by this request's authenticated credentials for connection management.",
+      description: "Return the stable profile ID and a short PID label represented by this request's authenticated credentials for connection management.",
       inputSchema: profileInputSchema,
       outputSchema: profileOutputSchema,
       annotations: TOOL_ANNOTATIONS,
@@ -667,7 +670,9 @@ export function createServer(
       try {
         const principal = env.KINIC_WIKI_IDENTITY.getPrincipal();
         if (!principal.isAnonymous()) {
-          const result = toToolResult({ id: principal.toText() });
+          const id = principal.toText();
+          const label = id.length > 15 ? `${id.slice(0, 10)}…${id.slice(-5)}` : id;
+          const result = toToolResult({ id, nickname: `Kinic Wiki · ${label}` });
           console.info(JSON.stringify({ event: "mcp_profile", outcome: "ok" }));
           return result;
         }
