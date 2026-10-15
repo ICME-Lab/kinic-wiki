@@ -2438,7 +2438,7 @@ fn canonical_roles() -> Vec<CanonicalRole> {
         (
             "index",
             "index.md",
-            "Content-oriented catalog of pages in a scope",
+            "Agent-maintained navigation catalog; not exhaustive inventory or factual evidence",
         ),
         (
             "overview",

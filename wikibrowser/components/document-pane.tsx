@@ -10,7 +10,7 @@ import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { splitMarkdownPreviewSections } from "@/lib/markdown-sections";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
 import { isDatabaseNotFoundErrorCode, isKnowledgeSourcePath, type LoadState, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
-import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
+import { folderOverviewPath, visibleChildren } from "@/lib/folder-index";
 import { ErrorBox } from "@/components/panel";
 import type { EditorSaveState } from "@/components/markdown-editor";
 import { MarkdownEditDocument } from "@/components/markdown-edit-document";
@@ -180,7 +180,7 @@ function CopyPathButton({ onCopyPath }: { onCopyPath: () => void }) {
 export function DocumentPane({
   databaseId,
   node,
-  folderIndexNode,
+  folderOverviewNode,
   childrenState,
   view,
   canisterId,
@@ -192,11 +192,11 @@ export function DocumentPane({
   databaseRoleError,
   databaseCyclesError,
   onNodeSaved,
-  onFolderIndexSaved,
+  onFolderOverviewSaved,
   onEditStateChange
 }: {
   node: PathLoadState<WikiNode>;
-  folderIndexNode: PathLoadState<WikiNode>;
+  folderOverviewNode: PathLoadState<WikiNode>;
   childrenState: PathLoadState<ChildNode[]>;
   view: ViewMode;
   canisterId: string;
@@ -209,7 +209,7 @@ export function DocumentPane({
   databaseRoleError?: string | null;
   databaseCyclesError?: string | null;
   onNodeSaved?: () => Promise<WikiNode>;
-  onFolderIndexSaved?: () => Promise<WikiNode>;
+  onFolderOverviewSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
   if (node.loading && childrenState.loading) return <PaneBody><LoadingBlock /></PaneBody>;
@@ -221,7 +221,7 @@ export function DocumentPane({
       <PaneBody>
         <FolderDocument
           folder={node.data}
-          folderIndexNode={folderIndexNode}
+          folderOverviewNode={folderOverviewNode}
           childrenState={childrenState}
           view={view}
           canisterId={canisterId}
@@ -232,7 +232,7 @@ export function DocumentPane({
           currentDatabaseRole={currentDatabaseRole ?? null}
           databaseRoleError={databaseRoleError ?? null}
           databaseCyclesError={databaseCyclesError ?? null}
-          onFolderIndexSaved={onFolderIndexSaved}
+          onFolderOverviewSaved={onFolderOverviewSaved}
           onEditStateChange={onEditStateChange}
         />
       </PaneBody>
@@ -624,7 +624,7 @@ function LargeContentState({
 
 function FolderDocument({
   folder,
-  folderIndexNode,
+  folderOverviewNode,
   childrenState,
   view,
   canisterId,
@@ -635,11 +635,11 @@ function FolderDocument({
   currentDatabaseRole,
   databaseRoleError,
   databaseCyclesError,
-  onFolderIndexSaved,
+  onFolderOverviewSaved,
   onEditStateChange
 }: {
   folder: WikiNode;
-  folderIndexNode: PathLoadState<WikiNode>;
+  folderOverviewNode: PathLoadState<WikiNode>;
   childrenState: LoadState<ChildNode[]>;
   view: ViewMode;
   canisterId: string;
@@ -650,18 +650,20 @@ function FolderDocument({
   currentDatabaseRole: DatabaseRole | null;
   databaseRoleError: string | null;
   databaseCyclesError: string | null;
-  onFolderIndexSaved?: () => Promise<WikiNode>;
+  onFolderOverviewSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
-  const indexNode = folderIndexNode.data ?? emptyFolderIndexNode(folder.path);
-  const contentBytes = new TextEncoder().encode(indexNode.content).length;
+  const overviewNode = folderOverviewNode.data ?? emptyFolderOverviewNode(folder.path);
+  const contentBytes = new TextEncoder().encode(overviewNode.content).length;
   const isLargeContent = contentBytes > LARGE_CONTENT_BYTES;
   if (view === "edit") {
+    if (folderOverviewNode.loading) return <p className="p-4 text-sm text-muted">Loading description...</p>;
+    if (folderOverviewNode.error) return <ErrorBox message={folderOverviewNode.error} hint={folderOverviewNode.hint} />;
     return (
       <EditDocument
         canisterId={canisterId}
         databaseId={databaseId}
-        node={indexNode}
+        node={overviewNode}
         isLargeContent={isLargeContent}
         contentBytes={contentBytes}
         authReady={authReady}
@@ -670,7 +672,7 @@ function FolderDocument({
         currentDatabaseRole={currentDatabaseRole}
         databaseRoleError={databaseRoleError}
         databaseCyclesError={databaseCyclesError}
-        onNodeSaved={onFolderIndexSaved}
+        onNodeSaved={onFolderOverviewSaved}
         onEditStateChange={onEditStateChange}
       />
     );
@@ -678,9 +680,8 @@ function FolderDocument({
   return (
     <div className="h-full overflow-auto p-3 sm:p-6">
       <div className="space-y-6">
-        <FolderIndexSection
-          folderPath={folder.path}
-          folderIndexNode={folderIndexNode}
+        <FolderOverviewSection
+          folderOverviewNode={folderOverviewNode}
           view={view}
           isLargeContent={isLargeContent}
           contentBytes={contentBytes}
@@ -693,48 +694,46 @@ function FolderDocument({
   );
 }
 
-function FolderIndexSection({
-  folderPath,
-  folderIndexNode,
+function FolderOverviewSection({
+  folderOverviewNode,
   view,
   isLargeContent,
   contentBytes,
   canisterId,
   databaseId
 }: {
-  folderPath: string;
-  folderIndexNode: PathLoadState<WikiNode>;
+  folderOverviewNode: PathLoadState<WikiNode>;
   view: "preview" | "raw";
   isLargeContent: boolean;
   contentBytes: number;
   canisterId: string;
   databaseId: string;
 }) {
-  if (folderIndexNode.loading) {
-    return <p className="text-sm text-muted">Loading folder note...</p>;
+  if (folderOverviewNode.loading) {
+    return <p className="text-sm text-muted">Loading description...</p>;
   }
-  if (folderIndexNode.error) {
-    return <ErrorBox message={folderIndexNode.error} hint={folderIndexNode.hint} />;
+  if (folderOverviewNode.error) {
+    return <ErrorBox message={folderOverviewNode.error} hint={folderOverviewNode.hint} />;
   }
-  if (!folderIndexNode.data) {
+  if (!folderOverviewNode.data?.content.trim()) {
     return null;
   }
-  const indexNode = folderIndexNode.data;
+  const overviewNode = folderOverviewNode.data;
   return (
-    <section className="rounded-2xl border border-line bg-paper p-4 sm:p-5">
-      <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Folder note</p>
+    <details className="min-w-0 overflow-hidden rounded-xl border border-line bg-paper p-3 sm:p-4">
+      <summary className="cursor-pointer text-sm font-medium text-muted">About this folder</summary>
       <div className="mt-4">
         {view === "raw" ? (
-          <RawContent content={indexNode.content} isLargeContent={isLargeContent} contentBytes={contentBytes} />
+          <RawContent content={overviewNode.content} isLargeContent={isLargeContent} contentBytes={contentBytes} />
         ) : isLargeContent ? (
-          <LargeMarkdownPreview key={`${indexNode.path}:${indexNode.etag}`} content={indexNode.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={folderPath} />
+          <LargeMarkdownPreview key={`${overviewNode.path}:${overviewNode.etag}`} content={overviewNode.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={overviewNode.path} />
         ) : (
           <div className="markdown-body mx-auto max-w-3xl">
-            <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={folderPath} content={indexNode.content} />
+            <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={overviewNode.path} content={overviewNode.content} />
           </div>
         )}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -793,8 +792,8 @@ function DirectoryChildrenCard({
   );
 }
 
-function emptyFolderIndexNode(folderPath: string): WikiNode {
-  const path = folderIndexPath(folderPath);
+function emptyFolderOverviewNode(folderPath: string): WikiNode {
+  const path = folderOverviewPath(folderPath);
   return {
     path,
     kind: "file",

@@ -17,7 +17,7 @@ Use this workflow for read-only search, inspection, summarization, and answer-on
 1. Extract the database ID from `https://wiki.kinic.xyz/db/<database_id>/...` or from the user prompt.
 2. Use the mainnet default canister for `wiki.kinic.xyz`; pass `--canister-id` only for an explicitly non-default canister.
 3. Start with `status --json` to confirm target and access.
-4. Prefer `query-context --json` for normal questions. Answer from returned nodes and evidence, not from search hits alone.
+4. Prefer `query-context --namespace /Knowledge --json` for normal questions. Answer from returned nodes and evidence, not from search hits alone.
 5. Use `search-remote` for content recall and `search-path-remote` for path or basename recall.
 6. Use `list-nodes` for inventory and prefix discovery; do not treat inventory output as final evidence.
 7. Use `query-sql` for 2 or more known-path body reads or narrow candidate classification.
@@ -50,3 +50,9 @@ Use this workflow for read-only search, inspection, summarization, and answer-on
 - Include source URL and source path only when present in read content or metadata.
 - For exact-value questions, answer the exact value first, then cite the path.
 - For broad synthesis, include scope, evidence groups, confirmed points, inference, and coverage limits.
+
+## Agent catalogs
+
+Use `index.md` for navigation or reading order when useful, not as exhaustive inventory or evidence for an answer. An empty, missing, or stale catalog must not stop content/path search and actual inventory discovery. `query_context` continues to prioritize the index to preserve navigation for broad questions. If large catalogs or other role pages consume the context budget, narrow the namespace or follow up with search and direct article reads. Reader-facing `overview.md` is synthesis, not evidence for exact claims.
+
+When inspecting a narrower Wiki scope, pass its prefix as `--namespace` (or API `namespace`). The public API defaults to `/Memory`; never interpret that default as a complete Knowledge inspection.

@@ -3,7 +3,6 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WikiNavigationLink, useWikiNavigation } from "@/components/wiki-navigation";
-import { displayPathForFolderIndex } from "@/lib/folder-index";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { searchRequestKey } from "@/lib/request-keys";
 import { DEFAULT_SEARCH_OPTIONS, normalizeSearchPrefix, prefixForSearchScope, type SearchLimit, type SearchOptions, type SearchPreviewMode, type SearchScope } from "@/lib/search-options";
@@ -149,7 +148,7 @@ export function SearchPanel({
         <div className="space-y-2">
           {results.map((hit) => {
             const excerpt = resultExcerpt(hit);
-            const displayPath = displayPathForFolderIndex(hit.path);
+            const displayPath = hit.path;
             return (
               <WikiNavigationLink
                 key={`${hit.path}-${hit.score}`}

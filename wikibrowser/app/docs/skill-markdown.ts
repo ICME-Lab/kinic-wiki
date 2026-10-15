@@ -8,6 +8,8 @@ import wikiIngestMarkdown from "../../../skills/kinic-wiki-ingest/SKILL.md?raw";
 import wikiIngestReferenceMarkdown from "../../../skills/kinic-wiki-ingest/ingest.md?raw";
 import wikiLintMarkdown from "../../../skills/kinic-wiki-lint/SKILL.md?raw";
 import wikiLintReferenceMarkdown from "../../../skills/kinic-wiki-lint/lint.md?raw";
+import wikiMaintainMarkdown from "../../../skills/kinic-wiki-maintain/SKILL.md?raw";
+import wikiMaintainReferenceMarkdown from "../../../skills/kinic-wiki-maintain/maintain.md?raw";
 import wikiMcpMarkdown from "../../../skills/kinic-wiki-mcp/SKILL.md?raw";
 import wikiMcpReferenceMarkdown from "../../../skills/kinic-wiki-mcp/references/tools.md?raw";
 import wikiQueryMarkdown from "../../../skills/kinic-wiki-query/SKILL.md?raw";
@@ -23,6 +25,7 @@ const skillMarkdownBySlug: Record<string, string> = {
   edit: wikiEditMarkdown,
   ingest: wikiIngestMarkdown,
   lint: wikiLintMarkdown,
+  maintain: wikiMaintainMarkdown,
   mcp: wikiMcpMarkdown,
   query: wikiQueryMarkdown,
   registry: skillRegistryMarkdown
@@ -33,6 +36,7 @@ const skillMarkdownReferencesBySlug: Record<string, SkillMarkdownReference[]> = 
   edit: [{ href: "edit.md", markdown: wikiEditReferenceMarkdown }],
   ingest: [{ href: "ingest.md", markdown: wikiIngestReferenceMarkdown }],
   lint: [{ href: "lint.md", markdown: wikiLintReferenceMarkdown }],
+  maintain: [{ href: "maintain.md", markdown: wikiMaintainReferenceMarkdown }],
   mcp: [{ href: "references/tools.md", markdown: wikiMcpReferenceMarkdown }],
   query: [{ href: "query.md", markdown: wikiQueryReferenceMarkdown }],
   registry: [{ href: "../../docs/SKILL_REGISTRY.md", markdown: skillRegistryReferenceMarkdown }]

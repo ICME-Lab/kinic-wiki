@@ -10,7 +10,7 @@ vi.mock("@/lib/public-seo-http", () => ({fetchPublicSeoPayload: async (canister:
     const node = await api.readNode(canister,id,path);
     const folder = !node || node.kind === "folder";
     const children = folder ? (await api.listChildren(canister,id,path)).filter((entry: ChildNode) => entry.name !== "index.md") : [];
-    const render = folder ? await api.readNode(canister,id,`${path}/index.md`) : node;
+    const render = folder ? await api.readNode(canister,id,`${path}/overview.md`) : node;
     return {database,node:render,children:children.slice(0,100),childrenTruncated:children.length>100,hasContent:Boolean(database||render||children.length)};
   } catch { return null; }
 }}));
@@ -53,7 +53,7 @@ describe("public article SEO page", () => {
   });
 
   it("preserves folder order, excludes index.md, and caps serialized links at 100", async () => {
-    api.readNode.mockImplementation(async (_canister: string, _database: string, path: string) => path.endsWith("index.md") ? node("# Folder body", path) : node("", path, "folder"));
+    api.readNode.mockImplementation(async (_canister: string, _database: string, path: string) => path.endsWith("overview.md") ? node("# Folder body", path) : node("", path, "folder"));
     const children: ChildNode[] = Array.from({ length: 102 }, (_, i) => ({ path: `/Knowledge/${i}.md`, name: `${i}.md`, kind: "file", updatedAt: null, etag: null, sizeBytes: null, isVirtual: false, hasChildren: false, isPublished: false }));
     api.listChildren.mockResolvedValue([{ ...children[0], name: "index.md", path: "/Knowledge/index.md" }, ...children]);
     const data = await loadWikiDatabasePageData("db_alpha");

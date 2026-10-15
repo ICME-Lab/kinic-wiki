@@ -4,7 +4,6 @@ import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useMemo, useState } from "react";
 import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { GitBranch } from "lucide-react";
-import { displayPathForFolderIndex } from "@/lib/folder-index";
 import { hrefForGraph, hrefForPath } from "@/lib/paths";
 import { graphRequestKey } from "@/lib/request-keys";
 import type { LinkEdge } from "@/lib/types";
@@ -188,11 +187,11 @@ function GraphCanvas({
         const isNeighbor = neighbors?.has(node.path) ?? false;
         const dimmed = hovered !== null && !isHovered && !isNeighbor;
         const showLabel = node.isCenter || isHovered || isNeighbor || (hovered === null && labelled.has(node.path));
-        const label = shortName(displayPathForFolderIndex(node.path));
+        const label = shortName(node.path);
         return (
           <WikiNavigationLink
             aria-label={label}
-            href={hrefForPath(canisterId, databaseId, displayPathForFolderIndex(node.path))}
+            href={hrefForPath(canisterId, databaseId, node.path)}
             key={node.path}
             onFocus={() => setHovered(node.path)}
             onBlur={() => setHovered(null)}

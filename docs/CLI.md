@@ -360,6 +360,8 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 For `move-node --overwrite`, pass `--expected-target-etag` when the destination currently exists. Omit it when the destination is absent. The flag is rejected without `--overwrite`, so callers must read and preserve both the source and destination etags before replacing a live destination.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
+Catalogs are curated by LLM ingest/edit and bounded maintenance skills; see [Wiki maintenance](WIKI_MAINTENANCE.md). `rebuild-index` and `rebuild-scope-index` replace catalog bodies and are explicit broad-repair tools, not routine save-time updates.
+
 Maintenance and database lifecycle operations live in their own command groups:
 
 - `rebuild-index`

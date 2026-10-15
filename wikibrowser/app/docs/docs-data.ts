@@ -38,7 +38,7 @@ export const primaryDocs: DocsLink[] = [
   {
     href: "/docs/skills",
     title: "Skills",
-    description: "Use agent workflow skills for wiki query, edit, ingest, lint, Context Pack export, and Skill Registry operations."
+    description: "Use agent workflow skills for wiki query, edit, ingest, lint, repeated maintenance, Context Pack export, and Skill Registry operations."
   }
 ];
 
@@ -82,6 +82,14 @@ export const skillDocs: SkillDoc[] = [
     eyebrow: "Health inspection",
     description: "Inspect local or remote wiki health without silently repairing content.",
     summary: "Use lint workflows to find wiki structure issues, missing source evidence, stale paths, malformed skill packages, or inconsistent store layout."
+  },
+  {
+    slug: "maintain",
+    href: "/docs/skills/maintain",
+    title: "Maintain",
+    eyebrow: "Repeated improvement",
+    description: "Inspect, repair, and reinspect Wiki content within an explicit scope and budget.",
+    summary: "Use maintenance workflows to improve agent catalogs, reader descriptions, links, and evidence-backed article organization. Inspect mode is read-only; repair mode requires explicit authorization."
   },
   {
     slug: "context-pack",

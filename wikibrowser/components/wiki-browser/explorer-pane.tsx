@@ -400,7 +400,7 @@ export function ExplorerActionError({ message }: { message: string }) {
 export function wikiMarkdownChildPath(directoryPath: string, fileName: string): string {
   const markdownFileName = normalizeMarkdownFileName(fileName);
   if (!markdownFileName) throw new Error("Enter a Markdown file name, not a path.");
-  if (isReservedFolderIndexName(markdownFileName)) throw new Error("Use folder Edit to create index.md.");
+  if (isReservedFolderIndexName(markdownFileName)) throw new Error("index.md is an agent catalog. Open its path explicitly to edit it.");
   return wikiChildPath(directoryPath, markdownFileName, "Markdown files");
 }
 
