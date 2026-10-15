@@ -108,6 +108,8 @@ The II registration grant accepts both `queries` (`Questions only`) and `all` (`
 
 Already-minted delegations remain usable for their remaining lifetime, so II revocation can take up to five minutes to reach a cached session. The next mint after expiry observes revocation, invalidates the local OAuth session, and returns `invalid_token`; reconnect through the client to restore access. Refresh-token rotation preserves a valid delegation cache. Changing `MCP_KEY_ENCRYPTION_KEY` intentionally invalidates all existing sessions.
 
+II permits one active MCP session per II identity. Registering a new connection with the same II identity replaces the previous grant, even when both connections use the same MCP server. Reauthenticating a management scan connection can therefore invalidate a user's existing connection. Use a separate II identity for management scans that must coexist with a user connection, and do not register another connection with the test identity during an OAuth renewal test. PID-based profile recognition does not merge or preserve those II grants.
+
 The II callback returns stable, non-sensitive errors:
 
 - `400 invalid_connection`: the callback, initiator binding, delegation, or local encrypted session is invalid or expired;

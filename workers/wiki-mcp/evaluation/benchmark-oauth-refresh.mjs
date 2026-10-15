@@ -81,8 +81,9 @@ try {
   for (let n = 0; n < seed.limit; n += 64) {
     const startedCpu = cpu(), started = performance.now();
     issued = await call("history", { action: "rotate", token: issued.refreshToken, count: 64 });
+    const elapsedWallMs = performance.now() - started;
     const elapsedCpu = cpu();
-    batches.push({ rotations: 64, wallMsPerRotation: (performance.now() - started) / 64,
+    batches.push({ rotations: 64, wallMsPerRotation: elapsedWallMs / 64,
       cpuMsPerRotation: elapsedCpu === null ? null : (elapsedCpu - startedCpu) / 64 });
     assert.equal(issued.sessionExpiresAt, seed.issued.sessionExpiresAt);
     assert.equal(issued.scope, "mcp:read");
