@@ -147,7 +147,7 @@ test("renders the skills overview and each workflow detail", async ({ page }) =>
   await expect(page).toHaveTitle("Kinic Wiki Skills Docs");
   await expect(page.getByRole("heading", { level: 1, name: "Agent workflow skills" })).toBeVisible();
   const skillLinks = page.getByRole("region", { name: "Skill workflow docs" });
-  await expect(skillLinks.getByRole("link")).toHaveCount(7);
+  await expect(skillLinks.getByRole("link")).toHaveCount(8);
 
   for (const skill of [
     { slug: "query", title: "Query", skillName: "kinic-wiki-query", referenceHref: "query.md", referenceHeading: "Kinic Wiki Query Workflow" },
@@ -155,6 +155,7 @@ test("renders the skills overview and each workflow detail", async ({ page }) =>
     { slug: "mcp", title: "MCP", skillName: "kinic-wiki-mcp", referenceHref: "references/tools.md", referenceHeading: "Kinic Wiki MCP Tool Reference" },
     { slug: "ingest", title: "Ingest", skillName: "kinic-wiki-ingest", referenceHref: "ingest.md", referenceHeading: "Kinic Wiki Ingest Workflow" },
     { slug: "lint", title: "Lint", skillName: "kinic-wiki-lint", referenceHref: "lint.md", referenceHeading: "Kinic Wiki Lint Workflow" },
+    { slug: "maintain", title: "Maintain", skillName: "kinic-wiki-maintain", referenceHref: "maintain.md", referenceHeading: "Maintenance execution contract" },
     { slug: "context-pack", title: "Context Pack", skillName: "kinic-context-pack", referenceHref: "context-pack.md", referenceHeading: "Kinic Context Pack Workflow" },
     { slug: "registry", title: "Skill Registry", skillName: "kinic-skill-registry", referenceHref: "../../docs/SKILL_REGISTRY.md", referenceHeading: "Skill Registry" }
   ]) {

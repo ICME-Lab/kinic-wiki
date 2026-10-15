@@ -142,8 +142,6 @@ assert.match(wikiBrowserSource, /localImportAbortController\.current\?\.abort\(\
 assert.match(wikiBrowserSource, /nodeContextCache\.current\.clear\(\)/);
 assert.match(wikiBrowserSource, /childNodesCache\.current\.clear\(\)/);
 assert.match(wikiBrowserSource, /expectedEtag: null/);
-assert.match(wikiBrowserSource, /folderIndexPath\(selectedPath\)/);
-assert.match(wikiBrowserSource, /Use folder Edit to create index\.md\./);
 assert.match(wikiBrowserSource, /const \{ deleteNodeAuthenticated, readNode \} = await import\("@\/lib\/vfs-client"\)/);
 assert.match(wikiBrowserSource, /readNode\(canisterId, databaseId, folderIndexPath\(target\.path\), readIdentity\)/);
 assert.match(wikiBrowserSource, /if \(!isNotFoundError\(cause\)\) throw cause;/);
@@ -447,8 +445,6 @@ assert.match(marketplaceListingDetailSource, /toast\.success\(`Purchase complete
 assert.match(marketplaceListingDetailSource, /toast\.info\("Access is already active\."\)/);
 assert.match(marketplaceListingDetailSource, /toast\.error\(message\)/);
 assert.match(documentPaneSource, /node\.data\?\.kind === "folder"/);
-assert.match(documentPaneSource, /FolderIndexSection/);
-assert.match(documentPaneSource, /emptyFolderIndexNode/);
 assert.match(documentPaneSource, /isKnowledgeSourcePath\(node\.path\)/);
 assert.match(markdownPreviewSource, /valueFor\(fields, "source_path"\) \?\? valueFor\(fields, "kinic\.source_path"\) \?\? valueFor\(fields, "kinic\.store_path"\)/);
 assert.match(markdownPreviewSource, />\s*store\{" "\}/);

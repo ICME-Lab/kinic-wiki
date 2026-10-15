@@ -233,7 +233,7 @@ fn payload(service: &VfsService, database: &str, path: &str) -> Result<Vec<u8>, 
         service.read_node(
             database,
             ANONYMOUS,
-            &format!("{}/index.md", path.trim_end_matches('/')),
+            &format!("{}/overview.md", path.trim_end_matches('/')),
         )?
     } else {
         node

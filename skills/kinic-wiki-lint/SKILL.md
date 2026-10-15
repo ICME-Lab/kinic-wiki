@@ -36,3 +36,5 @@ Core rules:
 - Use the embedded note-role rules in `lint.md` as the trust model. When this skill runs inside the repo and `docs/STORE_API.md` is available, use that file only as the current repo-local refinement.
 
 Read [lint.md](lint.md) before doing substantive Kinic Wiki lint work.
+
+For bounded repeated inspection, repair, and reinspection, use `kinic-wiki-maintain`. `index.md` is an agent catalog; optional `overview.md` is the reader description.

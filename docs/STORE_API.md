@@ -77,7 +77,7 @@ These methods are canister query methods. They do not mutate wiki content.
 
 Treat `capabilities` and `canonical_roles` as discovery data.
 Do not use `memory_manifest({ database_id })` as content evidence for an answer.
-The `canonical_roles` list mirrors the current wiki schema. Agents should use it to find role pages before relying on broad search results.
+The `canonical_roles` list describes file roles, including navigation and synthesis. It does not make every listed role factual evidence. `index.md` is an LLM-maintained agent catalog, not exhaustive inventory; use listing to discover actual paths.
 
 ## Memory Recall
 
@@ -196,3 +196,9 @@ Controller-only operational SQL remains separate in `query_index_sql_json`; data
 `read_nodes` is for explicitly selected paths, including pages in unrelated folders.
 `export_snapshot` remains the paginated prefix export API; `fetch_updates` remains
 revision-based synchronization. Neither is used as a fallback for arbitrary-path reads.
+
+## Catalog maintenance
+
+`query_context` continues to prioritize `index.md` before other role pages and search results, preserving catalog navigation for broad questions without lexical matches. Catalogs remain explicitly readable and searchable. A catalog is not exhaustive inventory or factual evidence. Large catalogs and other role pages can still consume the context budget; use a narrower namespace or follow-up search when needed. Candidate ordering and request/response shapes are unchanged.
+
+`index.md` is curated by ingest/edit skills and bounded `kinic-wiki-maintain` runs, not by server-side save hooks. Standalone lint is read-only. Optional `overview.md` holds reader-facing synthesis and folder descriptions; browser folder views and public folder SEO use it instead of embedding the index. Explicit catalog file URLs remain readable. See the [maintenance skill](../skills/kinic-wiki-maintain/maintain.md) for execution and [CLI guide](CLI.md#wiki-skill-distribution) for distribution.

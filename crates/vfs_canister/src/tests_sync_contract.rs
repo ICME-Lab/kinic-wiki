@@ -375,15 +375,15 @@ fn public_http_preserves_proofs_for_failed_auth_unrelated_updates_and_other_data
 fn public_http_fits_escaped_unicode_and_long_child_links_without_losing_the_article() {
     install_test_service();
     super::public_http::reset();
-    ensure_parent_folders("/Knowledge/wide/index.md");
+    ensure_parent_folders("/Knowledge/wide/overview.md");
     let metadata = serde_json::json!({
-        "title": "記事タイトル", "metadata": {"description": "説明😀".repeat(10_000)},
+        "title": "Article title", "metadata": {"description": "Description 😀".repeat(10_000)},
         "unused": "x".repeat(20_000)
     })
     .to_string();
     write_node(WriteNodeRequest {
         database_id: "default".into(),
-        path: "/Knowledge/wide/index.md".into(),
+        path: "/Knowledge/wide/overview.md".into(),
         kind: NodeKind::File,
         content: format!("# Article\n{}", "😀\u{1}\\\"".repeat(10_000)),
         metadata_json: metadata,
@@ -414,7 +414,7 @@ fn public_http_fits_escaped_unicode_and_long_child_links_without_losing_the_arti
     );
     let metadata: serde_json::Value =
         serde_json::from_str(payload["node"]["metadataJson"].as_str().unwrap()).unwrap();
-    assert_eq!(metadata["title"], "記事タイトル");
+    assert_eq!(metadata["title"], "Article title");
     assert!(metadata.get("unused").is_none());
     assert_eq!(payload["childrenTruncated"], true);
     let links = payload["children"].as_array().unwrap();
@@ -848,4 +848,59 @@ fn has_query_method_input(did: &str, method: &str, input: &str) -> bool {
 fn has_method_input(did: &str, method: &str, input: &str) -> bool {
     let prefix = format!("  {method} : ({input}) -> (");
     did.lines().any(|line| line.starts_with(&prefix))
+}
+
+#[test]
+fn public_folder_seo_uses_overview_and_keeps_catalogs_explicitly_readable() {
+    install_test_service();
+    super::public_http::reset();
+    ensure_parent_folders("/Knowledge/catalog-check/index.md");
+    for (name, content) in [
+        ("index.md", "# Agent catalog\nCATALOG_SENTINEL"),
+        ("article.md", "# Article\nReader content"),
+    ] {
+        write_node(WriteNodeRequest {
+            database_id: "default".into(),
+            path: format!("/Knowledge/catalog-check/{name}"),
+            kind: NodeKind::File,
+            content: content.into(),
+            metadata_json: "{}".into(),
+            expected_etag: None,
+        })
+        .unwrap();
+    }
+    let url = "/api/wiki-seo/default/Knowledge/catalog-check";
+    let response = super::http_request_update(test_http_get(url));
+    let payload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(payload["node"].is_null());
+    assert!(
+        payload["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|child| child["name"] == "article.md")
+    );
+    assert!(!String::from_utf8_lossy(&response.body).contains("CATALOG_SENTINEL"));
+    write_node(WriteNodeRequest {
+        database_id: "default".into(),
+        path: "/Knowledge/catalog-check/overview.md".into(),
+        kind: NodeKind::File,
+        content: "# Reader description".into(),
+        metadata_json: "{}".into(),
+        expected_etag: None,
+    })
+    .unwrap();
+    let response = super::http_request_update(test_http_get(url));
+    let payload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(payload["node"]["content"], "# Reader description");
+    let response = super::http_request_update(test_http_get(
+        "/api/wiki-seo/default/Knowledge/catalog-check/index.md",
+    ));
+    let payload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(
+        payload["node"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("CATALOG_SENTINEL")
+    );
 }

@@ -34,7 +34,7 @@ export async function listDatabasesPublic() {
 }
 export async function readNode(_canister, id, path) {
   if (!accessible(id)) throw new Error('Forbidden or missing');
-  if (id === 'db_folder') return {path, kind:path.endsWith('index.md')?'file':'folder', content:path.endsWith('index.md')?'# Folder title\\nFolder body':'',metadataJson:'{}'};
+  if (id === 'db_folder') return {path, kind:path.endsWith('overview.md')?'file':'folder', content:path.endsWith('overview.md')?'# Folder title\\nFolder body':'',metadataJson:'{}'};
   return {path,kind:'file',content:content[id] ?? '',metadataJson:'{}'};
 }
 export async function listChildren(_canister, id) {
@@ -48,7 +48,7 @@ export async function fetchPublicSeoPayload(canister,id,path) {
     const database = (await listDatabasesPublic()).find(item => item.databaseId===id);
     const raw = await readNode(canister,id,path);
     const folder = raw.kind === "folder";
-    const node = folder ? await readNode(canister,id,path+"/index.md") : raw;
+    const node = folder ? await readNode(canister,id,path+"/overview.md") : raw;
     const children = folder ? (await listChildren(canister,id)).filter(child => child.name!=="index.md") : [];
     return {database: database ? {metadata:database.metadata} : null,node:node ? {content:node.content.slice(0,16000),metadataJson:node.metadataJson.slice(0,16000)} : null,children:children.slice(0,100),childrenTruncated:children.length>100,hasContent:Boolean(database||node||children.length)};
   } catch { return null; }

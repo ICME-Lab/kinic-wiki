@@ -121,3 +121,6 @@ extensions/wiki-clipper/release/
 # cf build output and generated runtime state (binding declarations are checked in).
 **/.cloudflare/
 workers/payment/cloudflare.production.ts
+
+# Local video production workspace
+/mobile/ios/demo-video/

@@ -16,7 +16,7 @@ Keep raw evidence under `/Sources/...` and organized notes under `/Knowledge/...
 
 1. Confirm target database and access with `status --json`.
 2. Inspect existing scope before drafting changes.
-3. Prefer `query-context --json` for current wiki context.
+3. Prefer `query-context --namespace /Knowledge --json` for current wiki context.
 4. Use `list-nodes` for path inventory, overwrite checks, and destructive-operation review.
 5. Use `search-remote` or `search-path-remote` to find existing related notes before creating new pages.
 6. Use `query-sql` for 2 or more known-path reads or bulk overwrite checks.
@@ -27,9 +27,10 @@ Keep raw evidence under `/Sources/...` and organized notes under `/Knowledge/...
 
 ## Content Rules
 
-- Preserve exact values such as dates, money, fractions, spellings, product names, and role labels.
+- Preserve exact values such as dates, money, fractions, spellings, product names, and role labels, along with source links.
 - Keep transcript-like acknowledgements, tentative plans, and question phrasing out of `facts.md` unless they are canonical facts.
-- Route unresolved items to the appropriate question/open item page instead of promoting them into settled notes.
+- Route unresolved items and contradictions to the appropriate question/open item page instead of promoting them into settled notes.
+- Avoid copying implementation bodies or large diffs into knowledge pages: summarize decisions and link to the source.
 - Keep source persistence separate from wiki synthesis.
 - Do not move or rewrite existing evidence sources unless the user explicitly asks.
 - Stop at review-ready unless the user explicitly asks to push or publish.
@@ -46,3 +47,13 @@ Keep raw evidence under `/Sources/...` and organized notes under `/Knowledge/...
 - Use `kinic-wiki-query` for answer-only questions.
 - Use `kinic-wiki-edit` for existing-node repair without new source intake.
 - Use `kinic-context-pack` for portable AI handoff after the wiki structure exists.
+
+## Catalog maintenance
+
+The repository skills are the distribution source of truth. `index.md` is an LLM-maintained agent catalog, not a live inventory or factual evidence. `overview.md` is an optional reader-facing description; the browser does not embed catalog bodies.
+
+After creating, moving, deleting, or substantially changing a Knowledge article, inspect its existing folder index and the relevant parent/root navigation. Make focused etag-guarded updates when navigation or descriptions need to change; a normal authorized ingest includes these related in-scope edits. Report necessary out-of-scope parent edits. Skip catalog writes for typo-only changes or when content is already accurate. Do not create empty folder indexes or `none` templates. Create a useful root entry when ingest would otherwise leave the new knowledge undiscoverable through the root catalog.
+
+Keep curated summaries and reading order; do not run `rebuild-index` or `rebuild-scope-index` for routine edits. Use listing/search to check actual inventory. For repeated inspection → repair → verification, use `kinic-wiki-maintain`; lint alone remains read-only.
+
+When inspecting a narrower Wiki scope, pass its prefix as `--namespace` (or API `namespace`). The public API defaults to `/Memory`; never interpret that default as a complete Knowledge inspection.

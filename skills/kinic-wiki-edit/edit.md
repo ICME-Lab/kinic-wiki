@@ -15,7 +15,7 @@ Use this workflow only when the user asked for mutation or accepted a specific r
 ## Workflow
 
 1. Confirm target database and access with `status --json`.
-2. Build the candidate path set with `query-context`, search, inventory, or link commands.
+2. Build the candidate path set with `query-context --namespace <target-prefix>`, search, inventory, or link commands.
 3. Use `query-sql` for 2 or more known-path reads when narrowing candidates.
 4. Read every accepted target immediately before mutation with `read-node --json` or selected fields including `path`, `etag`, and `content`.
 5. Apply the smallest safe mutation: `write-node`, `append-node`, `edit-node`, `multi-edit-node`, `delete-node`, or `delete-tree`.
@@ -36,3 +36,13 @@ Use this workflow only when the user asked for mutation or accepted a specific r
 - Use `kinic-wiki-query` for answer-only work.
 - Use `kinic-wiki-ingest` when new source material must be persisted or synthesized.
 - Use `kinic-wiki-lint` for report-only health checks.
+
+## Catalog and maintenance repairs
+
+An explicitly authorized `kinic-wiki-maintain` repair run accepts supported, non-destructive repairs within its declared prefix; it does not need a second acceptance for each path. Its budgets and exclusions still apply. Ordinary lint findings do not authorize edits.
+
+For article creation, moves, deletion, or substantive changes, inspect affected folder and parent indexes and update navigation when necessary, within the authorized scope. Do not rewrite indexes for typo-only changes. Read actual inventory and verify links rather than trusting the index to be exhaustive. Preserve curated descriptions; broad rebuilds are not normal maintenance.
+
+Indexes are agent catalogs. Reader descriptions belong in optional `overview.md`. To split a mixed index, first read both files, merge unique prose and references into the overview, verify that write, then remove only transferred prose from the index. Never delete the catalog or overwrite an existing overview wholesale. A failed split remains an unresolved repair.
+
+After repair, read the saved body and rerun relevant lint checks. Write acknowledgement alone does not demonstrate resolution. For a maintenance run, report conflicts, partial progress, and unresolved findings under its execution contract.

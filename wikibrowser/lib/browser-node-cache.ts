@@ -2,7 +2,7 @@
 // What: Tiny in-memory cache helpers for the WikiBrowser reader pane.
 // Why: Re-selecting already visited nodes should not repeat IC queries during one session.
 
-import type { ChildNode, NodeContext } from "@/lib/types";
+import type { ChildNode, NodeContext, WikiNode } from "@/lib/types";
 
 export type BrowserNodeCacheHit =
   | {
@@ -28,4 +28,17 @@ export function readBrowserNodeCache(
     return { kind: "children", children };
   }
   return null;
+}
+
+// A description can be opened as a file or through its folder. Invalidate both
+// representations, including the children fallback, before caching the saved read.
+export function invalidateSavedBrowserNode(
+  nodeContexts: Map<string, NodeContext>,
+  childNodes: Map<string, ChildNode[]>,
+  folderOverviews: Map<string, WikiNode | null>,
+  requestKey: string
+): void {
+  nodeContexts.delete(requestKey);
+  childNodes.delete(requestKey);
+  folderOverviews.delete(requestKey);
 }

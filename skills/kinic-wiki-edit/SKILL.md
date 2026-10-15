@@ -28,3 +28,5 @@ Core rules:
 - Keep replacement scope explicit: path list, old text, new text, expected etag, verification.
 - Update the affected scope `log.md` for every page edit.
 - Stop and ask before destructive deletion, unclear redaction policy, or API-contract changes.
+
+For bounded repeated inspection, repair, and reinspection, use `kinic-wiki-maintain`. `index.md` is an agent catalog; optional `overview.md` is the reader description.
