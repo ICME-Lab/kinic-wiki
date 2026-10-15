@@ -49,6 +49,8 @@ Private connection requires only OAuth `mcp:read`. All mutation tools require OA
 
 OAuth is validated for every Private MCP POST. II sessions mint a per-app delegation only for `tools/call`; reviewer sessions restore the configured request-scoped service identity instead. An II app key and delegation chain are reused until 30 seconds before the five-minute cap, and concurrent cache misses share one mint.
 
+II connections initially request 30 days, with the actual expiry bounded by the user's II approval and the saved local cap. Access tokens last at most one hour. Clients registered for `refresh_token` receive rotating refresh tokens for II-approved sessions even without `offline_access`; refresh never extends the session expiry. Existing shorter sessions keep their original deadline until reconnecting. Code-only OAuth clients cannot refresh. Reviewer sessions retain their eight-hour cap and existing offline-scope requirements. Used refresh hashes remain available for replay detection, up to 4,096 rotations per session.
+
 Every `write_nodes` item and batch `write` operation is a full replacement and must explicitly provide `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` may be omitted. A batch `move` with `overwrite: true` must include `expected_target_etag` when its destination exists and omit it when the destination is absent; the field is invalid with `overwrite: false`. Conflict errors distinguish the input `path` from the actual `conflict_path`, and inline `current_content` is capped at 40,000 characters with truncation and original-size fields.
 
 ## Local

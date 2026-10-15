@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { RuntimeEnv } from "../vfs.js";
+import { II_SESSION_TTL_MS, REVIEW_SESSION_TTL_MS, MAX_REFRESH_ROTATIONS } from "./session-policy.js";
 import { decryptJson, encryptJson, randomOpaque, sha256, type EncryptedValueV1 } from "@kinic/ii-server/crypto";
 import {
   IiDelegationError,
@@ -18,7 +19,6 @@ const RECORD_KEY = "record";
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
 const AUTHORIZATION_CODE_TTL_MS = 10 * 60 * 1000;
 export const OAUTH_CLIENT_IDLE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
-const MAX_SPENT_REFRESH_TOKENS = 64;
 export const DELEGATION_REFRESH_MARGIN_MS = 30_000;
 
 export type ClientAuthMethod = "none" | "client_secret_basic" | "client_secret_post";
@@ -318,7 +318,11 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
       ) {
         return null;
       }
-      const sessionExpiresAt = Math.min(record.sessionCapAt, grantExpiresAt);
+      const sessionExpiresAt = Math.min(
+        record.sessionCapAt,
+        grantExpiresAt,
+        record.createdAt + (identitySource === "review_service" ? REVIEW_SESSION_TTL_MS : II_SESSION_TTL_MS)
+      );
       if (sessionExpiresAt <= now) {
         record.phase = "invalid";
         await transaction.put(RECORD_KEY, record);
@@ -361,6 +365,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
     redirectUri: string;
     codeVerifier: string;
     issueRefreshToken: boolean;
+    exchangeScope?: string;
     now: number;
   }): Promise<TokenIssueResult | null> {
     if (!/^[A-Za-z0-9._~-]{43,128}$/u.test(input.codeVerifier)) {
@@ -405,7 +410,10 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
       }
       return {
         kind: "issued",
-        value: await storeInitialTokens(transaction, record, material, input.issueRefreshToken)
+        value: await storeInitialTokens(transaction, record, material,
+          input.issueRefreshToken && (record.identitySource === "internet_identity" ||
+            (record.scope.split(/\s+/u).includes("offline_access") &&
+              input.exchangeScope?.split(/\s+/u).includes("offline_access") !== false)))
       };
     });
     if (result.kind === "replay") {
@@ -443,7 +451,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
       if (!record.currentRefreshTokenHash || !hashEquals(record.currentRefreshTokenHash, refreshTokenHash)) {
         return { kind: "invalid" };
       }
-      if (record.spentRefreshTokenHashes.length >= MAX_SPENT_REFRESH_TOKENS) {
+      if (record.spentRefreshTokenHashes.length >= MAX_REFRESH_ROTATIONS) {
         record.phase = "invalid";
         await transaction.put(RECORD_KEY, record);
         return { kind: "replay" };
@@ -744,16 +752,15 @@ async function storeInitialTokens(
   material: TokenMaterial,
   issueRefreshToken: boolean
 ): Promise<TokenIssueResult> {
-  const refreshAllowed = issueRefreshToken && record.scope.split(/\s+/u).includes("offline_access");
   record.consumedCodeHash = record.pendingCodeHash;
   record.pendingCodeHash = null;
   record.authorizationCodeExpiresAt = null;
   record.accessTokenHash = material.accessTokenHash;
   record.accessTokenExpiresAt = Math.min(material.now + ACCESS_TOKEN_TTL_MS, requiredSessionExpiry(record));
-  record.currentRefreshTokenHash = refreshAllowed ? material.refreshTokenHash : null;
+  record.currentRefreshTokenHash = issueRefreshToken ? material.refreshTokenHash : null;
   record.phase = "active";
   await transaction.put(RECORD_KEY, record);
-  return tokenIssueResult(record, material, refreshAllowed);
+  return tokenIssueResult(record, material, issueRefreshToken);
 }
 
 async function storeRotatedTokens(

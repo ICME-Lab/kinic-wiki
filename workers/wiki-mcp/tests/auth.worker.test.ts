@@ -1,10 +1,11 @@
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { DelegationChain } from "@icp-sdk/core/identity";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { encryptJson, sha256 } from "@kinic/ii-server/crypto";
 import { generateIiKey, type KinicDelegationMaterialV1 } from "@kinic/ii-server/internet-identity";
 import { handleAuthRoute } from "../src/auth/oauth.js";
 import entry from "../src/entry.js";
+import { II_SESSION_TTL_MS, REVIEW_SESSION_TTL_MS, MAX_REFRESH_ROTATIONS } from "../src/auth/session-policy.js";
 import {
   DELEGATION_REFRESH_MARGIN_MS,
   OAUTH_CLIENT_IDLE_TTL_MS,
@@ -61,7 +62,7 @@ describe("MCP inside the session Durable Object", () => {
     const now = Date.now(), verifier = "v".repeat(43);
     const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
     const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
-    const input = { ...await session(id, verifier, now, now + 10 * 60_000), scope: `${scope} offline_access` };
+    const input = { ...await session(id, verifier, now, now + 10 * 60_000), scope };
     input.sessionKey = await encryptJson(generateIiKey().toJSON(), encryptionKey, sessionKeyContext(id));
     await stub.createSession(input);
     await stub.claimConnect("connect-state", `${id}.cookie`, now);
@@ -418,6 +419,9 @@ describe("staging OAuth discovery and registration", () => {
       body: new URLSearchParams({ connect_state: connectStateFrom(authorizationHtml) }).toString()
     });
     expect(iiStarted.status).toBe(302);
+    const iiParams = new URLSearchParams(new URL(iiStarted.headers.get("location")!).hash.slice(1));
+    expect(iiParams.get("ttl")).toBe(String(II_SESSION_TTL_MS / 1000));
+    expect(authorizationHtml).toContain("renew this connection automatically until that approved expiry");
     expect(iiStarted.headers.get("location")).toMatch(/^https:\/\/id\.ai\/mcp#/u);
 
     valid.searchParams.set("redirect_uri", "https://chatgpt.com/connector/oauth/callback/");
@@ -1066,41 +1070,6 @@ describe("McpAuthStateV5 single-use records", () => {
     ).resolves.toBeNull();
   });
 
-  it("invalidates a session after sixty-four refresh rotations", async () => {
-    const verifier = "j".repeat(43);
-    const stub = env.MCP_AUTH_STATE.getByName("session:refresh-limit");
-    await stub.createSession(await session("refresh-limit", verifier, Date.now(), Date.now() + 60_000));
-    await stub.claimConnect("connect-state", "refresh-limit.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "refresh-limit");
-    let issued = await stub.exchangeCode({
-      code: completed!.code,
-      clientId: "client",
-      redirectUri: "https://chatgpt.com/callback",
-      codeVerifier: verifier,
-      issueRefreshToken: true,
-      now: Date.now()
-    });
-    for (let generation = 0; generation < 64; generation += 1) {
-      issued = await stub.rotateRefreshToken({
-        refreshToken: issued!.refreshToken!,
-        clientId: "client",
-        resource,
-        now: Date.now()
-      });
-      expect(issued).not.toBeNull();
-    }
-    const lastAccessToken = issued!.accessToken;
-    await expect(
-      stub.rotateRefreshToken({
-        refreshToken: issued!.refreshToken!,
-        clientId: "client",
-        resource,
-        now: Date.now()
-      })
-    ).resolves.toBeNull();
-    await expect(stub.validateAccessToken(lastAccessToken, resource, Date.now())).resolves.toBeNull();
-  });
-
   it("deletes expired sessions with an alarm", async () => {
     const stub = env.MCP_AUTH_STATE.getByName("session:expired");
     await stub.createSession(await session("expired", "d".repeat(43)));
@@ -1146,19 +1115,186 @@ describe("McpAuthStateV5 single-use records", () => {
   });
 });
 
+describe("II-approved duration and OAuth refresh", () => {
+  const hour = 60 * 60 * 1000;
+
+  async function approvedSession(id: string, lifetime = II_SESSION_TTL_MS, cap = II_SESSION_TTL_MS) {
+    const now = Date.now(), verifier = "t".repeat(43);
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
+    const input = { ...await session(id, verifier, now, now + cap), scope: "mcp:read" };
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", `${id}.cookie`, now);
+    const completed = await stub.completeConnect(now + lifetime, "queries", now, id);
+    const issued = await stub.exchangeCode({ code: completed!.code, clientId: "client", redirectUri: "https://chatgpt.com/callback", codeVerifier: verifier, issueRefreshToken: true, now });
+    expect(issued?.refreshToken).toBeTruthy();
+    return { stub, issued: issued!, now };
+  }
+
+  it.each([10 * 60_000, REVIEW_SESSION_TTL_MS, II_SESSION_TTL_MS, II_SESSION_TTL_MS + hour])(
+    "honors an II grant of %i ms without extending it", async lifetime => {
+      const { stub, issued, now } = await approvedSession(`duration-${lifetime}`, lifetime, II_SESSION_TTL_MS + hour);
+      expect(issued.sessionExpiresAt).toBe(now + Math.min(lifetime, II_SESSION_TTL_MS));
+      expect(issued.accessExpiresAt).toBe(now + Math.min(lifetime, hour));
+      expect(await stub.validateAccessToken(issued.accessToken, resource, issued.accessExpiresAt - 1)).not.toBeNull();
+      expect(await stub.validateAccessToken(issued.accessToken, resource, issued.accessExpiresAt)).toBeNull();
+    }
+  );
+
+  it("preserves the eight-hour cap of an existing session", async () => {
+    const { issued, now } = await approvedSession("legacy-cap", II_SESSION_TTL_MS, REVIEW_SESSION_TTL_MS);
+    expect(issued.sessionExpiresAt).toBe(now + REVIEW_SESSION_TTL_MS);
+  });
+
+  it("renews hourly for thirty days and rejects renewal at the approved expiry", async () => {
+    const { stub, issued: first, now } = await approvedSession("thirty-day-renewal");
+    let issued = first;
+    for (let n = 1; n < 30 * 24; n++) {
+      const at = now + n * hour;
+      expect(await stub.validateAccessToken(issued.accessToken, resource, at)).toBeNull();
+      const next = await stub.rotateRefreshToken({ refreshToken: issued.refreshToken!, clientId: "client", resource, now: at });
+      expect(next).not.toBeNull();
+      issued = next!;
+      expect(issued.sessionExpiresAt).toBe(now + II_SESSION_TTL_MS);
+      expect(issued.accessExpiresAt).toBe(at + hour);
+      expect(issued.scope).toBe("mcp:read");
+    }
+    expect(await stub.rotateRefreshToken({ refreshToken: issued.refreshToken!, clientId: "client", resource, now: now + II_SESSION_TTL_MS })).toBeNull();
+  }, 30_000);
+
+  it("stores 4096 real replay hashes, detects the oldest replay, and bounds refresh work", async () => {
+    const { stub, issued: first, now } = await approvedSession("full-replay-history");
+    let issued = first;
+    const samples: number[] = [];
+    for (let n = 0; n < MAX_REFRESH_ROTATIONS; n++) {
+      const started = performance.now();
+      const next = await stub.rotateRefreshToken({ refreshToken: issued.refreshToken!, clientId: "client", resource, now: now + n });
+      expect(next).not.toBeNull();
+      samples.push(performance.now() - started);
+      issued = next!;
+    }
+    const stored = await runInDurableObject(stub, async (_instance, state) => {
+      const record = await state.storage.get<AuthStateRecordV5>("record");
+      if (record?.kind !== "authorization_session") throw new Error("missing session");
+      return { hashes: record.spentRefreshTokenHashes, bytes: new TextEncoder().encode(JSON.stringify(record)).byteLength };
+    });
+    expect(stored.hashes).toHaveLength(MAX_REFRESH_ROTATIONS);
+    expect(stored.hashes.every(hash => /^[A-Za-z0-9_-]{43}$/u.test(hash))).toBe(true);
+    expect(stored.hashes[0]).toBe(await sha256(first.refreshToken!));
+    expect(stored.bytes).toBeLessThan(256 * 1024);
+    console.info(JSON.stringify({ event: "oauth_refresh_benchmark", rotations: MAX_REFRESH_ROTATIONS, recordBytes: stored.bytes,
+      meanWallMs: samples.reduce((a, b) => a + b, 0) / samples.length,
+      first64MeanWallMs: samples.slice(0, 64).reduce((a, b) => a + b, 0) / 64,
+      last64MeanWallMs: samples.slice(-64).reduce((a, b) => a + b, 0) / 64 }));
+    expect(await stub.rotateRefreshToken({ refreshToken: first.refreshToken!, clientId: "client", resource, now })).toBeNull();
+    expect(await stub.validateAccessToken(issued.accessToken, resource, now)).toBeNull();
+
+    const capped = await approvedSession("replay-history-cap");
+    await runInDurableObject(capped.stub, async (_instance, state) => {
+      const record = await state.storage.get<AuthStateRecordV5>("record");
+      if (record?.kind !== "authorization_session") throw new Error("missing session");
+      record.spentRefreshTokenHashes = stored.hashes;
+      await state.storage.put("record", record);
+    });
+    expect(await capped.stub.rotateRefreshToken({ refreshToken: capped.issued.refreshToken!, clientId: "client", resource, now: capped.now })).toBeNull();
+    expect(await capped.stub.validateAccessToken(capped.issued.accessToken, resource, capped.now)).toBeNull();
+  }, 60_000);
+
+  it("revokes a replayed concurrent refresh without affecting another session", async () => {
+    const a = await approvedSession("concurrent-a"), b = await approvedSession("concurrent-b");
+    const results = await Promise.all([1, 2].map(() => a.stub.rotateRefreshToken({ refreshToken: a.issued.refreshToken!, clientId: "client", resource, now: a.now })));
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(await a.stub.validateAccessToken(results.find(Boolean)!.accessToken, resource, a.now)).toBeNull();
+    expect(await b.stub.validateAccessToken(b.issued.accessToken, resource, b.now)).not.toBeNull();
+  });
+
+  const cases = ["internet_identity", "review_service"].flatMap(source =>
+    [true, false].flatMap(offline => [true, false].flatMap(supports =>
+      [undefined, "mcp:read", "mcp:read offline_access", "mcp:read mcp:write offline_access"].map(exchangeScope => ({ source, offline, supports, exchangeScope })))));
+  it.each(cases)("uses stored consent without widening scopes (%j)", async ({ source, offline, supports, exchangeScope }) => {
+    const response = await register(["https://chatgpt.com/callback"], "none", undefined, supports ? ["authorization_code", "refresh_token"] : ["authorization_code"]);
+    const client = await response.json<{ client_id: string }>();
+    const now = Date.now(), id = `matrix-${client.client_id.slice(5)}`, verifier = "c".repeat(43);
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
+    const scope = offline ? "mcp:read offline_access" : "mcp:read";
+    await stub.createSession({ ...await session(id, verifier, now, now + II_SESSION_TTL_MS), clientId: client.client_id, scope });
+    await stub.claimConnect("connect-state", `${id}.cookie`, now);
+    const completed = source === "internet_identity"
+      ? await stub.completeConnect(now + II_SESSION_TTL_MS, "queries", now, id)
+      : await stub.completeReviewConnect("review-v1", now, id);
+    const form = new URLSearchParams({ grant_type: "authorization_code", client_id: client.client_id, code: completed!.code,
+      redirect_uri: "https://chatgpt.com/callback", code_verifier: verifier });
+    if (exchangeScope !== undefined) form.set("scope", exchangeScope);
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const issued = await handleAuthRoute(new Request(`${origin}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString() }), env);
+      expect(issued!.status).toBe(200);
+      const tokens = await issued!.json<{ refresh_token?: string; scope: string; expires_in: number; access_token: string }>();
+      const expected = supports && (source === "internet_identity" || (offline && exchangeScope?.split(" ").includes("offline_access") !== false));
+      expect(Boolean(tokens.refresh_token)).toBe(expected);
+      expect(tokens.scope).toBe(scope);
+      expect(tokens.expires_in).toBeLessThanOrEqual(3600);
+      const diagnostic = JSON.parse(logs.mock.calls.at(-1)![0] as string);
+      expect(diagnostic).toEqual({ event: "mcp_oauth", stage: "authorization_code", clientSupportsRefresh: supports,
+        outcome: "issued", refreshIssued: expected, offlineAccessGranted: offline });
+      expect(JSON.stringify(diagnostic)).not.toContain(client.client_id);
+      expect(JSON.stringify(diagnostic)).not.toContain(tokens.access_token);
+    } finally { logs.mockRestore(); }
+    if (source === "review_service") await runInDurableObject(stub, async (_instance, state) => {
+      const record = await state.storage.get<AuthStateRecordV5>("record");
+      if (record?.kind !== "authorization_session") throw new Error("missing session");
+      expect(record.sessionExpiresAt).toBe(now + REVIEW_SESSION_TTL_MS);
+    });
+  });
+
+  it("keeps omitted DCR grant_types code-only and rejects unsupported refresh", async () => {
+    const registered = await register(["https://chatgpt.com/callback"], "none", undefined, null);
+    const client = await registered.json<{ client_id: string; grant_types: string[] }>();
+    expect(client.grant_types).toEqual(["authorization_code"]);
+    const response = await fetchWorker(`${origin}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: client.client_id, refresh_token: "mkr1.unknown.token" }).toString() });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "unauthorized_client" });
+  });
+
+  it("refreshes through the HTTP route without adding requested write scope", async () => {
+    const registered = await register(["https://chatgpt.com/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const now = Date.now(), id = "http-rotation", verifier = "h".repeat(43);
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
+    await stub.createSession({ ...await session(id, verifier, now, now + II_SESSION_TTL_MS), clientId, scope: "mcp:read" });
+    await stub.claimConnect("connect-state", `${id}.cookie`, now);
+    const completed = await stub.completeConnect(now + II_SESSION_TTL_MS, "queries", now, id);
+    const first = await stub.exchangeCode({ code: completed!.code, clientId, redirectUri: "https://chatgpt.com/callback", codeVerifier: verifier, issueRefreshToken: true, now });
+    const refresh = (refreshToken: string) => fetchWorker(`${origin}/oauth/token`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, resource, refresh_token: refreshToken, scope: "mcp:read mcp:write" }).toString()
+    });
+    const response = await refresh(first!.refreshToken!);
+    expect(response.status).toBe(200);
+    const next = await response.json<{ access_token: string; refresh_token: string; scope: string; expires_in: number }>();
+    expect(next.scope).toBe("mcp:read");
+    expect(next.refresh_token).not.toBe(first!.refreshToken);
+    expect(next.expires_in).toBeLessThanOrEqual(3600);
+    expect(await stub.validateAccessToken(next.access_token, resource, now)).toMatchObject({ scope: "mcp:read", actionPermission: "queries" });
+    expect((await refresh(first!.refreshToken!)).status).toBe(400);
+    expect(await stub.validateAccessToken(next.access_token, resource, now)).toBeNull();
+  });
+});
+
 let registrationAddressSequence = 1;
 
 async function register(
   redirectUris: string[],
   tokenEndpointAuthMethod: "none" | "client_secret_basic" | "client_secret_post" = "none",
-  clientAddress = `198.51.100.${registrationAddressSequence++}`
+  clientAddress = `198.51.100.${registrationAddressSequence++}`,
+  grantTypes: string[] | null = ["authorization_code", "refresh_token"]
 ) {
   return fetchWorker(`${origin}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json", "cf-connecting-ip": clientAddress },
     body: JSON.stringify({
       redirect_uris: redirectUris,
-      grant_types: ["authorization_code", "refresh_token"],
+      ...(grantTypes === null ? {} : { grant_types: grantTypes }),
       token_endpoint_auth_method: tokenEndpointAuthMethod
     })
   });
