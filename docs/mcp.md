@@ -1,6 +1,6 @@
 # Kinic Wiki Remote MCP
 
-This document describes the repository implementation: 15 Private tools and 7 read-only tools. Use `tools/list` to inspect the contract exposed by a deployed endpoint.
+This document describes the repository implementation: 16 registered Private tools (15 model-visible tools plus one app-only connection profile) and 7 anonymous public tools. Use `tools/list` to inspect the contract exposed by a deployed endpoint.
 
 `workers/wiki-mcp` provides three isolated deployments:
 
@@ -11,7 +11,7 @@ This document describes the repository implementation: 15 Private tools and 7 re
 ## Boundary
 
 - Public production reads public databases only and queries the canister anonymously.
-- Private production and Private staging expose exactly the seven read tools plus eight mutation tools (`write_nodes`, `mutate_nodes_batch`, `append_nodes`, `edit_nodes`, `multi_edit_nodes`, `create_folders`, `move_nodes`, `delete_nodes`). `initialize`, `tools/list`, and `tools/call` all require OAuth.
+- Private production and Private staging expose the seven model-visible read tools plus eight mutation tools (`write_nodes`, `mutate_nodes_batch`, `append_nodes`, `edit_nodes`, `multi_edit_nodes`, `create_folders`, `move_nodes`, `delete_nodes`). `initialize`, `tools/list`, and `tools/call` all require OAuth.
 - After connection, all data tools use only the delegated principal. Anonymous public database results are never merged into private results.
 - A supplied but invalid, expired, revoked, or wrong-resource Bearer token returns `401`; it never falls back to anonymous.
 - Private database authorization remains in the Kinic canister; the Worker does not accept a database owner principal as input.
@@ -39,6 +39,28 @@ Route behavior:
 - `POST /`: not an MCP alias.
 
 On both Private endpoints, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
+
+## Connection profile
+
+Private MCP registers `get_profile` with `_meta["openai/profile"]: true` and
+`_meta.ui.visibility: ["app"]`. Its strict input is `{}` and its output is
+`{"id":"<authenticated principal>"}`, returned identically in `structuredContent`
+and JSON text content. It requires `mcp:read`, works without write permission,
+and reuses the validated request identity without querying the Wiki canister.
+Missing or anonymous identities fail closed. No profile is registered on public MCP.
+
+The PID stays stable across OAuth refresh, reconnection, scope changes, and
+per-app key rotation for the same II identity and canonical derivation origin.
+No names or email addresses are synthesized. The profile supports connection
+recognition; it does not change OAuth expiry or guarantee automatic duplicate
+connection removal. Verify host profile discovery and model invisibility after
+scanning tools. If either fails or connection is disrupted, roll back the Private
+Worker rather than exposing a sixteenth tool to the model. Compare existing
+connections' verified PIDs before removing a duplicate; retain connections whose
+identity differs or cannot be verified.
+
+See [OpenAI profile contract](https://developers.openai.com/plugins/build/auth#support-multiple-accounts)
+and [tool visibility](https://developers.openai.com/plugins/reference).
 
 ## Private authentication
 
@@ -223,7 +245,7 @@ MCP_STAGING_AUTH_CACHE="${XDG_STATE_HOME:-$HOME/.local/state}/kinic-wiki/mcp-pri
   --open
 ```
 
-The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to isolate the cache for each endpoint. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 15-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
+The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to isolate the cache for each endpoint. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 16-registered / 15-model-visible tool contract and authenticated profile, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
 
 ## Configuration
 
@@ -266,7 +288,7 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
 
 1. In II Settings, add `https://wiki-private-mcp.kinic.xyz/mcp` as the trusted connector. Use the staging URL only for staging validation.
 2. Configure the same MCP URL in ChatGPT/Codex and confirm the initial connection starts OAuth from the HTTP `401` challenge.
-3. Refresh tools and confirm the exact 15-tool list contains seven reads plus the eight mutation tools listed above, with no `connect_private` or single-mutation tools.
+3. Refresh tools and confirm the registered list has 16 tools, with seven reads plus eight mutations available to the model and an app-only `get_profile`, with no `connect_private` or single-mutation tools.
 4. Complete II consent with either `Questions only` or `Actions & questions`, then run authenticated `find_databases`, `context`, and `read_paths`.
 5. Run review test cases:
    - `find_databases` can select `KINIC-WIKI`.

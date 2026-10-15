@@ -187,6 +187,18 @@
         "open_world_justification": "Changes can become publicly visible when the selected database is public or a selected node is already published.",
         "destructive_justification": "Deletes existing nodes with etag protection."
       }
+    },
+    "get_profile": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Returns only the stable principal ID from the validated request identity for host connection management. This app-only tool is hidden from model selection and does not read or modify wiki data.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not change data, accounts, or connection records."
+      }
     }
   },
   "test_cases": [

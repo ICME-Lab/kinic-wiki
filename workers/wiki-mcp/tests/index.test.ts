@@ -369,7 +369,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.listDatabases).not.toHaveBeenCalled();
   });
 
-  it("advertises exactly seven reads and eight batch writes after staging authentication", async () => {
+  it("advertises fifteen model tools and one app-only profile after staging authentication", async () => {
     const server = createServer(privateRequiredEnv, { accessPolicy: "private_required", writesAvailable: true });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
@@ -397,14 +397,14 @@ describe("wiki mcp worker", () => {
       "memory_manifest",
       "context",
       "write_nodes",
-      "mutate_nodes_batch", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"
+      "mutate_nodes_batch", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes", "get_profile"
     ]);
     for (const tool of tools.slice(0, 7)) {
       expect(tool._meta?.securitySchemes).toEqual([
         { type: "oauth2", scopes: ["mcp:read"] }
       ]);
     }
-    for (const tool of tools.slice(7)) {
+    for (const tool of tools.slice(7, 15)) {
       expect(tool._meta?.securitySchemes).toEqual([
         { type: "oauth2", scopes: ["mcp:read", "mcp:write"] }
       ]);
@@ -415,6 +415,11 @@ describe("wiki mcp worker", () => {
         openWorldHint: true
       });
     }
+    expect(tools[15]._meta).toEqual({
+      securitySchemes: [{ type: "oauth2", scopes: ["mcp:read"] }],
+      "openai/profile": true,
+      ui: { visibility: ["app"] }
+    });
   });
 
   it("does not downgrade an invalid bearer token to public mode", async () => {

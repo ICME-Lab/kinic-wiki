@@ -1,6 +1,6 @@
 # Kinic Wiki MCP
 
-Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with seven tools. The Private production and staging Workers require OAuth at MCP connection and expose those seven reads plus eight atomic mutation tools. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
+Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with seven tools. The Private production and staging Workers require OAuth at MCP connection and expose those seven reads plus eight atomic mutation tools to the model. They also register one app-only `get_profile` tool for connection management: 16 registered tools, 15 model-visible tools. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
 
 See [MCP documentation](../../docs/mcp.md) for the repository contract and client usage. Inspect a deployed endpoint with `tools/list`.
 
@@ -87,7 +87,7 @@ pnpm dev
 pnpm smoke:staging -- --open
 ```
 
-The staging smoke command authenticates at connection, checks the exact 15-tool contract, and runs private reads. It securely caches OAuth credentials under the user state directory and reuses or refreshes them, so browser consent is normally needed only on the first run. A first write-enabled run needs one additional consent for write scope; `--reset-auth` forces a fresh login, and `MCP_STAGING_AUTH_CACHE` overrides the cache path. Do not run concurrent smoke processes against one cache because refresh tokens rotate. With `--database-id <id> --path <known-path>` it verifies a known private path. Adding `--write-smoke-path <new-temporary-path>` verifies single and multiple `write_nodes`, etag conflict rereads, atomic rollback, `mutate_nodes_batch`, and batch cleanup; select `Actions & questions` in II. It reports only success flags and response sizes, never tokens, principals, or private node text.
+The staging smoke command authenticates at connection, checks the exact 16-registered / 15-model-visible tool contract and authenticated profile, and runs private reads. It securely caches OAuth credentials under the user state directory and reuses or refreshes them, so browser consent is normally needed only on the first run. A first write-enabled run needs one additional consent for write scope; `--reset-auth` forces a fresh login, and `MCP_STAGING_AUTH_CACHE` overrides the cache path. Do not run concurrent smoke processes against one cache because refresh tokens rotate. With `--database-id <id> --path <known-path>` it verifies a known private path. Adding `--write-smoke-path <new-temporary-path>` verifies single and multiple `write_nodes`, etag conflict rereads, atomic rollback, `mutate_nodes_batch`, and batch cleanup; select `Actions & questions` in II. It reports only success flags and response sizes, never tokens, principals, or private node text.
 
 Staging uses canister `3ryrw-kyaaa-aaaaf-qgxpq-cai` and requires `KINIC_WIKI_MCP_TARGET_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. This derivation origin is distinct from the `https://icp0.io` API gateway. Browser URLs use `https://kinic-wiki-browser-staging.hude.workers.dev`.
 

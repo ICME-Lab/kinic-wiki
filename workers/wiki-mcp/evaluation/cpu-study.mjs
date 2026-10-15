@@ -94,7 +94,7 @@ export async function runCpuStudy({request,send,cpu,metrics,dir,bundle,integrity
   const manifest={commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),
     node:process.version,platform:os.platform(),arch:os.arch(),cpu:os.cpus()[0].model,
     experiment:process.argv.find(a=>a.startsWith('--experiment='))?.slice(13)??'installed-product',screen,
-    toolConfiguration:'private (15 tools)',firstSearchCpuMs,direct,uncached,edgeProcess,
+    toolConfiguration:'private (16 registered, 15 model-visible tools)',firstSearchCpuMs,direct,uncached,edgeProcess,
     bundleSha256:createHash('sha256').update(bundle).digest('hex'),signatureVerification:true,
     identityFixture:delegatedFixture?'fixture-seeded encrypted delegation; real DO decrypt, expiry check, identity restoration and request signing; excludes live II login/mint':'review OAuth with real Ed25519 service identity; not a live Internet Identity login',
     measurement:edgeProcess?'separate forwarding workerd process CPU including a local HTTP bridge to the real OAuth/DO/SDK backend; not billed CPU or production topology':'macOS workerd process user+system CPU, including Durable Objects; unprofiled measurements exclude inspector sampling. CDP sampled active time is diagnostic, not billed CPU.',

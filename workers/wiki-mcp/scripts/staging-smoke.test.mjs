@@ -7,6 +7,8 @@ import test from "node:test";
 import {
   authorizationUrlWithScopes,
   assertPrivateRequiredToolSecurity,
+  assertPrivateToolContract,
+  assertProfileResult,
   assertCallbackState,
   cleanupSmokeArtifacts,
   createOAuthState,
@@ -52,6 +54,42 @@ function singleReadResult(path, display, etag) {
     structuredContent: { results: [{ text, metadata: { path, etag } }], metadata: { batch_error: null } }
   };
 }
+
+test("requires exactly fifteen model tools and one app-only authenticated profile", () => {
+  const submission = JSON.parse(readFileSync(new URL("../chatgpt-app-submission.json", import.meta.url), "utf8"));
+  const writes = new Set(["write_nodes", "mutate_nodes_batch", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"]);
+  const tools = Object.keys(submission.tools).map(name => ({
+    name,
+    annotations: submission.tools[name].annotations,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: writes.has(name) ? ["mcp:read", "mcp:write"] : ["mcp:read"] }],
+      ...(name === "get_profile" ? { "openai/profile": true, ui: { visibility: ["app"] } } : {}) }
+  }));
+  assert.doesNotThrow(() => assertPrivateToolContract(tools));
+  const profile = tools.find(tool => tool.name === "get_profile");
+  for (const visibility of [["model", "app"], ["model"], undefined]) {
+    const broken = structuredClone(tools);
+    broken.find(tool => tool.name === "get_profile")._meta.ui.visibility = visibility;
+    assert.throws(() => assertPrivateToolContract(broken), /app-only/u);
+  }
+  assert.throws(() => assertPrivateToolContract(tools.filter(tool => tool !== profile)), /Unexpected MCP tools/u);
+  const extraHidden = structuredClone(tools);
+  extraHidden.find(tool => tool.name === "search")._meta.ui = { visibility: ["app"] };
+  assert.throws(() => assertPrivateToolContract(extraHidden), /fifteen/u);
+});
+
+test("validates profile identity representations without logging identifiers", () => {
+  const profile = { id: "example-profile" };
+  const result = { structuredContent: profile, content: [{ type: "text", text: JSON.stringify(profile) }] };
+  assert.doesNotThrow(() => assertProfileResult(result));
+  for (const invalid of [
+    { ...result, isError: true },
+    { ...result, structuredContent: { id: "" } },
+    { ...result, structuredContent: { id: "2vxsx-fae" } },
+    { ...result, structuredContent: { ...profile, email: "invented@example.test" } },
+    { ...result, content: [{ type: "text", text: "different-profile" }] }
+  ]) assert.throws(() => assertProfileResult(invalid), /Invalid authenticated profile result/u);
+});
 
 test("keeps staging on its canonical custom domain and permission-aware SDK", () => {
   assert.equal(stagingConfig.workers_dev, false);

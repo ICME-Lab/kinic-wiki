@@ -63,6 +63,8 @@ import {
 import { clipText } from "./text.js";
 
 const DEFAULT_DATABASE_LIMIT = 10;
+const profileInputSchema = z.strictObject({});
+const profileOutputSchema = z.strictObject({ id: z.string().min(1).regex(/\S/u) });
 const MAX_DATABASE_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -508,7 +510,7 @@ function rootInfo(url: URL, authMode: AuthenticationMode, writesAvailable: boole
         : "Public, anonymous, read-only Kinic Wiki MCP server.",
     mcp_endpoint: new URL("/mcp", url.origin).toString(),
     health_endpoint: new URL("/health", url.origin).toString(),
-    tools: mcpToolNames(writesAvailable)
+    tools: mcpToolNames(writesAvailable, authMode === "private_required" ? "private_required" : "public")
   };
 }
 
@@ -647,6 +649,29 @@ export function createServer(
 
   if (writesAvailable) {
     registerMutationTools(server, env, writeToolMeta);
+  }
+
+  if (accessPolicy === "private_required") {
+    server.registerTool("get_profile", {
+      description: "Return the stable profile ID represented by this request's authenticated credentials for connection management.",
+      inputSchema: profileInputSchema,
+      outputSchema: profileOutputSchema,
+      annotations: TOOL_ANNOTATIONS,
+      _meta: { ...readToolMeta, "openai/profile": true, ui: { visibility: ["app"] } }
+    }, async () => {
+      if (!env.KINIC_WIKI_IDENTITY || !env.KINIC_WIKI_AUTHORIZATION?.scopes.includes("mcp:read")) {
+        return toolError("Authentication required", { error: "unauthorized" }, {
+          "mcp/www_authenticate": [mcpWwwAuthenticateChallenge(env, "insufficient_scope", "Authentication required", "mcp:read")]
+        });
+      }
+      try {
+        const principal = env.KINIC_WIKI_IDENTITY.getPrincipal();
+        if (!principal.isAnonymous()) return toToolResult({ id: principal.toText() });
+      } catch {
+        // Never return a placeholder or expose identity restoration details.
+      }
+      return toolError("Profile identity unavailable", { error: "profile_identity_unavailable" });
+    });
   }
 
   return server;

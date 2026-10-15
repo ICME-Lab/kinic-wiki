@@ -24,6 +24,7 @@ const EXPECTED_TOOLS = [
   "context",
   "fetch_many",
   "find_databases",
+  "get_profile",
   "list",
   "memory_manifest",
   "mutate_nodes_batch",
@@ -190,6 +191,36 @@ export function assertPrivateRequiredToolSecurity(tools) {
   }
 }
 
+export function assertPrivateToolContract(tools) {
+  const names = tools.map(tool => tool.name).sort();
+  if (JSON.stringify(names) !== JSON.stringify(EXPECTED_TOOLS)) {
+    throw new Error(`Unexpected MCP tools: ${names.join(", ")}`);
+  }
+  assertPrivateRequiredToolSecurity(tools);
+  const profiles = tools.filter(tool => tool._meta?.["openai/profile"] === true);
+  const profile = profiles[0];
+  if (profiles.length !== 1 || profile?.name !== "get_profile" ||
+      JSON.stringify(profile._meta?.ui?.visibility) !== '["app"]' ||
+      profile.annotations?.readOnlyHint !== true || profile.annotations?.destructiveHint !== false ||
+      profile.annotations?.openWorldHint !== false ||
+      profile.inputSchema?.additionalProperties !== false ||
+      Object.keys(profile.inputSchema?.properties ?? {}).length !== 0) {
+    throw new Error("Expected one app-only authenticated profile tool");
+  }
+  const modelTools = tools.filter(tool => tool._meta?.ui?.visibility?.includes("model") ?? true);
+  if (modelTools.length !== 15) throw new Error("Expected fifteen model-visible tools");
+}
+
+export function assertProfileResult(result) {
+  const profile = result?.structuredContent;
+  if (result?.isError || !profile || Object.keys(profile).join(",") !== "id" ||
+      typeof profile.id !== "string" || !profile.id.trim() || profile.id === "2vxsx-fae" ||
+      result.content?.length !== 1 || result.content[0].type !== "text" ||
+      result.content[0].text !== JSON.stringify(profile)) {
+    throw new Error("Invalid authenticated profile result");
+  }
+}
+
 export function smokeTempPaths(path, marker) {
   return {
     rollbackPath: smokeSiblingPath(path, `${marker}-rollback`),
@@ -336,10 +367,11 @@ async function main() {
     console.error("staging smoke stage: tools");
     const tools = await client.listTools();
     const toolNames = tools.tools.map((tool) => tool.name).sort();
-    if (JSON.stringify(toolNames) !== JSON.stringify(EXPECTED_TOOLS)) {
-      throw new Error(`Unexpected MCP tools: ${toolNames.join(", ")}`);
-    }
-    assertPrivateRequiredToolSecurity(tools.tools);
+    assertPrivateToolContract(tools.tools);
+
+    console.error("staging smoke stage: profile");
+    const profileResult = await client.callTool({ name: "get_profile", arguments: {} });
+    assertProfileResult(profileResult);
 
     console.error("staging smoke stage: private-read");
     const findResult = await client.callTool({
@@ -349,7 +381,8 @@ async function main() {
     assertToolSucceeded("find_databases", findResult);
     const findText = toolResultText(findResult);
     const summary = {
-      tools: { ok: true, count: toolNames.length },
+      tools: { ok: true, count: toolNames.length, model_visible_count: 15 },
+      get_profile: summarizeToolResult(profileResult),
       find_databases: {
         ...summarizeToolResult(findResult),
         ...(options.databaseId ? { private_database_visible: findText.includes(options.databaseId) } : {})
