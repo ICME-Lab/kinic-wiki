@@ -360,7 +360,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 For `move-node --overwrite`, pass `--expected-target-etag` when the destination currently exists. Omit it when the destination is absent. The flag is rejected without `--overwrite`, so callers must read and preserve both the source and destination etags before replacing a live destination.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
-Catalogs are curated by LLM ingest/edit and bounded maintenance skills; see [Wiki maintenance](WIKI_MAINTENANCE.md). `rebuild-index` and `rebuild-scope-index` replace catalog bodies and are explicit broad-repair tools, not routine save-time updates.
+Catalogs are curated by LLM ingest/edit and bounded maintenance skills; see [the maintenance skill](../skills/kinic-wiki-maintain/maintain.md). `rebuild-index` and `rebuild-scope-index` replace catalog bodies and are explicit broad-repair tools, not routine save-time updates.
 
 Maintenance and database lifecycle operations live in their own command groups:
 
@@ -387,3 +387,13 @@ kinic-vfs-cli graph-links --prefix /Knowledge --limit 100 --json
 kinic-vfs-cli incoming-links --path /Knowledge/file.md --limit 20 --json
 kinic-vfs-cli outgoing-links --path /Knowledge/file.md --limit 20 --json
 ```
+
+## Wiki Skill Distribution
+
+Repository `skills/` is the canonical source for the Wiki workflow packages. Before replacing an installed package, compare it and review installed-only instructions; preserve useful customizations in the repository deliberately, not by blindly copying obsolete instructions. Back up the installed packages outside the install root, then install each complete repository package through the environment's skill installation flow. Ship the five query/ingest/edit/lint/maintain packages from the same Git revision and record that revision with the deployment. Do not modify arbitrary user skills as a side effect of application deployment.
+
+```sh
+node scripts/check-wiki-skill-distribution.mjs --installed-root /absolute/path/to/installed/skills
+```
+
+The command only reads files, reports missing/different/installed-only paths, and exits 1 on drift (0 on parity, 2 on bad usage). It compares supporting files as well as SKILL.md, ignoring Python caches. Run again after installation. Local installed skills and published registry packages are separate deployment targets; repository edits do not silently update either.

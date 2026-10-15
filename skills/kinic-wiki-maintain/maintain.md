@@ -48,3 +48,14 @@ Example prompt:
 > Use kinic-wiki-maintain for canister <CANISTER>, database <DATABASE>, prefix /Knowledge, mode repair. Use this runner's existing authorized writer identity. Limit to 3 passes, 20 changed nodes, and 15 minutes. Save the report to <RUN_OUTPUT>/report.json. Keep quiet when complete with no changes; notify only for meaningful improvements, failures, or required user action. Do not delete articles, change sources, or deploy anything.
 
 Schedule frequency and runner identity are deployment configuration. Do not create a recurring job or repair production content as an installation side effect.
+
+## Local validation and rehearsal
+
+Resolve these commands relative to this skill directory:
+
+```sh
+python3 scripts/validate-report.py /absolute/path/to/report.json
+python3 -m unittest discover -s tests
+```
+
+The validator checks report consistency, not whether the LLM actually inspected the claimed content. Preserve command and readback evidence. `tests/fixture_wiki.py` is an offline VFS rehearsal adapter: initialize a fresh `--state` file, inspect inventory and bodies, then make etag-guarded writes with `--mode repair`. It never contacts a canister. Rehearse mixed-description and broken-link repairs, preservation of existing prose, and no-change reinspection. This does not replace validation against a selected canister.
