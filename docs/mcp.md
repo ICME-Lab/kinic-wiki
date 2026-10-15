@@ -44,14 +44,20 @@ On both Private endpoints, every unauthenticated MCP POST returns HTTP `401` wit
 
 Private MCP registers `get_profile` with `_meta["openai/profile"]: true` and
 `_meta.ui.visibility: ["app"]`. Its strict input is `{}` and its output is
-`{"id":"<authenticated principal>"}`, returned identically in `structuredContent`
-and JSON text content. It requires `mcp:read`, works without write permission,
+`{"id":"<authenticated principal>","nickname":"Kinic Wiki · <short PID>"}`,
+returned identically in `structuredContent` and JSON text content. The display
+label uses the first ten and last five PID characters, separated by `…`; PIDs
+of fifteen characters or fewer are shown in full. Only `id` is required by the
+output schema, preserving compatibility with older ID-only responses.
+It requires `mcp:read`, works without write permission,
 and reuses the validated request identity without querying the Wiki canister.
 Missing or anonymous identities fail closed. No profile is registered on public MCP.
 
 The PID stays stable across OAuth refresh, reconnection, scope changes, and
 per-app key rotation for the same II identity and canonical derivation origin.
-No names or email addresses are synthesized. The profile supports connection
+The nickname is derived only from that PID; personal names and email addresses
+are not synthesized. ChatGPT controls where the nickname appears and can retain
+an existing custom connection name. The profile supports connection
 recognition; it does not change OAuth expiry or guarantee automatic duplicate
 connection removal. Verify host profile discovery and model invisibility after
 scanning tools. If either fails or connection is disrupted, roll back the Private

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createServer } from "../src/index.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 import { restoreReviewServiceIdentity } from "../src/auth/review-identity.js";
+import { Principal } from "@icp-sdk/core/principal";
 
 const targetOrigin = "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app";
 
@@ -40,7 +41,7 @@ describe("connection profile", () => {
       expect(tools.filter(tool => (tool._meta?.ui as { visibility: string[] } | undefined)?.visibility?.includes("model") ?? true)).toHaveLength(writesAvailable ? 15 : 7);
       expect(profile.inputSchema).toMatchObject({ type: "object", properties: {}, additionalProperties: false });
       expect(profile.outputSchema).toMatchObject({ type: "object", required: ["id"], additionalProperties: false });
-      expect(Object.keys(profile.outputSchema!.properties!)).toEqual(["id"]);
+      expect(Object.keys(profile.outputSchema!.properties!)).toEqual(["id", "nickname"]);
       expect(profile.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
       expect(profile._meta).toEqual({ securitySchemes: [{ type: "oauth2", scopes: ["mcp:read"] }], "openai/profile": true, ui: { visibility: ["app"] } });
     }, true, writesAvailable);
@@ -70,7 +71,8 @@ describe("connection profile", () => {
       });
       const results = await Promise.all(calls);
       for (const [index, result] of results.entries()) {
-        const profile = { id: (index === 2 ? foreign : root).getPrincipal().toText() };
+        const id = (index === 2 ? foreign : root).getPrincipal().toText();
+        const profile = { id, nickname: `Kinic Wiki · ${id.slice(0, 10)}…${id.slice(-5)}` };
         expect(result.isError).not.toBe(true);
         expect(result.structuredContent).toEqual(profile);
         expect(result.content).toEqual([{ type: "text", text: JSON.stringify(profile) }]);
@@ -84,7 +86,20 @@ describe("connection profile", () => {
     const key = generateIiKey();
     const identity = restoreReviewServiceIdentity(JSON.stringify(key.toJSON()), key.getPrincipal().toText());
     const result = await withClient(authorized(identity, ["mcp:read"], "review_service"), client => client.callTool({ name: "get_profile", arguments: {} }));
-    expect(result.structuredContent).toEqual({ id: key.getPrincipal().toText() });
+    const id = key.getPrincipal().toText();
+    expect(result.structuredContent).toEqual({ id, nickname: `Kinic Wiki · ${id.slice(0, 10)}…${id.slice(-5)}` });
+    expect(result.structuredContent).not.toHaveProperty("name");
+    expect(result.structuredContent).not.toHaveProperty("email");
+  });
+
+  it.each([
+    ["rrkah-fqaaa-aaaaa-aaaaq-cai", "Kinic Wiki · rrkah-fqaa…q-cai"],
+    ["aaaaa-aa", "Kinic Wiki · aaaaa-aa"]
+  ])("labels PID %s without changing the full identity", async (id, nickname) => {
+    const identity = { getPrincipal: () => Principal.fromText(id) } as unknown as Identity;
+    const result = await withClient(authorized(identity), client => client.callTool({ name: "get_profile", arguments: {} }));
+    expect(result.structuredContent).toEqual({ id, nickname });
+    expect(result.content).toEqual([{ type: "text", text: JSON.stringify({ id, nickname }) }]);
   });
 
   it.each([

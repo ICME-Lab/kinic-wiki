@@ -213,8 +213,10 @@ export function assertPrivateToolContract(tools) {
 
 export function assertProfileResult(result) {
   const profile = result?.structuredContent;
-  if (result?.isError || !profile || Object.keys(profile).join(",") !== "id" ||
+  if (result?.isError || !profile || typeof profile !== "object" || Array.isArray(profile) ||
+      !Object.hasOwn(profile, "id") || Object.keys(profile).some(key => !["id", "nickname"].includes(key)) ||
       typeof profile.id !== "string" || !profile.id.trim() || profile.id === "2vxsx-fae" ||
+      ("nickname" in profile && (typeof profile.nickname !== "string" || !profile.nickname.trim())) ||
       result.content?.length !== 1 || result.content[0].type !== "text" ||
       result.content[0].text !== JSON.stringify(profile)) {
     throw new Error("Invalid authenticated profile result");

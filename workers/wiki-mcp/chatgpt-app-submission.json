@@ -195,7 +195,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Returns only the stable principal ID from the validated request identity for host connection management. This app-only tool is hidden from model selection and does not read or modify wiki data.",
+        "read_only_justification": "Returns the stable principal ID and a short PID-derived display nickname from the validated request identity for host connection management. This app-only tool is hidden from model selection and does not read or modify wiki data.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
         "destructive_justification": "Does not change data, accounts, or connection records."
       }

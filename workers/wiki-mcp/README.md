@@ -1,6 +1,6 @@
 # Kinic Wiki MCP
 
-Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with seven tools. The Private production and staging Workers require OAuth at MCP connection and expose those seven reads plus eight atomic mutation tools to the model. They also register one app-only `get_profile` tool for connection management: 16 registered tools, 15 model-visible tools. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
+Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with seven tools. The Private production and staging Workers require OAuth at MCP connection and expose those seven reads plus eight atomic mutation tools to the model. They also register one app-only `get_profile` tool for connection management: 16 registered tools, 15 model-visible tools. It returns the complete PID as `id` and a PID-derived `nickname` such as `Kinic Wiki · <first 10>…<last 5>`; the host controls its display. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
 
 See [MCP documentation](../../docs/mcp.md) for the repository contract and client usage. Inspect a deployed endpoint with `tools/list`.
 

@@ -95,13 +95,15 @@ describe("MCP inside the session Durable Object", () => {
     const first = await iiSession("profile-ii-first");
     const reconnected = await iiSession("profile-ii-reconnect", first.rootKey, "mcp:read mcp:write");
     const other = await iiSession("profile-ii-other");
-    const expected = { id: first.rootKey.getPrincipal().toText() };
+    const id = first.rootKey.getPrincipal().toText();
+    const expected = { id, nickname: `Kinic Wiki · ${id.slice(0, 10)}…${id.slice(-5)}` };
     expect(await profile(first.issued.accessToken)).toEqual(expected);
     const refreshed = await first.stub.rotateRefreshToken({ refreshToken: first.issued.refreshToken!, clientId: "client", resource, now: Date.now() });
     expect(refreshed).not.toBeNull();
     expect(await profile(refreshed!.accessToken)).toEqual(expected);
     const results = await Promise.all([profile(reconnected.issued.accessToken), profile(other.issued.accessToken)]);
-    expect(results).toEqual([expected, { id: other.rootKey.getPrincipal().toText() }]);
+    const otherId = other.rootKey.getPrincipal().toText();
+    expect(results).toEqual([expected, { id: otherId, nickname: `Kinic Wiki · ${otherId.slice(0, 10)}…${otherId.slice(-5)}` }]);
     expect(results[1]).not.toEqual(expected);
     const params = { name: "get_profile", arguments: {} };
     expect((await entry.fetch(mcpRequest(first.issued.accessToken, "tools/call", params), env)).status).toBe(401);
@@ -118,8 +120,10 @@ describe("MCP inside the session Durable Object", () => {
 
   it("returns the configured review profile through a read-only OAuth session", async () => {
     const a = await activeSession("profile-review-a"), b = await activeSession("profile-review-b");
-    expect(await profile(a.token)).toEqual({ id: env.MCP_REVIEW_IDENTITY_PRINCIPAL });
-    expect(await profile(b.token)).toEqual({ id: env.MCP_REVIEW_IDENTITY_PRINCIPAL });
+    const id = env.MCP_REVIEW_IDENTITY_PRINCIPAL!;
+    const expected = { id, nickname: `Kinic Wiki · ${id.slice(0, 10)}…${id.slice(-5)}` };
+    expect(await profile(a.token)).toEqual(expected);
+    expect(await profile(b.token)).toEqual(expected);
     expect((await entry.fetch(mcpRequest(a.token + "forged", "tools/call", { name: "get_profile", arguments: {} }), env)).status).toBe(401);
   });
 

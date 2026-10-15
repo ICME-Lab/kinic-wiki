@@ -82,11 +82,15 @@ test("validates profile identity representations without logging identifiers", (
   const profile = { id: "example-profile" };
   const result = { structuredContent: profile, content: [{ type: "text", text: JSON.stringify(profile) }] };
   assert.doesNotThrow(() => assertProfileResult(result));
+  const labeled = { ...profile, nickname: "Kinic Wiki · example-pr…ofile" };
+  assert.doesNotThrow(() => assertProfileResult({ structuredContent: labeled, content: [{ type: "text", text: JSON.stringify(labeled) }] }));
   for (const invalid of [
     { ...result, isError: true },
     { ...result, structuredContent: { id: "" } },
     { ...result, structuredContent: { id: "2vxsx-fae" } },
     { ...result, structuredContent: { ...profile, email: "invented@example.test" } },
+    { ...result, structuredContent: { ...profile, nickname: "" } },
+    { ...result, structuredContent: { ...profile, nickname: 123 } },
     { ...result, content: [{ type: "text", text: "different-profile" }] }
   ]) assert.throws(() => assertProfileResult(invalid), /Invalid authenticated profile result/u);
 });
