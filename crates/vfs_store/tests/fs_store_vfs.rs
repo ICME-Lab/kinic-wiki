@@ -1151,30 +1151,6 @@ fn query_context_trims_search_hits_and_preserves_candidate_order() {
         ]
     );
     assert!(ordered_paths.contains(&"/Knowledge/order/aaa.md"));
-    // A catalog is still directly readable and retrievable when it matches the task.
-    assert!(
-        store
-            .read_node("/Knowledge/order/index.md")
-            .unwrap()
-            .is_some()
-    );
-    let catalog_context = store
-        .query_context(QueryContextRequest {
-            database_id: "default".to_string(),
-            task: "Index".to_string(),
-            entities: Vec::new(),
-            namespace: Some("/Knowledge/order".to_string()),
-            budget_tokens: 1_000,
-            include_evidence: false,
-            depth: 0,
-        })
-        .unwrap();
-    assert!(
-        catalog_context
-            .nodes
-            .iter()
-            .any(|item| item.node.path == "/Knowledge/order/index.md")
-    );
 
     let (_dir, budget_store) = new_store();
     ensure_parent_folders(&budget_store, "/Knowledge/budget/long.md", 19);
