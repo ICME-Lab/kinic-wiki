@@ -666,7 +666,11 @@ export function createServer(
       }
       try {
         const principal = env.KINIC_WIKI_IDENTITY.getPrincipal();
-        if (!principal.isAnonymous()) return toToolResult({ id: principal.toText() });
+        if (!principal.isAnonymous()) {
+          const result = toToolResult({ id: principal.toText() });
+          console.info(JSON.stringify({ event: "mcp_profile", outcome: "ok" }));
+          return result;
+        }
       } catch {
         // Never return a placeholder or expose identity restoration details.
       }

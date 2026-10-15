@@ -59,6 +59,7 @@ describe("connection profile", () => {
     const root = generateIiKey();
     const foreign = generateIiKey();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("profile must not access the network"));
+    const logSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       const calls = [root, root, foreign].map(async (key, index) => {
         const appKey = generateIiKey();
@@ -75,7 +76,8 @@ describe("connection profile", () => {
         expect(result.content).toEqual([{ type: "text", text: JSON.stringify(profile) }]);
       }
       expect(fetchSpy).not.toHaveBeenCalled();
-    } finally { fetchSpy.mockRestore(); }
+      expect(logSpy.mock.calls).toEqual(Array(3).fill([JSON.stringify({ event: "mcp_profile", outcome: "ok" })]));
+    } finally { fetchSpy.mockRestore(); logSpy.mockRestore(); }
   });
 
   it("uses the validated review identity without inventing display metadata", async () => {
