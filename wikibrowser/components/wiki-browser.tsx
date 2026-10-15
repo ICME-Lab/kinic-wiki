@@ -21,6 +21,7 @@ import { databaseCyclesDisabledReason } from "@/lib/cycles-state";
 import { invalidateSavedBrowserNode, readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForCanonicalDatabaseRoute, hrefForPath, parentPath, parseWikiRoute } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
+import { useRequestScope } from "@/lib/use-request-scope";
 import { parseSearchOptions } from "@/lib/search-options";
 import { databaseRouteBase } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
@@ -120,6 +121,7 @@ function WikiBrowserContent() {
   const effectiveReadIdentity = currentReadIdentityMode === "user" ? readIdentity : null;
   const readPrincipal = effectiveReadIdentity?.getPrincipal().toText() ?? null;
   const currentRequestKey = nodeRequestKey(canisterId, databaseId, selectedPath, readPrincipal);
+  const isCurrentRequest = useRequestScope(currentRequestKey);
   const folderOverviewRequestKey = nodeRequestKey(canisterId, databaseId, folderOverviewPath(selectedPath), readPrincipal);
   const [node, setNode] = useState<BrowserLoadState<WikiNode>>(browserLoadingState(canisterId, databaseId, selectedPath));
   const [nodeContext, setNodeContext] = useState<BrowserLoadState<NodeContext>>(browserLoadingState(canisterId, databaseId, selectedPath));
@@ -406,11 +408,13 @@ function WikiBrowserContent() {
       throw new ApiError(`node not found: ${selectedPath}`, 404);
     }
     nodeContextCache.current.set(requestKey, data);
-    setNode({ requestKey, path: selectedPath, data: data.node, error: null, loading: false });
-    setNodeContext({ requestKey, path: selectedPath, data, error: null, loading: false });
-    setChildNodes({ requestKey, path: selectedPath, data: [], error: null, loading: false });
+    if (isCurrentRequest()) {
+      setNode({ requestKey, path: selectedPath, data: data.node, error: null, loading: false });
+      setNodeContext({ requestKey, path: selectedPath, data, error: null, loading: false });
+      setChildNodes({ requestKey, path: selectedPath, data: [], error: null, loading: false });
+    }
     return data.node;
-  }, [canisterId, databaseId, effectiveReadIdentity, readPrincipal, selectedPath]);
+  }, [canisterId, databaseId, effectiveReadIdentity, isCurrentRequest, readPrincipal, selectedPath]);
 
   const refreshSelectedFolderOverview = useCallback(async (): Promise<WikiNode> => {
     const overviewPath = folderOverviewPath(selectedPath);
@@ -422,18 +426,22 @@ function WikiBrowserContent() {
       throw new ApiError(`node not found: ${overviewPath}`, 404);
     }
     folderOverviewNodeCache.current.set(requestKey, data);
-    setFolderOverviewNode({ requestKey, path: overviewPath, data, error: null, loading: false });
+    if (isCurrentRequest()) {
+      setFolderOverviewNode({ requestKey, path: overviewPath, data, error: null, loading: false });
+    }
     const childrenKey = nodeRequestKey(canisterId, databaseId, selectedPath, readPrincipal);
     try {
       const children = await listChildren(canisterId, databaseId, selectedPath, effectiveReadIdentity ?? undefined);
       childNodesCache.current.set(childrenKey, children);
-      setChildNodes({ requestKey: childrenKey, path: selectedPath, data: children, error: null, loading: false });
+      if (isCurrentRequest()) {
+        setChildNodes({ requestKey: childrenKey, path: selectedPath, data: children, error: null, loading: false });
+      }
     } catch {
       // The description was saved and refreshed; keep the existing listing if its refresh fails.
       childNodesCache.current.delete(childrenKey);
     }
     return data;
-  }, [canisterId, databaseId, effectiveReadIdentity, readPrincipal, selectedPath]);
+  }, [canisterId, databaseId, effectiveReadIdentity, isCurrentRequest, readPrincipal, selectedPath]);
 
   const invalidateBrowserCaches = useCallback(() => {
     nodeContextCache.current.clear();
