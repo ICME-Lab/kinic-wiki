@@ -64,6 +64,10 @@ export function toolAuthMetadata(
   return { securitySchemes: [NO_AUTH_SECURITY_SCHEME] };
 }
 
-export function mcpToolNames(writesAvailable = false): string[] {
-  return writesAvailable ? [...MCP_TOOL_NAMES, ...MCP_MUTATION_TOOL_NAMES] : [...MCP_TOOL_NAMES];
+export function mcpToolNames(writesAvailable = false, accessPolicy: ToolAccessPolicy = "public"): string[] {
+  return [
+    ...MCP_TOOL_NAMES,
+    ...(writesAvailable ? MCP_MUTATION_TOOL_NAMES : []),
+    ...(accessPolicy === "private_required" ? ["get_profile"] : [])
+  ];
 }

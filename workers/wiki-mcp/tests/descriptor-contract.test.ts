@@ -15,15 +15,18 @@ function stableJson(value: unknown): string {
 }
 
 for (const privateMode of [false, true]) {
-  it(`preserves the ${privateMode ? "private 15" : "public 7"}-tool descriptor contract`, async () => {
+  it(`preserves the ${privateMode ? "private 16 registered / 15 model" : "public 7"}-tool descriptor contract`, async () => {
     const server = createServer({}, { accessPolicy: privateMode ? "private_required" : "public", writesAvailable: privateMode });
     const client = new Client({ name: "descriptor-contract", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    let wireDescriptorHash: string | undefined;
+    let modelDescriptorHash: string | undefined;
     const send = serverTransport.send.bind(serverTransport);
     serverTransport.send = async (message, options) => {
       if ("result" in message && message.result && typeof message.result === "object" && "tools" in message.result) {
-        wireDescriptorHash = createHash("sha256").update(JSON.stringify(message.result)).digest("hex");
+        // The app-only profile is outside the evaluated fifteen business tools.
+        const result = message.result as { tools: Array<{ _meta?: { ui?: { visibility?: string[] } } }> };
+        const modelTools = result.tools.filter(tool => tool._meta?.ui?.visibility?.includes("model") ?? true);
+        modelDescriptorHash = createHash("sha256").update(JSON.stringify({ ...result, tools: modelTools })).digest("hex");
       }
       return send(message, options);
     };
@@ -31,11 +34,11 @@ for (const privateMode of [false, true]) {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(privateMode ? 15 : 7);
+      expect(tools).toHaveLength(privateMode ? 16 : 7);
       if (privateMode) {
         // Keep evaluation provenance independent of archived session transcripts.
         const evaluated = JSON.parse(readFileSync(new URL("../schemas/mcp-evaluated-descriptor.json", import.meta.url), "utf8"));
-        expect(wireDescriptorHash).toBe(evaluated.privateDescriptorSha256);
+        expect(modelDescriptorHash).toBe(evaluated.privateDescriptorSha256);
       }
       const snapshot = {
         instructions: client.getInstructions(),

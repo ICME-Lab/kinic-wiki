@@ -57,12 +57,77 @@ describe("MCP inside the session Durable Object", () => {
     return JSON.parse(text.startsWith("event:") ? text.split("\n").find(line => line.startsWith("data: "))!.slice(6) : text);
   }
 
-  it("serves the real 15-tool contract, rejects forged/cross-session tokens and observes revocation", async () => {
+  async function iiSession(id: string, rootKey = generateIiKey(), scope = "mcp:read") {
+    const now = Date.now(), verifier = "v".repeat(43);
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
+    const input = { ...await session(id, verifier, now, now + 10 * 60_000), scope: `${scope} offline_access` };
+    input.sessionKey = await encryptJson(generateIiKey().toJSON(), encryptionKey, sessionKeyContext(id));
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", `${id}.cookie`, now);
+    const completed = await stub.completeConnect(now + 10 * 60_000, scope.includes("mcp:write") ? "all" : "queries", now, id);
+    const issued = await stub.exchangeCode({ code: completed!.code, clientId: "client", redirectUri: "https://chatgpt.com/callback", codeVerifier: verifier, issueRefreshToken: true, now });
+    const appKey = generateIiKey(), expiresAt = now + 5 * 60_000;
+    const chain = await DelegationChain.create(rootKey, appKey.getPublicKey(), new Date(expiresAt));
+    const material: KinicDelegationMaterialV1 = { version: 1, targetOrigin, expiresAt, appKey: appKey.toJSON(), delegation: chain.toJSON() };
+    const encrypted = await encryptJson(material, encryptionKey, delegationContext(id, targetOrigin));
+    await runInDurableObject(stub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      record.cachedDelegation = encrypted;
+      record.cachedDelegationTargetOrigin = targetOrigin;
+      record.cachedDelegationExpiresAt = expiresAt;
+      await state.storage.put("record", record);
+    });
+    return { stub, issued: issued!, rootKey };
+  }
+
+  async function profile(token: string) {
+    const response = await entry.fetch(mcpRequest(token, "tools/call", { name: "get_profile", arguments: {} }), env);
+    expect(response.status).toBe(200);
+    const body = await result(response);
+    expect(body.result.isError).not.toBe(true);
+    return body.result.structuredContent;
+  }
+
+  it("keeps the restored II profile stable across refresh, reconnect, and scope upgrades while isolating accounts", async () => {
+    const first = await iiSession("profile-ii-first");
+    const reconnected = await iiSession("profile-ii-reconnect", first.rootKey, "mcp:read mcp:write");
+    const other = await iiSession("profile-ii-other");
+    const expected = { id: first.rootKey.getPrincipal().toText() };
+    expect(await profile(first.issued.accessToken)).toEqual(expected);
+    const refreshed = await first.stub.rotateRefreshToken({ refreshToken: first.issued.refreshToken!, clientId: "client", resource, now: Date.now() });
+    expect(refreshed).not.toBeNull();
+    expect(await profile(refreshed!.accessToken)).toEqual(expected);
+    const results = await Promise.all([profile(reconnected.issued.accessToken), profile(other.issued.accessToken)]);
+    expect(results).toEqual([expected, { id: other.rootKey.getPrincipal().toText() }]);
+    expect(results[1]).not.toEqual(expected);
+    const params = { name: "get_profile", arguments: {} };
+    expect((await entry.fetch(mcpRequest(first.issued.accessToken, "tools/call", params), env)).status).toBe(401);
+    await first.stub.invalidate();
+    expect((await entry.fetch(mcpRequest(refreshed!.accessToken, "tools/call", params), env)).status).toBe(401);
+    await runInDurableObject(reconnected.stub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      record.accessTokenExpiresAt = Date.now() - 1;
+      await state.storage.put("record", record);
+    });
+    expect((await entry.fetch(mcpRequest(reconnected.issued.accessToken, "tools/call", params), env)).status).toBe(401);
+  });
+
+  it("returns the configured review profile through a read-only OAuth session", async () => {
+    const a = await activeSession("profile-review-a"), b = await activeSession("profile-review-b");
+    expect(await profile(a.token)).toEqual({ id: env.MCP_REVIEW_IDENTITY_PRINCIPAL });
+    expect(await profile(b.token)).toEqual({ id: env.MCP_REVIEW_IDENTITY_PRINCIPAL });
+    expect((await entry.fetch(mcpRequest(a.token + "forged", "tools/call", { name: "get_profile", arguments: {} }), env)).status).toBe(401);
+  });
+
+  it("serves sixteen registered tools, rejects forged/cross-session tokens and observes revocation", async () => {
     const a = await activeSession("mcp-a"), b = await activeSession("mcp-b");
     const responses = await Promise.all([a, b].map(({ token }) => entry.fetch(mcpRequest(token), env)));
     for (const response of responses) {
       expect(response.status).toBe(200);
-      expect((await result(response)).result.tools).toHaveLength(15);
+      expect((await result(response)).result.tools).toHaveLength(16);
     }
     expect((await a.stub.fetch(mcpRequest(b.token))).status).toBe(401);
     expect((await entry.fetch(mcpRequest(a.token + "forged"), env)).status).toBe(401);

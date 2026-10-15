@@ -16,7 +16,7 @@ import {
   REVIEW_FILES,
   REVIEW_SCRATCH_PREFIX
 } from "./review-fixture.mjs";
-import { assertPrivateRequiredToolSecurity, openAuthenticatedSession } from "./staging-smoke.mjs";
+import { assertPrivateToolContract, assertProfileResult, openAuthenticatedSession } from "./staging-smoke.mjs";
 
 const SKILL_ROOT = new URL("../../../skills/kinic-wiki-mcp/", import.meta.url);
 const SKILL_FILE = new URL("SKILL.md", SKILL_ROOT);
@@ -41,7 +41,8 @@ const EXPECTED_READ_TOOLS = [
   "read_paths",
   "search"
 ];
-const EXPECTED_TOOLS = [...EXPECTED_READ_TOOLS, "mutate_nodes_batch", "write_nodes", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"].sort();
+const EXPECTED_MODEL_TOOLS = [...EXPECTED_READ_TOOLS, "mutate_nodes_batch", "write_nodes", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"].sort();
+const EXPECTED_TOOLS = [...EXPECTED_MODEL_TOOLS, "get_profile"].sort();
 const WRITE_TOOLS = new Set(["mutate_nodes_batch", "write_nodes", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"]);
 const EXPECTED_CASE_TOOLS = [
   "find_databases, memory_manifest, list",
@@ -196,7 +197,7 @@ export function validateSkillFiles(skill, toolReference, openAiConfig) {
   const documentedTools = [...toolReference.matchAll(/^\| `([^`]+)` \|/gmu)]
     .map((match) => match[1])
     .sort();
-  assertSameValues(documentedTools, EXPECTED_TOOLS, "skill reference tool names");
+  assertSameValues(documentedTools, EXPECTED_MODEL_TOOLS, "skill reference model tool names");
   validateOpenAiConfigYaml(openAiConfig);
 }
 
@@ -303,7 +304,7 @@ async function checkEndpoint(mcpUrl, options) {
     const toolsResponse = await client.listTools({}, requestOptions());
     const tools = [...toolsResponse.tools].sort((left, right) => left.name.localeCompare(right.name));
     assertSameValues(tools.map((tool) => tool.name), EXPECTED_TOOLS, `${mcpUrl} tool names`);
-    assertPrivateRequiredToolSecurity(tools);
+    assertPrivateToolContract(tools);
     const descriptorHashes = Object.fromEntries(tools.map((tool) => [tool.name, descriptorHash(tool)]));
     if (options.printDescriptorHashes) {
       console.log(JSON.stringify({ instructions, tools: descriptorHashes }, null, 2));
@@ -320,6 +321,7 @@ async function checkEndpoint(mcpUrl, options) {
       };
     }
 
+    assertProfileResult(await client.callTool({ name: "get_profile", arguments: {} }, undefined, requestOptions()));
     await checkSuccessfulCalls(client, mcpUrl);
     return {
       protocolVersion: transport.protocolVersion,

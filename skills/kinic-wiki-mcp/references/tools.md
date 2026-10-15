@@ -5,7 +5,7 @@
 - Skill endpoint: `https://wiki-private-mcp.kinic.xyz/mcp`
 - Access: OAuth required from MCP initialization onward
 - Identity: every data call uses the Internet Identity delegated identity
-- Contract: seven read tools plus eight batch mutation tools (15 total)
+- Contract: seven read tools plus eight batch mutation tools (15 model-visible tools; 16 registered including the app-only connection profile)
 - OAuth credentials are managed by the host. Do not request, display, store, or transform them.
 
 The public search endpoint at `https://wiki-mcp.kinic.xyz/mcp` remains anonymous and read-only with seven tools. It is a separate Worker and is not used by this skill.
