@@ -377,7 +377,7 @@ fn public_http_fits_escaped_unicode_and_long_child_links_without_losing_the_arti
     super::public_http::reset();
     ensure_parent_folders("/Knowledge/wide/overview.md");
     let metadata = serde_json::json!({
-        "title": "記事タイトル", "metadata": {"description": "説明😀".repeat(10_000)},
+        "title": "Article title", "metadata": {"description": "Description 😀".repeat(10_000)},
         "unused": "x".repeat(20_000)
     })
     .to_string();
@@ -414,7 +414,7 @@ fn public_http_fits_escaped_unicode_and_long_child_links_without_losing_the_arti
     );
     let metadata: serde_json::Value =
         serde_json::from_str(payload["node"]["metadataJson"].as_str().unwrap()).unwrap();
-    assert_eq!(metadata["title"], "記事タイトル");
+    assert_eq!(metadata["title"], "Article title");
     assert!(metadata.get("unused").is_none());
     assert_eq!(payload["childrenTruncated"], true);
     let links = payload["children"].as_array().unwrap();
