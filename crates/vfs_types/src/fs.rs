@@ -524,10 +524,15 @@ pub struct WriteNodesRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeMutationErrorCode {
+    #[serde(alias = "EtagConflict")]
     EtagConflict,
+    #[serde(alias = "NotFound")]
     NotFound,
+    #[serde(alias = "Forbidden")]
     Forbidden,
+    #[serde(alias = "WriteUnavailable")]
     WriteUnavailable,
+    #[serde(alias = "InvalidOperation")]
     InvalidOperation,
 }
 
@@ -602,6 +607,46 @@ impl fmt::Display for NodeMutationError {
 }
 
 impl std::error::Error for NodeMutationError {}
+
+#[cfg(test)]
+mod mutation_error_tests {
+    use super::{NodeMutationError, NodeMutationErrorCode, WriteNodeResult};
+
+    #[test]
+    fn candid_round_trip_all_node_mutation_error_codes() {
+        for code in [
+            NodeMutationErrorCode::EtagConflict,
+            NodeMutationErrorCode::NotFound,
+            NodeMutationErrorCode::Forbidden,
+            NodeMutationErrorCode::WriteUnavailable,
+            NodeMutationErrorCode::InvalidOperation,
+        ] {
+            let encoded = candid::encode_one(code).expect("encode mutation error code");
+            let decoded = candid::decode_one::<NodeMutationErrorCode>(&encoded)
+                .unwrap_or_else(|error| panic!("decode {code:?}: {error}"));
+            assert_eq!(decoded, code);
+        }
+    }
+
+    #[test]
+    fn candid_round_trip_node_mutation_error_result() {
+        let error =
+            NodeMutationError::etag_conflict("node changed", "/work/plan.md").with_failed_index(2);
+        let encoded_error = candid::encode_one(&error).expect("encode mutation error");
+        assert_eq!(
+            candid::decode_one::<NodeMutationError>(&encoded_error).expect("decode mutation error"),
+            error
+        );
+
+        let result: Result<WriteNodeResult, NodeMutationError> = Err(error);
+        let encoded_result = candid::encode_one(&result).expect("encode write result");
+        assert_eq!(
+            candid::decode_one::<Result<WriteNodeResult, NodeMutationError>>(&encoded_result)
+                .expect("decode write result"),
+            result
+        );
+    }
+}
 
 impl WriteNodeRequest {
     pub fn into_write_nodes_request(self) -> WriteNodesRequest {
