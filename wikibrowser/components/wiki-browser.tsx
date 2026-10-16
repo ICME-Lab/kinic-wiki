@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowPresentationProvider } from "@/components/workflow-presentation";
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
@@ -129,6 +130,7 @@ function WikiBrowserContent() {
   const [folderOverviewNode, setFolderOverviewNode] = useState<BrowserLoadState<WikiNode>>(browserLoadingState(canisterId, databaseId, folderOverviewPath(selectedPath)));
   const [editState, setEditState] = useState<DocumentEditState>({ dirty: false, saveState: "idle" });
   const [explorerRevision, setExplorerRevision] = useState(0);
+  const [workflowMetadataChange, setWorkflowMetadataChange] = useState<{ path: string; requestKey: string }>();
   const [explorerSortOrder, setExplorerSortOrder] = useState<ExplorerSortOrder>(DEFAULT_EXPLORER_SORT_ORDER);
   const [selectedExplorerState, setSelectedExplorerState] = useState<{ key: string; node: ChildNode } | null>(null);
   const [explorerActionMode, setExplorerActionMode] = useState<"file" | "folder" | "rename" | null>(null);
@@ -401,6 +403,9 @@ function WikiBrowserContent() {
   const refreshSelectedNodeContext = useCallback(async (): Promise<WikiNode> => {
     const requestKey = nodeRequestKey(canisterId, databaseId, selectedPath, readPrincipal);
     // The save already succeeded; discard stale views even if the refresh fails.
+    if (/\/(project|manifest)\.json$/.test(selectedPath)) {
+      setWorkflowMetadataChange({ path: selectedPath, requestKey });
+    }
     invalidateSavedBrowserNode(nodeContextCache.current, childNodesCache.current, folderOverviewNodeCache.current, requestKey);
     const { readNodeContext } = await import("@/lib/vfs-client");
     const data = await readNodeContext(canisterId, databaseId, selectedPath, 20, effectiveReadIdentity ?? undefined);
@@ -812,6 +817,7 @@ function WikiBrowserContent() {
   }
 
   return (
+    <WorkflowPresentationProvider canisterId={canisterId} databaseId={databaseId} identity={effectiveReadIdentity} metadataChange={workflowMetadataChange}>
     <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
       <a className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-action focus:px-4 focus:py-3 focus:text-onAction" href="#wiki-document">
         Skip to content
@@ -1078,6 +1084,7 @@ function WikiBrowserContent() {
         <LocalImportDialog state={localImportDialog} onCancel={cancelLocalImport} onImport={(replacements) => void runLocalImport(replacements)} />
       ) : null}
     </main>
+    </WorkflowPresentationProvider>
   );
 }
 

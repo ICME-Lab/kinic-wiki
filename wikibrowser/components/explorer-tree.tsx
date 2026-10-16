@@ -1,5 +1,6 @@
 "use client";
 
+import { useWorkflowPresentation, WorkflowDisplayToggle, ManagementGroup, WorkflowSummary } from "@/components/workflow-presentation";
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useRef, useState } from "react";
 import { WikiNavigationLink } from "@/components/wiki-navigation";
@@ -83,6 +84,7 @@ export function ExplorerTree({
 
   return (
     <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-2">
+      <WorkflowDisplayToggle />
       {sortedRootNodes.map((node) => (
         <TreeNode key={`${canisterId}:${databaseId}:${node.path}:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={node} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} sortOrder={sortOrder} onSelectedNode={onSelectedNode} />
       ))}
@@ -125,6 +127,7 @@ function TreeNode({
     hasChildren: nodeHasChildren,
     isPublished: nodeIsPublished
   } = node;
+  const display = useWorkflowPresentation([node.path]);
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const requestKey = nodeRequestKey(canisterId, databaseId, nodePath, readPrincipal);
   const [expanded, setExpanded] = useState(autoExpandSelected && (nodePath === selectedPath || selectedPath.startsWith(`${nodePath}/`)));
@@ -227,7 +230,7 @@ function TreeNode({
           href={hrefForPath(canisterId, databaseId, node.path)}
           aria-current={selected ? "page" : undefined}
         >
-          {node.name}
+          {display.label(node.path, node.name)}
         </WikiNavigationLink>
         {nodeKind === "file" && nodePath.endsWith(".md") && nodeIsPublished ? (
           <Tooltip>
@@ -240,6 +243,7 @@ function TreeNode({
           </Tooltip>
         ) : null}
       </div>
+      {expanded && canExpand ? <WorkflowSummary compact path={node.path} canisterId={canisterId} databaseId={databaseId} existingPaths={children.data?.map(c => c.path)} /> : null}
       {expanded && canExpand ? (
         <ChildrenList
           canisterId={canisterId}
@@ -299,12 +303,13 @@ function ChildrenList({
   onSelectedNode: (node: ChildNode) => void;
 }) {
   const children = childrenState.data ? sortExplorerChildNodes(visibleChildren(childrenState.data), sortOrder) : null;
+  const display = useWorkflowPresentation(children?.map(c => c.path) ?? []);
   return (
     <div>
       {!childrenState.data && !childrenState.error ? <TreeStatus depth={depth + 1} label="Loading" /> : null}
       {childrenState.error ? <TreeStatus depth={depth + 1} label={childrenState.error} /> : null}
       {children?.length === 0 ? <TreeStatus depth={depth + 1} label="No children" /> : null}
-      {children?.map((child) => (
+      {children?.filter(child => !display.management(child.path)).map((child) => (
         <TreeNode
           key={child.path}
           canisterId={canisterId}
@@ -319,6 +324,7 @@ function ChildrenList({
           onSelectedNode={onSelectedNode}
         />
       ))}
+      {children?.some(child => display.management(child.path)) ? <ManagementGroup>{children.filter(child => display.management(child.path)).map(child => <WikiNavigationLink key={child.path} className="block truncate" href={hrefForPath(canisterId, databaseId, child.path)}>{child.name}</WikiNavigationLink>)}</ManagementGroup> : null}
     </div>
   );
 }
