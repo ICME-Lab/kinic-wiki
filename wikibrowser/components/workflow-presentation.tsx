@@ -3,7 +3,7 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
+  useRef,
   useReducer,
   useState,
   type ReactNode,
@@ -11,6 +11,7 @@ import {
 import type { Identity } from "@icp-sdk/core/agent";
 import { WorkflowReader, workflowRoles } from "@/lib/workflow-presentation";
 import { WikiNavigationLink } from "@/components/wiki-navigation";
+import { nodeRequestKey } from "@/lib/request-keys";
 import { hrefForPath } from "@/lib/paths";
 const Context = createContext<{
   reader: WorkflowReader;
@@ -18,18 +19,19 @@ const Context = createContext<{
   toggle: () => void;
   refresh: () => void;
   reload: () => void;
+  generation: number;
 } | null>(null);
 export function WorkflowPresentationProvider({
   canisterId,
   databaseId,
   identity,
-  revision = "",
+  metadataChange,
   children,
 }: {
   canisterId: string;
   databaseId: string;
   identity: Identity | null;
-  revision?: string;
+  metadataChange?: { path: string; requestKey: string };
   children: ReactNode;
 }) {
   const principal = identity?.getPrincipal().toText() ?? "anonymous";
@@ -39,7 +41,7 @@ export function WorkflowPresentationProvider({
       canisterId={canisterId}
       databaseId={databaseId}
       identity={identity}
-      revision={revision}
+      metadataChange={metadataChange}
     >
       {children}
     </ScopedProvider>
@@ -49,34 +51,68 @@ function ScopedProvider({
   canisterId,
   databaseId,
   identity,
-  revision,
+  metadataChange,
   children,
 }: {
   canisterId: string;
   databaseId: string;
   identity: Identity | null;
-  revision: string;
+  metadataChange?: { path: string; requestKey: string };
   children: ReactNode;
 }) {
   const [raw, setRaw] = useState(false);
-  const [generation, reload] = useReducer((x: number) => x + 1, 0);
+  const [generation, advance] = useReducer((x: number) => x + 1, 0);
   const [, refresh] = useReducer((x: number) => x + 1, 0);
-  const reader = useMemo(
+  const identityRef = useRef(identity);
+  useEffect(() => {
+    identityRef.current = identity;
+  }, [identity]);
+  // ScopedProvider is keyed by connection and principal. Navigation never replaces this reader.
+  const [reader] = useState(
     () =>
       new WorkflowReader(async (path) => {
         const { readNode } = await import("@/lib/vfs-client");
         return (
-          (await readNode(canisterId, databaseId, path, identity ?? undefined))
-            ?.content ?? null
+          (
+            await readNode(
+              canisterId,
+              databaseId,
+              path,
+              identityRef.current ?? undefined,
+            )
+          )?.content ?? null
         );
       }),
-    // Saving a document or explicitly refreshing invalidates display-only metadata.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canisterId, databaseId, identity, revision, generation],
   );
+  useEffect(() => {
+    if (
+      !metadataChange ||
+      metadataChange.requestKey !==
+        nodeRequestKey(
+          canisterId,
+          databaseId,
+          metadataChange.path,
+          identity?.getPrincipal().toText() ?? null,
+        )
+    )
+      return;
+    reader.invalidate(metadataChange.path);
+    advance();
+  }, [reader, metadataChange, canisterId, databaseId, identity]);
+  const reload = () => {
+    reader.invalidate();
+    advance();
+  };
   return (
     <Context.Provider
-      value={{ reader, raw, toggle: () => setRaw((x) => !x), refresh, reload }}
+      value={{
+        reader,
+        raw,
+        toggle: () => setRaw((x) => !x),
+        refresh,
+        reload,
+        generation,
+      }}
     >
       {children}
     </Context.Provider>
@@ -86,6 +122,7 @@ export function useWorkflowPresentation(paths: string[] = []) {
   const context = useContext(Context);
   const reader = context?.reader,
     refresh = context?.refresh;
+  const generation = context?.generation;
   const key = JSON.stringify(paths);
   useEffect(() => {
     if (!reader) return;
@@ -98,7 +135,7 @@ export function useWorkflowPresentation(paths: string[] = []) {
     return () => {
       cancelled = true;
     };
-  }, [reader, refresh, key]);
+  }, [reader, refresh, key, generation]);
   return {
     label: (path: string, fallback: string) =>
       context?.raw ? fallback : (reader?.label(path) ?? fallback),

@@ -114,20 +114,24 @@ export class WorkflowReader {
   workflows = new Map<string, Workflow>();
   private reads = new Map<
     string,
-    { promise: Promise<string | null>; expires: number }
+    { promise: Promise<string | null>; expires: number; token: object }
   >();
+  private generation = 0;
   private active = 0;
   private queue: Array<() => void> = [];
   constructor(private read: (path: string) => Promise<string | null>) {}
   private async get(path: string): Promise<string | null> {
     const cached = this.reads.get(path);
     if (cached && cached.expires > Date.now()) return cached.promise;
+    const token = {};
     const pending = (async () => {
       await new Promise<void>((resolve) => {
         this.queue.push(resolve);
         this.drain();
       });
       try {
+        // Invalidated queued requests need not consume a network call.
+        if (this.reads.get(path)?.token !== token) return null;
         return await this.read(path);
       } catch {
         return null;
@@ -136,9 +140,14 @@ export class WorkflowReader {
         this.drain();
       }
     })();
-    this.reads.set(path, { promise: pending, expires: Date.now() + 30_000 });
+    this.reads.set(path, {
+      promise: pending,
+      expires: Date.now() + 30_000,
+      token,
+    });
     void pending.then((value) => {
-      if (value === null) this.reads.delete(path);
+      if (value === null && this.reads.get(path)?.promise === pending)
+        this.reads.delete(path);
     });
     return pending;
   }
@@ -148,7 +157,29 @@ export class WorkflowReader {
       this.queue.shift()!();
     }
   }
+  invalidate(path?: string) {
+    // Cache invalidation must not replace the reader's in-flight request queue.
+    this.generation++;
+    if (!path) {
+      this.reads.clear();
+      this.projects.clear();
+      this.workflows.clear();
+    } else {
+      this.reads.delete(path);
+      if (path.endsWith("/manifest.json"))
+        this.workflows.delete(path.slice(0, -14));
+      if (path.endsWith("/project.json")) {
+        const root = path.slice(0, -13);
+        this.projects.delete(root);
+        for (const folder of this.workflows.keys()) {
+          if (folder.startsWith(root + "/workflows/"))
+            this.workflows.delete(folder);
+        }
+      }
+    }
+  }
   async load(path: string) {
+    const generation = this.generation;
     const loc = workflowLocation(path);
     if (!loc) return;
     if (
@@ -159,6 +190,7 @@ export class WorkflowReader {
     const project = parseProject(
       (await this.get(loc.root + "/project.json")) ?? "",
     );
+    if (generation !== this.generation) return;
     if (!project) {
       this.projects.delete(loc.root);
       for (const folder of this.workflows.keys())
@@ -174,6 +206,7 @@ export class WorkflowReader {
       loc.root,
       loc.id,
     );
+    if (generation !== this.generation) return;
     if (workflow) this.workflows.set(folder, workflow);
     else this.workflows.delete(folder);
   }

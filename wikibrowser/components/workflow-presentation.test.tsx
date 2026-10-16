@@ -6,7 +6,9 @@ import {
   WorkflowPresentationProvider,
   WorkflowSummary,
   WorkflowDisplayToggle,
+  useWorkflowPresentation,
 } from "./workflow-presentation";
+import { nodeRequestKey } from "@/lib/request-keys";
 import { DocumentPane, DocumentHeader } from "./document-pane";
 import { SearchPanel } from "./search-panel";
 import type { ChildNode, WikiNode } from "@/lib/types";
@@ -269,7 +271,10 @@ it("refreshes metadata after explicit refresh and saved-node revision", async ()
       canisterId="c"
       databaseId="db"
       identity={null}
-      revision="saved-etag"
+      metadataChange={{
+        path: path + "/manifest.json",
+        requestKey: nodeRequestKey("c", "db", path + "/manifest.json", null),
+      }}
     >
       {summary}
     </WorkflowPresentationProvider>,
@@ -297,4 +302,60 @@ it("does not keep a title when the reader principal changes", async () => {
     </WorkflowPresentationProvider>,
   );
   expect(screen.queryByText("同期チェック")).toBeNull();
+});
+
+it("keeps cached metadata across page navigation and a stable request queue during refresh", async () => {
+  setup();
+  function Page({ current }: { current: string }) {
+    const display = useWorkflowPresentation([current]);
+    return <span>{display.label(path, "pending")}</span>;
+  }
+  const screen = render(wrap(<Page current={path} />));
+  await screen.findByText("同期チェック · a222c796");
+  const initialCalls = api.readNode.mock.calls.length;
+  screen.rerender(wrap(<Page current={path + "/plan.md"} />));
+  await waitFor(() =>
+    expect(screen.getByText("同期チェック · a222c796")).toBeTruthy(),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(api.readNode).toHaveBeenCalledTimes(initialCalls);
+  screen.unmount();
+
+  let active = 0,
+    maximum = 0;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  api.readNode.mockImplementation(async (_c, _d, p) => {
+    active++;
+    maximum = Math.max(maximum, active);
+    await gate;
+    await new Promise((resolve) => setTimeout(resolve, 3));
+    active--;
+    return node(
+      p,
+      JSON.stringify({
+        version: 1,
+        id,
+        nonce: id,
+        name: "test",
+        repository_key: "repo",
+      }),
+    );
+  });
+  function Probes({ count }: { count: number }) {
+    useWorkflowPresentation(
+      Array.from({ length: count }, (_, i) => "/Knowledge/probe" + i),
+    );
+    return <WorkflowDisplayToggle />;
+  }
+  const next = render(wrap(<Probes count={12} />));
+  await waitFor(() => expect(active).toBe(4));
+  next.rerender(wrap(<Probes count={16} />));
+  fireEvent.click(next.getByText("表示を更新"));
+  fireEvent.click(next.getByText("表示を更新"));
+  release();
+  await waitFor(() => expect(active).toBe(0));
+  expect(maximum).toBe(4);
 });

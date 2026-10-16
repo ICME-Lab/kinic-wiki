@@ -143,3 +143,46 @@ it("retries failed reads and expires successful metadata", async () => {
     Date.now = original;
   }
 });
+it("invalidates only the saved manifest and does not let an earlier response restore it", async () => {
+  let release: (body: string) => void = () => {};
+  let slow = true;
+  const calls: string[] = [];
+  const reader = new WorkflowReader(async (p) => {
+    calls.push(p);
+    if (p.endsWith("project.json")) return JSON.stringify(project);
+    if (slow)
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    return JSON.stringify({ ...manifest, title: "Saved" });
+  });
+  const first = reader.load(root + "/workflows/" + id);
+  while (calls.length < 2) await new Promise((r) => setTimeout(r, 0));
+  reader.invalidate(root + "/workflows/" + id + "/manifest.json");
+  slow = false;
+  await reader.load(root + "/workflows/" + id);
+  release(JSON.stringify({ ...manifest, title: "Old" }));
+  await first;
+  expect(reader.label(root + "/workflows/" + id)).toContain("Saved");
+  expect(calls.filter((p) => p.endsWith("project.json"))).toHaveLength(1);
+});
+it("keeps one four-request queue across repeated refreshes", async () => {
+  let active = 0,
+    max = 0;
+  const reader = new WorkflowReader(async () => {
+    active++;
+    max = Math.max(max, active);
+    await new Promise((r) => setTimeout(r, 3));
+    active--;
+    return JSON.stringify(project);
+  });
+  const work = [];
+  for (let round = 0; round < 4; round++) {
+    reader.invalidate();
+    work.push(
+      ...Array.from({ length: 12 }, (_, i) => reader.load("/Knowledge/p" + i)),
+    );
+  }
+  await Promise.all(work);
+  expect(max).toBe(4);
+});
