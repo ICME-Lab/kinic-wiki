@@ -3,7 +3,11 @@ import { Principal } from "@icp-sdk/core/principal";
 const ARCHITECTURE_PATH = "/.well-known/ic-architecture";
 const DERIVATION_ORIGIN_PATH = "/.well-known/ii-derivation-origin";
 
-/** Discovery is served before app redirects, HTML rendering, and page caching. */
+/**
+ * Serve discovery before redirects, HTML and page caching. Deploy the canister's
+ * get_api_doc query before publishing this manifest. Publishing opts the app into
+ * ICP MCP and its operator terms; removing the manifest stops new calls once observed.
+ */
 export function serviceDiscoveryResponse(request: Request, canisterId: unknown): Response | null {
   const path = new URL(request.url).pathname;
   if (path !== ARCHITECTURE_PATH && path !== DERIVATION_ORIGIN_PATH) return null;
@@ -24,6 +28,8 @@ export function serviceDiscoveryResponse(request: Request, canisterId: unknown):
       id: canisterId, name: "wiki", role: "backend", description: "Kinic Wiki content API; call get_api_doc() first."
     }] })
     // Browser II normalizes icp0.io to this seed origin; direct II callers do not.
+    // Before release, verify the same II identity/account has the same principal through
+    // the browser, Private MCP and ICP MCP. Do not change ACLs to mask a mismatch.
     : `https://${canisterId}.ic0.app\n`;
   return new Response(request.method === "HEAD" ? null : body, {
     headers: { ...headers, "content-type": architecture ? "application/json" : "text/plain; charset=utf-8" }
