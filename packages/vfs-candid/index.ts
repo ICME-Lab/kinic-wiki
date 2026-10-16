@@ -582,6 +582,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
+    get_api_doc: idl.Func([], [idl.Text], ["query"]),
     scope_revision: idl.Func([ScopeRevisionRequest], [ResultNat64], ["query"]),
     current_node_revision: idl.Func([NodeRevisionRequest], [ResultNodeRevision], ["query"]),
     node_history: idl.Func([NodeHistoryRequest], [ResultNodeHistory], ["query"]),
