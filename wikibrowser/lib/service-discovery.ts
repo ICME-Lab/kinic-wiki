@@ -27,10 +27,12 @@ export function serviceDiscoveryResponse(request: Request, canisterId: unknown):
     ? JSON.stringify({ version: "1.0.0", canisters: [{
       id: canisterId, name: "wiki", role: "backend", description: "Kinic Wiki content API; call get_api_doc() first."
     }] })
-    // Browser II normalizes icp0.io to this seed origin; direct II callers do not.
+    // Match the browser's reachable II origin: ic0.app can reject this canister
+    // with client_domain_canister_mismatch, preventing alternative-origin checks.
+    // II normalizes icp0.io to the existing ic0.app principal seed.
     // Before release, verify the same II identity/account has the same principal through
     // the browser, Private MCP and ICP MCP. Do not change ACLs to mask a mismatch.
-    : `https://${canisterId}.ic0.app\n`;
+    : `https://${canisterId}.icp0.io\n`;
   return new Response(request.method === "HEAD" ? null : body, {
     headers: { ...headers, "content-type": architecture ? "application/json" : "text/plain; charset=utf-8" }
   });
