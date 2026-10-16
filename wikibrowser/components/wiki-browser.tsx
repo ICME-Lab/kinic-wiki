@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowPresentationProvider } from "@/components/workflow-presentation";
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
@@ -812,6 +813,7 @@ function WikiBrowserContent() {
   }
 
   return (
+    <WorkflowPresentationProvider canisterId={canisterId} databaseId={databaseId} identity={effectiveReadIdentity} revision={`${explorerRevision}:${currentNode.data?.etag ?? ""}`}>
     <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
       <a className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-action focus:px-4 focus:py-3 focus:text-onAction" href="#wiki-document">
         Skip to content
@@ -1078,6 +1080,7 @@ function WikiBrowserContent() {
         <LocalImportDialog state={localImportDialog} onCancel={cancelLocalImport} onImport={(replacements) => void runLocalImport(replacements)} />
       ) : null}
     </main>
+    </WorkflowPresentationProvider>
   );
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useWorkflowPresentation, ManagementGroup } from "@/components/workflow-presentation";
 import type { Identity } from "@icp-sdk/core/agent";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WikiNavigationLink, useWikiNavigation } from "@/components/wiki-navigation";
@@ -60,6 +61,7 @@ export function SearchPanel({
   });
   const isCurrentSearchState = searchState.key === urlSearchKey;
   const results = isCurrentSearchState ? searchState.results : [];
+  const presentation = useWorkflowPresentation(results.filter(hit => /\/(project|manifest)\.json$/.test(hit.path)).map(hit => hit.path));
   const error = isCurrentSearchState ? searchState.error : null;
   const loading = (isCurrentSearchState && searchState.loading) || (Boolean(urlQuery) && !isCurrentSearchState);
   const hasSearched = isCurrentSearchState ? searchState.hasSearched : Boolean(urlQuery);
@@ -146,7 +148,7 @@ export function SearchPanel({
           <p className="rounded-xl border border-line bg-paper p-4 text-sm text-muted">No results.</p>
         ) : null}
         <div className="space-y-2">
-          {results.map((hit) => {
+          {results.filter(hit => !presentation.management(hit.path)).map((hit) => {
             const excerpt = resultExcerpt(hit);
             const displayPath = hit.path;
             return (
@@ -160,6 +162,7 @@ export function SearchPanel({
               </WikiNavigationLink>
             );
           })}
+          {results.some(hit => presentation.management(hit.path)) ? <ManagementGroup>{results.filter(hit => presentation.management(hit.path)).map(hit => <WikiNavigationLink className="block break-all" key={hit.path} href={hrefForPath(canisterId, databaseId, hit.path)}>{hit.path}</WikiNavigationLink>)}</ManagementGroup> : null}
         </div>
       </div>
     </div>

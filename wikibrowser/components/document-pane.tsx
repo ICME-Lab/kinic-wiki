@@ -1,5 +1,7 @@
 "use client";
 
+import { useWorkflowPresentation, ManagementGroup, WorkflowSummary } from "@/components/workflow-presentation";
+import { workflowRoles } from "@/lib/workflow-presentation";
 import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
@@ -126,6 +128,7 @@ function DocumentHeaderPath({
   path: string;
   onCopyPath: () => void;
 }) {
+  const display = useWorkflowPresentation([path]);
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) {
     return (
@@ -144,13 +147,13 @@ function DocumentHeaderPath({
           <Fragment key={crumbPath}>
             {index > 0 ? <span className="shrink-0 text-midLine">/</span> : null}
             {last ? (
-              <span className="max-w-[24rem] truncate font-medium text-ink">{segment}</span>
+              <span className="max-w-[24rem] truncate font-medium text-ink">{display.label(crumbPath, segment)}</span>
             ) : (
               <WikiNavigationLink
                 className="max-w-[14rem] shrink-0 truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-paper hover:text-ink"
                 href={hrefForPath(canisterId, databaseId, crumbPath)}
               >
-                {segment}
+                {display.label(crumbPath, segment)}
               </WikiNavigationLink>
             )}
           </Fragment>
@@ -388,6 +391,7 @@ function NodeDocument({
   onNodeSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
+  const display = useWorkflowPresentation([node.path]);
   const contentBytes = new TextEncoder().encode(node.content).length;
   const isLargeContent = contentBytes > LARGE_CONTENT_BYTES;
   if (view === "edit") {
@@ -411,7 +415,7 @@ function NodeDocument({
   }
   return (
     <article className="h-full overflow-auto px-6 py-6 md:px-10">
-      {view === "raw" ? (
+      {display.management(node.path) && view === "preview" ? <section className="space-y-3"><h3>管理情報</h3><p className="break-all font-mono text-xs">{node.path}</p><pre className="overflow-auto whitespace-pre-wrap break-words">{prettyJson(node.content)}</pre></section> : view === "raw" ? (
         <RawContent key={`${node.path}-${node.etag}`} content={node.content} isLargeContent={isLargeContent} contentBytes={contentBytes} />
       ) : isLargeContent ? (
         <LargeMarkdownPreview key={`${node.path}:${node.etag}`} content={node.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={node.path} />
@@ -767,14 +771,18 @@ function DirectoryChildrenCard({
   parentPath: string;
 }) {
   const children = childrenState.data ? visibleChildren(childrenState.data, parentPath) : null;
+  const display = useWorkflowPresentation([parentPath, ...(children?.map(c => c.path) ?? [])]);
+  const workflow = display.workflow(parentPath);
+  const roleName = (path: string, name: string) => { const role = workflow && Object.entries(workflow.artifacts).find(([, a]) => a.path === path)?.[0]; return role ? workflowRoles[role] ?? role : display.label(path, name); };
   return (
     <div className="rounded-2xl border border-line bg-paper p-4 sm:p-5">
+      <WorkflowSummary path={parentPath} canisterId={canisterId} databaseId={databaseId} existingPaths={children?.map(c => c.path)} />
       <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Directory</p>
       <h3 className="mt-2 text-2xl font-semibold tracking-[-0.018em]">Children</h3>
       <div className="mt-5 grid gap-2">
         {childrenState.loading ? <p className="text-sm text-muted">Loading children...</p> : null}
         {!childrenState.loading && children?.length === 0 ? <p className="text-sm text-muted">No children.</p> : null}
-        {children?.map((child) => (
+        {children?.filter(child => !display.management(child.path)).map((child) => (
           <WikiNavigationLink
             key={child.path}
             href={hrefForPath(canisterId, databaseId, child.path)}
@@ -782,11 +790,12 @@ function DirectoryChildrenCard({
           >
             <span className="flex min-w-0 items-center gap-2">
               {child.kind === "directory" || child.kind === "folder" ? <Folder size={16} /> : <FileText size={16} />}
-              <span className="truncate">{child.name}</span>
+              <span className="truncate">{roleName(child.path, child.name)}</span>
             </span>
             <span className="font-mono text-xs text-muted">{child.kind}</span>
           </WikiNavigationLink>
         ))}
+        {children?.some(child => display.management(child.path)) ? <ManagementGroup>{children.filter(child => display.management(child.path)).map(child => <WikiNavigationLink key={child.path} className="block break-all" href={hrefForPath(canisterId, databaseId, child.path)}>{child.name}</WikiNavigationLink>)}</ManagementGroup> : null}
       </div>
     </div>
   );
@@ -856,3 +865,5 @@ function LoadingBlock() {
 function isVfsNotFound(nodeError: string | null, childrenError: string | null): boolean {
   return Boolean(nodeError?.includes("node not found:") && childrenError?.includes("path not found:"));
 }
+
+function prettyJson(content: string) { try { return JSON.stringify(JSON.parse(content), null, 2); } catch { return content; } }
