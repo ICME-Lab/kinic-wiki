@@ -6265,3 +6265,106 @@ fn scope_revision_query_uses_database_reader_authorization() {
         service.scope_revision("owner", request).unwrap()
     );
 }
+
+#[test]
+fn learning_replay_preserves_later_publication() {
+    use vfs_types::{LearningPublicationRequest, PublishNodeRequest, WriteNodeItem};
+    let service = service();
+    let db = activate_pending_database(&service);
+    let path = "/Knowledge/replay.md";
+    let mut request = LearningPublicationRequest {
+        database_id: db.clone(),
+        operation_id: "replay-publication".into(),
+        evidence: vec![],
+        scope_guards: vec![],
+        targets: vec![WriteNodeItem {
+            path: path.into(),
+            kind: NodeKind::Source,
+            content: "source".into(),
+            metadata_json: r#"{"authority":"agent"}"#.into(),
+            expected_etag: None,
+        }],
+    };
+    let first = service
+        .publish_learning("owner", request.clone(), 10)
+        .unwrap();
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: db.clone(),
+                path: path.into(),
+                kind: NodeKind::File,
+                content: "public file".into(),
+                metadata_json: r#"{"authority":"agent"}"#.into(),
+                expected_etag: Some(first.nodes[0].node.etag.clone()),
+            },
+            11,
+        )
+        .unwrap();
+    let public = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: db.clone(),
+                path: path.into(),
+            },
+            "abcdef0123456789abcdef0123456789",
+            12,
+        )
+        .unwrap();
+    assert!(
+        service
+            .publish_learning("stranger", request.clone(), 13)
+            .is_err()
+    );
+    assert_eq!(
+        service
+            .publish_learning("owner", request.clone(), 13)
+            .unwrap(),
+        first
+    );
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_some()
+    );
+    // A replay has no node commit marker. If finalization is interrupted, the
+    // durable detach journal must restore the later publication on recovery.
+    vfs_runtime::fail_next_publication_resolution_for_test(&db);
+    assert_eq!(
+        service
+            .publish_learning("owner", request.clone(), 13)
+            .unwrap(),
+        first
+    );
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_some()
+    );
+    request.targets[0].content = "conflicting replay".into();
+    assert!(
+        service
+            .publish_learning("owner", request.clone(), 14)
+            .is_err()
+    );
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_some()
+    );
+    request.operation_id = "new-publication".into();
+    request.targets[0].expected_etag =
+        Some(service.read_node(&db, "owner", path).unwrap().unwrap().etag);
+    service.publish_learning("owner", request, 15).unwrap();
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_none()
+    );
+}

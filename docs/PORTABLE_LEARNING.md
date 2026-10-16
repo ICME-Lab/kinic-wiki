@@ -21,7 +21,11 @@ validation-only evaluation suite. Without one, learning retains proposals and
 never publishes them. The runner file uses the existing RunnerConfig format in
 [continual learning](CONTINUAL_LEARNING.md). Credentials stay in the normal
 identity store or inherited environment; do not put secret environment values in
-the runner or reranker configuration. Setup rejects these values.
+the runner or reranker configuration. Setup rejects these values. Set runner
+`"inherited_environment":["OPENAI_API_KEY"]` (or `DEEPSEEK_API_KEY` for dsh) to
+reference credentials available in the launching process. Isolated evaluation
+passes these only to the runner, redacts their values from artifacts, and keeps
+the verifier environment isolated. Missing referenced values fail explicitly.
 
 Setup creates version 2 `.kinic-learning.json` containing a stable opaque
 `project_id`, pinned replica/canister/database/principal, runner configuration,
@@ -34,6 +38,9 @@ Repeated setup preserves existing settings, identity and disabled state. A legac
 recall file is explicitly migrated, with its original bytes preserved as
 `.kinic-learning.json.legacy`; the former namespace becomes a selected read scope.
 Legacy files still work for recall/record without setup, but do not start jobs.
+Within a version 2 project, a legacy file or stdin runtime override retains the
+project's scope, identity, and connection checks. Such transient overrides do not
+start automatic learning jobs; durable jobs require the version 2 config path.
 Use the version 2 file to change runner, suite or read scopes. Executable/suite
 paths are absolute: update host paths explicitly after moving machines. Retain
 normal identity state and evaluator keys separately. Linked Git worktrees find

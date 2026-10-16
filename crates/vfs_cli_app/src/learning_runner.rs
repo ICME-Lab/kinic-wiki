@@ -33,6 +33,9 @@ pub struct RunnerConfig {
     pub read_only: bool,
     pub env_clear: bool,
     pub environment: BTreeMap<String, String>,
+    /// Variable names only; values are resolved at execution and never stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inherited_environment: Vec<String>,
 }
 impl Default for RunnerConfig {
     fn default() -> Self {
@@ -47,7 +50,42 @@ impl Default for RunnerConfig {
             read_only: false,
             env_clear: false,
             environment: BTreeMap::new(),
+            inherited_environment: vec![],
         }
+    }
+}
+impl RunnerConfig {
+    pub(crate) fn inherited_values(&self) -> anyhow::Result<BTreeMap<String, String>> {
+        let mut values = BTreeMap::new();
+        for name in &self.inherited_environment {
+            anyhow::ensure!(
+                !name.is_empty()
+                    && !name.starts_with(|c: char| c.is_ascii_digit())
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                    && ![
+                        "HOME",
+                        "TMPDIR",
+                        "PATH",
+                        "CARGO_TARGET_DIR",
+                        "PYTHONDONTWRITEBYTECODE",
+                        "DSH_PERMISSION_MODE"
+                    ]
+                    .contains(&name.as_str()),
+                "invalid inherited environment variable name or reserved task environment variable"
+            );
+            let value = std::env::var(name)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "required inherited environment variable is unavailable: {name}"
+                    )
+                })?;
+            values.insert(name.clone(), value);
+        }
+        Ok(values)
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,6 +157,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
         command.env_clear();
     }
     command.envs(&config.environment);
+    command.envs(config.inherited_values()?);
     match config.engine {
         AgentEngine::Codex => {
             command.args(["exec", "--json", "--cd"]).arg(cwd).args([
@@ -584,6 +623,32 @@ mod tests {
         (dir, config)
     }
 
+    #[test]
+    fn inherited_credentials_require_safe_names_and_available_values() {
+        let mut config = RunnerConfig::default();
+        assert!(
+            serde_json::to_value(&config)
+                .unwrap()
+                .get("inherited_environment")
+                .is_none()
+        );
+        config.inherited_environment = vec!["KINIC_TEST_MISSING_CREDENTIAL_A947BC".into()];
+        let error = config.inherited_values().unwrap_err().to_string();
+        assert!(error.contains("required inherited environment variable is unavailable"));
+        for name in [
+            "HOME",
+            "PATH",
+            "TMPDIR",
+            "CARGO_TARGET_DIR",
+            "DSH_PERMISSION_MODE",
+            "BAD=private-value",
+        ] {
+            config.inherited_environment = vec![name.into()];
+            let error = config.inherited_values().unwrap_err().to_string();
+            assert!(!error.contains("private-value"));
+            assert!(error.contains("invalid inherited environment"));
+        }
+    }
     #[tokio::test]
     async fn read_only_configuration_overrides_ambient_and_extra_environment_policy() {
         let (dir, mut cfg) = fixture(

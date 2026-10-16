@@ -102,6 +102,8 @@ pub async fn drain_with_config(
     state: &StateArgs,
     config: Option<&Path>,
 ) -> Result<Value> {
+    let effective_state = target_state(state, root)?;
+    let state = &effective_state;
     let path = config
         .map(PathBuf::from)
         .or(discover_config(root)?)

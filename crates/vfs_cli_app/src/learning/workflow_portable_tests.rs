@@ -698,3 +698,134 @@ async fn review_fix_external_config_flows_from_hook_to_job_processing() {
         json!(external.canonicalize().unwrap())
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn status_and_drain_use_target_project_state_outside_project() {
+    let (_dir, client, _state, a, b) = fixture().await;
+    let c = connection();
+    for root in [&a, &b] {
+        std::fs::create_dir(root.join(".kinic")).unwrap();
+        std::fs::write(
+            root.join(".kinic/config.toml"),
+            "[learning]\nstate_dir='state'\n",
+        )
+        .unwrap();
+        let state = StateArgs {
+            state_dir: Some(root.join(".kinic/state")),
+            json: true,
+        };
+        hooks::handle(&client,&c,"codex",None,&state,json!({"event":"UserPromptSubmit","cwd":root,"session_id":"target-job","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+        hooks::handle(
+            &client,
+            &c,
+            "codex",
+            None,
+            &state,
+            json!({"event":"Stop","cwd":root,"session_id":"target-job","turn_id":"1"}),
+        )
+        .await
+        .unwrap();
+    }
+    let state = StateArgs {
+        state_dir: None,
+        json: true,
+    };
+    let value = learn_value(
+        &client,
+        &c,
+        LearnCommand::Status {
+            project_root: b.clone(),
+            state: state.clone(),
+        },
+        &a,
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["jobs"].as_array().unwrap().len(), 1, "{value}");
+    let b_run = value["jobs"][0]["run_id"].clone();
+    let value = learn_value(
+        &client,
+        &c,
+        LearnCommand::Drain {
+            project_root: b.clone(),
+            state,
+            recall_config: None,
+        },
+        &a,
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["jobs"][0]["run_id"], b_run, "{value}");
+    assert_eq!(value["jobs"][0]["state"], "candidate", "{value}");
+    let state = StateArgs {
+        state_dir: Some(a.join(".kinic/state")),
+        json: true,
+    };
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    assert_eq!(
+        job_driver::queue(&client, &c, &state, &project)
+            .unwrap()
+            .list()
+            .unwrap()[0]
+            .state,
+        "pending"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn legacy_hook_override_keeps_connection_policy_without_starting_jobs() {
+    let (dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let runtime = dir.path().join("recall-runtime.json");
+    std::fs::write(&runtime, r#"{"budget_tokens":2000}"#).unwrap();
+    let recalled = hooks::handle(&client,&c,"codex",Some(runtime.clone()),&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"runtime","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+    assert!(!recalled["additionalContext"].as_str().unwrap().is_empty());
+    let stopped = hooks::handle(
+        &client,
+        &c,
+        "codex",
+        Some(runtime.clone()),
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"runtime","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stopped["queued"], false);
+    let mut wrong = c.clone();
+    wrong.database_id = Some("wrong".into());
+    assert!(hooks::handle(&client,&wrong,"codex",Some(runtime.clone()),&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"wrong","turn_id":"1","prompt":"advice"})).await.is_err());
+    let resolved = crate::agent_config::AgentConfig::at(&a)
+        .unwrap()
+        .with_stdin_recall(Some(json!({"budget_tokens":2000})));
+    let opts = load_recall_resolved(
+        &resolved,
+        Some(Path::new("-")),
+        "advice",
+        &client,
+        &c,
+        &state,
+        &a,
+        None,
+    )
+    .unwrap();
+    assert_eq!(opts.budget_tokens, 2000);
+    assert!(
+        load_recall_resolved(
+            &resolved,
+            Some(Path::new("-")),
+            "advice",
+            &client,
+            &wrong,
+            &state,
+            &a,
+            None
+        )
+        .is_err()
+    );
+    let mut project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    project.principal = Some("different-principal".into());
+    crate::learning::project::save_project(&a.join(CONFIG_FILE), &project).unwrap();
+    assert!(hooks::handle(&client,&c,"codex",Some(runtime),&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"wrong-principal","turn_id":"1","prompt":"advice"})).await.is_err());
+}

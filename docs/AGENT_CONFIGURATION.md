@@ -63,9 +63,25 @@ executable = "/absolute/path/to/your/dsh-launcher"
 A bare executable name uses PATH. A path in TOML is relative to the file defining
 that value. Runner fields retain their existing names: `model`,
 `reasoning_effort`, `timeout_seconds`, `max_output_bytes`, `extra_args`,
-`read_only`, and `env_clear`. Literal runner `environment` values are not accepted
-in TOML; use the existing inherited credential environment. Legacy runner JSON
-continues to support its previous explicit environment map.
+`read_only`, `env_clear`, and `inherited_environment`. Literal runner `environment`
+values are not accepted in TOML. Name required runtime credentials explicitly:
+
+```toml
+[agents.dsh]
+inherited_environment = ["DEEPSEEK_API_KEY"]
+```
+
+Runner JSON and the portable project's `runner` accept the same array of names.
+Set their values in the launching process environment. Missing or empty values
+fail with a sanitized error naming the variable. Evaluation passes these values
+only to the agent process and redacts them from persisted evidence; external
+verification keeps its isolated task environment. `HOME`, `TMPDIR`, `PATH`, and
+other reserved task environment variables cannot be inherited this way. Names
+participate in runner configuration identity; rotating credential values does not
+change evaluation environment fingerprints. Normal execution keeps its existing
+ambient-environment behavior. Legacy runner JSON continues to support its
+previous explicit environment map; during evaluation, recognized credential
+keys in that map also go only to the agent process.
 
 Learning/engine fields resolve individually in this order: explicit command
 arguments, explicitly provided JSON fields, project TOML, user TOML, existing

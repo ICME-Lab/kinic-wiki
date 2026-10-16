@@ -346,7 +346,8 @@ pub async fn evaluate_suite(
         !output.starts_with("/private/tmp"),
         "evaluation workspaces cannot be under /private/tmp"
     );
-    let secrets = secret_values(runner);
+    let mut secrets = secret_values(runner);
+    secrets.extend(runner.inherited_values()?.into_values());
     let mut reported_runner = runner.clone();
     for (key, value) in &mut reported_runner.environment {
         if secret_key(key) {
@@ -473,7 +474,12 @@ fn prepared_environment(
     directory: &Path,
     runner: &RunnerConfig,
 ) -> Result<BTreeMap<String, String>> {
-    let mut environment = runner.environment.clone();
+    let mut environment: BTreeMap<String, String> = runner
+        .environment
+        .iter()
+        .filter(|(key, _)| !secret_key(key) && !runner.inherited_environment.contains(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     environment.extend(task.environment.variables.clone());
     if !environment.contains_key("PATH") {
         environment.insert(
@@ -588,6 +594,18 @@ async fn evaluate_one(
     let mut isolated_runner = runner.clone();
     isolated_runner.env_clear = true;
     isolated_runner.environment = environment.clone();
+    let inherited = runner.inherited_values()?;
+    let mut secrets = secret_values(runner);
+    secrets.extend(inherited.values().cloned());
+    isolated_runner.environment.extend(
+        runner
+            .environment
+            .iter()
+            .filter(|(key, _)| secret_key(key))
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
+    isolated_runner.environment.extend(inherited);
+    isolated_runner.inherited_environment.clear();
     let prompt = if context.content.is_empty() {
         task.prompt.clone()
     } else {
@@ -665,7 +683,7 @@ async fn evaluate_one(
         && sample.checks.iter().all(|check| check.passed)
         && sample.outside_scope.is_empty();
     let mut value = serde_json::to_value(&sample)?;
-    redact_value(&mut value, &secret_values(runner));
+    redact_value(&mut value, &secrets);
     sample = serde_json::from_value(value)?;
     write_json_atomic(&directory.join("sample.json"), &sample)?;
     Ok(sample)
@@ -1418,6 +1436,14 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn full_four_mode_run_rejects_scope_violation_and_tracks_missing_cost() {
+        if std::env::var_os("KINIC_TEST_EVAL_CREDENTIAL").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "learning_evaluation::tests::full_four_mode_run_rejects_scope_violation_and_tracks_missing_cost", "--nocapture"])
+                .env("KINIC_TEST_EVAL_CREDENTIAL", "fixture-secret-do-not-save")
+                .status().unwrap();
+            assert!(status.success());
+            return;
+        }
         use std::os::unix::fs::PermissionsExt;
         let temporary = tempfile::tempdir().unwrap();
         let repo = temporary.path().join("repo");
@@ -1443,7 +1469,7 @@ mod tests {
         .await
         .unwrap();
         let executable = temporary.path().join("fake-agent.py");
-        std::fs::write(&executable,"#!/usr/bin/env python3\nimport sys,json,pathlib,os\nprompt=sys.stdin.read()\nprint(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':os.environ['OPENAI_API_KEY']}}))\npathlib.Path('file').write_text('fixed')\nif 'bad-context' in prompt: pathlib.Path('outside').write_text('bad')\nprint(json.dumps({'type':'turn.completed','usage':{'input_tokens':2,'output_tokens':3}}))\n").unwrap();
+        std::fs::write(&executable,"#!/usr/bin/env python3\nimport sys,json,pathlib,os\nprompt=sys.stdin.read()\nprint(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':os.environ['KINIC_TEST_EVAL_CREDENTIAL']+os.environ['OPENAI_API_KEY']}}))\npathlib.Path('file').write_text('fixed')\nif 'bad-context' in prompt: pathlib.Path('outside').write_text('bad')\nprint(json.dumps({'type':'turn.completed','usage':{'input_tokens':2,'output_tokens':3}}))\n").unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         let task = EvaluationTask {
             id: "test".into(),
@@ -1451,8 +1477,16 @@ mod tests {
             split: TaskSplit::Validation,
             repo: repo.clone(),
             start_commit: git(&repo, &["rev-parse", "HEAD"]).await.unwrap(),
-            prompt: "repair".into(),
-            verification: vec![vec!["/usr/bin/true".into()]],
+            prompt: format!(
+                "repair {}",
+                std::env::var("KINIC_TEST_EVAL_CREDENTIAL").unwrap()
+            ),
+            verification: vec![vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "test -z \"${KINIC_TEST_EVAL_CREDENTIAL+x}\" && test -z \"${OPENAI_API_KEY+x}\""
+                    .into(),
+            ]],
             allowed_paths: vec!["file".into()],
             environment: Default::default(),
         };
@@ -1475,14 +1509,12 @@ mod tests {
                 })
                 .collect(),
         )]);
-        let config = RunnerConfig {
-            executable,
-            environment: BTreeMap::from([(
-                "OPENAI_API_KEY".into(),
-                "fixture-secret-do-not-save".into(),
-            )]),
-            ..Default::default()
-        };
+        let config: RunnerConfig = serde_json::from_value(serde_json::json!({
+            "executable": executable,
+            "inherited_environment": ["KINIC_TEST_EVAL_CREDENTIAL"],
+            "environment": {"OPENAI_API_KEY":"legacy-fixture-secret"}
+        }))
+        .unwrap();
         // /tmp is /private/tmp on macOS; the evaluator forbids that destination.
         let output_parent = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let report = evaluate_suite(
@@ -1497,9 +1529,36 @@ mod tests {
         )
         .await
         .unwrap();
+        let mut missing = config.clone();
+        missing.inherited_environment = vec!["KINIC_TEST_MISSING_EVAL_CREDENTIAL_A947BC".into()];
+        let error = evaluate_suite(
+            &report.manifest,
+            &missing,
+            &contexts,
+            &output_parent.path().join("missing-credential"),
+            1,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("required inherited environment variable is unavailable"));
+        assert!(!error.contains("fixture-secret-do-not-save"));
+        assert!(!error.contains("legacy-fixture-secret"));
         assert_eq!(report.samples.len(), 4);
         validate_report(&report).unwrap();
         assert!(report.redacted);
+        for entry in std::fs::read_dir(output_parent.path().join("results")).unwrap() {
+            let path = entry.unwrap().path();
+            let artifact = if path.is_dir() {
+                path.join("sample.json")
+            } else {
+                path
+            };
+            let text = std::fs::read_to_string(artifact).unwrap();
+            assert!(!text.contains("fixture-secret-do-not-save"));
+            assert!(!text.contains("legacy-fixture-secret"));
+        }
+
         assert_eq!(report.runner.environment["OPENAI_API_KEY"], "[REDACTED]");
         assert!(
             !serde_json::to_string(&report)

@@ -908,6 +908,18 @@ impl VfsService {
         paths: &[&str],
         f: impl FnOnce(&FsStore, Option<i64>) -> Result<T, NodeMutationError>,
     ) -> Result<T, NodeMutationError> {
+        self.with_detached_node_publications_outcome(database_id, caller, paths, |store, id| {
+            f(store, id).map(|value| (value, true))
+        })
+    }
+
+    fn with_detached_node_publications_outcome<T>(
+        &self,
+        database_id: &str,
+        caller: &str,
+        paths: &[&str],
+        f: impl FnOnce(&FsStore, Option<i64>) -> Result<(T, bool), NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
         self.require_role(database_id, caller, RequiredRole::Writer)
             .map_err(NodeMutationError::forbidden)?;
         let meta = self
@@ -919,14 +931,14 @@ impl VfsService {
         self.recover_pending_publication_mutations()
             .map_err(NodeMutationError::write_unavailable)?;
         if paths.is_empty() {
-            return f(&store, None);
+            return f(&store, None).map(|(value, _)| value);
         }
         let detached = self
             .detach_node_publications_for_paths(database_id, paths)
             .map_err(NodeMutationError::write_unavailable)?;
         match f(&store, detached.operation_id) {
-            Ok(value) => {
-                if let Err(_error) = self.resolve_detached_node_publications(&detached, false) {
+            Ok((value, mutated)) => {
+                if let Err(_error) = self.resolve_detached_node_publications(&detached, !mutated) {
                     #[cfg(target_arch = "wasm32")]
                     panic!(
                         "node mutation committed but publication recovery finalization failed: {_error}"

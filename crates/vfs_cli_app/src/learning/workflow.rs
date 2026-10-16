@@ -41,18 +41,29 @@ fn print<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 fn state_root(args: &StateArgs) -> Result<PathBuf> {
-    let config = crate::agent_config::AgentConfig::current()?;
-    Ok(args
+    state_root_at(args, &std::env::current_dir()?)
+}
+fn state_root_at(args: &StateArgs, cwd: &Path) -> Result<PathBuf> {
+    if let Some(path) = args
         .state_dir
         .clone()
         .or_else(|| std::env::var_os("KINIC_LEARNING_HOME").map(PathBuf::from))
-        .or_else(|| config.state_dir())
-        .unwrap_or(
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .context("HOME is required or set --state-dir")?
-                .join(".kinic/learning"),
-        ))
+    {
+        return Ok(path);
+    }
+    let config = crate::agent_config::AgentConfig::at(cwd)?;
+    Ok(config.state_dir().unwrap_or(
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is required or set --state-dir")?
+            .join(".kinic/learning"),
+    ))
+}
+fn target_state(args: &StateArgs, cwd: &Path) -> Result<StateArgs> {
+    Ok(StateArgs {
+        state_dir: Some(state_root_at(args, cwd)?),
+        json: args.json,
+    })
 }
 /// Bind queued hook observations to the actual authenticated destination and caller.
 pub fn routing_binding(c: &ResolvedConnection, principal: &str) -> String {
@@ -178,7 +189,7 @@ fn load_recall_resolved(
     opts.task = task.into();
     opts.endpoint = endpoint(c);
     opts.principal = client.caller_principal().context("identity unavailable")?;
-    opts.state_dir = state_root(args)?;
+    opts.state_dir = state_root_at(args, cwd)?;
     opts.environment
         .extend([std::env::consts::OS.into(), std::env::consts::ARCH.into()]);
     opts.environment.push(cwd.display().to_string());
@@ -502,6 +513,19 @@ async fn learn_value_at(
     cwd: &Path,
     config_path: Option<&Path>,
 ) -> Result<Value> {
+    let mut command = command;
+    match &mut command {
+        LearnCommand::Status {
+            project_root,
+            state,
+        }
+        | LearnCommand::Drain {
+            project_root,
+            state,
+            ..
+        } => *state = target_state(state, project_root)?,
+        _ => {}
+    }
     let chosen = config_path.map(PathBuf::from).or_else(|| match &command {
         LearnCommand::Evaluate { recall_config, .. } => Some(recall_config.clone()),
         _ => None,

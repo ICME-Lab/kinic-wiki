@@ -163,6 +163,14 @@ pub async fn handle(
             json!({"skipped":true,"reason":"project learning is not configured","additionalContext":""}),
         );
     };
+    // Runtime overrides are useful for this invocation, but cannot become the
+    // portable config path of a durable job. Stdin has the same transient rule.
+    let job_project = project.as_ref().filter(|_| {
+        explicit.is_none()
+            || explicit.is_some_and(|path| {
+                crate::agent_config::read_json_value(path).is_ok_and(|value| value["version"] == 2)
+            })
+    });
     let binding = routing_binding(
         c,
         &client
@@ -210,8 +218,7 @@ pub async fn handle(
             .flush(client, c.database_id.as_deref().unwrap())
             .await;
         // Retry pending finite work on the next normal entry as well as Stop.
-        let background = project
-            .as_ref()
+        let background = job_project
             .filter(|p| p.enabled)
             .map(|_| job_driver::launch(c, state, &cwd, &config))
             .transpose()
@@ -231,14 +238,14 @@ pub async fn handle(
     outbox.enqueue(&event(&id, "hook", payload))?;
     let terminal = kind == "Stop" || request["terminal"] == true;
     if terminal {
-        if let Some(p) = &project {
+        if let Some(p) = job_project {
             job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
         }
     }
     let sync = outbox
         .flush(client, c.database_id.as_deref().unwrap())
         .await;
-    let background = if terminal && project.as_ref().is_some_and(|p| p.enabled) {
+    let background = if terminal && job_project.is_some_and(|p| p.enabled) {
         job_driver::launch(c, state, &cwd, &config)
             .err()
             .map(|e| e.to_string())
@@ -246,7 +253,7 @@ pub async fn handle(
         None
     };
     Ok(
-        json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":sync.is_err(),"queued":terminal&&project.as_ref().is_some_and(|p|p.enabled),"background_error":background}),
+        json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":sync.is_err(),"queued":terminal&&job_project.is_some_and(|p|p.enabled),"background_error":background}),
     )
 }
 

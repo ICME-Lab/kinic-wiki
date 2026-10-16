@@ -13,7 +13,7 @@ fn config_layers_paths_and_explicit_json_preserve_absent_fields() {
     put(
         &home,
         ".config/kinic-vfs-cli/config.toml",
-        "[learning]\nbudget_tokens=1000\n[agents.dsh]\nexecutable='./bin/dsh'\nmodel='user-model'\ntimeout_seconds=44\n",
+        "[learning]\nbudget_tokens=1000\n[agents.dsh]\nexecutable='./bin/dsh'\nmodel='user-model'\ntimeout_seconds=44\ninherited_environment=['DEEPSEEK_API_KEY']\n",
     );
     put(
         &project,
@@ -25,6 +25,7 @@ fn config_layers_paths_and_explicit_json_preserve_absent_fields() {
     let runner = config.runner(Some("dsh"), None).unwrap();
     assert_eq!(runner.model.as_deref(), Some("project-model"));
     assert_eq!(runner.timeout_seconds, 44);
+    assert_eq!(runner.inherited_environment, vec!["DEEPSEEK_API_KEY"]);
     assert_eq!(
         runner.executable,
         home.join(".config/kinic-vfs-cli/bin/dsh")
@@ -47,6 +48,13 @@ fn config_layers_paths_and_explicit_json_preserve_absent_fields() {
     assert_eq!(
         config.runner(None, Some(&json)).unwrap().model.as_deref(),
         Some("json-model")
+    );
+    assert_eq!(
+        config
+            .runner(None, Some(&json))
+            .unwrap()
+            .inherited_environment,
+        vec!["DEEPSEEK_API_KEY"]
     );
     assert!(config.runner(Some("codex"), Some(&json)).is_err());
 }
@@ -239,4 +247,54 @@ fn prepared_stdin_recall_is_reusable_and_overrides_project_runtime_defaults() {
         assert_eq!(recall.budget_tokens, 1234);
         assert!(!recall.fts);
     }
+}
+
+#[test]
+fn legacy_file_and_stdin_retain_portable_policy() {
+    let root = tempfile::tempdir().unwrap();
+    let project = portable(root.path());
+    let path = root.path().join("runtime.json");
+    fs::write(&path, r#"{"budget_tokens":2222}"#).unwrap();
+    for explicit in [&*path, Path::new("-")] {
+        let config = AgentConfig::load(root.path(), &root.path().join("home"))
+            .unwrap()
+            .with_stdin_recall(Some(serde_json::json!({"budget_tokens":2222})));
+        assert_eq!(
+            config
+                .portable_project(Some(explicit))
+                .unwrap()
+                .unwrap()
+                .project_id,
+            project.project_id
+        );
+        let recall = config.recall(Some(explicit)).unwrap().unwrap();
+        assert_eq!(recall.budget_tokens, 2222);
+        assert_eq!(recall.namespace, project.knowledge_scope());
+        assert_eq!(recall.read_scopes, project.recall_scopes());
+        for policy in [
+            serde_json::json!({"namespace":"/Knowledge"}),
+            serde_json::json!({"project_id":"other"}),
+            serde_json::json!({"read_scopes":["/Knowledge"]}),
+        ] {
+            fs::write(&path, serde_json::to_vec(&policy).unwrap()).unwrap();
+            let config = config.clone().with_stdin_recall(Some(policy));
+            assert!(config.recall(Some(explicit)).is_err());
+        }
+        fs::write(&path, r#"{"budget_tokens":2222}"#).unwrap();
+    }
+    let other_root = tempfile::tempdir().unwrap();
+    let mut other = portable(other_root.path());
+    other.project_id = "b".repeat(32);
+    other.recall.namespace = other.knowledge_scope();
+    other.runner.inherited_environment = vec!["OPENAI_API_KEY".into()];
+    let external = other_root.path().join(".kinic-learning.json");
+    vfs_cli_app::learning::project::save_project(&external, &other).unwrap();
+    let config = AgentConfig::load(root.path(), &root.path().join("home")).unwrap();
+    let chosen = config.portable_project(Some(&external)).unwrap().unwrap();
+    assert_eq!(chosen.project_id, "b".repeat(32));
+    assert_eq!(chosen.runner.inherited_environment, vec!["OPENAI_API_KEY"]);
+    assert_eq!(
+        config.recall(Some(&external)).unwrap().unwrap().project_id,
+        Some("b".repeat(32))
+    );
 }

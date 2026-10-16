@@ -22,6 +22,19 @@ fn state() -> StateArgs {
         json: true,
     }
 }
+fn fixture_runner(root: &Path) -> RunnerConfig {
+    let executable = root.join("fixture-agent");
+    std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    RunnerConfig {
+        executable,
+        ..Default::default()
+    }
+}
 fn setup(root: &Path, runner: &Path) -> LearnCommand {
     LearnCommand::Setup {
         project_root: root.into(),
@@ -38,7 +51,7 @@ async fn setup_is_idempotent_and_projects_are_isolated() {
     let runner = tmp.path().join("runner.json");
     std::fs::write(
         &runner,
-        serde_json::to_vec(&RunnerConfig::default()).unwrap(),
+        serde_json::to_vec(&fixture_runner(tmp.path())).unwrap(),
     )
     .unwrap();
     let a = tmp.path().join("a");
@@ -89,7 +102,11 @@ async fn legacy_migration_preserves_retrieval_and_rejects_invalid_scopes() {
     let tmp = tempfile::tempdir().unwrap();
     let client = StoreClient::new(tmp.path());
     let runner = tmp.path().join("runner.json");
-    std::fs::write(&runner, "{}").unwrap();
+    std::fs::write(
+        &runner,
+        serde_json::to_vec(&fixture_runner(tmp.path())).unwrap(),
+    )
+    .unwrap();
     let config = tmp.path().join(CONFIG_FILE);
     std::fs::write(
         &config,
@@ -185,7 +202,7 @@ async fn setup_rejects_stored_runner_secrets_and_load_rejects_injected_secrets()
     let tmp = tempfile::tempdir().unwrap();
     let client = StoreClient::new(tmp.path());
     let runner = tmp.path().join("runner.json");
-    let mut config = RunnerConfig::default();
+    let mut config = fixture_runner(tmp.path());
     config
         .environment
         .insert("PROVIDER_API_KEY".into(), "secret-value".into());
@@ -212,7 +229,11 @@ async fn legacy_retry_reuses_identical_backup_but_preserves_conflicting_backup()
     let tmp = tempfile::tempdir().unwrap();
     let client = StoreClient::new(tmp.path());
     let runner = tmp.path().join("runner.json");
-    std::fs::write(&runner, "{}").unwrap();
+    std::fs::write(
+        &runner,
+        serde_json::to_vec(&fixture_runner(tmp.path())).unwrap(),
+    )
+    .unwrap();
     let path = tmp.path().join(CONFIG_FILE);
     let backup = path.with_extension("json.legacy");
     let legacy = r#"{"budget_tokens":321}"#;

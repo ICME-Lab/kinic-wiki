@@ -210,6 +210,18 @@ impl FsStore {
         now: i64,
         publication_operation_id: Option<i64>,
     ) -> Result<LearningPublicationResult, NodeMutationError> {
+        self.publish_learning_with_publication_outcome(request, now, publication_operation_id)
+            .map(|(result, _)| result)
+    }
+
+    /// The boolean is true only when this transaction changed nodes. Replays must
+    /// preserve later public URLs and must not mark a detach journal committed.
+    pub fn publish_learning_with_publication_outcome(
+        &self,
+        request: LearningPublicationRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<(LearningPublicationResult, bool), NodeMutationError> {
         validate_write_nodes_count(request.targets.len())
             .map_err(NodeMutationError::invalid_operation)?;
         if request.operation_id.trim().is_empty()
@@ -223,7 +235,7 @@ impl FsStore {
         }
         let request_json = serde_json::to_string(&request)
             .map_err(|error| NodeMutationError::invalid_operation(error.to_string()))?;
-        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+        self.write_mutation_conn_with_publication_outcome(publication_operation_id, |tx| {
             let previous: Option<(String, String)> = tx
                 .query_row(
                     PUBLICATION_LOOKUP_SQL,
@@ -244,6 +256,7 @@ impl FsStore {
                     ));
                 }
                 return serde_json::from_str(&result)
+                    .map(|result| ((result, false), false))
                     .map_err(|error| NodeMutationError::write_unavailable(error.to_string()));
             }
             for guard in &request.scope_guards {
@@ -343,7 +356,7 @@ impl FsStore {
                 params![request.operation_id, request_json, result_json],
             )
             .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
-            Ok(result)
+            Ok(((result, true), true))
         })
     }
 }

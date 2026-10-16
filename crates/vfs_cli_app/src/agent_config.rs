@@ -118,7 +118,11 @@ impl AgentConfig {
     ) -> Result<Option<crate::learning::project::ProjectConfig>> {
         let path =
             if let Some(path) = explicit.filter(|p| p.extension().is_none_or(|e| e != "toml")) {
-                Some(path.to_path_buf())
+                if self.recall_json(path)?["version"] == 2 {
+                    Some(path.to_path_buf())
+                } else {
+                    crate::learning::project::discover_config(&self.cwd)?
+                }
             } else {
                 crate::learning::project::discover_config(&self.cwd)?
             };

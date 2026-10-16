@@ -54,12 +54,12 @@ impl VfsService {
             .map(|item| item.path.clone())
             .collect::<Vec<_>>();
         let path_refs = paths.iter().map(String::as_str).collect::<Vec<_>>();
-        let result = self.with_detached_node_publications(
+        let result = self.with_detached_node_publications_outcome(
             &database_id,
             caller,
             &path_refs,
             |store, operation_id| {
-                store.publish_learning_with_publication_commit(request, now, operation_id)
+                store.publish_learning_with_publication_outcome(request, now, operation_id)
             },
         );
         if result.is_ok() {
