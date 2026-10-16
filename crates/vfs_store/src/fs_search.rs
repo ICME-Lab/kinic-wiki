@@ -353,7 +353,27 @@ pub(crate) fn rerank_candidates(
                 match_reasons: BTreeSet::new(),
                 has_content_match: false,
             });
-        let mut score = candidate.score.min(hit.score);
+        let title_match = plan
+            .path_terms
+            .iter()
+            .all(|term| matches_search_term(&title, term));
+        let path_match = plan
+            .path_terms
+            .iter()
+            .all(|term| matches_search_term(&hit.path, term));
+        let basename_prefix = title_lower.starts_with(&plan.lowered_query);
+        // An incidental path/title substring can also receive a strong FTS
+        // title score. Keep it as a weak path candidate instead of allowing
+        // that same accidental match to displace content-only evidence.
+        let mut score = if !title_match
+            && !path_match
+            && !basename_prefix
+            && path_lower != plan.lowered_query
+        {
+            candidate.score.max(hit.score)
+        } else {
+            candidate.score.min(hit.score)
+        };
         if path_lower == plan.lowered_query {
             score = score.min(PATH_EXACT_SCORE);
             candidate.match_reasons.insert("path_exact".to_string());
@@ -361,21 +381,17 @@ pub(crate) fn rerank_candidates(
         if title_lower == plan.lowered_query {
             score = score.min(BASENAME_EXACT_SCORE);
             candidate.match_reasons.insert("basename_exact".to_string());
-        } else if title_lower.starts_with(&plan.lowered_query) {
+        } else if basename_prefix {
             score = score.min(BASENAME_PREFIX_SCORE);
             candidate
                 .match_reasons
                 .insert("basename_prefix".to_string());
         }
-        if plan
-            .path_terms
-            .iter()
-            .all(|term| title_lower.contains(term))
-        {
+        if title_match {
             score = score.min(TITLE_SCORE);
             candidate.match_reasons.insert("title_fts".to_string());
         }
-        if plan.path_terms.iter().all(|term| path_lower.contains(term)) {
+        if path_match {
             score = score.min(PATH_SCORE);
             candidate.match_reasons.insert("path_substring".to_string());
             if candidate.snippet.is_none() || !candidate.has_content_match {
@@ -385,6 +401,36 @@ pub(crate) fn rerank_candidates(
         candidate.score = score;
     }
     sort_candidates(candidates.into_values().collect())
+}
+
+// Partial FTS/path candidates remain searchable; only strong title/path boosts
+// require word boundaries. Preserve original casing for stream|SSE / SSE|Handler.
+fn matches_search_term(value: &str, term: &str) -> bool {
+    if !term.is_ascii() {
+        return value.to_lowercase().contains(term);
+    }
+    let bytes = value.as_bytes();
+    let term = term.as_bytes();
+    !term.is_empty()
+        && bytes.windows(term.len()).enumerate().any(|(start, part)| {
+            part.eq_ignore_ascii_case(term)
+                && is_search_term_boundary(bytes, start)
+                && is_search_term_boundary(bytes, start + term.len())
+        })
+}
+
+fn is_search_term_boundary(value: &[u8], position: usize) -> bool {
+    if position == 0 || position == value.len() {
+        return true;
+    }
+    let before = value[position - 1];
+    let after = value[position];
+    !before.is_ascii_alphanumeric()
+        || !after.is_ascii_alphanumeric()
+        || (before.is_ascii_lowercase() && after.is_ascii_uppercase())
+        || (before.is_ascii_uppercase()
+            && after.is_ascii_uppercase()
+            && value.get(position + 1).is_some_and(u8::is_ascii_lowercase))
 }
 
 pub(crate) fn sort_candidates(mut ranked: Vec<SearchCandidate>) -> Vec<SearchCandidate> {
