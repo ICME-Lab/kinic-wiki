@@ -202,3 +202,15 @@ revision-based synchronization. Neither is used as a fallback for arbitrary-path
 `query_context` continues to prioritize `index.md` before other role pages and search results, preserving catalog navigation for broad questions without lexical matches. Catalogs remain explicitly readable and searchable. A catalog is not exhaustive inventory or factual evidence. Large catalogs and other role pages can still consume the context budget; use a narrower namespace or follow-up search when needed. Candidate ordering and request/response shapes are unchanged.
 
 `index.md` is curated by ingest/edit skills and bounded `kinic-wiki-maintain` runs, not by server-side save hooks. Standalone lint is read-only. Optional `overview.md` holds reader-facing synthesis and folder descriptions; browser folder views and public folder SEO use it instead of embedding the index. Explicit catalog file URLs remain readable. See the [maintenance skill](../skills/kinic-wiki-maintain/maintain.md) for execution and [CLI guide](CLI.md#wiki-skill-distribution) for distribution.
+
+## Versioned learning APIs
+
+`current_node_revision({database_id,path})` returns an immutable identity, revision,
+full Node and SHA-256. `node_history({database_id,node_id,before_revision,limit})`
+returns newest-first snapshots, including moves/deletions, bounded to 100 items
+and 1 MB. History starts at migration baseline and requires database Reader access.
+`scope_revision({database_id,prefix})` returns the latest scoped path-state revision.
+`publish_learning({database_id,operation_id,targets,evidence,scope_guards})` is an additive writer
+update method, separate from read-only Store API v1. It atomically validates source
+revision refs and target etags, protects human/approved instructions, and reserves
+operation IDs against exact payloads. See [learning](CONTINUAL_LEARNING.md).

@@ -1182,12 +1182,11 @@ class SessionCaptureTests(unittest.TestCase):
                 ],
             )
 
-    def test_runtime_cli_repo_root_points_to_checkout_root(self) -> None:
+    def test_runtime_cli_does_not_use_repo_development_binary(self) -> None:
         from kinic_agent_runtime import cli as runtime_cli
-
-        self.assertTrue((runtime_cli.REPO_ROOT / "Cargo.toml").is_file())
-        self.assertTrue((runtime_cli.REPO_ROOT / "plugins/runtime/kinic_agent_runtime/cli.py").is_file())
-        self.assertEqual(runtime_cli.REPO_DEBUG_CLI, runtime_cli.REPO_ROOT / "target/debug/kinic-vfs-cli")
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(runtime_cli.shutil, "which", return_value=None):
+            self.assertIsNone(runtime_cli.resolve_cli())
+        self.assertNotIn("target/debug", Path(runtime_cli.__file__).read_text())
 
     def test_flush_pending_deletes_file_after_successful_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -521,7 +521,52 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
+  const NodeRevision = idl.Record({
+    node_id: idl.Text,
+    revision: idl.Nat64,
+    node: Node,
+    deleted: idl.Bool,
+    content_hash: idl.Text
+  });
+  const NodeRevisionRequest = idl.Record({ database_id: idl.Text, path: idl.Text });
+  const NodeHistoryRequest = idl.Record({
+    database_id: idl.Text,
+    node_id: idl.Text,
+    before_revision: idl.Opt(idl.Nat64),
+    limit: idl.Nat32
+  });
+  const NodeHistoryPage = idl.Record({ revisions: idl.Vec(NodeRevision), next_cursor: idl.Opt(idl.Nat64) });
+  const RevisionRef = idl.Record({
+    path: idl.Text,
+    node_id: idl.Text,
+    revision: idl.Nat64,
+    etag: idl.Text,
+    content_hash: idl.Text
+  });
+  const ScopeRevisionRequest = idl.Record({ database_id: idl.Text, prefix: idl.Text });
+  const ScopeRevisionGuard = idl.Record({ prefix: idl.Text, revision: idl.Nat64 });
+  const LearningPublicationRequest = idl.Record({
+    database_id: idl.Text,
+    operation_id: idl.Text,
+    targets: idl.Vec(WriteNodeItem),
+    evidence: idl.Vec(RevisionRef),
+    scope_guards: idl.Vec(ScopeRevisionGuard)
+  });
+  const EditNodeRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    old_text: idl.Text,
+    new_text: idl.Text,
+    replace_all: idl.Bool,
+    expected_etag: idl.Opt(idl.Text)
+  });
+  const EditNodeResult = idl.Record({ node: NodeMutationAck, replacement_count: idl.Nat32 });
+  const ResultNodeRevision = idl.Variant({ Ok: idl.Opt(NodeRevision), Err: idl.Text });
+  const ResultNodeHistory = idl.Variant({ Ok: NodeHistoryPage, Err: idl.Text });
+  const ResultEditNode = idl.Variant({ Ok: EditNodeResult, Err: NodeMutationError });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
+  const LearningPublicationResult = idl.Record({ operation_id: idl.Text, nodes: idl.Vec(WriteNodeResult) });
+  const ResultLearningPublication = idl.Variant({ Ok: LearningPublicationResult, Err: NodeMutationError });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
   const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: NodeMutationError });
   const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
@@ -537,6 +582,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
+    scope_revision: idl.Func([ScopeRevisionRequest], [ResultNat64], ["query"]),
+    current_node_revision: idl.Func([NodeRevisionRequest], [ResultNodeRevision], ["query"]),
+    node_history: idl.Func([NodeHistoryRequest], [ResultNodeHistory], ["query"]),
+    publish_learning: idl.Func([LearningPublicationRequest], [ResultLearningPublication], []),
+    edit_node: idl.Func([EditNodeRequest], [ResultEditNode], []),
     authorize_ops_answer_session: idl.Func([OpsAnswerSessionRequest], [ResultUnit], []),
     authorize_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionRequest], [ResultUnit], []),
     canister_health: idl.Func([], [CanisterHealth], ["query"]),

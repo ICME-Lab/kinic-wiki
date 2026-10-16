@@ -32,6 +32,11 @@ pub const CODEX_PLUGIN_FILES: &[PayloadFile] = &[
         executable: true,
     },
     PayloadFile {
+        path: "scripts/learning-hook.sh",
+        content: include_str!("../../../plugins/codex/scripts/learning-hook.sh"),
+        executable: true,
+    },
+    PayloadFile {
         path: "hooks/hooks.json",
         content: include_str!("../../../plugins/codex/hooks/hooks.json"),
         executable: false,
@@ -125,6 +130,11 @@ pub const RUNTIME_FILES: &[PayloadFile] = &[
     PayloadFile {
         path: "kinic_agent_runtime/session.py",
         content: include_str!("../../../plugins/runtime/kinic_agent_runtime/session.py"),
+        executable: false,
+    },
+    PayloadFile {
+        path: "kinic_agent_runtime/learning_hook.py",
+        content: include_str!("../../../plugins/runtime/kinic_agent_runtime/learning_hook.py"),
         executable: false,
     },
 ];

@@ -4,11 +4,13 @@ pub use voice::*;
 // What: FS-first shared contracts exposed as the reusable VFS public boundary.
 // Why: VFS consumers should depend on stable node contracts without importing wiki-specific crates.
 mod fs;
+mod revisions;
 
 use candid::CandidType;
 use serde::{Deserialize, Serialize};
 
 pub use fs::*;
+pub use revisions::*;
 
 pub const KINIC_DECIMALS: u8 = 8;
 pub const KINIC_LEDGER_FEE_E8S: u64 = 100_000;

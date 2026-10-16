@@ -49,6 +49,7 @@ export function checkCandidSubset({
 }
 
 function parseDidTypes(source, aliases) {
+  source = source.replace(/\/\/[^\n]*/g, "");
   const types = {};
   for (const match of source.matchAll(/^type\s+(\w+)\s*=\s*(record|variant)\s*\{([^]*?)\};/gm)) {
     const [, name, kind, body] = match;

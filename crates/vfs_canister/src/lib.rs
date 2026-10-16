@@ -1,3 +1,8 @@
+use vfs_types::ScopeRevisionRequest;
+use vfs_types::{
+    LearningPublicationRequest, LearningPublicationResult, NodeHistoryPage, NodeHistoryRequest,
+    NodeRevision, NodeRevisionRequest,
+};
 use vfs_types::{
     VoiceAccess, VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
     VoiceStopRequest,
@@ -422,6 +427,33 @@ fn store_root(path: &str, kind: &str) -> MemoryRoot {
         path: path.to_string(),
         kind: kind.to_string(),
     }
+}
+
+#[query]
+fn current_node_revision(request: NodeRevisionRequest) -> Result<Option<NodeRevision>, String> {
+    with_service(|service| service.current_node_revision(&caller_text(), request))
+}
+
+#[query]
+fn scope_revision(request: ScopeRevisionRequest) -> Result<u64, String> {
+    with_service(|service| service.scope_revision(&caller_text(), request))
+}
+
+#[query]
+fn node_history(request: NodeHistoryRequest) -> Result<NodeHistoryPage, String> {
+    with_service(|service| service.node_history(&caller_text(), request))
+}
+
+#[update]
+fn publish_learning(
+    request: LearningPublicationRequest,
+) -> Result<LearningPublicationResult, NodeMutationError> {
+    let database_id = request.database_id.clone();
+    with_node_mutation_metered_update(
+        "publish_learning",
+        Some(database_id),
+        |service, caller, now| service.publish_learning(caller, request, now),
+    )
 }
 
 #[query]

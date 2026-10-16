@@ -38,24 +38,9 @@ resolve_runtime_path() {
 resolve_cli_optional() {
   if [ -n "${KINIC_VFS_CLI:-}" ]; then
     printf '%s\n' "$KINIC_VFS_CLI"
-  elif [ -x "$repo_cli" ]; then
-    printf '%s\n' "$repo_cli"
   elif command -v kinic-vfs-cli >/dev/null 2>&1; then
     command -v kinic-vfs-cli
   fi
-}
-
-resolve_repo_root() {
-  local runtime_path candidate
-  runtime_path="$1"
-  for candidate in "$runtime_path/.." "$runtime_path/../.."; do
-    candidate="$(cd "$candidate" && pwd)"
-    if [ -f "$candidate/Cargo.toml" ] && [ -d "$candidate/plugins/runtime/kinic_agent_runtime" ]; then
-      printf '%s\n' "$candidate"
-      return
-    fi
-  done
-  cd "$runtime_path/.." && pwd
 }
 
 runtime_path="$(resolve_runtime_path || true)"
@@ -64,8 +49,6 @@ if [ -z "$runtime_path" ]; then
   exit 0
 fi
 
-repo_root="$(resolve_repo_root "$runtime_path")"
-repo_cli="$repo_root/target/debug/kinic-vfs-cli"
 export PYTHONPATH="$runtime_path${PYTHONPATH:+:$PYTHONPATH}"
 export CODEX_PLUGIN_DATA="${CODEX_PLUGIN_DATA:-$HOME/.codex/kinic-skill-recorder}"
 

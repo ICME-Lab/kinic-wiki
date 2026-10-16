@@ -1,0 +1,11 @@
+# Supply this overlay only to the profile selected by the user.
+- insert:
+    - id: kinic-learning
+      name: '@kinic/dsh-learning'
+      config:
+        cliExecutable: /absolute/path/to/kinic-vfs-cli
+        cliArgs: []
+        recallConfig: /absolute/path/to/recall-options.json
+        timeoutMs: 10000
+        maxOutputBytes: 1048576
+        maxPendingRecords: 128

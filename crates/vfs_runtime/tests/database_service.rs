@@ -6165,3 +6165,206 @@ fn retrieval_search_obeys_reader_and_public_reader_access() {
         assert_eq!(hits[0].rerank_excerpt, "CORS credentials");
     }
 }
+
+#[test]
+fn learning_revision_history_and_publication_require_database_roles() {
+    use vfs_types::{
+        LearningPublicationRequest, NodeHistoryRequest, NodeRevisionRequest, WriteNodeItem,
+    };
+    let service = service();
+    let db = activate_pending_database(&service);
+    let request = LearningPublicationRequest {
+        scope_guards: vec![],
+        database_id: db.clone(),
+        operation_id: "role-test".into(),
+        targets: vec![WriteNodeItem {
+            path: "/Knowledge/learned.md".into(),
+            kind: NodeKind::File,
+            content: "lesson".into(),
+            metadata_json: r#"{"authority":"agent"}"#.into(),
+            expected_etag: None,
+        }],
+        evidence: vec![],
+    };
+    assert!(
+        service
+            .publish_learning("stranger", request.clone(), 10)
+            .is_err()
+    );
+    service
+        .grant_database_access(&db, "owner", "reader", DatabaseRole::Reader, 9)
+        .unwrap();
+    assert!(
+        service
+            .publish_learning("reader", request.clone(), 10)
+            .is_err()
+    );
+    service.publish_learning("owner", request, 10).unwrap();
+    let revision_request = NodeRevisionRequest {
+        database_id: db.clone(),
+        path: "/Knowledge/learned.md".into(),
+    };
+    assert!(
+        service
+            .current_node_revision("stranger", revision_request.clone())
+            .is_err()
+    );
+    assert!(
+        service
+            .current_node_revision("reader", revision_request.clone())
+            .unwrap()
+            .is_some()
+    );
+    let revision = service
+        .current_node_revision("owner", revision_request)
+        .unwrap()
+        .unwrap();
+    let history_request = NodeHistoryRequest {
+        database_id: db,
+        node_id: revision.node_id,
+        before_revision: None,
+        limit: 100,
+    };
+    assert!(
+        service
+            .node_history("stranger", history_request.clone())
+            .is_err()
+    );
+    assert_eq!(
+        service
+            .node_history("reader", history_request.clone())
+            .unwrap()
+            .revisions
+            .len(),
+        1
+    );
+    assert_eq!(
+        service
+            .node_history("owner", history_request)
+            .unwrap()
+            .revisions
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn scope_revision_query_uses_database_reader_authorization() {
+    let service = service();
+    let db = activate_pending_database(&service);
+    let request = vfs_types::ScopeRevisionRequest {
+        database_id: db.clone(),
+        prefix: "/Knowledge".into(),
+    };
+    assert!(service.scope_revision("stranger", request.clone()).is_err());
+    service
+        .grant_database_access(&db, "owner", "reader", DatabaseRole::Reader, 1)
+        .unwrap();
+    assert_eq!(
+        service.scope_revision("reader", request.clone()).unwrap(),
+        service.scope_revision("owner", request).unwrap()
+    );
+}
+
+#[test]
+fn learning_replay_preserves_later_publication() {
+    use vfs_types::{LearningPublicationRequest, PublishNodeRequest, WriteNodeItem};
+    let service = service();
+    let db = activate_pending_database(&service);
+    let path = "/Knowledge/replay.md";
+    let mut request = LearningPublicationRequest {
+        database_id: db.clone(),
+        operation_id: "replay-publication".into(),
+        evidence: vec![],
+        scope_guards: vec![],
+        targets: vec![WriteNodeItem {
+            path: path.into(),
+            kind: NodeKind::Source,
+            content: "source".into(),
+            metadata_json: r#"{"authority":"agent"}"#.into(),
+            expected_etag: None,
+        }],
+    };
+    let first = service
+        .publish_learning("owner", request.clone(), 10)
+        .unwrap();
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: db.clone(),
+                path: path.into(),
+                kind: NodeKind::File,
+                content: "public file".into(),
+                metadata_json: r#"{"authority":"agent"}"#.into(),
+                expected_etag: Some(first.nodes[0].node.etag.clone()),
+            },
+            11,
+        )
+        .unwrap();
+    let public = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: db.clone(),
+                path: path.into(),
+            },
+            "abcdef0123456789abcdef0123456789",
+            12,
+        )
+        .unwrap();
+    assert!(
+        service
+            .publish_learning("stranger", request.clone(), 13)
+            .is_err()
+    );
+    assert_eq!(
+        service
+            .publish_learning("owner", request.clone(), 13)
+            .unwrap(),
+        first
+    );
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_some()
+    );
+    // A replay has no node commit marker. If finalization is interrupted, the
+    // durable detach journal must restore the later publication on recovery.
+    vfs_runtime::fail_next_publication_resolution_for_test(&db);
+    assert_eq!(
+        service
+            .publish_learning("owner", request.clone(), 13)
+            .unwrap(),
+        first
+    );
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_some()
+    );
+    request.targets[0].content = "conflicting replay".into();
+    assert!(
+        service
+            .publish_learning("owner", request.clone(), 14)
+            .is_err()
+    );
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_some()
+    );
+    request.operation_id = "new-publication".into();
+    request.targets[0].expected_etag =
+        Some(service.read_node(&db, "owner", path).unwrap().unwrap().etag);
+    service.publish_learning("owner", request, 15).unwrap();
+    assert!(
+        service
+            .read_public_node(&public.public_id)
+            .unwrap()
+            .is_none()
+    );
+}

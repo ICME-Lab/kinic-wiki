@@ -39,6 +39,7 @@ const removedMethods = [...liveMethods].filter((method) => !candidateMethods.has
 const addedMethods = [...candidateMethods].filter((method) => !liveMethods.has(method));
 const expectedAddedMethods = [
   "configure_voice_rate",
+  "current_node_revision",
   "get_voice_access",
   "get_voice_policy",
   "get_voice_rate",
@@ -46,8 +47,11 @@ const expectedAddedMethods = [
   "grant_database_cycles_from_iap",
   "http_request_update",
   "initialize_voice_policy",
+  "node_history",
+  "publish_learning",
   "read_nodes",
   "reserve_voice",
+  "scope_revision",
   "search_nodes_for_retrieval",
   "set_voice_policy",
   "settle_voice",

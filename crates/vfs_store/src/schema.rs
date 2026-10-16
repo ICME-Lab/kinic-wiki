@@ -8,10 +8,12 @@ use crate::sqlite::{
 
 const SCHEMA_VERSION_INITIAL: &str = "vfs_store:001_initial";
 const SCHEMA_VERSION_002: &str = "vfs_store:002_publication_mutation_commits";
-const SCHEMA_VERSION_CURRENT: &str = "vfs_store:003_fts_trigram";
+const SCHEMA_VERSION_003: &str = "vfs_store:003_fts_trigram";
+const SCHEMA_VERSION_CURRENT: &str = "vfs_store:004_node_revisions";
 const SCHEMA_VERSIONS: &[&str] = &[
     SCHEMA_VERSION_INITIAL,
     SCHEMA_VERSION_002,
+    SCHEMA_VERSION_003,
     SCHEMA_VERSION_CURRENT,
 ];
 const FRESH_FS_SCHEMA_SQL: &str = include_str!("../migrations/fresh_fs_schema.sql");
@@ -33,6 +35,8 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
         reject_existing_managed_tables(tx)?;
         create_fresh_schema(tx)?;
         seed_initial_store_roots(tx)?;
+        tx.execute_batch(include_str!("../migrations/004_node_revisions.sql"))
+            .map_err(|error| error.to_string())?;
         for version in SCHEMA_VERSIONS {
             record_schema_migration(tx, version)?;
         }
@@ -61,7 +65,8 @@ fn apply_pending_migrations(conn: &Transaction<'_>) -> Result<(), String> {
         }
         let sql = match *version {
             SCHEMA_VERSION_002 => SCHEMA_MIGRATION_002,
-            SCHEMA_VERSION_CURRENT => SCHEMA_MIGRATION_003,
+            SCHEMA_VERSION_003 => SCHEMA_MIGRATION_003,
+            SCHEMA_VERSION_CURRENT => include_str!("../migrations/004_node_revisions.sql"),
             _ => continue,
         };
         conn.execute_batch(sql).map_err(|error| error.to_string())?;
@@ -135,6 +140,7 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
         "fs_nodes_parent_idx",
         "fs_links_target_path_idx",
         "fs_links_source_path_idx",
+        "fs_node_revisions_identity",
     ] {
         if !index_exists(conn, index)? {
             return Err(format!(
@@ -173,6 +179,26 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
             ][..],
         ),
         ("publication_mutation_commits", &["operation_id"][..]),
+        ("fs_node_identities", &["node_id", "current_row_id"][..]),
+        (
+            "fs_node_revisions",
+            &[
+                "node_id",
+                "revision",
+                "path",
+                "kind",
+                "content",
+                "created_at",
+                "updated_at",
+                "etag",
+                "metadata_json",
+                "deleted",
+            ][..],
+        ),
+        (
+            "learning_publication_commits",
+            &["operation_id", "request_json", "result_json"][..],
+        ),
     ] {
         for column in columns {
             if !table_column_exists(conn, table, column)? {
@@ -180,6 +206,26 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
                     "unsupported vfs_store schema: missing column {table}.{column}"
                 ));
             }
+        }
+    }
+    for trigger in [
+        "fs_node_revision_insert",
+        "fs_node_revision_update",
+        "fs_node_revision_delete",
+    ] {
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?1",
+                params![trigger],
+                |row| crate::sqlite::row_get::<i64>(row, 0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some();
+        if !exists {
+            return Err(format!(
+                "unsupported vfs_store schema: missing trigger {trigger}"
+            ));
         }
     }
     validate_fts_shape(conn)
@@ -257,6 +303,9 @@ fn managed_tables() -> &'static [&'static str] {
         "fs_path_state",
         "fs_links",
         "publication_mutation_commits",
+        "fs_node_identities",
+        "fs_node_revisions",
+        "learning_publication_commits",
     ]
 }
 

@@ -33,6 +33,14 @@ pub async fn run_command(
         return run_vfs_command(client, connection, vfs_command).await;
     }
     match command {
+        Command::Agent { command } => {
+            crate::learning::workflow::run_agent(client, connection, command).await?
+        }
+        Command::Learn { command } => {
+            crate::learning::workflow::run_learn(client, connection, command).await?
+        }
+        Command::Eval { command } => crate::learning::workflow::run_eval(command).await?,
+        Command::Dsh { command } => crate::learning::workflow::run_dsh_setup(command)?,
         Command::Identity { command } => match command {
             IdentityCommand::Show { json } => {
                 let principal = client

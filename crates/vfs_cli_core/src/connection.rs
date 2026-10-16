@@ -220,11 +220,11 @@ fn link_workspace_database_at(
     database_id: &str,
 ) -> Result<PathBuf> {
     let path = root.join(WORKSPACE_CONFIG_PATH);
-    let mut config = load_config_from_path_optional(&path)?.unwrap_or_default();
-    config.replica_host = Some(connection.replica_host.clone());
-    config.canister_id = Some(connection.canister_id.clone());
-    config.database_id = Some(database_id.to_string());
-    write_workspace_config(&path, &config)?;
+    let mut config = read_config_document(&path)?;
+    config["replica_host"] = toml_edit::value(&connection.replica_host);
+    config["canister_id"] = toml_edit::value(&connection.canister_id);
+    config["database_id"] = toml_edit::value(database_id);
+    write_config_document(&path, &config)?;
     Ok(path)
 }
 
@@ -237,20 +237,15 @@ pub fn unlink_workspace_database() -> Result<Option<PathBuf>> {
 
 fn unlink_workspace_database_at(root: &Path) -> Result<Option<PathBuf>> {
     let path = root.join(WORKSPACE_CONFIG_PATH);
-    let Some(mut config) = load_config_from_path_optional(&path)? else {
+    if !path.is_file() {
         return Ok(None);
-    };
-    config.database_id = None;
-    if config.replica_host.is_none() && config.canister_id.is_none() && config.database_id.is_none()
-    {
-        fs::remove_file(&path).map_err(|error| {
-            anyhow!(
-                "failed to remove workspace config {}: {error}",
-                path.display()
-            )
-        })?;
+    }
+    let mut config = read_config_document(&path)?;
+    config.remove("database_id");
+    if config.as_table().is_empty() {
+        fs::remove_file(&path)?;
     } else {
-        write_workspace_config(&path, &config)?;
+        write_config_document(&path, &config)?;
     }
     Ok(Some(path))
 }
@@ -275,7 +270,11 @@ fn load_workspace_config() -> Result<Option<UserConfig>> {
 }
 
 fn find_workspace_root() -> Result<Option<PathBuf>> {
-    let mut dir = env::current_dir()?;
+    find_workspace_root_at(&env::current_dir()?)
+}
+
+pub fn find_workspace_root_at(cwd: &Path) -> Result<Option<PathBuf>> {
+    let mut dir = cwd.canonicalize()?;
     loop {
         if dir.join(".git").exists() || dir.join(WORKSPACE_CONFIG_PATH).is_file() {
             return Ok(Some(dir));
@@ -286,47 +285,77 @@ fn find_workspace_root() -> Result<Option<PathBuf>> {
     }
 }
 
-fn find_user_config_path() -> Option<PathBuf> {
+pub fn find_user_config_path() -> Option<PathBuf> {
     let home = env::var_os("HOME").map(PathBuf::from)?;
+    Some(user_config_path_at(&home))
+}
+
+pub fn user_config_path_at(home: &Path) -> PathBuf {
     let primary = home
         .join(".config")
         .join("kinic-vfs-cli")
         .join("config.toml");
     if primary.is_file() {
-        return Some(primary);
+        return primary;
     }
     let fallback = home.join(".kinic-vfs-cli.toml");
-    fallback.is_file().then_some(fallback)
+    if fallback.is_file() {
+        fallback
+    } else {
+        primary
+    }
 }
 
 fn load_user_config_from_path(path: &Path) -> Result<Option<UserConfig>> {
     load_config_from_path_optional(path)
 }
 
+/// Bounded regular-file reads for local configuration and credential consumers.
+/// Checking the type before opening avoids waiting on explicitly supplied pipes.
+pub fn read_local_config_bytes(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    const LIMIT: usize = 8 * 1024 * 1024;
+    let metadata = fs::metadata(path).context("cannot inspect local configuration")?;
+    if !metadata.is_file() || metadata.len() > LIMIT as u64 {
+        bail!("local configuration must be a regular file of at most 8 MiB");
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take((LIMIT + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > LIMIT {
+        bail!("local configuration exceeds 8 MiB");
+    }
+    Ok(bytes)
+}
+
 fn load_config_from_path_optional(path: &Path) -> Result<Option<UserConfig>> {
     if !path.is_file() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(path)
-        .map_err(|error| anyhow!("failed to read config {}: {error}", path.display()))?;
+    let raw = String::from_utf8(read_local_config_bytes(path)?)
+        .context("invalid configuration encoding")?;
     let config = toml::from_str::<UserConfig>(&raw)
-        .map_err(|error| anyhow!("failed to parse config {}: {error}", path.display()))?;
+        .map_err(|_| anyhow!("invalid TOML connection configuration"))?;
     Ok(Some(config))
 }
 
-fn write_workspace_config(path: &Path, config: &UserConfig) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+pub fn read_config_document(path: &Path) -> Result<toml_edit::DocumentMut> {
+    if !path.exists() {
+        return Ok(toml_edit::DocumentMut::new());
     }
-    let content = toml::to_string_pretty(config)
-        .map_err(|error| anyhow!("failed to serialize workspace config: {error}"))?;
-    fs::write(path, content).map_err(|error| {
-        anyhow!(
-            "failed to write workspace config {}: {error}",
-            path.display()
-        )
-    })
+    // Parser errors can embed input lines containing credentials. Never forward them.
+    let raw = String::from_utf8(read_local_config_bytes(path)?)
+        .context("invalid configuration encoding")?;
+    raw.parse()
+        .map_err(|_| anyhow!("invalid TOML configuration"))
+}
+
+pub fn write_config_document(path: &Path, config: &toml_edit::DocumentMut) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, config.to_string()).context("cannot write configuration file")
 }
 
 #[cfg(test)]
@@ -543,14 +572,47 @@ mod tests {
     }
 
     fn find_user_config_path_with_home(home: &std::path::Path) -> Option<PathBuf> {
-        let primary = home
-            .join(".config")
-            .join("kinic-vfs-cli")
-            .join("config.toml");
-        if primary.is_file() {
-            return Some(primary);
-        }
-        let fallback = home.join(".kinic-vfs-cli.toml");
-        fallback.is_file().then_some(fallback)
+        let path = super::user_config_path_at(home);
+        path.is_file().then_some(path)
+    }
+
+    #[test]
+    fn link_unlink_preserves_learning_unknown_tables_and_comments() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join(".kinic/config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "# retain this comment\n[learning]\nbudget_tokens = 2048\n[other]\ncustom = 'retained'\n").unwrap();
+        let connection = ResolvedConnection {
+            replica_host: "https://icp0.io".into(),
+            canister_id: "test".into(),
+            database_id: None,
+            replica_host_source: "test".into(),
+            canister_id_source: "test".into(),
+            database_id_source: None,
+        };
+        super::link_workspace_database_at(dir.path(), &connection, "db-test").unwrap();
+        super::unlink_workspace_database_at(dir.path()).unwrap();
+        let text = std::fs::read_to_string(config).unwrap();
+        assert!(
+            text.contains("budget_tokens = 2048"),
+            "learning setting lost: {text}"
+        );
+        assert!(text.contains("custom = 'retained'"), "unknown setting lost");
+        assert!(text.contains("# retain this comment"));
+        assert!(!text.contains("database_id"));
+    }
+
+    #[test]
+    fn unlink_does_not_remove_learning_only_config() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join(".kinic/config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config,
+            "database_id='db-test'\n[learning]\nbudget_tokens=2048\n",
+        )
+        .unwrap();
+        super::unlink_workspace_database_at(dir.path()).unwrap();
+        assert!(config.is_file(), "unlink removed learning configuration");
     }
 }

@@ -199,6 +199,22 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    Agent {
+        #[command(subcommand)]
+        command: crate::learning::cli::AgentCommand,
+    },
+    Learn {
+        #[command(subcommand)]
+        command: crate::learning::cli::LearnCommand,
+    },
+    Eval {
+        #[command(subcommand)]
+        command: crate::learning::cli::EvalCommand,
+    },
+    Dsh {
+        #[command(subcommand)]
+        command: crate::learning::cli::DshCommand,
+    },
     #[command(about = "Show KINIC cycles configuration")]
     Cycles {
         #[command(subcommand)]
@@ -857,10 +873,18 @@ pub enum HermesCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum CodexCommand {
-    #[command(about = "Install the Codex skill recorder plugin")]
+    #[command(about = "Prepare Codex configuration and plugin; inspect changes before --apply")]
     Setup {
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        executable: Option<PathBuf>,
+        #[arg(long)]
+        project: bool,
+        #[arg(long, conflicts_with = "dry_run")]
+        apply: bool,
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -932,6 +956,14 @@ pub enum GitHubIngestCommand {
 impl Command {
     pub fn requires_identity(&self) -> bool {
         match self {
+            Self::Agent { command } => !matches!(
+                command,
+                crate::learning::cli::AgentCommand::Setup(_)
+                    | crate::learning::cli::AgentCommand::Doctor(_)
+                    | crate::learning::cli::AgentCommand::Status(_)
+            ),
+            Self::Learn { .. } => true,
+            Self::Eval { .. } | Self::Dsh { .. } => false,
             Self::Cycles { command: _ } => false,
             Self::Database { command } => matches!(
                 command,
@@ -1004,6 +1036,7 @@ impl Command {
 
     pub fn probes_anonymous_database_read(&self) -> bool {
         match self {
+            Self::Agent { .. } | Self::Learn { .. } | Self::Eval { .. } | Self::Dsh { .. } => false,
             Self::Skill { command } => matches!(
                 command,
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }

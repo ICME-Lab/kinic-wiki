@@ -7,6 +7,7 @@
 // Only returned hits pay preview generation cost.
 mod context;
 mod marketplace;
+mod revisions;
 mod sql_json;
 mod sync;
 pub use sql_json::validate_sql_json_select;
@@ -738,14 +739,24 @@ impl FsStore {
         publication_operation_id: Option<i64>,
         f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
     ) -> Result<T, NodeMutationError> {
+        self.write_mutation_conn_with_publication_outcome(publication_operation_id, |tx| {
+            f(tx).map(|value| (value, true))
+        })
+    }
+
+    fn write_mutation_conn_with_publication_outcome<T>(
+        &self,
+        publication_operation_id: Option<i64>,
+        f: impl FnOnce(&Transaction<'_>) -> Result<(T, bool), NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut conn = self.open().map_err(NodeMutationError::write_unavailable)?;
             let tx = conn
                 .transaction()
                 .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
-            let value = f(&tx)?;
-            if let Some(operation_id) = publication_operation_id {
+            let (value, mutated) = f(&tx)?;
+            if let Some(operation_id) = publication_operation_id.filter(|_| mutated) {
                 record_publication_mutation_commit(&tx, operation_id)
                     .map_err(NodeMutationError::write_unavailable)?;
             }
@@ -757,8 +768,8 @@ impl FsStore {
         {
             let mut mutation_error = None;
             let result = self.handle.update(|tx| {
-                match f(tx).and_then(|value| {
-                    if let Some(operation_id) = publication_operation_id {
+                match f(tx).and_then(|(value, mutated)| {
+                    if let Some(operation_id) = publication_operation_id.filter(|_| mutated) {
                         record_publication_mutation_commit(tx, operation_id)
                             .map_err(NodeMutationError::write_unavailable)?;
                     }

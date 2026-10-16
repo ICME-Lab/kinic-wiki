@@ -2,6 +2,9 @@
 
 ## User Guides
 
+- [PORTABLE_LEARNING.md](PORTABLE_LEARNING.md) — arbitrary-project setup, CLI-only plugins and durable learning jobs
+- [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md) — CLI learning, Codex/DSH integration, evaluation and guarded publication
+
 - [CLI.md](CLI.md) — Official guide for kinic-vfs-cli
 - [QUICKSTART_SKILL_KB.md](QUICKSTART_SKILL_KB.md) — Quickstart for the skill knowledge base
 - [mcp.md](mcp.md) — MCP server usage

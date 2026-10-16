@@ -1,28 +1,30 @@
 {
   "name": "kinic-skill-recorder",
-  "version": "0.1.2",
-  "description": "Record Codex skill run evidence through kinic-vfs-cli.",
+  "version": "0.2.0",
+  "description": "Connect any project to Kinic Wiki context, evidence, and continual learning through kinic-vfs-cli.",
   "author": {
     "name": "Kinic"
   },
   "license": "MIT",
   "keywords": [
     "kinic",
+    "wiki",
+    "learning",
     "skills",
     "evidence"
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Kinic Skill Recorder",
-    "shortDescription": "Record Kinic skill evidence from Codex.",
-    "longDescription": "Provides a skill-only Codex workflow for recording skill run evidence through kinic-vfs-cli and the shared Python runner, without MCP or a Codex App Server runner.",
+    "displayName": "Kinic Wiki",
+    "shortDescription": "Project knowledge and continual learning through Kinic Wiki.",
+    "longDescription": "Connects Codex tasks to Kinic Wiki using kinic-vfs-cli for recall, evidence recording, and validated learning. Includes Skill Registry evidence recording and session capture.",
     "developerName": "Kinic",
     "category": "Productivity",
     "capabilities": [
       "Write"
     ],
     "defaultPrompt": [
-      "Use kinic-record-skill-run to record evidence for a skill that affected this task."
+      "Use Kinic Wiki context for this project and record evidence for skills that materially affect the task."
     ],
     "brandColor": "#10A37F"
   }
