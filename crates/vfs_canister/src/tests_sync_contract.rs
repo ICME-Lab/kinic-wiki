@@ -758,6 +758,30 @@ fn exported_candid_matches_checked_in_vfs_did() {
 }
 
 #[test]
+fn api_doc_is_discoverable_as_an_anonymous_query() {
+    // No service initialization or caller identity: the guide is static and public.
+    let doc = super::get_api_doc();
+    assert!(doc.starts_with("# Kinic Wiki API"));
+    for method in [
+        "list_databases",
+        "search_nodes",
+        "list_nodes",
+        "read_nodes",
+        "query_context",
+        "memory_manifest",
+        "write_nodes",
+        "mutate_nodes_batch",
+    ] {
+        assert!(doc.contains(method), "missing usage guidance for {method}");
+    }
+    assert!(doc.contains("expected_etag"));
+    assert!(doc.contains("milliseconds"));
+    assert!(doc.contains("10^8"));
+    assert!(doc.contains("Questions only"));
+    assert!(super::candid_interface().contains("get_api_doc : () -> (text) query;"));
+}
+
+#[test]
 fn abandoned_source_capture_queries_are_not_public() {
     let generated = super::candid_interface();
     let checked_in = include_str!("../vfs.did");

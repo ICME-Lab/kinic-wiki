@@ -1,6 +1,7 @@
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
 import { createServerEntry } from "@tanstack/react-start/server-entry";
 import { env } from "cloudflare:workers";
+import { serviceDiscoveryResponse } from "../lib/service-discovery";
 
 const startFetch = createStartHandler(defaultStreamHandler);
 
@@ -20,6 +21,8 @@ const PUBLIC_CACHE_RULES: PublicCacheRule[] = [
 
 export default createServerEntry({
   async fetch(request) {
+    const discovery = serviceDiscoveryResponse(request, env.KINIC_WIKI_CANISTER_ID);
+    if (discovery) return applyStaging(discovery);
     const url = new URL(request.url);
     if (url.hostname === "kinic.xyz") {
       url.hostname = "wiki.kinic.xyz";

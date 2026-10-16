@@ -7,7 +7,8 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.js"
-    }
+    },
+    "./api-guidance": "./api-guidance.json"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

@@ -10,7 +10,8 @@
     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types", "node", "vitest/globals"],
     "skipLibCheck": true,
     "noEmit": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

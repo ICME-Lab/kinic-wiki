@@ -73,6 +73,7 @@ use vfs_types::{
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
+mod api_doc;
 mod candid_normalization;
 mod public_http;
 
@@ -454,6 +455,11 @@ fn publish_learning(
         Some(database_id),
         |service, caller, now| service.publish_learning(caller, request, now),
     )
+}
+
+#[query]
+fn get_api_doc() -> String {
+    api_doc::render()
 }
 
 #[query]
