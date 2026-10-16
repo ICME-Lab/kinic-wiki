@@ -415,7 +415,7 @@ function NodeDocument({
   }
   return (
     <article className="h-full overflow-auto px-6 py-6 md:px-10">
-      {display.management(node.path) && view === "preview" ? <section className="space-y-3"><h3>管理情報</h3><p className="break-all font-mono text-xs">{node.path}</p><pre className="overflow-auto whitespace-pre-wrap break-words">{prettyJson(node.content)}</pre></section> : view === "raw" ? (
+      {display.management(node.path) && view === "preview" ? <section className="space-y-3"><h3>Management metadata</h3><p className="break-all font-mono text-xs">{node.path}</p><pre className="overflow-auto whitespace-pre-wrap break-words">{prettyJson(node.content)}</pre></section> : view === "raw" ? (
         <RawContent key={`${node.path}-${node.etag}`} content={node.content} isLargeContent={isLargeContent} contentBytes={contentBytes} />
       ) : isLargeContent ? (
         <LargeMarkdownPreview key={`${node.path}:${node.etag}`} content={node.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={node.path} />

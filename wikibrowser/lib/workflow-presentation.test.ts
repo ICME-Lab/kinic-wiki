@@ -70,7 +70,7 @@ describe("workflow presentation validation", () => {
     expect(
       reader.isManagement(root + "/workflows/" + id + "/manifest.json"),
     ).toBe(true);
-    expect(reader.label(root + "/workflows")).toBe("案件");
+    expect(reader.label(root + "/workflows")).toBe("Workflows");
   });
   it("fails open on access errors and never hides generic JSON", async () => {
     const reader = new WorkflowReader(async () => {

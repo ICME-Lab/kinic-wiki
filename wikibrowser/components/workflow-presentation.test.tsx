@@ -105,15 +105,15 @@ it("shows canonical document links, status and closed management group; raw togg
   await screen.findByText("同期チェック");
   expect(screen.getByText("実装中")).toBeTruthy();
   expect(screen.queryByText("作業完了")).toBeNull();
-  expect(screen.getByText("計画").getAttribute("href")).toContain(
+  expect(screen.getByText("Plan").getAttribute("href")).toContain(
     "/Knowledge/demo/plans/a.md",
   );
-  expect(screen.getByText("管理情報").parentElement?.hasAttribute("open")).toBe(
+  expect(screen.getByText("Management metadata").parentElement?.hasAttribute("open")).toBe(
     false,
   );
   expect(screen.getByText("other.md")).toBeTruthy();
-  fireEvent.click(screen.getByLabelText("実ファイル名で表示"));
-  expect(screen.queryByText("管理情報")).toBeNull();
+  fireEvent.click(screen.getByLabelText("Show actual filenames"));
+  expect(screen.queryByText("Management metadata")).toBeNull();
   expect(screen.getByText("manifest.json")).toBeTruthy();
 });
 it("does not duplicate a registered document in the same directory", async () => {
@@ -144,7 +144,7 @@ it("does not duplicate a registered document in the same directory", async () =>
     ),
   );
   await screen.findByText("同期チェック");
-  expect(screen.getAllByText("計画")).toHaveLength(1);
+  expect(screen.getAllByText("Plan")).toHaveLength(1);
 });
 it("ignores a late response from the previous database", async () => {
   let finish: (value: WikiNode) => void = () => {};
@@ -201,7 +201,7 @@ it("labels breadcrumb while preserving canonical href and copying actual path", 
     ),
   );
   await screen.findByText("同期チェック · a222c796");
-  expect(screen.getByText("案件").getAttribute("href")).toContain("/workflows");
+  expect(screen.getByText("Workflows").getAttribute("href")).toContain("/workflows");
 });
 it("pretty prints directly opened management JSON", async () => {
   setup();
@@ -217,7 +217,7 @@ it("pretty prints directly opened management JSON", async () => {
       />,
     ),
   );
-  await screen.findByText("管理情報");
+  await screen.findByText("Management metadata");
   expect(screen.container.querySelector("pre")?.textContent).toContain(
     '\n  "version": 2',
   );
@@ -239,7 +239,7 @@ it("groups only verified search hits and keeps ordinary JSON visible", async () 
       />,
     ),
   );
-  await screen.findByText("管理情報");
+  await screen.findByText("Management metadata");
   expect(screen.getByText("/Knowledge/ordinary.json")).toBeTruthy();
 });
 it("refreshes metadata after explicit refresh and saved-node revision", async () => {
@@ -262,7 +262,7 @@ it("refreshes metadata after explicit refresh and saved-node revision", async ()
       ),
     ),
   );
-  fireEvent.click(screen.getByText("表示を更新"));
+  fireEvent.click(screen.getByText("Refresh display"));
   await screen.findByText("Updated");
   expect(screen.queryByText("同期チェック")).toBeNull();
   api.readNode.mockImplementation(async () => null);
@@ -353,8 +353,8 @@ it("keeps cached metadata across page navigation and a stable request queue duri
   const next = render(wrap(<Probes count={12} />));
   await waitFor(() => expect(active).toBe(4));
   next.rerender(wrap(<Probes count={16} />));
-  fireEvent.click(next.getByText("表示を更新"));
-  fireEvent.click(next.getByText("表示を更新"));
+  fireEvent.click(next.getByText("Refresh display"));
+  fireEvent.click(next.getByText("Refresh display"));
   release();
   await waitFor(() => expect(active).toBe(0));
   expect(maximum).toBe(4);

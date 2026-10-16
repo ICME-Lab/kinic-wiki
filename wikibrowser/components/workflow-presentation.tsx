@@ -154,14 +154,14 @@ export function WorkflowDisplayToggle() {
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex items-center gap-2 px-2 py-1 text-xs">
         <input type="checkbox" checked={view.raw} onChange={view.toggle} />
-        実ファイル名で表示
+        Show actual filenames
       </label>
       <button
         type="button"
         className="rounded border border-line px-2 py-1 text-xs"
         onClick={view.reload}
       >
-        表示を更新
+        Refresh display
       </button>
     </div>
   );
@@ -174,7 +174,7 @@ export function ManagementGroup({ children }: { children: ReactNode }) {
       onToggle={(event) => setOpen(event.currentTarget.open)}
       className="min-w-0 rounded-lg border border-line p-2 text-sm"
     >
-      <summary className="cursor-pointer">管理情報</summary>
+      <summary className="cursor-pointer">Management metadata</summary>
       {open ? <div className="mt-2 space-y-2">{children}</div> : null}
     </details>
   );
@@ -214,11 +214,11 @@ export function WorkflowSummary({
   return (
     <section
       className="min-w-0 space-y-3 rounded-xl border border-line p-4"
-      aria-label="案件情報"
+      aria-label="Workflow details"
     >
       <h3 className="break-words text-lg font-semibold">{workflow.title}</h3>
       <p className="text-sm">
-        登録状態: {workflow.state === "ready" ? "登録済み" : "初期化中"}
+        Registration: {workflow.state === "ready" ? "Registered" : "Initializing"}
       </p>
       {workflow.current_state ? (
         <p className="whitespace-pre-wrap break-words text-sm">

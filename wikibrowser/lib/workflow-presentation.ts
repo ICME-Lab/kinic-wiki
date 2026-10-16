@@ -1,10 +1,10 @@
 /** Read-only display metadata. Canonical paths are never replaced with labels. */
 export const workflowRoles: Record<string, string> = {
-  spec: "設計",
-  plan: "計画",
-  progress: "進捗",
-  review: "レビュー",
-  completion: "結果",
+  spec: "Design",
+  plan: "Plan",
+  progress: "Progress",
+  review: "Review",
+  completion: "Results",
 };
 type Project = {
   version: 1;
@@ -220,7 +220,7 @@ export class WorkflowReader {
       Object.entries(parent.artifacts).find(([, a]) => a.path === path)?.[0];
     if (role) return workflowRoles[role];
     if (path.endsWith("/workflows") && this.projects.has(path.slice(0, -10)))
-      return "案件";
+      return "Workflows";
     return undefined;
   }
   isManagement(path: string) {
