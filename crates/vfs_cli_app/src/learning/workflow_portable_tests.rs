@@ -953,3 +953,89 @@ async fn poisoned_inbox_is_quarantined_without_blocking_valid_input() {
             > 0
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn invalid_reserved_binding_is_quarantined_before_valid_replay() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let req = json!({"event":"PostToolUse","cwd":a,"session_id":"reserved","turn_id":"1"});
+    let bad = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let mut value: Value = read_json(&bad).unwrap();
+    value["__kinic_run_id"] = json!("wrong-project:run");
+    std::fs::write(&bad, serde_json::to_vec(&value).unwrap()).unwrap();
+    let valid = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let current = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    hooks::replay(&client, &c, "codex", None, &state, &current)
+        .await
+        .unwrap();
+    assert!(!valid.exists());
+    assert!(
+        bad.parent()
+            .unwrap()
+            .join("quarantine")
+            .join(bad.file_name().unwrap())
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_unbound_intake_is_not_quarantined_by_delivery() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let req = json!({"event":"PostToolUse","cwd":a,"session_id":"live","turn_id":"1"});
+    let current = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let mut value: Value = read_json(&current).unwrap();
+    value["__kinic_principal"] = Value::Null;
+    std::fs::write(&current, serde_json::to_vec(&value).unwrap()).unwrap();
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert!(current.exists());
+    assert!(!current.parent().unwrap().join("quarantine").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn intake_publication_never_exposes_partial_json() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let (_dir, _client, state, a, _) = fixture().await;
+    let c = connection();
+    let root = state.state_dir.as_ref().unwrap().join("hook-inbox");
+    let done = Arc::new(AtomicBool::new(false));
+    let stop = done.clone();
+    let reader = std::thread::spawn(move || {
+        let mut invalid = 0;
+        while !stop.load(Ordering::SeqCst) {
+            if let Ok(dirs) = std::fs::read_dir(&root) {
+                for dir in dirs.flatten() {
+                    if let Ok(files) = std::fs::read_dir(dir.path()) {
+                        for file in files.flatten() {
+                            if file.path().extension().is_some_and(|e| e == "json")
+                                && let Ok(bytes) = std::fs::read(file.path())
+                                && serde_json::from_slice::<Value>(&bytes).is_err()
+                            {
+                                invalid += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        invalid
+    });
+    for turn in 0..4 {
+        let req = json!({"event":"PostToolUse","cwd":a,"session_id":"atomic","turn_id":turn.to_string(),"tool_response":"x".repeat(1024*1024)});
+        hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    }
+    done.store(true, Ordering::SeqCst);
+    assert_eq!(
+        reader.join().unwrap(),
+        0,
+        "replay observed partially published intake"
+    );
+}

@@ -49,7 +49,9 @@ def main():
     note = root / 'note.md'
     note.write_text('Delivery verification: always test the portable widget before release.\n')
     run(base + ['write-node', '--path', namespace + '/delivery.md', '--input', str(note)])
-    faults = {"offline": False}
+    faults = {"offline": False, "hold_response": False}
+    response_held = threading.Event()
+    release_response = threading.Event()
     class Proxy(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_GET(self): self.forward()
@@ -65,6 +67,9 @@ def main():
             try:
                 with urllib.request.urlopen(req, timeout=30) as upstream:
                     body = upstream.read()
+                    if self.path.endswith('/call') and faults['hold_response']:
+                        response_held.set()
+                        release_response.wait(timeout=30)
                     self.send_response(upstream.status)
                     self.send_header('Content-Type', upstream.headers.get('Content-Type', 'application/cbor'))
                     self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -118,7 +123,7 @@ def main():
     (inbox / '000-bad.json').write_text('{broken')
     intake = {'event': 'PostToolUse', 'cwd': str(root), 'engine': 'codex', 'session_id': 'replay',
               'turn_id': '1', '__kinic_config': str(config), '__kinic_principal': args.principal,
-              '__kinic_explicit_config': False, '__kinic_run_id': 'replay'}
+              '__kinic_explicit_config': False, '__kinic_run_id': project_id + ':codex:replay:1'}
     (inbox / '001-other.json').write_text(json.dumps({**intake, 'engine': 'dsh'}))
     (inbox / '002-good.json').write_text(json.dumps(intake))
     run(prefix + ['--replay-inbox', '--engine', 'codex'])
@@ -138,6 +143,23 @@ def main():
         assert conn.execute('SELECT last_error_code FROM learning_delivery WHERE scope=?',(scope,)).fetchone()[0]=='identity_unavailable'
     run(prefix)
     assert pending()==0
+    # Interrupt a real sender after a remote update was accepted but before its
+    # response can reach the CLI. The next flush must verify/recover the same ID.
+    with sqlite3.connect(db) as conn:
+        event_id=project_id+'-lost-response'
+        body=json.dumps({'id':event_id,'run_id':'lost-response','kind':'hook','payload':{}})
+        conn.execute('INSERT INTO learning_outbox(scope,id,body) VALUES(?,?,?)',(scope,event_id,body))
+    faults['hold_response']=True
+    sender=subprocess.Popen(prefix,cwd=root,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    try:
+        assert response_held.wait(timeout=30), 'sender never reached remote update'
+    finally:
+        sender.kill(); sender.wait()
+        faults['hold_response']=False
+        release_response.set()
+    assert pending()>0
+    run(prefix)
+    assert pending()==0
     # Kill the hook host's process group after CLI acknowledgement. The real
     # background CLI must finish sending in its own group.
     hook_command=[cli,'--allow-non-ii-identity','agent','hook','--engine','codex']
@@ -154,7 +176,7 @@ def main():
     while pending() and time.monotonic()<deadline:time.sleep(.1)
     assert pending()==0
     summary = {'hook_seconds': elapsed, 'context_received': True, 'delayed_delivery_completed': True,
-               'concurrent_flush': results, 'poison_isolated': True, 'network_failure_recorded_and_recovered': True, 'host_group_kill_delivery_survived': True, 'database': args.database, 'endpoint': args.endpoint}
+               'concurrent_flush': results, 'poison_isolated': True, 'network_failure_recorded_and_recovered': True, 'host_group_kill_delivery_survived': True, 'lost_response_recovered': True, 'database': args.database, 'endpoint': args.endpoint}
     (root / 'report.json').write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     server.shutdown()

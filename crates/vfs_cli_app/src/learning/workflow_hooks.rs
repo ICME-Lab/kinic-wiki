@@ -299,9 +299,14 @@ pub fn spool(
         options.mode(0o600);
     }
     use std::io::Write;
-    let mut file = options.open(&path)?;
+    // Replay only sees complete JSON. A killed writer leaves an ignored .tmp.
+    let temporary = path.with_extension("tmp");
+    let mut file = options.open(&temporary)?;
     file.write_all(&serde_json::to_vec(&request)?)?;
     file.sync_all()?;
+    std::fs::rename(&temporary, &path)?;
+    #[cfg(unix)]
+    std::fs::File::open(&root)?.sync_all()?;
     Ok(path)
 }
 pub(super) fn inbox_root(
@@ -396,6 +401,13 @@ pub async fn replay_after(
                 continue;
             }
         };
+        if request["__kinic_owner_pid"]
+            .as_u64()
+            .and_then(|p| u32::try_from(p).ok())
+            .is_some_and(crate::learning::jobs::process_alive)
+        {
+            continue;
+        }
         if !request.is_object()
             || request["engine"].as_str().is_none()
             || request["cwd"].as_str().is_none()
@@ -403,13 +415,6 @@ pub async fn replay_after(
             || request["__kinic_config"].as_str().is_none()
         {
             quarantine(&path, "binding_unverifiable")?;
-            continue;
-        }
-        if request["__kinic_owner_pid"]
-            .as_u64()
-            .and_then(|p| u32::try_from(p).ok())
-            .is_some_and(crate::learning::jobs::process_alive)
-        {
             continue;
         }
         let saved_engine = request["engine"]
@@ -427,6 +432,28 @@ pub async fn replay_after(
             continue;
         };
         if Some(principal.to_string()) != client.caller_principal() {
+            continue;
+        }
+        let settings =
+            crate::agent_config::AgentConfig::at(Path::new(request["cwd"].as_str().unwrap()))?;
+        let explicit = if request["__kinic_explicit_config"] == false {
+            None
+        } else {
+            saved_config.as_deref()
+        };
+        let project = settings.portable_project(explicit)?;
+        let prefix = project
+            .as_ref()
+            .map(|p| p.project_id.as_str())
+            .unwrap_or("legacy");
+        let valid_run = request["__kinic_run_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with(&format!("{prefix}:")));
+        let valid_evidence = request
+            .get("__kinic_evidence")
+            .is_none_or(|v| v.is_object() && v["capture"].is_object());
+        if !valid_run || !valid_evidence {
+            quarantine(&path, "binding_unverifiable")?;
             continue;
         }
         if processed == 100 {
