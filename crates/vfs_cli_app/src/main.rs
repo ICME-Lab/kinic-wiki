@@ -345,28 +345,28 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
             request = vfs_cli_app::learning::workflow::read_json(&path)?;
             hook_spool = Some(path);
         }
-        if let Some(path) = &hook_spool {
-            vfs_cli_app::learning::workflow::replay_hook_inbox(
-                &client,
-                &connection,
-                &engine,
-                recall_config.clone(),
-                &state,
-                path,
-            )
-            .await?;
-        }
+        let current_request = request.clone();
         vfs_cli_app::learning::workflow::run_hook_request(
             &client,
             &connection,
             &engine,
-            recall_config,
+            recall_config.clone(),
             &state,
             request,
         )
         .await?;
         if let Some(path) = hook_spool {
-            std::fs::remove_file(path)?;
+            std::fs::remove_file(&path)?;
+            let _ = vfs_cli_app::learning::workflow::replay_hook_inbox_after(
+                &client,
+                &connection,
+                &engine,
+                recall_config,
+                &state,
+                &path,
+                &current_request,
+            )
+            .await;
         }
         return Ok(());
     }

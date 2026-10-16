@@ -108,6 +108,14 @@ Identical IDs deduplicate; changed content under an existing ID fails. Remote
 this path. Lost write acknowledgments are reconciled by exact content reads.
 Acknowledged IDs remain reserved. Failed sync stays pending and is reported.
 
+Hooks never wait on remote writes: they only enqueue, then start one detached
+`agent flush` when events are pending and no live flusher holds the outbox lease.
+The flusher sends the backlog as atomic create-only `write_nodes` batches (at most
+100 nodes and about 1 MB each); if a batch fails it verifies each event
+individually, so conflicting remote content still fails without overwrite. Each
+hook answers its own request before best-effort replay of older spooled entries,
+so a backlog or an unreplayable entry cannot delay recall.
+
 ## Revise, evaluate and publish
 
 ```sh

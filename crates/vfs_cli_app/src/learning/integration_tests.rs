@@ -2,7 +2,7 @@
 use super::*;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use vfs_client::VfsApi;
 use vfs_store::FsStore;
 use vfs_types::*;
@@ -12,6 +12,9 @@ pub(crate) struct StoreClient {
     deny: AtomicBool,
     fail_after_write: AtomicBool,
     pub(crate) fail_after_publication: AtomicBool,
+    fail_after_batch: AtomicBool,
+    pub(crate) writes: AtomicUsize,
+    pub(crate) batch_writes: AtomicUsize,
 }
 impl StoreClient {
     pub(crate) fn new(path: &std::path::Path) -> Self {
@@ -22,6 +25,9 @@ impl StoreClient {
             deny: AtomicBool::new(false),
             fail_after_write: AtomicBool::new(false),
             fail_after_publication: AtomicBool::new(false),
+            fail_after_batch: AtomicBool::new(false),
+            writes: AtomicUsize::new(0),
+            batch_writes: AtomicUsize::new(0),
         }
     }
 }
@@ -56,7 +62,19 @@ impl VfsApi for StoreClient {
     async fn list_children(&self, r: ListChildrenRequest) -> Result<Vec<ChildNode>> {
         self.store.list_children(r).map_err(|e| anyhow!(e))
     }
+    async fn write_nodes(&self, r: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
+        self.batch_writes.fetch_add(1, Ordering::SeqCst);
+        let result = self
+            .store
+            .write_nodes(r, 10)
+            .map_err(|e| anyhow!("{e:?}"))?;
+        if self.fail_after_batch.swap(false, Ordering::SeqCst) {
+            return Err(anyhow!("lost batch response"));
+        }
+        Ok(result)
+    }
     async fn write_node(&self, r: WriteNodeRequest) -> Result<WriteNodeResult> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
         let result = self.store.write_node(r, 10).map_err(|e| anyhow!("{e:?}"))?;
         if self.fail_after_write.swap(false, Ordering::SeqCst) {
             return Err(anyhow!("lost transport response"));
@@ -121,6 +139,120 @@ impl VfsApi for StoreClient {
             Ok(result)
         }
     }
+}
+fn outbox_events(count: usize, runs: usize) -> Vec<Event> {
+    (0..count)
+        .map(|i| Event {
+            id: format!("e{i}"),
+            run_id: format!("r{}", i % runs),
+            kind: "hook".into(),
+            payload: serde_json::json!({"n":i}),
+        })
+        .collect()
+}
+#[tokio::test]
+async fn outbox_backlog_is_sent_in_one_batched_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(&dir.path().join("local"), "c", "db", "p").unwrap();
+    let events = outbox_events(12, 3);
+    for event in &events {
+        outbox.enqueue(event).unwrap();
+    }
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 12);
+    assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        client.writes.load(Ordering::SeqCst),
+        0,
+        "no per-event writes"
+    );
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+    for event in &events {
+        let node = client
+            .store
+            .read_node(&outbox::evidence_path(event))
+            .unwrap()
+            .unwrap();
+        assert_eq!(node.content, serde_json::to_string(event).unwrap());
+        assert_eq!(node.kind, NodeKind::Source);
+    }
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 0);
+}
+#[tokio::test]
+async fn outbox_lost_batch_response_and_partial_remote_state_fall_back_to_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(&dir.path().join("local"), "c", "db", "p").unwrap();
+    let events = outbox_events(4, 2);
+    for event in &events {
+        outbox.enqueue(event).unwrap();
+    }
+    client.fail_after_batch.store(true, Ordering::SeqCst);
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 4);
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+    // An event that landed before its acknowledgement was lost makes the atomic
+    // create-only batch fail; verification still sends the remaining events.
+    let more = outbox_events(6, 2);
+    for event in &more {
+        outbox.enqueue(event).unwrap();
+    }
+    client
+        .store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "db".into(),
+                path: outbox::evidence_path(&more[5]),
+                kind: NodeKind::Source,
+                content: serde_json::to_string(&more[5]).unwrap(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .unwrap();
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 2);
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+}
+#[tokio::test]
+async fn outbox_batch_never_overwrites_conflicting_remote_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(&dir.path().join("local"), "c", "db", "p").unwrap();
+    let events = outbox_events(3, 1);
+    for event in &events {
+        outbox.enqueue(event).unwrap();
+    }
+    outbox.flush(&client, "db").await.unwrap();
+    let conflicting = Event {
+        id: "late".into(),
+        run_id: "r0".into(),
+        kind: "hook".into(),
+        payload: serde_json::json!({"local":true}),
+    };
+    client
+        .store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "db".into(),
+                path: outbox::evidence_path(&conflicting),
+                kind: NodeKind::Source,
+                content: "{\"remote\":true}".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .unwrap();
+    outbox.enqueue(&conflicting).unwrap();
+    let error = outbox.flush(&client, "db").await.unwrap_err();
+    assert!(error.to_string().contains("conflicts"), "{error:#}");
+    assert_eq!(outbox.pending_count().unwrap(), 1);
+    let node = client
+        .store
+        .read_node(&outbox::evidence_path(&conflicting))
+        .unwrap()
+        .unwrap();
+    assert_eq!(node.content, "{\"remote\":true}");
 }
 #[tokio::test]
 async fn outbox_recovers_ambiguous_success_and_does_not_duplicate_remote_evidence() {

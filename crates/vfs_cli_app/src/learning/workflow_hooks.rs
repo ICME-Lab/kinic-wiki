@@ -131,6 +131,29 @@ fn evidence(request: &Value) -> Value {
     redact(&mut capture);
     json!({"capture":capture,"complete":false,"adoption":"unknown"})
 }
+/// Hooks never wait on remote writes: events stay in the durable local outbox and
+/// one detached flusher sends them, so a slow canister or a backlog cannot consume
+/// the agent's hook budget or delay recall.
+fn schedule_flush(
+    outbox: &Outbox,
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+) -> (bool, Option<String>) {
+    let launch = || -> Result<bool> {
+        if outbox.pending_count()? == 0 {
+            return Ok(false);
+        }
+        if !outbox.flush_owner_active()? {
+            job_driver::launch_flush(c, state, cwd)?;
+        }
+        Ok(true)
+    };
+    match launch() {
+        Ok(pending) => (pending, None),
+        Err(error) => (true, Some(error.to_string())),
+    }
+}
 pub async fn handle(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -209,14 +232,12 @@ pub async fn handle(
         }
         let opts = load_recall_optional(explicit, task, client, c, state, &cwd, None)?;
         let receipt = recall(client, c.database_id.as_deref().unwrap(), &id, &opts).await?;
-        let persisted = persist_receipt(client, c, state, &receipt).await?;
+        persist_receipt(client, c, state, &receipt, false).await?;
         let mut task_value = json!(task);
         redact(&mut task_value);
         let outbox = open_outbox(client, c, state)?;
         outbox.enqueue(&event(&id,"run",json!({"project_id":project.as_ref().map(|p|&p.project_id),"task":task_value,"engine":engine,"repository":cwd,"start_commit":git(&cwd,&["rev-parse","HEAD"]).await.ok(),"model":project.as_ref().and_then(|p|p.runner.model.clone()),"settings":project.as_ref().map(|p|safe_runner(&p.runner))})))?;
-        let _ = outbox
-            .flush(client, c.database_id.as_deref().unwrap())
-            .await;
+        let (pending_sync, sync_error) = schedule_flush(&outbox, c, state, &cwd);
         // Retry pending finite work on the next normal entry as well as Stop.
         let background = job_project
             .filter(|p| p.enabled)
@@ -225,7 +246,7 @@ pub async fn handle(
             .err()
             .map(|e| e.to_string());
         return Ok(
-            json!({"routing_binding":binding,"additionalContext":receipt.rendered,"receipt_id":receipt.id,"run_id":id,"hookSpecificOutput":{"hookEventName":kind,"additionalContext":receipt.rendered},"pending_sync":persisted["pending_sync"],"background_error":background}),
+            json!({"routing_binding":binding,"additionalContext":receipt.rendered,"receipt_id":receipt.id,"run_id":id,"hookSpecificOutput":{"hookEventName":kind,"additionalContext":receipt.rendered},"pending_sync":pending_sync,"sync_error":sync_error,"background_error":background}),
         );
     }
     let mut payload = evidence(&request);
@@ -240,9 +261,7 @@ pub async fn handle(
     if terminal && let Some(p) = job_project {
         job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
     }
-    let sync = outbox
-        .flush(client, c.database_id.as_deref().unwrap())
-        .await;
+    let (pending_sync, sync_error) = schedule_flush(&outbox, c, state, &cwd);
     let background = if terminal && job_project.is_some_and(|p| p.enabled) {
         job_driver::launch(c, state, &cwd, &config)
             .err()
@@ -251,7 +270,7 @@ pub async fn handle(
         None
     };
     Ok(
-        json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":sync.is_err(),"queued":terminal&&job_project.is_some_and(|p|p.enabled),"background_error":background}),
+        json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":pending_sync,"sync_error":sync_error,"queued":terminal&&job_project.is_some_and(|p|p.enabled),"background_error":background}),
     )
 }
 
@@ -333,6 +352,7 @@ pub fn spool(
     file.sync_all()?;
     Ok(path)
 }
+#[cfg(test)]
 pub async fn replay(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -342,6 +362,19 @@ pub async fn replay(
     current: &Path,
 ) -> Result<()> {
     let current_request: Value = read_json(current)?;
+    replay_after(client, c, engine, config, state, current, &current_request).await
+}
+/// Replay older spooled entries routed like `current_request`. The current entry
+/// may already be removed; its path only identifies the inbox and is skipped.
+pub async fn replay_after(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    engine: &str,
+    config: Option<PathBuf>,
+    state: &StateArgs,
+    current: &Path,
+    current_request: &Value,
+) -> Result<()> {
     let effective_config = current_request["__kinic_config"]
         .as_str()
         .map(PathBuf::from);

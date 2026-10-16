@@ -312,6 +312,12 @@ async fn offline_inbox_binds_explicit_config_engine_and_original_run_before_repl
     )
     .await
     .unwrap();
+    // Hooks only enqueue; the detached flusher sends the backlog.
+    open_outbox(&client, &c, &state)
+        .unwrap()
+        .flush_exclusive(&client, "db")
+        .await
+        .unwrap();
     for run in [
         one["__kinic_run_id"].as_str().unwrap(),
         two["__kinic_run_id"].as_str().unwrap(),
@@ -573,6 +579,12 @@ async fn review_fix_replay_keeps_original_transcript_snapshot() {
     hooks::replay(&client, &c, "codex", Some(config), &state, &current)
         .await
         .unwrap();
+    // Hooks only enqueue; the detached flusher sends the backlog.
+    open_outbox(&client, &c, &state)
+        .unwrap()
+        .flush_exclusive(&client, "db")
+        .await
+        .unwrap();
     let run = original["__kinic_run_id"].as_str().unwrap();
     let entries = client
         .list_nodes(ListNodesRequest {
@@ -828,4 +840,36 @@ async fn legacy_hook_override_keeps_connection_policy_without_starting_jobs() {
     project.principal = Some("different-principal".into());
     crate::learning::project::save_project(&a.join(CONFIG_FILE), &project).unwrap();
     assert!(hooks::handle(&client,&c,"codex",Some(runtime),&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"wrong-principal","turn_id":"1","prompt":"advice"})).await.is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn hooks_enqueue_evidence_without_remote_writes_and_flush_later() {
+    use std::sync::atomic::Ordering;
+    let (_dir, client, state, a, _b) = fixture().await;
+    let c = connection();
+    let writes =
+        || client.writes.load(Ordering::SeqCst) + client.batch_writes.load(Ordering::SeqCst);
+    let before = writes();
+    let recalled = hooks::handle(&client, &c, "codex", None, &state, json!({"event":"UserPromptSubmit","cwd":a,"session_id":"hot-path","turn_id":"1","prompt":"portable build"})).await.unwrap();
+    assert!(!recalled["additionalContext"].as_str().unwrap().is_empty());
+    assert_eq!(recalled["pending_sync"], true);
+    for call in 0..3 {
+        let tool = hooks::handle(&client, &c, "codex", None, &state, json!({"event":"PostToolUse","cwd":a,"session_id":"hot-path","turn_id":"1","tool_name":"shell","tool_use_id":call})).await.unwrap();
+        assert_eq!(tool["recorded"], true);
+        assert_eq!(tool["pending_sync"], true);
+    }
+    assert_eq!(writes(), before, "hooks must not wait on remote writes");
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    let pending = outbox.pending_count().unwrap();
+    assert!(
+        pending >= 5,
+        "receipt, run and tool events stay queued: {pending}"
+    );
+    assert_eq!(
+        outbox.flush_exclusive(&client, "db").await.unwrap(),
+        Some(pending)
+    );
+    assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
+    assert_eq!(outbox.pending_count().unwrap(), 0);
 }

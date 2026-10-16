@@ -53,12 +53,30 @@ pub fn launch(c: &ResolvedConnection, state: &StateArgs, cwd: &Path, config: &Pa
     });
     Ok(())
 }
-fn drain_command(
-    c: &ResolvedConnection,
-    state: &StateArgs,
-    cwd: &Path,
-    config: &Path,
-) -> Result<std::process::Command> {
+#[cfg(test)]
+pub fn launch_flush(_c: &ResolvedConnection, _state: &StateArgs, _cwd: &Path) -> Result<()> {
+    Ok(())
+}
+/// Start one detached outbox flusher per hook process; the outbox lease keeps
+/// concurrent hook processes from sending the same backlog twice.
+#[cfg(not(test))]
+pub fn launch_flush(c: &ResolvedConnection, state: &StateArgs, cwd: &Path) -> Result<()> {
+    static LAUNCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if LAUNCHED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+    let mut cmd = cli_command(c, cwd)?;
+    cmd.args(["agent", "flush"]);
+    if let Some(dir) = &state.state_dir {
+        cmd.arg("--state-dir").arg(dir);
+    }
+    let mut child = cmd.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+fn cli_command(c: &ResolvedConnection, cwd: &Path) -> Result<std::process::Command> {
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.args([
         "--replica-host",
@@ -73,6 +91,19 @@ fn drain_command(
     {
         cmd.arg("--allow-non-ii-identity");
     }
+    cmd.current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    Ok(cmd)
+}
+fn drain_command(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    config: &Path,
+) -> Result<std::process::Command> {
+    let mut cmd = cli_command(c, cwd)?;
     cmd.args(["learn", "drain", "--project-root"])
         .arg(cwd)
         .arg("--recall-config")
@@ -80,10 +111,6 @@ fn drain_command(
     if let Some(dir) = &state.state_dir {
         cmd.arg("--state-dir").arg(dir);
     }
-    cmd.current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
     Ok(cmd)
 }
 #[cfg(test)]

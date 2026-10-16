@@ -101,11 +101,7 @@ fn event(run: &str, kind: &str, payload: Value) -> Event {
     }
 }
 fn event_path(event: &Event) -> String {
-    format!(
-        "/Sources/learning-runs/{}/{}.json",
-        hash(&event.run_id),
-        hash(&event.id)
-    )
+    outbox::evidence_path(event)
 }
 async fn remote_json<T: DeserializeOwned>(client: &impl VfsApi, db: &str, path: &str) -> Result<T> {
     let node = client
@@ -224,10 +220,14 @@ async fn persist_receipt(
     c: &ResolvedConnection,
     args: &StateArgs,
     receipt: &ContextReceipt,
+    flush: bool,
 ) -> Result<Value> {
     let outbox = open_outbox(client, c, args)?;
     let event = event(&receipt.run_id, "context", serde_json::to_value(receipt)?);
     outbox.enqueue(&event)?;
+    if !flush {
+        return Ok(json!({"receipt":receipt,"event_path":event_path(&event),"pending_sync":true}));
+    }
     let result = outbox
         .flush(client, c.database_id.as_deref().unwrap())
         .await;
@@ -304,7 +304,7 @@ pub async fn run_agent(
                 None,
             )?;
             let receipt = recall(client, db, &id, &opts).await?;
-            print(&persist_receipt(client, c, &state, &receipt).await?)
+            print(&persist_receipt(client, c, &state, &receipt, true).await?)
         }
         AgentCommand::Record {
             event_file,
@@ -320,8 +320,13 @@ pub async fn run_agent(
             )
         }
         AgentCommand::Flush { state, cwd: _ } => {
-            let sent = open_outbox(client, c, &state)?.flush(client, db).await?;
-            print(&json!({"sent":sent}))
+            match open_outbox(client, c, &state)?
+                .flush_exclusive(client, db)
+                .await?
+            {
+                Some(sent) => print(&json!({"sent":sent})),
+                None => print(&json!({"sent":0,"busy":true})),
+            }
         }
         AgentCommand::Hook {
             cwd: _,
@@ -1456,15 +1461,16 @@ pub fn spool_hook(
 ) -> Result<PathBuf> {
     hooks::spool(c, state, engine, config, request)
 }
-pub async fn replay_hook_inbox(
+pub async fn replay_hook_inbox_after(
     client: &impl VfsApi,
     c: &ResolvedConnection,
     engine: &str,
     config: Option<PathBuf>,
     state: &StateArgs,
-    path: &Path,
+    current: &Path,
+    current_request: &Value,
 ) -> Result<()> {
-    hooks::replay(client, c, engine, config, state, path).await
+    hooks::replay_after(client, c, engine, config, state, current, current_request).await
 }
 
 #[cfg(test)]
