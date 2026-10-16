@@ -24,6 +24,7 @@ struct Section {
 
 pub(super) fn render() -> String {
     // The MCP Worker imports this same source. No identity, database or I/O is needed.
+    // Share API semantics here; keep MCP transport, OAuth and tool-only limits in the Worker.
     let guidance: Guidance = serde_json::from_str(include_str!(
         "../../../packages/vfs-client-core/api-guidance.json"
     ))
