@@ -1,3 +1,4 @@
+use vfs_types::ScopeRevisionRequest;
 // Where: crates/vfs_client/src/lib.rs
 // What: Reusable canister client for the VFS public API.
 // Why: CLI and non-CLI consumers should share one transport implementation.
@@ -17,17 +18,18 @@ use vfs_types::{
     DatabaseRole, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
     EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
     FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
-    MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeMutationError, NodeMutationResult, NodePublication, OutgoingLinksRequest, PublicNode,
-    PublishNodeRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult,
+    LearningPublicationRequest, LearningPublicationResult, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeHistoryPage,
+    NodeHistoryRequest, NodeMutationError, NodeMutationResult, NodePublication, NodeRevision,
+    NodeRevisionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -227,6 +229,29 @@ pub trait VfsApi: Sync {
         ))
     }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>>;
+    async fn current_node_revision(
+        &self,
+        _request: NodeRevisionRequest,
+    ) -> Result<Option<NodeRevision>> {
+        Err(anyhow!(
+            "current_node_revision is not implemented by this client"
+        ))
+    }
+    async fn scope_revision(&self, _request: ScopeRevisionRequest) -> Result<u64> {
+        Err(anyhow!("scope_revision is not implemented by this client"))
+    }
+    async fn node_history(&self, _request: NodeHistoryRequest) -> Result<NodeHistoryPage> {
+        Err(anyhow!("node_history is not implemented by this client"))
+    }
+    async fn publish_learning(
+        &self,
+        _request: LearningPublicationRequest,
+    ) -> Result<LearningPublicationResult> {
+        Err(anyhow!(
+            "publish_learning is not implemented by this client"
+        ))
+    }
+
     async fn read_node_context(&self, _request: NodeContextRequest) -> Result<Option<NodeContext>> {
         Err(anyhow!(
             "read_node_context is not implemented by this client"
@@ -772,6 +797,30 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn current_node_revision(
+        &self,
+        request: NodeRevisionRequest,
+    ) -> Result<Option<NodeRevision>> {
+        let result: Result<Option<NodeRevision>, String> =
+            self.query("current_node_revision", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+    async fn scope_revision(&self, request: ScopeRevisionRequest) -> Result<u64> {
+        let result: Result<u64, String> = self.query("scope_revision", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+    async fn node_history(&self, request: NodeHistoryRequest) -> Result<NodeHistoryPage> {
+        let result: Result<NodeHistoryPage, String> = self.query("node_history", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+    async fn publish_learning(
+        &self,
+        request: LearningPublicationRequest,
+    ) -> Result<LearningPublicationResult> {
+        let result: Result<LearningPublicationResult, NodeMutationError> =
+            self.update("publish_learning", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>> {
         let result: Result<Option<Node>, String> = self
             .query2("read_node", &database_id.to_string(), &path.to_string())

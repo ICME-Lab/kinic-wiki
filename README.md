@@ -77,6 +77,10 @@ kinic-vfs-cli edit-node --path /Knowledge/page.md --old-text before --new-text a
 Public databases can be read anonymously only when the database grants reader access to the anonymous principal.
 Writes, database grants, archive operations, and private skill store writes require an authenticated identity.
 
+## Continual learning
+
+The CLI can connect Codex and DeepSeek Harness to versioned context receipts, durable run evidence, isolated evaluation and guarded lesson revision. See [portable project setup](docs/PORTABLE_LEARNING.md) and [continual learning](docs/CONTINUAL_LEARNING.md) for configuration, rollout and verification.
+
 ## Skill Store
 
 Skill store commands use the same CLI:

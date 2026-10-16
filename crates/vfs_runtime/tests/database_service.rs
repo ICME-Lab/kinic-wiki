@@ -6165,3 +6165,103 @@ fn retrieval_search_obeys_reader_and_public_reader_access() {
         assert_eq!(hits[0].rerank_excerpt, "CORS credentials");
     }
 }
+
+#[test]
+fn learning_revision_history_and_publication_require_database_roles() {
+    use vfs_types::{
+        LearningPublicationRequest, NodeHistoryRequest, NodeRevisionRequest, WriteNodeItem,
+    };
+    let service = service();
+    let db = activate_pending_database(&service);
+    let request = LearningPublicationRequest {
+        scope_guards: vec![],
+        database_id: db.clone(),
+        operation_id: "role-test".into(),
+        targets: vec![WriteNodeItem {
+            path: "/Knowledge/learned.md".into(),
+            kind: NodeKind::File,
+            content: "lesson".into(),
+            metadata_json: r#"{"authority":"agent"}"#.into(),
+            expected_etag: None,
+        }],
+        evidence: vec![],
+    };
+    assert!(
+        service
+            .publish_learning("stranger", request.clone(), 10)
+            .is_err()
+    );
+    service
+        .grant_database_access(&db, "owner", "reader", DatabaseRole::Reader, 9)
+        .unwrap();
+    assert!(
+        service
+            .publish_learning("reader", request.clone(), 10)
+            .is_err()
+    );
+    service.publish_learning("owner", request, 10).unwrap();
+    let revision_request = NodeRevisionRequest {
+        database_id: db.clone(),
+        path: "/Knowledge/learned.md".into(),
+    };
+    assert!(
+        service
+            .current_node_revision("stranger", revision_request.clone())
+            .is_err()
+    );
+    assert!(
+        service
+            .current_node_revision("reader", revision_request.clone())
+            .unwrap()
+            .is_some()
+    );
+    let revision = service
+        .current_node_revision("owner", revision_request)
+        .unwrap()
+        .unwrap();
+    let history_request = NodeHistoryRequest {
+        database_id: db,
+        node_id: revision.node_id,
+        before_revision: None,
+        limit: 100,
+    };
+    assert!(
+        service
+            .node_history("stranger", history_request.clone())
+            .is_err()
+    );
+    assert_eq!(
+        service
+            .node_history("reader", history_request.clone())
+            .unwrap()
+            .revisions
+            .len(),
+        1
+    );
+    assert_eq!(
+        service
+            .node_history("owner", history_request)
+            .unwrap()
+            .revisions
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn scope_revision_query_uses_database_reader_authorization() {
+    let service = service();
+    let db = activate_pending_database(&service);
+    let request = vfs_types::ScopeRevisionRequest {
+        database_id: db.clone(),
+        prefix: "/Knowledge".into(),
+    };
+    assert!(service.scope_revision("stranger", request.clone()).is_err());
+    service
+        .grant_database_access(&db, "owner", "reader", DatabaseRole::Reader, 1)
+        .unwrap();
+    assert_eq!(
+        service.scope_revision("reader", request.clone()).unwrap(),
+        service.scope_revision("owner", request).unwrap()
+    );
+}

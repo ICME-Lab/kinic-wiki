@@ -23,3 +23,13 @@ mod purge_source_capture;
 pub mod skill_registry;
 #[cfg(test)]
 mod skill_registry_tests;
+
+pub mod learning;
+pub mod learning_evaluation;
+pub mod learning_runner;
+
+pub mod agent_config;
+pub mod agent_doctor;
+pub mod agent_setup;
+
+pub mod agent_status;

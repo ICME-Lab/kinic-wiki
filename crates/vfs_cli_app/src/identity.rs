@@ -40,6 +40,38 @@ pub async fn load_default_identity(
     }
 }
 
+/// Read-only doctor path. Never invokes icp, a wrapper, keyring helpers or login.
+pub(crate) fn load_diagnostic_identity(
+    canister_id: &str,
+    allow_non_ii_identity: bool,
+) -> Result<Option<Box<dyn ic_agent::Identity>>> {
+    let dir = default_identity_dir()?;
+    let defaults: serde_json::Value = serde_json::from_slice(
+        &vfs_cli::connection::read_local_config_bytes(&dir.join("identity_defaults.json"))?,
+    )?;
+    let name = defaults
+        .get("default")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("identity default missing"))?;
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == ".." {
+        bail!("invalid identity name");
+    }
+    let metadata = read_identity_metadata(&dir, name)?;
+    if metadata.kind == "anonymous" || metadata.kind == "pending-delegation" {
+        bail!("authenticated identity required");
+    }
+    let key = dir.join("keys").join(format!("{name}.pem"));
+    if !key.is_file() {
+        return Ok(None);
+    }
+    let pem = vfs_cli::connection::read_local_config_bytes(&key)?;
+    if metadata.kind == "internet-identity" {
+        return load_internet_identity(&dir, name, &pem, canister_id).map(Some);
+    }
+    ensure_identity_kind_allowed(&metadata.kind, name, allow_non_ii_identity)?;
+    vfs_client::identity_from_pem(&pem).map(Some)
+}
+
 fn ensure_identity_kind_allowed(
     kind: &str,
     identity_name: &str,
@@ -70,10 +102,12 @@ fn load_internet_identity(
     let delegation_path = identity_dir
         .join("delegations")
         .join(format!("{identity_name}.json"));
-    let chain = std::fs::read_to_string(&delegation_path).map_err(|error| {
-        let _ = error;
-        refresh_required(identity_name)
-    })?;
+    let chain = vfs_cli::connection::read_local_config_bytes(&delegation_path)
+        .and_then(|bytes| String::from_utf8(bytes).map_err(Into::into))
+        .map_err(|error| {
+            let _ = error;
+            refresh_required(identity_name)
+        })?;
     let stored: StoredDelegationChain = serde_json::from_str(&chain)
         .with_context(|| format!("failed to parse {}", delegation_path.display()))?;
     let public_key = decode_hex_field(&stored.public_key, "publicKey")?;
@@ -176,7 +210,8 @@ fn ensure_delegation_targets_canister(
 
 fn read_identity_metadata(identity_dir: &Path, identity_name: &str) -> Result<IdentityMetadata> {
     let list_path = identity_dir.join("identity_list.json");
-    let list = std::fs::read_to_string(&list_path)
+    let list = vfs_cli::connection::read_local_config_bytes(&list_path)
+        .and_then(|bytes| String::from_utf8(bytes).map_err(Into::into))
         .with_context(|| format!("failed to read {}", list_path.display()))?;
     let identities: IdentityList = serde_json::from_str(&list)
         .with_context(|| format!("failed to parse {}", list_path.display()))?;

@@ -1,5 +1,5 @@
 {
-  "description": "Persist completed Codex turns to Kinic raw sources.",
+  "description": "Recall Kinic task context and retain observational learning evidence alongside completed turn sources.",
   "hooks": {
     "Stop": [
       {
@@ -9,6 +9,41 @@
             "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}/scripts/record-session.sh\"",
             "timeout": 10,
             "statusMessage": "Saving Codex turn to Kinic"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}}/scripts/learning-hook.sh\"",
+            "timeout": 8,
+            "statusMessage": "Recording Kinic turn evidence"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}}/scripts/learning-hook.sh\"",
+            "timeout": 8,
+            "statusMessage": "Recalling Kinic task context",
+            "additionalContextLimit": 0
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}}/scripts/learning-hook.sh\"",
+            "timeout": 8,
+            "statusMessage": "Recording Kinic tool evidence"
           }
         ]
       }

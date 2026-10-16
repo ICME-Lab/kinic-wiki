@@ -7,6 +7,7 @@
 // Only returned hits pay preview generation cost.
 mod context;
 mod marketplace;
+mod revisions;
 mod sql_json;
 mod sync;
 pub use sql_json::validate_sql_json_select;

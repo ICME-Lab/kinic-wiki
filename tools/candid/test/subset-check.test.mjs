@@ -70,3 +70,18 @@ const ResultBatch = idl.Variant({ Ok: idl.Vec(ResultItem), Err: idl.Text });`,
     }, expectedMethods: {},
   }), []);
 });
+
+test("Candid field documentation does not hide revision identity or cursors", () => {
+  assert.deepEqual(checkCandidSubset({
+    didSource: `type Revision = record {
+  // Immutable identity, retained by moves.
+  node_id : text;
+  // Exclusive upper bound.
+  before_revision : opt nat64;
+};
+service : () -> {\n}`,
+    idlSource: "const Revision = idl.Record({node_id:idl.Text,before_revision:idl.Opt(idl.Nat64)});",
+    expectedTypes: {Revision:{kind:"record",fields:{node_id:"text",before_revision:"opt nat64"}}},
+    expectedMethods: {},
+  }), []);
+});

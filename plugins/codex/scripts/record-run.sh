@@ -42,8 +42,6 @@ resolve_runtime_path() {
 resolve_cli() {
   if [ -n "${KINIC_VFS_CLI:-}" ]; then
     printf '%s\n' "$KINIC_VFS_CLI"
-  elif [ -x "$repo_cli" ]; then
-    printf '%s\n' "$repo_cli"
   elif command -v kinic-vfs-cli >/dev/null 2>&1; then
     command -v kinic-vfs-cli
   else
@@ -71,8 +69,6 @@ if [ ! -f "$evidence_json" ]; then
 fi
 
 runtime_path="$(resolve_runtime_path)"
-repo_root="$(cd "$runtime_path/.." && pwd)"
-repo_cli="$repo_root/target/debug/kinic-vfs-cli"
 export PYTHONPATH="$runtime_path${PYTHONPATH:+:$PYTHONPATH}"
 cli="$(resolve_cli)"
 exec python3 -m kinic_agent_runtime.evidence record-run "$skill_id" "$evidence_json" --recorded-by codex-plugin --cli "$cli"

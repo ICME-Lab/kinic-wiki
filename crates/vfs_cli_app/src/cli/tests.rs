@@ -1252,7 +1252,7 @@ fn main_cli_parses_hermes_surfaces() {
 fn main_cli_parses_codex_setup_as_local_command() {
     let setup = Cli::parse_from(["kinic-vfs-cli", "codex", "setup", "--json"]);
     let Command::Codex {
-        command: CodexCommand::Setup { json },
+        command: CodexCommand::Setup { json, .. },
     } = &setup.command
     else {
         panic!("expected codex setup command");

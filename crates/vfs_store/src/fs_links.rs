@@ -170,7 +170,7 @@ fn edge_from_row(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<LinkEdge
     })
 }
 
-fn extract_link_edges(source_path: &str, content: &str, updated_at: i64) -> Vec<LinkEdge> {
+pub fn extract_link_edges(source_path: &str, content: &str, updated_at: i64) -> Vec<LinkEdge> {
     let mut edges = Vec::new();
     let excluded_ranges = link_excluded_ranges(content);
     extract_markdown_links(

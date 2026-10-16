@@ -548,3 +548,46 @@ fn fs_entrypoints_cover_move_glob_and_multi_edit() {
     .expect("node should exist");
     assert_eq!(edited_node.content, "one two");
 }
+
+#[test]
+fn learning_entrypoints_preserve_history_and_meter_publication() {
+    use crate::{current_node_revision, node_history, publish_learning};
+    use vfs_types::{LearningPublicationRequest, NodeHistoryRequest, NodeRevisionRequest};
+    install_test_service();
+    let published = publish_learning(LearningPublicationRequest {
+        scope_guards: vec![],
+        database_id: "default".into(),
+        operation_id: "canister-learning".into(),
+        targets: vec![WriteNodeItem {
+            path: "/Knowledge/learned.md".into(),
+            kind: NodeKind::File,
+            content: "guarded lesson".into(),
+            metadata_json: r#"{"authority":"agent"}"#.into(),
+            expected_etag: None,
+        }],
+        evidence: vec![],
+    })
+    .unwrap();
+    assert_eq!(published.nodes.len(), 1);
+    let current = current_node_revision(NodeRevisionRequest {
+        database_id: "default".into(),
+        path: "/Knowledge/learned.md".into(),
+    })
+    .unwrap()
+    .unwrap();
+    let history = node_history(NodeHistoryRequest {
+        database_id: "default".into(),
+        node_id: current.node_id,
+        before_revision: None,
+        limit: 10,
+    })
+    .unwrap();
+    assert_eq!(history.revisions.len(), 1);
+    let entries = list_database_cycle_entries("default".into(), None, 100).unwrap();
+    assert!(
+        entries
+            .entries
+            .iter()
+            .any(|entry| entry.method.as_deref() == Some("publish_learning"))
+    );
+}

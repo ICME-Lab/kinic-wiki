@@ -152,7 +152,22 @@ const typeOrder = [
   "ResultDatabases",
   "ResultMembers",
   "ResultNat64",
+  "NodeRevision",
+  "NodeRevisionRequest",
+  "NodeHistoryRequest",
+  "NodeHistoryPage",
+  "RevisionRef",
+  "ScopeRevisionRequest",
+  "ScopeRevisionGuard",
+  "LearningPublicationRequest",
+  "EditNodeRequest",
+  "EditNodeResult",
+  "ResultNodeRevision",
+  "ResultNodeHistory",
+  "ResultEditNode",
   "WriteNodeResult",
+  "LearningPublicationResult",
+  "ResultLearningPublication",
   "ResultWriteNode",
   "ResultWriteNodes",
   "WriteSourceForGenerationResult",
@@ -168,6 +183,11 @@ const typeOrder = [
 ];
 
 const methodOrder = [
+  "scope_revision",
+  "current_node_revision",
+  "node_history",
+  "publish_learning",
+  "edit_node",
   "authorize_ops_answer_session",
   "authorize_source_capture_trigger_session",
   "canister_health",
@@ -388,6 +408,7 @@ function validateRenderOrder() {
 }
 
 function parseDidTypes(source) {
+  source = source.replace(/\/\/[^\n]*/g, "");
   const types = {};
   for (const match of source.matchAll(/^type\s+(\w+)\s*=\s*(record|variant)\s*\{([^]*?)\};/gm)) {
     const [, name, kind, body] = match;

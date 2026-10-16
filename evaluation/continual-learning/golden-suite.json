@@ -1,0 +1,17 @@
+{
+  "suite_id": "kinic-historical-candid-v1",
+  "tasks": [{
+    "id": "node-mutation-candid-decode",
+    "family": "historical-candid-errors",
+    "split": "final",
+    "repo": "../..",
+    "start_commit": "b378316dd8ae9cdd8d475e858062cf5a5b57deff",
+    "prompt": "Repair Candid decoding of the public node mutation error API. The CLI currently loses useful mutation errors because decoding the server response fails with an unknown variant. All five NodeMutationErrorCode values must round-trip through Candid, as must the complete NodeMutationError and a Result<WriteNodeResult, NodeMutationError>. Preserve existing snake_case JSON serialization and the public Candid representation. Limit changes to crates/vfs_types/src/fs.rs.",
+    "verification": [["python3", "{suite_dir}/verifiers/node_mutation.py", "{workspace}"]],
+    "allowed_paths": ["crates/vfs_types/src/fs.rs"],
+    "environment": {
+      "required_programs": ["python3", "cargo"],
+      "verification_timeout_seconds": 300
+    }
+  }]
+}

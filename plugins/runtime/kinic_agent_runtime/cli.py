@@ -11,17 +11,6 @@ import subprocess
 from pathlib import Path
 
 
-def discover_repo_root() -> Path:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / "Cargo.toml").is_file() and (parent / "plugins" / "runtime").is_dir():
-            return parent
-    return current.parents[2]
-
-
-REPO_ROOT = discover_repo_root()
-REPO_DEBUG_CLI = REPO_ROOT / "target" / "debug" / "kinic-vfs-cli"
-
 
 def resolve_cli(cli: str | None = None) -> str | None:
     candidate = cli or os.environ.get("KINIC_VFS_CLI")
@@ -30,8 +19,6 @@ def resolve_cli(cli: str | None = None) -> str | None:
     path_cli = shutil.which("kinic-vfs-cli")
     if path_cli:
         return path_cli
-    if REPO_DEBUG_CLI.is_file():
-        return str(REPO_DEBUG_CLI)
     return None
 
 
