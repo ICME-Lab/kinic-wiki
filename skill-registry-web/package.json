@@ -18,8 +18,8 @@
     "@icp-sdk/core": "^5.4.0",
     "@kinic/vfs-candid": "workspace:*",
     "@kinic/vfs-client-core": "workspace:*",
-    "@tanstack/react-router": "1.170.18",
-    "@tanstack/react-start": "1.168.28",
+    "@tanstack/react-router": "1.170.41",
+    "@tanstack/react-start": "1.168.60",
     "lucide-react": "0.555.0",
     "react": "19.2.5",
     "react-dom": "19.2.5"
