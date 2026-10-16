@@ -92,7 +92,26 @@ jobs:
           set_output wiki_assistant "($js_workspace|^packages/ii-server/|^workers/wiki-assistant/|^\.github/workflows/ci\.yml$)"
           set_output payment "($js_workspace|^workers/payment/|^packages/|^\.github/workflows/ci\.yml$)"
           set_output skill_registry_web "($js_workspace|^packages/vfs-candid/|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
-          set_output ios '^(mobile/ios/|\.github/workflows/ci\.yml)'
+          ios_changed=false
+          if has_path '^mobile/ios/'; then
+            ios_changed=true
+          elif has_path '^\.github/workflows/ci\.yml$'; then
+            # Compare the iOS job and shared workflow settings, not unrelated jobs.
+            ios_configuration() {
+              awk '
+                /^[[:alnum:]_-]+:/ { in_jobs = ($0 ~ /^jobs:/); in_ios = 0 }
+                !in_jobs { print; next }
+                /^  [[:alnum:]_-]+:/ { in_ios = ($0 ~ /^  ios-check:/) }
+                in_ios { print }
+              '
+            }
+            base_ios_configuration="$(git show '${{ github.event.pull_request.base.sha }}:.github/workflows/ci.yml' | ios_configuration)"
+            head_ios_configuration="$(git show '${{ github.event.pull_request.head.sha }}:.github/workflows/ci.yml' | ios_configuration)"
+            if [[ "$base_ios_configuration" != "$head_ios_configuration" ]]; then
+              ios_changed=true
+            fi
+          fi
+          echo "ios=$ios_changed" >> "$GITHUB_OUTPUT"
 
   cloudflare-config-check:
     runs-on: ubuntu-latest
