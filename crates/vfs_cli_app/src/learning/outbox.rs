@@ -27,6 +27,18 @@ impl Outbox {
         }
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS learning_outbox(scope TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,acknowledged INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id)); CREATE TABLE IF NOT EXISTS learning_outbox_owner(scope TEXT PRIMARY KEY,pid INTEGER NOT NULL);")?;
+        // Serialize additive migrations across concurrently starting CLI processes.
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let has_time = conn
+            .prepare("PRAGMA table_info(learning_outbox)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|n| n == "enqueued_at");
+        if !has_time {
+            conn.execute_batch("ALTER TABLE learning_outbox ADD COLUMN enqueued_at TEXT")?;
+        }
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_delivery(scope TEXT PRIMARY KEY, last_attempt_at TEXT, last_success_at TEXT, last_failure_at TEXT, last_error_code TEXT); COMMIT;")?;
         Ok(Self {
             conn,
             scope: hash(&serde_json::to_string(&(canister, database, principal))?),
@@ -38,8 +50,8 @@ impl Outbox {
         }
         let body = serde_json::to_string(event)?;
         self.conn.execute(
-            "INSERT OR IGNORE INTO learning_outbox(scope,id,body) VALUES(?1,?2,?3)",
-            params![self.scope, event.id, body],
+            "INSERT OR IGNORE INTO learning_outbox(scope,id,body,enqueued_at) VALUES(?1,?2,?3,?4)",
+            params![self.scope, event.id, body, chrono::Utc::now().to_rfc3339()],
         )?;
         let stored: String = self.conn.query_row(
             "SELECT body FROM learning_outbox WHERE scope=?1 AND id=?2",
@@ -77,7 +89,7 @@ impl Outbox {
             .ok();
         Ok(owner.is_some_and(super::jobs::process_alive))
     }
-    fn acquire(&self) -> Result<Option<FlushLease<'_>>> {
+    pub(super) fn acquire(&self) -> Result<Option<FlushLease<'_>>> {
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         if self.flush_owner_active()? {
             self.conn.execute_batch("ROLLBACK")?;
@@ -105,14 +117,56 @@ impl Outbox {
             let Some(lease) = self.acquire()? else {
                 return Ok((sent > 0).then_some(sent));
             };
-            sent += self.flush(client, db).await?;
+            sent += self.flush_owned(client, db).await?;
             drop(lease);
             if self.pending_count()? == 0 {
                 return Ok(Some(sent));
             }
         }
     }
+    /// All callers, including synchronous record/run commands, use the same lease.
     pub async fn flush(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
+        self.flush_exclusive(client, db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("delivery_pending: another process is sending evidence"))
+    }
+    pub fn pending_run(&self, run: &str) -> Result<bool> {
+        Ok(self.pending()?.iter().any(|e| e.run_id == run))
+    }
+    pub async fn ensure_run_sent(&self, client: &impl VfsApi, db: &str, run: &str) -> Result<()> {
+        if self.pending_run(run)? {
+            self.flush_exclusive(client, db).await?;
+        }
+        anyhow::ensure!(
+            !self.pending_run(run)?,
+            "delivery_pending: run evidence has not been sent; retry after agent flush"
+        );
+        Ok(())
+    }
+    pub(super) fn failure(&self, code: &str) -> Result<()> {
+        self.conn.execute("INSERT INTO learning_delivery(scope,last_failure_at,last_error_code) VALUES(?1,?2,?3) ON CONFLICT(scope) DO UPDATE SET last_failure_at=excluded.last_failure_at,last_error_code=excluded.last_error_code", params![self.scope,chrono::Utc::now().to_rfc3339(),code])?;
+        Ok(())
+    }
+    pub(super) async fn flush_owned(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
+        if self.pending_count()? == 0 {
+            return Ok(0);
+        }
+        self.conn.execute("INSERT INTO learning_delivery(scope,last_attempt_at) VALUES(?1,?2) ON CONFLICT(scope) DO UPDATE SET last_attempt_at=excluded.last_attempt_at", params![self.scope,chrono::Utc::now().to_rfc3339()])?;
+        let result = self.send_pending(client, db).await;
+        match &result {
+            Ok(_) => {
+                self.conn.execute(
+                    "UPDATE learning_delivery SET last_success_at=?2 WHERE scope=?1",
+                    params![self.scope, chrono::Utc::now().to_rfc3339()],
+                )?;
+            }
+            Err(_) => {
+                self.failure("delivery_failed")?;
+            }
+        }
+        result
+    }
+    async fn send_pending(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
         client.check_database_write_cycles(db).await?;
         let mut sent = 0;
         for batch in batches(self.pending()?)? {
@@ -154,7 +208,7 @@ impl Outbox {
         Ok(())
     }
 }
-struct FlushLease<'a> {
+pub(super) struct FlushLease<'a> {
     outbox: &'a Outbox,
 }
 impl Drop for FlushLease<'_> {
@@ -346,5 +400,83 @@ mod batch_tests {
             )
             .unwrap();
         assert!(other.acquire().unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn migration_keeps_unknown_old_time_and_records_new_event_time() {
+        let root = tempfile::tempdir().unwrap();
+        let db = Connection::open(root.path().join("learning-outbox.sqlite3")).unwrap();
+        db.execute_batch("CREATE TABLE learning_outbox(scope TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,acknowledged INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id)); INSERT INTO learning_outbox VALUES('legacy','old','{}',0);").unwrap();
+        drop(db);
+        let outbox = Outbox::open(root.path(), "c", "d", "p").unwrap();
+        let old: Option<String> = outbox
+            .conn
+            .query_row(
+                "SELECT enqueued_at FROM learning_outbox WHERE id='old'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(old.is_none());
+        let e = Event {
+            id: "new".into(),
+            run_id: "run".into(),
+            kind: "hook".into(),
+            payload: serde_json::json!({}),
+        };
+        outbox.enqueue(&e).unwrap();
+        let time: String = outbox
+            .conn
+            .query_row(
+                "SELECT enqueued_at FROM learning_outbox WHERE id='new'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(chrono::DateTime::parse_from_rfc3339(&time).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::*;
+    #[test]
+    #[ignore = "child fixture used by cross_process_lease_recovers_after_owner_exit"]
+    fn lease_child() {
+        let root = std::env::var_os("KINIC_LEASE_TEST_ROOT").unwrap();
+        let root = Path::new(&root);
+        let outbox = Outbox::open(root, "c", "d", "p").unwrap();
+        let _lease = outbox.acquire().unwrap().unwrap();
+        std::fs::write(root.join("owned"), b"ready").unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+    #[test]
+    fn cross_process_lease_recovers_after_owner_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let outbox = Outbox::open(root.path(), "c", "d", "p").unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "learning::outbox::process_tests::lease_child",
+                "--ignored",
+            ])
+            .env("KINIC_LEASE_TEST_ROOT", root.path())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !root.path().join("owned").exists() && started.elapsed().as_secs() < 10 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let ready = root.path().join("owned").exists();
+        let busy = outbox.acquire().unwrap().is_none();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(ready && busy);
+        assert!(outbox.acquire().unwrap().is_some());
     }
 }

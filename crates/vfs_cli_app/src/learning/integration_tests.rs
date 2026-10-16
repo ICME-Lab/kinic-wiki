@@ -611,3 +611,40 @@ async fn portable_recall_rejects_ambiguous_scope_boundaries_and_outside_overlays
         );
     }
 }
+
+#[tokio::test]
+async fn failed_delivery_persists_only_safe_diagnostics_and_recovers() {
+    let root = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(root.path());
+    let outbox = Outbox::open(root.path(), "c", "db", "principal").unwrap();
+    outbox
+        .enqueue(&Event {
+            id: "diagnostic-event".into(),
+            run_id: "diagnostic-run".into(),
+            kind: "hook".into(),
+            payload: serde_json::json!({"text":"private transcript"}),
+        })
+        .unwrap();
+    client.deny.store(true, Ordering::SeqCst);
+    assert!(outbox.flush(&client, "db").await.is_err());
+    assert_eq!(outbox.pending_count().unwrap(), 1);
+    let conn = rusqlite::Connection::open(root.path().join("learning-outbox.sqlite3")).unwrap();
+    let (code, time): (String, String) = conn
+        .query_row(
+            "SELECT last_error_code,last_failure_at FROM learning_delivery",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(code, "delivery_failed");
+    assert!(chrono::DateTime::parse_from_rfc3339(&time).is_ok());
+    client.deny.store(false, Ordering::SeqCst);
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 1);
+    let success: String = conn
+        .query_row("SELECT last_success_at FROM learning_delivery", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(success >= time);
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+}

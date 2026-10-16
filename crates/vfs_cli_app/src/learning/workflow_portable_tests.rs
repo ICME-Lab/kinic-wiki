@@ -873,3 +873,83 @@ async fn hooks_enqueue_evidence_without_remote_writes_and_flush_later() {
     assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
     assert_eq!(outbox.pending_count().unwrap(), 0);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_gate_does_not_start_proposal_while_outbox_is_owned() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let r = hooks::handle(&client,&c,"codex",None,&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"gate","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+    let run = r["run_id"].as_str().unwrap();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"gate","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    let db = rusqlite::Connection::open(
+        state
+            .state_dir
+            .as_ref()
+            .unwrap()
+            .join("learning-outbox.sqlite3"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO learning_outbox_owner SELECT DISTINCT scope, ?1 FROM learning_outbox",
+        [std::process::id()],
+    )
+    .unwrap();
+    let result = learn_value(
+        &client,
+        &c,
+        LearnCommand::Propose {
+            run_id: run.into(),
+            runner_file: a.join(CONFIG_FILE),
+            state: state.clone(),
+        },
+        &a,
+    )
+    .await;
+    assert!(result.unwrap_err().to_string().contains("delivery_pending"));
+    let jobs = job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(jobs["busy"], true);
+    assert_eq!(jobs["jobs"][0]["state"], "pending");
+    db.execute("DELETE FROM learning_outbox_owner", []).unwrap();
+    assert!(outbox.pending_count().unwrap() > 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn poisoned_inbox_is_quarantined_without_blocking_valid_input() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let req = json!({"event":"PostToolUse","cwd":a,"session_id":"poison","turn_id":"1"});
+    let valid = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let bad = valid.parent().unwrap().join("000-broken.json");
+    std::fs::write(&bad, "{broken").unwrap();
+    let current = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    hooks::replay(&client, &c, "codex", None, &state, &current)
+        .await
+        .unwrap();
+    assert!(!valid.exists());
+    assert!(!bad.exists());
+    assert!(
+        bad.parent()
+            .unwrap()
+            .join("quarantine/000-broken.json")
+            .exists()
+    );
+    assert!(
+        open_outbox(&client, &c, &state)
+            .unwrap()
+            .pending_count()
+            .unwrap()
+            > 0
+    );
+}

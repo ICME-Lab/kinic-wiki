@@ -46,29 +46,30 @@ pub fn launch(
 }
 #[cfg(not(test))]
 pub fn launch(c: &ResolvedConnection, state: &StateArgs, cwd: &Path, config: &Path) -> Result<()> {
-    let mut cmd = drain_command(c, state, cwd, config)?;
-    let mut child = cmd.spawn()?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    spawn_detached(drain_command(c, state, cwd, config)?)
 }
-#[cfg(test)]
-pub fn launch_flush(_c: &ResolvedConnection, _state: &StateArgs, _cwd: &Path) -> Result<()> {
-    Ok(())
-}
-/// Start one detached outbox flusher per hook process; the outbox lease keeps
-/// concurrent hook processes from sending the same backlog twice.
-#[cfg(not(test))]
-pub fn launch_flush(c: &ResolvedConnection, state: &StateArgs, cwd: &Path) -> Result<()> {
-    static LAUNCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if LAUNCHED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Ok(());
-    }
+pub fn launch_flush(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    engine: &str,
+    config: Option<&Path>,
+) -> Result<()> {
     let mut cmd = cli_command(c, cwd)?;
-    cmd.args(["agent", "flush"]);
+    cmd.args(["agent", "flush", "--replay-inbox", "--engine", engine]);
+    if let Some(config) = config {
+        cmd.arg("--recall-config").arg(config);
+    }
     if let Some(dir) = &state.state_dir {
         cmd.arg("--state-dir").arg(dir);
+    }
+    spawn_detached(cmd)
+}
+fn spawn_detached(mut cmd: std::process::Command) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
     let mut child = cmd.spawn()?;
     std::thread::spawn(move || {
@@ -157,9 +158,16 @@ pub async fn drain_with_config(
         let Some(lease) = q.acquire()? else {
             return Ok(json!({"busy":true,"jobs":q.list()?}));
         };
-        open_outbox(client, c, state)?
-            .flush(client, c.database_id.as_deref().unwrap())
+        let outbox = open_outbox(client, c, state)?;
+        outbox
+            .flush_exclusive(client, c.database_id.as_deref().unwrap())
             .await?;
+        if q.list()?
+            .iter()
+            .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+        {
+            return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+        }
         for mut job in q.list()? {
             if attempted.contains(&job.run_id) {
                 continue;
@@ -408,6 +416,34 @@ fn unattempted(jobs: &[LearningJob], attempted: &std::collections::BTreeSet<Stri
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn detached_delivery_uses_a_separate_process_group() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.args([
+            "-c",
+            "ps -o pgid= -p $$ > group; sleep 0.1; printf done > done",
+        ])
+        .current_dir(root.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+        spawn_detached(cmd).unwrap();
+        let start = std::time::Instant::now();
+        while !root.path().join("done").exists() && start.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let group = std::fs::read_to_string(root.path().join("group")).unwrap();
+        let parent = std::process::Command::new("ps")
+            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+            .output()
+            .unwrap();
+        assert_ne!(
+            group.trim(),
+            String::from_utf8(parent.stdout).unwrap().trim()
+        );
+    }
     #[test]
     fn release_then_recheck_observes_work_enqueued_while_owner_was_busy() {
         let root = tempfile::tempdir().unwrap();

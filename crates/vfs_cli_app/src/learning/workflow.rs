@@ -319,14 +319,29 @@ pub async fn run_agent(
                 &json!({"event_id":event.id,"event_path":event_path(&event),"pending_sync":flushed.is_err(),"sync_error":flushed.err().map(|e|e.to_string())}),
             )
         }
-        AgentCommand::Flush { state, cwd: _ } => {
-            match open_outbox(client, c, &state)?
-                .flush_exclusive(client, db)
-                .await?
-            {
-                Some(sent) => print(&json!({"sent":sent})),
-                None => print(&json!({"sent":0,"busy":true})),
-            }
+        AgentCommand::Flush {
+            state,
+            cwd,
+            replay_inbox,
+            engine,
+            recall_config,
+        } => {
+            let cwd = cwd.unwrap_or(std::env::current_dir()?);
+            print(
+                &deliver(
+                    client,
+                    c,
+                    &state,
+                    &cwd,
+                    if replay_inbox {
+                        engine.as_deref()
+                    } else {
+                        None
+                    },
+                    recall_config.as_deref(),
+                )
+                .await?,
+            )
         }
         AgentCommand::Hook {
             cwd: _,
@@ -576,8 +591,11 @@ async fn learn_value_at(
         LearnCommand::Propose {
             run_id,
             runner_file,
-            state: _,
+            state,
         } => {
+            open_outbox(client, c, &state)?
+                .ensure_run_sent(client, db, &run_id)
+                .await?;
             let prefix = format!("/Sources/learning-runs/{}", hash(&run_id));
             let entries = client
                 .list_nodes(ListNodesRequest {
@@ -1437,6 +1455,7 @@ fn validate_project_candidate_at(
     Ok(())
 }
 
+/// Finish local intake before launching delivery. Returning means no replay is awaited.
 pub async fn run_hook_request(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -1444,8 +1463,107 @@ pub async fn run_hook_request(
     config: Option<PathBuf>,
     state: &StateArgs,
     request: Value,
+    spool: Option<&Path>,
 ) -> Result<()> {
-    print(&hooks::handle(client, c, engine, config, state, request).await?)
+    let cwd = PathBuf::from(request["cwd"].as_str().context("hook cwd required")?);
+    let mut reply = hooks::handle(client, c, engine, config.clone(), state, request).await?;
+    if let Some(path) = spool {
+        std::fs::remove_file(path)?;
+    }
+    if reply["skipped"] != true && reply["error_code"].is_null() {
+        let outbox = open_outbox(client, c, state)?;
+        if job_driver::launch_flush(c, state, &cwd, engine, config.as_deref()).is_err() {
+            outbox.failure("spawn_failed")?;
+            reply["sync_error"] = json!("spawn_failed");
+        }
+    }
+    print(&reply)
+}
+
+pub fn record_delivery_startup_failure(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    command: &crate::cli::Command,
+) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let path = crate::learning::project::config_for_command(command, &cwd)?
+        .context("project configuration unavailable")?;
+    let project = load_project(&path)?;
+    project.validate_connection(c)?;
+    let principal = project
+        .principal
+        .context("configured principal unavailable")?;
+    Outbox::open(
+        &state_root(state)?,
+        &endpoint(c),
+        c.database_id.as_deref().context("database required")?,
+        &principal,
+    )?
+    .failure("identity_unavailable")
+}
+
+pub async fn deliver(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    engine: Option<&str>,
+    config: Option<&Path>,
+) -> Result<Value> {
+    let outbox = open_outbox(client, c, state)?;
+    let Some(lease) = outbox.acquire()? else {
+        return Ok(json!({"sent":0,"busy":true}));
+    };
+    if let Some(engine) = engine {
+        let root = hooks::inbox_root(c, state, engine, config, cwd)?;
+        if root.exists() {
+            let settings = crate::agent_config::AgentConfig::at(cwd)?;
+            let effective = config
+                .map(Path::to_path_buf)
+                .or(settings.hook_path()?)
+                .map(std::fs::canonicalize)
+                .transpose()?;
+            let request = json!({"cwd":cwd,"__kinic_config":effective});
+            if let Err(error) = hooks::replay_after(
+                client,
+                c,
+                engine,
+                config.map(Path::to_path_buf),
+                state,
+                &root.join(".worker"),
+                &request,
+            )
+            .await
+            {
+                outbox.failure("inbox_replay_failed")?;
+                return Err(error);
+            }
+        }
+    }
+    let sent = outbox
+        .flush_owned(
+            client,
+            c.database_id.as_deref().context("database required")?,
+        )
+        .await?;
+    drop(lease);
+    // Recheck after release so concurrent local enqueues get another flush attempt.
+    let sent = sent
+        + outbox
+            .flush_exclusive(client, c.database_id.as_deref().unwrap())
+            .await?
+            .unwrap_or(0);
+    let settings = crate::agent_config::AgentConfig::at(cwd)?;
+    if let Some(path) = config.map(Path::to_path_buf).or(settings.hook_path()?)
+        && let Ok(project) = load_project(&path)
+        && project.enabled
+    {
+        project.validate_connection(c)?;
+        if job_driver::launch(c, state, cwd, &path).is_err() {
+            outbox.failure("drain_spawn_failed")?;
+        }
+    }
+    Ok(json!({"sent":sent,"pending_sync":outbox.pending_count()? > 0}))
 }
 
 #[cfg(test)]
