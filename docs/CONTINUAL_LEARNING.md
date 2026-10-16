@@ -204,6 +204,6 @@ Live transport smoke verifies actual provider access, event handling and complet
 It does not demonstrate learning-related performance improvement. Production
 activation should follow held-out task-quality evaluation and regression review.
 
-Implementation evidence and release limits: [validation record](CONTINUAL_LEARNING_VALIDATION.md).
+Implementation evidence and release limits: the existing Wiki workflow `/Knowledge/kinic-wiki/workflows/a1cf9738-5e80-40bd-88b0-6ce259d50be5/completion.md`.
 
 For arbitrary-project setup and CLI-only plugins, see [portable learning](PORTABLE_LEARNING.md).

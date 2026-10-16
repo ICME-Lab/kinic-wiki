@@ -130,5 +130,5 @@ proof of provider access or learning quality.
 No production deployment or enabled profile is implied. Before release, run
 held-out repeated task-family comparisons and actual-agent integration in the
 target installation. The first implementation's live provider smoke is recorded
-in [validation](CONTINUAL_LEARNING_VALIDATION.md); it does not measure this
+in the existing Wiki workflow `/Knowledge/kinic-wiki/workflows/a1cf9738-5e80-40bd-88b0-6ce259d50be5/completion.md`; it does not measure this
 extension's generalization or prove a quality gain.

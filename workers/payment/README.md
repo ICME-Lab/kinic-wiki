@@ -100,10 +100,10 @@ marked approved with the App Store CLI readback timestamp.
    migrations remotely.
 3. Store all four production secrets listed above. Keep the IAP authority identity separate
    from the billing authority.
-4. From the clean `feat/iap-mainnet-backport` worktree, run
-   `scripts/mainnet/deploy_wiki.sh` for a read-only preflight. After reviewing its build,
-   set the exact confirmation value printed by the script and rerun with `--execute`. Verify that
-   `get_cycles_billing_config` returns it before exposing the Worker.
+4. Verify the running canister supports the required IAP API and configured authority.
+   If an upgrade is needed, use a separately reviewed procedure for that live state.
+   The frozen `scripts/mainnet/deploy_wiki.sh` backport is not a generic release command;
+   see [IAP acceptance and recovery](../../docs/IAP_PRODUCTION_RUNBOOK.md).
 5. Run the production deploy guard, deploy the Worker, and smoke-test both purchase-intent and
    activation error paths before enabling purchases in the app.
 6. For App Review only, set `APP_STORE_SANDBOX_FULFILLMENT_ENABLED` to `true`, keep the committed
@@ -111,7 +111,8 @@ marked approved with the App Store CLI readback timestamp.
    isolated `--sandbox` build instead.
 7. Configure both App Store Server Notification V2 URLs to
    `https://payment.kinic.xyz/iap/app-store-notifications` and send Apple's test notifications.
-8. Upload the `1.0.4` build. Submit the first consumable together with that new app version.
+8. Upload the intended app release build and verify its processed version and endpoints.
+   Submit the first consumable together with that app version.
 9. After App Review completes, restore `APP_STORE_SANDBOX_FULFILLMENT_ENABLED=false` and redeploy.
 
 Refund and revoke notifications are verified and retained for audit. They do not currently

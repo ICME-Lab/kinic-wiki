@@ -27,3 +27,30 @@ pnpm --dir workers/wiki-assistant build
 Default tests make no paid API calls. `test:live` covers synthetic DeepSeek and TypeSafe routing. `test:live:readonly` checks authenticated Wiki reads without sending Wiki content to an AI provider. `test:live:private` explicitly sends real Wiki excerpts to DeepSeek and requires `KINIC_LIVE_PRIVATE_EGRESS=1` and provider keys.
 
 Voice routes are retired and return 404. Historical voice billing tables remain for compatibility; they do not create a provider call.
+
+Native delegation validation is implemented in [native-delegation.ts](src/native-delegation.ts).
+Targets are optional, but any supplied targets must permit the configured canister.
+Structural checks alone are insufficient: acceptance requires an authenticated IC
+query so the replica validates the delegation chain. No iOS private key export is required.
+
+## Release acceptance and recovery
+
+Before a release, verify the current account, environment, canister, D1 and
+Worker bindings; record the deployed version and the reviewed source being
+released. Use the guarded commands in [Cloudflare CLI](../../docs/CLOUDFLARE_CLI.md)
+and the environment procedure in [Staging](../../docs/STAGING.md). Do not reuse
+version IDs or secret lists from a historical deployment log.
+
+Verify authenticated native login, authorized and denied DB access, search and
+overview answers with valid citations, sequential questions, history restoration,
+reconnect, cancellation before/after submission, background return and DB switch.
+Exercise the actual iOS build on a device; a Swift decoder or simulator test is
+not device acceptance. Observe errors, latency and CPU on the deployed Worker;
+local process timings and unauthenticated HTTP 200 responses do not establish
+production reliability. Current deployment/device acceptance must be established
+for the release being shipped, not inferred from old test counts.
+
+If acceptance fails, stop distribution and assess the recorded rollback version
+against the current Durable Object/D1 schema before switching traffic. Do not
+roll back persistent data as part of a Worker traffic rollback. Keep the
+conversation encryption key stable so existing recovery state remains readable.

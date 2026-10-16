@@ -11,9 +11,7 @@ when done.
 |---|---|---|---|---|---|
 | [001](./001-parallelize-wiki-generation.md) | Parallelize production wiki generation on the standard Queue Worker | P1 | L | — | BLOCKED (external review requires explicit code-export approval) |
 | [002](./002-ios-shared-work-items.md) | iOS: DB-scoped shared WorkItems (VFS documents + App Group SQLite) | P1 | XL | — | IN PROGRESS (Phase 1–3 implemented; Phase 3 unit-verified, device verification pending) |
-| [003](./003-wiki-batch-read-sql-validation.md) | Simplify Wiki retrieval and enforce SQL / MCP response boundaries | P1 | M | — | DONE (local implementation and verification; deployment excluded) |
 
-| [004](./004-read-nodes-and-candid-bom.md) | Add arbitrary-path batch reads and preserve Candid BOM | P1 | M | — | DONE (local checks passed; deployment excluded) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED
 (with one-line rationale — finding fixed independently or approach abandoned)
@@ -33,3 +31,6 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 - Parallel source capture: rejected because HTML and image buffering share the parent isolate's
   128 MB heap. Only bounded source-generation inputs run concurrently.
 - Automatic Cloudflare DLQ forwarding: rejected because it copies nonce-bearing original messages.
+
+
+Completed plans 003/004 and their exact test evidence remain in Git history at `023bfb42`. The reusable design rationale is in Wiki `/Knowledge/kinic-wiki/decisions/wiki-io.md`; completed task logs are not retained as knowledge pages.

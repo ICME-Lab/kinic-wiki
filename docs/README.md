@@ -16,6 +16,8 @@
 
 ## Operations
 
+- [IAP_PRODUCTION_RUNBOOK.md](IAP_PRODUCTION_RUNBOOK.md) — payment release acceptance and recovery constraints
+
 - [RELEASE.md](RELEASE.md) — Release procedure
 - [STAGING.md](STAGING.md) — Staging environment and deployment procedure
 - [PUBLIC_SMOKE.md](PUBLIC_SMOKE.md) — Public environment smoke test procedure
@@ -25,12 +27,9 @@
 - [Privacy Policy](legal/privacy-policy.md) — Source for the published Kinic privacy policy
 - [Support](legal/support.md) — Source for the published Kinic support page
 
-## Internal Design (internal/)
+## Dependency maintenance
 
 - [DEPENDENCY_FORKS.md](internal/DEPENDENCY_FORKS.md) — Scope and update policy for forked dependencies
-- [LLM_WIKI_STRUCTURE.md](internal/LLM_WIKI_STRUCTURE.md) — Wiki structure design
-- [IDEA_TO_DECISION_WIKI.md](internal/IDEA_TO_DECISION_WIKI.md) — Background for design decisions
-- [WIKI_BROWSER_PLAN.md](internal/WIKI_BROWSER_PLAN.md) — Initial browser UI plan
 
 ## Validation (validation/)
 
@@ -38,6 +37,23 @@
 - [VFS_CORRECTNESS_CHECKLIST.md](validation/VFS_CORRECTNESS_CHECKLIST.md) — Correctness checklist
 - [VFS_DEPLOYED_CANISTER_BENCHMARKS.md](validation/VFS_DEPLOYED_CANISTER_BENCHMARKS.md) — Deployed canister benchmark results
 
-## Archive (archive/)
 
-- [idea.md](archive/idea.md) — Initial idea notes (historical record)
+## Development records (Wiki)
+
+Project entry: `/Knowledge/kinic-wiki/index.md`.
+Wiki retains useful decisions, unresolved work and the authoritative records of
+active cases. Do not upload every old plan or test log just to preserve it.
+Completed task checklists and obsolete plans can remain in Git history.
+
+The rationale for batch reads, SQL authorization and atomic mutations is at
+`/Knowledge/kinic-wiki/decisions/wiki-io.md`. Learning implementation evidence
+remains in the existing project workflow; product guidance is in
+[AGENT_CONFIGURATION.md](AGENT_CONFIGURATION.md),
+[CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md) and
+[PORTABLE_LEARNING.md](PORTABLE_LEARNING.md).
+
+Git retains code, executable tests and maintained product/operations documents.
+Local document copies support active work; compare them with Wiki before cleanup
+and preserve unpublished changes. Connection settings, selection, sync baselines
+and recovery journals remain local and ignored. Plans 001/002 retain local copies
+because their recorded review/device checks are unresolved.
