@@ -177,12 +177,12 @@ pub async fn handle(
             .caller_principal()
             .context("authenticated identity required")?,
     );
-    if let Some(expected) = request["expected_routing_binding"].as_str() {
-        if expected != binding {
-            return Ok(
-                json!({"routing_binding":binding,"recorded":false,"error_code":"routing_changed"}),
-            );
-        }
+    if let Some(expected) = request["expected_routing_binding"].as_str()
+        && expected != binding
+    {
+        return Ok(
+            json!({"routing_binding":binding,"recorded":false,"error_code":"routing_changed"}),
+        );
     }
     if let Some(project) = &project {
         project.validate_connection(c)?;
@@ -237,10 +237,8 @@ pub async fn handle(
     let outbox = open_outbox(client, c, state)?;
     outbox.enqueue(&event(&id, "hook", payload))?;
     let terminal = kind == "Stop" || request["terminal"] == true;
-    if terminal {
-        if let Some(p) = job_project {
-            job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
-        }
+    if terminal && let Some(p) = job_project {
+        job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
     }
     let sync = outbox
         .flush(client, c.database_id.as_deref().unwrap())
@@ -393,6 +391,35 @@ pub async fn replay(
     Ok(())
 }
 
+pub fn pending_count(state: &StateArgs, config: &Path) -> Result<usize> {
+    let root = state_root(state)?.join("hook-inbox");
+    if !root.exists() {
+        return Ok(0);
+    }
+    let config = config.canonicalize()?;
+    let mut count = 0;
+    for dir in std::fs::read_dir(root)? {
+        let dir = dir?;
+        if !dir.file_type()?.is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(dir.path())? {
+            let file = file?;
+            if file.path().extension().is_none_or(|e| e != "json") {
+                continue;
+            }
+            let value: Value = read_json(&file.path())?;
+            if value["__kinic_config"]
+                .as_str()
+                .is_some_and(|p| Path::new(p) == config)
+            {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod capture_tests {
     use super::*;
@@ -426,33 +453,4 @@ mod capture_tests {
         assert!(!text.contains("not-in-process-env-secret"));
         assert!(!text.contains("private-cookie-value"));
     }
-}
-
-pub fn pending_count(state: &StateArgs, config: &Path) -> Result<usize> {
-    let root = state_root(state)?.join("hook-inbox");
-    if !root.exists() {
-        return Ok(0);
-    }
-    let config = config.canonicalize()?;
-    let mut count = 0;
-    for dir in std::fs::read_dir(root)? {
-        let dir = dir?;
-        if !dir.file_type()?.is_dir() {
-            continue;
-        }
-        for file in std::fs::read_dir(dir.path())? {
-            let file = file?;
-            if file.path().extension().is_none_or(|e| e != "json") {
-                continue;
-            }
-            let value: Value = read_json(&file.path())?;
-            if value["__kinic_config"]
-                .as_str()
-                .is_some_and(|p| Path::new(p) == config)
-            {
-                count += 1;
-            }
-        }
-    }
-    Ok(count)
 }

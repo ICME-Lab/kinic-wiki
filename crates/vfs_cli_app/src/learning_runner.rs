@@ -551,15 +551,14 @@ impl State {
             let event_type = event["type"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("missing session event type"))?;
-            if root && event_type == "agent/inbox/spliced" {
-                if let Some(inserted) = event["data"]["inserted"].as_array() {
-                    if inserted
-                        .iter()
-                        .any(|message| message["id"].as_str() == self.message_id.as_deref())
-                    {
-                        self.received = true;
-                    }
-                }
+            if root
+                && event_type == "agent/inbox/spliced"
+                && let Some(inserted) = event["data"]["inserted"].as_array()
+                && inserted
+                    .iter()
+                    .any(|message| message["id"].as_str() == self.message_id.as_deref())
+            {
+                self.received = true;
             }
             if self.received {
                 if event_type == "assistant/message" {
@@ -583,15 +582,18 @@ impl State {
                 }
             }
         }
-        if root && method == "session.status" && params["status"] == "idle" && self.received {
-            if let Some(reason) = &self.terminal {
-                self.done = true;
-                self.execution.exit_reason = if reason == "completed" {
-                    "completed".into()
-                } else {
-                    format!("turn_{reason}")
-                };
-            }
+        if root
+            && method == "session.status"
+            && params["status"] == "idle"
+            && self.received
+            && let Some(reason) = &self.terminal
+        {
+            self.done = true;
+            self.execution.exit_reason = if reason == "completed" {
+                "completed".into()
+            } else {
+                format!("turn_{reason}")
+            };
         }
         self.execution.events.push(value);
         Ok(())

@@ -163,6 +163,8 @@ fn load_recall_optional(
     let resolved = crate::agent_config::AgentConfig::at(cwd)?;
     load_recall_resolved(&resolved, path, task, client, c, args, cwd, commit)
 }
+// Keep the resolved configuration explicit so cached stdin is reused across policy and recall checks.
+#[allow(clippy::too_many_arguments)]
 fn load_recall_resolved(
     resolved: &crate::agent_config::AgentConfig,
     path: Option<&Path>,
@@ -441,12 +443,12 @@ pub async fn run_agent(
             outbox.enqueue(&event(&id, "execution", execution.clone()))?;
             outbox.enqueue(&event(&id, "outcome", serde_json::to_value(&outcome)?))?;
             let sync = outbox.flush(client, db).await;
-            if let Some(path) = config_path {
-                if let Some(project) = active_project_at(client, c, &cwd, Some(&path))? {
-                    job_driver::enqueue(client, c, &state, &project, &id, &cwd, &path)?;
-                    if project.enabled {
-                        let _ = job_driver::launch(c, &state, &cwd, &path);
-                    }
+            if let Some(path) = config_path
+                && let Some(project) = active_project_at(client, c, &cwd, Some(&path))?
+            {
+                job_driver::enqueue(client, c, &state, &project, &id, &cwd, &path)?;
+                if project.enabled {
+                    let _ = job_driver::launch(c, &state, &cwd, &path);
                 }
             }
             print(
@@ -536,14 +538,13 @@ async fn learn_value_at(
             project_root,
             state,
         } = &command
+            && let Some(path) = discover_config(project_root)?
         {
-            if let Some(path) = discover_config(project_root)? {
-                let project = load_project(&path)?;
-                value["jobs"] =
-                    serde_json::to_value(job_driver::queue(client, c, state, &project)?.list()?)?;
-                value["pending_events"] = json!(open_outbox(client, c, state)?.pending()?.len());
-                value["pending_hook_inputs"] = json!(hooks::pending_count(state, &path)?);
-            }
+            let project = load_project(&path)?;
+            value["jobs"] =
+                serde_json::to_value(job_driver::queue(client, c, state, &project)?.list()?)?;
+            value["pending_events"] = json!(open_outbox(client, c, state)?.pending()?.len());
+            value["pending_hook_inputs"] = json!(hooks::pending_count(state, &path)?);
         }
         return Ok(value);
     }
@@ -1232,7 +1233,7 @@ async fn promote_candidate_at(
     let intent_path = publication_intent_path(&fingerprint, &evaluation_path);
     let intent = if let Some(existing) = client.read_node(db, &intent_path).await? {
         let intent: PublicationIntent = serde_json::from_str(&existing.content)?;
-        verify_attestation(&intent, &state_root(&state)?, c, client)?;
+        verify_attestation(&intent, &state_root(state)?, c, client)?;
         ensure!(
             intent.candidate.fingerprint()? == fingerprint
                 && intent.evaluation_path == evaluation_path,
@@ -1245,7 +1246,7 @@ async fn promote_candidate_at(
             assessment.candidate_hash == fingerprint,
             "evaluation refers to different candidate"
         );
-        verify_attestation(&assessment, &state_root(&state)?, c, client)?;
+        verify_attestation(&assessment, &state_root(state)?, c, client)?;
         let verified = evaluation::compare_modes(
             &assessment.report,
             EvaluationMode::Current,
@@ -1301,7 +1302,7 @@ async fn promote_candidate_at(
             preimages,
             attestation: String::new(),
         };
-        intent.attestation = attest(&intent, &state_root(&state)?, c, client)?;
+        intent.attestation = attest(&intent, &state_root(state)?, c, client)?;
         write_immutable(client, db, &intent_path, &serde_json::to_string(&intent)?).await?;
         intent
     };
@@ -1314,7 +1315,7 @@ async fn promote_candidate_at(
         preimages: intent.preimages,
         attestation: String::new(),
     };
-    publication.attestation = attest(&publication, &state_root(&state)?, c, client)?;
+    publication.attestation = attest(&publication, &state_root(state)?, c, client)?;
     let path = format!("/Sources/learning-publications/{fingerprint}.json");
     write_immutable(client, db, &path, &serde_json::to_string(&publication)?).await?;
     Ok(json!({"publication_path":path,"result":publication.result}))

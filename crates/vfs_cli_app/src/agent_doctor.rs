@@ -384,13 +384,12 @@ pub async fn run(args: &DoctorArgs, connection: &ConnectionArgs) -> Result<i32> 
                     Err(_)=>checks.push(Check::new("identity","error","credential_missing_or_invalid","Active stored identity or delegation is missing, invalid or expired.","Configure/login to an icp-cli identity separately; doctor does not refresh it.")),
                 }
             }
-            if identity.is_none() {
-                if let Some(expected) = portable
+            if identity.is_none()
+                && let Some(expected) = portable
                     .as_ref()
                     .and_then(|project| project.principal.as_deref())
-                {
-                    checks.push(project_identity_check(expected, None));
-                }
+            {
+                checks.push(project_identity_check(expected, None));
             }
             if let (Some(canister), Some(db)) = (
                 preview.canister_id.as_deref(),

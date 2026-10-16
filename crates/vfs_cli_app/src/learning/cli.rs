@@ -331,10 +331,11 @@ impl AgentCommand {
     /// Explicit CLI paths keep their invocation-directory meaning even with --cwd.
     pub fn anchor_paths(&mut self, base: &std::path::Path) {
         fn anchor(path: &mut Option<PathBuf>, base: &std::path::Path) {
-            if let Some(path) = path {
-                if path.is_relative() && path != std::path::Path::new("-") {
-                    *path = base.join(&*path);
-                }
+            if let Some(path) = path
+                && path.is_relative()
+                && path != std::path::Path::new("-")
+            {
+                *path = base.join(&*path);
             }
         }
         match self {

@@ -71,10 +71,10 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         }
         *request = Some(input);
     }
-    if let Command::Agent { command } = &mut cli.command {
-        if let Some(cwd) = command.resolve_cwd(&std::env::current_dir()?)? {
-            std::env::set_current_dir(cwd)?;
-        }
+    if let Command::Agent { command } = &mut cli.command
+        && let Some(cwd) = command.resolve_cwd(&std::env::current_dir()?)?
+    {
+        std::env::set_current_dir(cwd)?;
     }
     if let Command::Agent { command } = &cli.command {
         match command {
@@ -97,18 +97,16 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     if let Command::Agent {
         command: vfs_cli_app::learning::cli::AgentCommand::Hook { recall_config, .. },
     } = &cli.command
+        && recall_config.is_none()
+        && vfs_cli_app::agent_config::AgentConfig::current()?
+            .hook_path()?
+            .is_none()
     {
-        if recall_config.is_none()
-            && vfs_cli_app::agent_config::AgentConfig::current()?
-                .hook_path()?
-                .is_none()
-        {
-            println!(
-                "{}",
-                serde_json::json!({"skipped":true,"reason":"project learning is not configured","additionalContext":""})
-            );
-            return Ok(());
-        }
+        println!(
+            "{}",
+            serde_json::json!({"skipped":true,"reason":"project learning is not configured","additionalContext":""})
+        );
+        return Ok(());
     }
     let mut hook_input = if let Command::Agent {
         command: vfs_cli_app::learning::cli::AgentCommand::Hook { request, .. },
@@ -312,8 +310,8 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
             None => new_identity_client(&connection, cli.connection.allow_non_ii_identity).await?,
         },
     };
-    if let Some(mut request) = hook_input {
-        if let Command::Agent {
+    if let Some(mut request) = hook_input
+        && let Command::Agent {
             command:
                 vfs_cli_app::learning::cli::AgentCommand::Hook {
                     engine,
@@ -322,56 +320,55 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
                     ..
                 },
         } = cli.command
-        {
-            if let Some(expected) = request["expected_routing_binding"].as_str() {
-                let actual = vfs_cli_app::learning::workflow::routing_binding(
-                    &connection,
-                    &client
-                        .caller_principal()
-                        .ok_or_else(|| anyhow::anyhow!("authenticated identity required"))?,
+    {
+        if let Some(expected) = request["expected_routing_binding"].as_str() {
+            let actual = vfs_cli_app::learning::workflow::routing_binding(
+                &connection,
+                &client
+                    .caller_principal()
+                    .ok_or_else(|| anyhow::anyhow!("authenticated identity required"))?,
+            );
+            if expected != actual {
+                println!(
+                    "{}",
+                    serde_json::json!({"routing_binding":actual,"recorded":false,"error_code":"routing_changed"})
                 );
-                if expected != actual {
-                    println!(
-                        "{}",
-                        serde_json::json!({"routing_binding":actual,"recorded":false,"error_code":"routing_changed"})
-                    );
-                    return Ok(());
-                }
-                let path = vfs_cli_app::learning::workflow::spool_hook(
-                    &connection,
-                    &state,
-                    &engine,
-                    recall_config.clone(),
-                    &request,
-                )?;
-                request = vfs_cli_app::learning::workflow::read_json(&path)?;
-                hook_spool = Some(path);
+                return Ok(());
             }
-            if let Some(path) = &hook_spool {
-                vfs_cli_app::learning::workflow::replay_hook_inbox(
-                    &client,
-                    &connection,
-                    &engine,
-                    recall_config.clone(),
-                    &state,
-                    path,
-                )
-                .await?;
-            }
-            vfs_cli_app::learning::workflow::run_hook_request(
+            let path = vfs_cli_app::learning::workflow::spool_hook(
+                &connection,
+                &state,
+                &engine,
+                recall_config.clone(),
+                &request,
+            )?;
+            request = vfs_cli_app::learning::workflow::read_json(&path)?;
+            hook_spool = Some(path);
+        }
+        if let Some(path) = &hook_spool {
+            vfs_cli_app::learning::workflow::replay_hook_inbox(
                 &client,
                 &connection,
                 &engine,
-                recall_config,
+                recall_config.clone(),
                 &state,
-                request,
+                path,
             )
             .await?;
-            if let Some(path) = hook_spool {
-                std::fs::remove_file(path)?;
-            }
-            return Ok(());
         }
+        vfs_cli_app::learning::workflow::run_hook_request(
+            &client,
+            &connection,
+            &engine,
+            recall_config,
+            &state,
+            request,
+        )
+        .await?;
+        if let Some(path) = hook_spool {
+            std::fs::remove_file(path)?;
+        }
+        return Ok(());
     }
     run_command(&client, cli, &connection).await
 }

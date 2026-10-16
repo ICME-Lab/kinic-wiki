@@ -181,9 +181,15 @@ async fn recall_overlay_is_budgeted_and_does_not_pollute_live_index_or_ignore_re
         metadata_json: "{\"authority\":\"agent\"}".into(),
         expected_etag: Some(node.node.etag),
     };
-    let revised = recall_overlay(&client, "db", "run", &opts, &[replacement.clone()])
-        .await
-        .unwrap();
+    let revised = recall_overlay(
+        &client,
+        "db",
+        "run",
+        &opts,
+        std::slice::from_ref(&replacement),
+    )
+    .await
+    .unwrap();
     assert!(revised.rendered.chars().count() <= 800);
     assert!(revised.truncated);
     assert!(revised.rendered.contains("new advice"));
