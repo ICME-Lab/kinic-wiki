@@ -119,7 +119,7 @@ impl Drop for JobLease<'_> {
         );
     }
 }
-fn process_alive(pid: u32) -> bool {
+pub(super) fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         std::process::Command::new("kill")

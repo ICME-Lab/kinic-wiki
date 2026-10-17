@@ -108,6 +108,14 @@ Identical IDs deduplicate; changed content under an existing ID fails. Remote
 this path. Lost write acknowledgments are reconciled by exact content reads.
 Acknowledged IDs remain reserved. Failed sync stays pending and is reported.
 
+Hooks never wait on remote writes: they only enqueue, then start one detached
+`agent flush` when events are pending and no live flusher holds the outbox lease.
+The flusher sends the backlog as atomic create-only `write_nodes` batches (at most
+100 nodes and about 1 MB each); if a batch fails it verifies each event
+individually, so conflicting remote content still fails without overwrite. Each
+hook answers its own request before best-effort replay of older spooled entries,
+so a backlog or an unreplayable entry cannot delay recall.
+
 ## Revise, evaluate and publish
 
 ```sh
@@ -207,3 +215,49 @@ activation should follow held-out task-quality evaluation and regression review.
 Implementation evidence and release limits: the existing Wiki workflow `/Knowledge/kinic-wiki/workflows/a1cf9738-5e80-40bd-88b0-6ce259d50be5/completion.md`.
 
 For arbitrary-project setup and CLI-only plugins, see [portable learning](PORTABLE_LEARNING.md).
+
+### Hook delivery recovery
+
+Hooks persist intake and evidence locally, remove the completed intake file, start
+one finite `agent flush --replay-inbox --engine codex` (or `dsh`) process, and
+return without awaiting replay or remote writes. Unix delivery processes use a
+separate process group. Normal `agent flush` retains outbox-only delivery;
+`--replay-inbox` also replays the selected cwd/config/engine inbox. Use
+`--recall-config` for an explicit configuration and `--state-dir` for its state.
+All outbox writers share the same destination/identity lease. Replay does not
+recursively launch workers. After delivery, enabled project jobs resume through
+`learn drain`.
+
+`learn propose --run-id` sends pending local evidence before reading the run.
+If another sender owns the queue and the run is still pending, it reports
+`delivery_pending`; retry after delivery. Drain leaves these jobs pending.
+Remote evidence completeness and immutable-content validation still apply.
+
+`agent status --json` exposes additive record fields `oldest_pending_at`,
+`pending_time_unknown`, `last_send_attempt_at`, `last_send_success_at`, and
+`last_send_failure`. Delivery timestamps/errors belong to the selected
+**destination and principal across projects**, whereas record counts retain their
+existing project scope. Historical failures remain visible after recovery;
+compare their timestamps with the latest success. Old event enqueue times stay
+unknown. Status never migrates a database and continues to report active WALs as
+unverified rather than mutating their shared memory.
+
+Malformed or unverifiable inbox records move into that partition's `quarantine`
+folder with a bounded reason code. Status shows its count, reasons and location.
+Foreign valid bindings and live hook owners are skipped. No quarantine item is
+automatically replayed; inspect it before any manual recovery. Network failures
+remain retryable. Startup/send errors store fixed diagnostic codes, not stderr or
+transcripts. Local storage failure can itself prevent diagnostic persistence.
+
+No resident worker is installed. After an unsuccessful finite attempt, the next
+hook or explicit flush retries delivery. Delivery is not guaranteed while the
+CLI is not running. Separating delivery does not guarantee that identity loading
+and remote recall fit the Python adapter's two-second deadline.
+
+Explicit local-canister acceptance is available in
+`evaluation/continual-learning/check_delivery_live.py` (see `--help`). It uses a
+caller-supplied local test database and a delaying/failing proxy, invokes no model,
+and checks real plugin/CLI context delivery, concurrent flushing, quarantine,
+network recovery, and survival of a host process-group kill. The
+`recall_readonly_timing` Rust example measures fresh identity and recall without
+sending evidence or making remote writes; local retrieval indexes are retained.

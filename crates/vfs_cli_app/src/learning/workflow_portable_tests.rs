@@ -312,6 +312,12 @@ async fn offline_inbox_binds_explicit_config_engine_and_original_run_before_repl
     )
     .await
     .unwrap();
+    // Hooks only enqueue; the detached flusher sends the backlog.
+    open_outbox(&client, &c, &state)
+        .unwrap()
+        .flush_exclusive(&client, "db")
+        .await
+        .unwrap();
     for run in [
         one["__kinic_run_id"].as_str().unwrap(),
         two["__kinic_run_id"].as_str().unwrap(),
@@ -573,6 +579,12 @@ async fn review_fix_replay_keeps_original_transcript_snapshot() {
     hooks::replay(&client, &c, "codex", Some(config), &state, &current)
         .await
         .unwrap();
+    // Hooks only enqueue; the detached flusher sends the backlog.
+    open_outbox(&client, &c, &state)
+        .unwrap()
+        .flush_exclusive(&client, "db")
+        .await
+        .unwrap();
     let run = original["__kinic_run_id"].as_str().unwrap();
     let entries = client
         .list_nodes(ListNodesRequest {
@@ -828,4 +840,202 @@ async fn legacy_hook_override_keeps_connection_policy_without_starting_jobs() {
     project.principal = Some("different-principal".into());
     crate::learning::project::save_project(&a.join(CONFIG_FILE), &project).unwrap();
     assert!(hooks::handle(&client,&c,"codex",Some(runtime),&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"wrong-principal","turn_id":"1","prompt":"advice"})).await.is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn hooks_enqueue_evidence_without_remote_writes_and_flush_later() {
+    use std::sync::atomic::Ordering;
+    let (_dir, client, state, a, _b) = fixture().await;
+    let c = connection();
+    let writes =
+        || client.writes.load(Ordering::SeqCst) + client.batch_writes.load(Ordering::SeqCst);
+    let before = writes();
+    let recalled = hooks::handle(&client, &c, "codex", None, &state, json!({"event":"UserPromptSubmit","cwd":a,"session_id":"hot-path","turn_id":"1","prompt":"portable build"})).await.unwrap();
+    assert!(!recalled["additionalContext"].as_str().unwrap().is_empty());
+    assert_eq!(recalled["pending_sync"], true);
+    for call in 0..3 {
+        let tool = hooks::handle(&client, &c, "codex", None, &state, json!({"event":"PostToolUse","cwd":a,"session_id":"hot-path","turn_id":"1","tool_name":"shell","tool_use_id":call})).await.unwrap();
+        assert_eq!(tool["recorded"], true);
+        assert_eq!(tool["pending_sync"], true);
+    }
+    assert_eq!(writes(), before, "hooks must not wait on remote writes");
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    let pending = outbox.pending_count().unwrap();
+    assert!(
+        pending >= 5,
+        "receipt, run and tool events stay queued: {pending}"
+    );
+    assert_eq!(
+        outbox.flush_exclusive(&client, "db").await.unwrap(),
+        Some(pending)
+    );
+    assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_gate_does_not_start_proposal_while_outbox_is_owned() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let r = hooks::handle(&client,&c,"codex",None,&state,json!({"event":"UserPromptSubmit","cwd":a,"session_id":"gate","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+    let run = r["run_id"].as_str().unwrap();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"gate","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    let db = rusqlite::Connection::open(
+        state
+            .state_dir
+            .as_ref()
+            .unwrap()
+            .join("learning-outbox.sqlite3"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO learning_outbox_owner SELECT DISTINCT scope, ?1 FROM learning_outbox",
+        [std::process::id()],
+    )
+    .unwrap();
+    let result = learn_value(
+        &client,
+        &c,
+        LearnCommand::Propose {
+            run_id: run.into(),
+            runner_file: a.join(CONFIG_FILE),
+            state: state.clone(),
+        },
+        &a,
+    )
+    .await;
+    assert!(result.unwrap_err().to_string().contains("delivery_pending"));
+    let jobs = job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(jobs["busy"], true);
+    assert_eq!(jobs["jobs"][0]["state"], "pending");
+    db.execute("DELETE FROM learning_outbox_owner", []).unwrap();
+    assert!(outbox.pending_count().unwrap() > 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn poisoned_inbox_is_quarantined_without_blocking_valid_input() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let req = json!({"event":"PostToolUse","cwd":a,"session_id":"poison","turn_id":"1"});
+    let valid = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let bad = valid.parent().unwrap().join("000-broken.json");
+    std::fs::write(&bad, "{broken").unwrap();
+    let current = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    hooks::replay(&client, &c, "codex", None, &state, &current)
+        .await
+        .unwrap();
+    assert!(!valid.exists());
+    assert!(!bad.exists());
+    assert!(
+        bad.parent()
+            .unwrap()
+            .join("quarantine/000-broken.json")
+            .exists()
+    );
+    assert!(
+        open_outbox(&client, &c, &state)
+            .unwrap()
+            .pending_count()
+            .unwrap()
+            > 0
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn invalid_reserved_binding_is_quarantined_before_valid_replay() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let req = json!({"event":"PostToolUse","cwd":a,"session_id":"reserved","turn_id":"1"});
+    let bad = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let mut value: Value = read_json(&bad).unwrap();
+    value["__kinic_run_id"] = json!("wrong-project:run");
+    std::fs::write(&bad, serde_json::to_vec(&value).unwrap()).unwrap();
+    let valid = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let current = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    hooks::replay(&client, &c, "codex", None, &state, &current)
+        .await
+        .unwrap();
+    assert!(!valid.exists());
+    assert!(
+        bad.parent()
+            .unwrap()
+            .join("quarantine")
+            .join(bad.file_name().unwrap())
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_unbound_intake_is_not_quarantined_by_delivery() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let req = json!({"event":"PostToolUse","cwd":a,"session_id":"live","turn_id":"1"});
+    let current = hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    let mut value: Value = read_json(&current).unwrap();
+    value["__kinic_principal"] = Value::Null;
+    std::fs::write(&current, serde_json::to_vec(&value).unwrap()).unwrap();
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert!(current.exists());
+    assert!(!current.parent().unwrap().join("quarantine").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn intake_publication_never_exposes_partial_json() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let (_dir, _client, state, a, _) = fixture().await;
+    let c = connection();
+    let root = state.state_dir.as_ref().unwrap().join("hook-inbox");
+    let done = Arc::new(AtomicBool::new(false));
+    let stop = done.clone();
+    let reader = std::thread::spawn(move || {
+        let mut invalid = 0;
+        while !stop.load(Ordering::SeqCst) {
+            if let Ok(dirs) = std::fs::read_dir(&root) {
+                for dir in dirs.flatten() {
+                    if let Ok(files) = std::fs::read_dir(dir.path()) {
+                        for file in files.flatten() {
+                            if file.path().extension().is_some_and(|e| e == "json")
+                                && let Ok(bytes) = std::fs::read(file.path())
+                                && serde_json::from_slice::<Value>(&bytes).is_err()
+                            {
+                                invalid += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        invalid
+    });
+    for turn in 0..4 {
+        let req = json!({"event":"PostToolUse","cwd":a,"session_id":"atomic","turn_id":turn.to_string(),"tool_response":"x".repeat(1024*1024)});
+        hooks::spool(&c, &state, "codex", None, &req).unwrap();
+    }
+    done.store(true, Ordering::SeqCst);
+    assert_eq!(
+        reader.join().unwrap(),
+        0,
+        "replay observed partially published intake"
+    );
 }

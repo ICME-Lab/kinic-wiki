@@ -59,6 +59,12 @@ pub enum AgentCommand {
     Flush {
         #[arg(long)]
         cwd: Option<PathBuf>,
+        #[arg(long, requires = "engine")]
+        replay_inbox: bool,
+        #[arg(long, value_parser = ["codex", "dsh"], requires = "replay_inbox")]
+        engine: Option<String>,
+        #[arg(long)]
+        recall_config: Option<PathBuf>,
         #[command(flatten)]
         state: StateArgs,
     },
@@ -372,7 +378,14 @@ impl AgentCommand {
                 }
                 anchor(&mut state.state_dir, base);
             }
-            Self::Flush { state, .. } => anchor(&mut state.state_dir, base),
+            Self::Flush {
+                state,
+                recall_config,
+                ..
+            } => {
+                anchor(&mut state.state_dir, base);
+                anchor(recall_config, base);
+            }
             Self::Status(args) => {
                 anchor(&mut args.recall_config, base);
                 anchor(&mut args.state.state_dir, base);
