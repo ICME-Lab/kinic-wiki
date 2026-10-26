@@ -259,7 +259,7 @@ transcripts. Local storage failure can itself prevent diagnostic persistence.
 No resident worker is installed. After an unsuccessful finite attempt, the next
 hook or explicit flush retries delivery. Delivery is not guaranteed while the
 CLI is not running. Separating delivery does not guarantee that identity loading
-and remote recall fit the Python adapter's two-second deadline.
+and remote recall always fit the Python adapter's deadline.
 
 Explicit local-canister acceptance is available in
 `evaluation/continual-learning/check_delivery_live.py` (see `--help`). It uses a
@@ -268,3 +268,19 @@ and checks real plugin/CLI context delivery, concurrent flushing, quarantine,
 network recovery, and survival of a host process-group kill. The
 `recall_readonly_timing` Rust example measures fresh identity and recall without
 sending evidence or making remote writes; local retrieval indexes are retained.
+
+### Codex recall deadlines (2026-10-26)
+
+The Python adapter allows 10 seconds for UserPromptSubmit recall; the distributed
+Codex hook configuration allows 15 seconds, leaving startup/cleanup margin.
+PostToolUse and Stop still allow 2 seconds inside the adapter and 8 seconds in
+the learning hook configuration. Completion returns immediately; these are limits,
+not fixed waits. Update/reinstall the plugin and reload its hook configuration
+for existing installations; repository changes alone do not activate installed hooks.
+
+Timeouts return an empty hook response and emit a fixed JSON diagnostic to stderr:
+`recall_timeout` or `evidence_timeout`, the configured deadline and elapsed time.
+No prompts, paths, CLI arguments, or captured stderr are included. Empty successful
+searches do not emit a timeout diagnostic. This diagnostic is in the hook host's
+stderr, not persisted in `agent status`; keep the host log when investigating.
+There is no cache or resident worker. Ten seconds is not a recall latency guarantee.

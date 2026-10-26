@@ -28,6 +28,7 @@ def main():
     p.add_argument('--database', required=True)
     p.add_argument('--principal', required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--query-delay', type=float, default=0, help='Local proxy delay per recall query, in seconds')
     args = p.parse_args()
     assert urllib.parse.urlparse(args.endpoint).hostname in ('localhost', '127.0.0.1', '::1')
     args.output.mkdir(parents=True, exist_ok=False)
@@ -60,6 +61,8 @@ def main():
             if faults["offline"]:
                 self.send_error(503); return
             data = self.rfile.read(int(self.headers.get('Content-Length', 0))) if self.command == 'POST' else None
+            if self.path.endswith('/query'):
+                time.sleep(args.query_delay)
             if self.path.endswith('/call'):
                 time.sleep(3)
             req = urllib.request.Request(args.endpoint.rstrip('/') + self.path, data=data, method=self.command,
@@ -91,9 +94,12 @@ def main():
     started = time.monotonic()
     reply = run([sys.executable, '-m', 'kinic_agent_runtime.learning_hook'], input=json.dumps(request))
     elapsed = time.monotonic() - started
+    assert 'hookSpecificOutput' in json.loads(reply.stdout), (reply.stderr, elapsed)
     context = json.loads(reply.stdout)['hookSpecificOutput']['additionalContext']
     assert 'portable widget' in context, reply.stdout
-    assert elapsed < 2, elapsed
+    assert elapsed < 10, elapsed
+    if args.query_delay:
+        assert elapsed >= args.query_delay, elapsed
     db = state / 'learning-outbox.sqlite3'
     def pending():
         with sqlite3.connect(db) as conn:
@@ -175,7 +181,7 @@ def main():
     deadline=time.monotonic()+30
     while pending() and time.monotonic()<deadline:time.sleep(.1)
     assert pending()==0
-    summary = {'hook_seconds': elapsed, 'context_received': True, 'delayed_delivery_completed': True,
+    summary = {'hook_seconds': elapsed, 'query_delay_seconds': args.query_delay, 'context_received': True, 'delayed_delivery_completed': True,
                'concurrent_flush': results, 'poison_isolated': True, 'network_failure_recorded_and_recovered': True, 'host_group_kill_delivery_survived': True, 'lost_response_recovered': True, 'database': args.database, 'endpoint': args.endpoint}
     (root / 'report.json').write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))

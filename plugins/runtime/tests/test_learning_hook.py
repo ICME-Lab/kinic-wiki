@@ -23,6 +23,8 @@ class LearningHookTests(unittest.TestCase):
 import json,os,sys
 from pathlib import Path
 request=json.load(sys.stdin)
+if os.environ.get('FIXTURE_DELAY'):
+    import time; time.sleep(float(os.environ['FIXTURE_DELAY']))
 if os.environ.get('FIXTURE_TIMEOUT')=='1':
     import time; time.sleep(10)
 if os.environ.get('FIXTURE_FLOOD')=='1':
@@ -43,7 +45,7 @@ else:
         self.base = {'session_id':'session-1','cwd':str(self.workspace),'turn_id':'turn-1'}
 
     def run_hook(self, event='UserPromptSubmit', **fields):
-        return subprocess.run([sys.executable,'-m','kinic_agent_runtime.learning_hook'],input=json.dumps({**self.base,'hook_event_name':event,**fields}),text=True,capture_output=True,env=self.env,timeout=10)
+        return subprocess.run([sys.executable,'-m','kinic_agent_runtime.learning_hook'],input=json.dumps({**self.base,'hook_event_name':event,**fields}),text=True,capture_output=True,env=self.env,timeout=15)
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
@@ -137,6 +139,26 @@ else:
         result=self.run_hook('Stop')
         self.assertEqual(json.loads(result.stdout),{})
         self.assertLess(time.monotonic()-start,4)
+
+    def test_recall_over_two_seconds_reaches_installed_wrapper(self):
+        self.env['FIXTURE_DELAY']='2.2'
+        self.test_installed_shell_wrapper_is_self_contained()
+
+    def test_recall_timeout_has_safe_distinct_diagnostic(self):
+        self.env['FIXTURE_DELAY']='11'
+        result=self.run_hook(prompt='private task do-not-copy')
+        self.assertEqual(json.loads(result.stdout),{})
+        diagnostic=json.loads(result.stderr)
+        self.assertEqual(diagnostic['code'],'recall_timeout')
+        self.assertEqual(diagnostic['timeout_seconds'],10)
+        self.assertGreaterEqual(diagnostic['elapsed_ms'],10000)
+        self.assertNotIn('private task',result.stderr)
+        self.assertFalse(self.log.exists(), 'timed out CLI must be killed')
+
+    def test_outer_recall_deadline_leaves_cleanup_margin(self):
+        hooks=json.loads((RUNTIME.parent/'codex/hooks/hooks.json').read_text())['hooks']
+        self.assertGreaterEqual(hooks['UserPromptSubmit'][0]['hooks'][0]['timeout'],15)
+        self.assertEqual(hooks['PostToolUse'][0]['hooks'][0]['timeout'],8)
 
     def test_installed_shell_wrapper_is_self_contained(self):
         installed=self.root/'installed-plugin'

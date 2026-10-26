@@ -113,3 +113,33 @@ Decisions and limits retained from the implementation ledger:
   failure diagnostics from being saved.
 
 The branch is retained for review; no production activation or merge was done.
+
+## Follow-up: recall deadlines and drain handoff — 2026-10-26
+
+The drain pending-delivery exit now releases its job lease and rechecks delivery.
+A deterministic regression forces the sender's replacement drain to exit busy
+before the original resumes: the original now produces a candidate instead of
+leaving the job pending. Regression failed before the fix and passed afterward.
+
+Codex recall now has a 10-second CLI timeout and 15-second outer hook timeout;
+evidence events retain their 2-second CLI limit. Adapter tests reproduce context
+loss with a 2.2-second CLI response before the fix, then verify delivery through
+the installed shell wrapper after the fix. An 11-second fixture verifies timeout,
+child termination and bounded safe diagnostics. Runtime Python suite: 53 passed.
+
+Actual CLI plus Python adapter against the existing dedicated local canister/DB,
+with 0.5 seconds added per query: context received in 5.978 seconds. The same run
+also passed delayed evidence delivery, concurrent flush, poison quarantine,
+network recovery, ambiguous accepted writes, and host-process-group termination.
+An earlier 2.2-seconds-per-query attempt did not return context; ten seconds still
+cannot accommodate arbitrary query delays. The local acceptance tool now reports
+stderr/elapsed time on missing-context failures and accepts `--query-delay`.
+
+Five fresh read-only mainnet measurements (same endpoint, database, namespace and
+task as above; debug timing example, fresh then reused local index) succeeded:
+first/max 7.449 seconds, median 6.218 seconds, 5/5 over two seconds, 0/5 over ten.
+Median identity/client initialization was 29 ms; median remaining recall was
+6183 ms. These are direct CLI measurements, not proof of delivery in the running
+Codex application. No mainnet writes or model calls were used for measurement.
+The configured outer deadline and installed-wrapper tests are verified; actual
+Codex host hook behavior still depends on loading/trusting the updated plugin.
