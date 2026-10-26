@@ -4,7 +4,7 @@ Cloudflare Worker for turning evidence sources into review-ready wiki pages.
 
 ## LLM
 
-Generation uses DeepSeek Chat Completions with `deepseek-v4-flash`.
+Generation uses DeepSeek Chat Completions with `deepseek-flash`.
 Set `DEEPSEEK_API_KEY` and `TYPESAFE_API_KEY` as Cloudflare secrets. `KINIC_WIKI_WORKER_TOKEN` protects `POST /run` and `POST /source-capture`; it is not an LLM API key.
 `GET /healthz` is unauthenticated and returns `{ "ok": true }` without accessing D1, R2, Queues, VFS, or DeepSeek. The CI Worker-runtime test uses this route to verify that the production entrypoint starts inside workerd.
 

@@ -28,7 +28,7 @@ async fn actual_codex_and_dsh_transport() {
             ..RunnerConfig::default()
         };
         if name == "DSH" {
-            config.model = Some("deepseek-official/deepseek-v4-flash".into());
+            config.model = Some("deepseek-official/deepseek-flash".into());
             config
                 .environment
                 .insert("DSH_TELEMETRY_MODE".into(), "DISABLED".into());

@@ -85,6 +85,8 @@ importers:
         specifier: 0.28.1
         version: 0.28.1
 
+  packages/deepseek-client: {}
+
   packages/ii-server:
     dependencies:
       '@icp-sdk/core':
@@ -187,6 +189,9 @@ importers:
 
   wikibrowser:
     dependencies:
+      '@kinic/deepseek-client':
+        specifier: workspace:*
+        version: link:../packages/deepseek-client
       '@codemirror/lang-markdown':
         specifier: 6.5.0
         version: 6.5.0
@@ -384,6 +389,9 @@ importers:
 
   workers/wiki-assistant:
     dependencies:
+      '@kinic/deepseek-client':
+        specifier: workspace:*
+        version: link:../../packages/deepseek-client
       '@icp-sdk/core':
         specifier: 6.0.0
         version: 6.0.0(patch_hash=1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e)
@@ -421,6 +429,9 @@ importers:
 
   workers/wiki-generator:
     dependencies:
+      '@kinic/deepseek-client':
+        specifier: workspace:*
+        version: link:../../packages/deepseek-client
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)

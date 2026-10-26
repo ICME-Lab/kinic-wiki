@@ -470,6 +470,40 @@ await withEnv({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY: "deepseek-
   queryAnswerRouteModule.setQueryAnswerDepsForTest({
     checkSession: async () => ({ principal: "principal-1" }),
     rateLimitStore: rateLimitStore(),
+    timeoutMs: 1,
+    fetchImpl: async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        const timer = setTimeout(() => {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answer: "Late", citations: [], abstained: true }) } }] })));
+          controller.close();
+        }, 30);
+        init.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          controller.error(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      }
+    }))
+  });
+  const bodyTimeout = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
+  assert.equal(bodyTimeout.status, 504, "deadline must cover the response body, not just headers");
+
+  let cancelledOversizedBody = false;
+  queryAnswerRouteModule.setQueryAnswerDepsForTest({
+    checkSession: async () => ({ principal: "principal-1" }),
+    rateLimitStore: rateLimitStore(),
+    timeoutMs: 15_000,
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode(" ".repeat(256 * 1024 + 1))); },
+      cancel() { cancelledOversizedBody = true; }
+    }))
+  });
+  const oversizedResponse = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
+  assert.equal(oversizedResponse.status, 502);
+  assert.equal(cancelledOversizedBody, true);
+
+  queryAnswerRouteModule.setQueryAnswerDepsForTest({
+    checkSession: async () => ({ principal: "principal-1" }),
+    rateLimitStore: rateLimitStore(),
     fetchImpl: async (input, init) => {
       assert.equal(inputUrl(input), "https://api.deepseek.com/chat/completions");
       const body = JSON.parse(init?.body);
@@ -519,7 +553,7 @@ async function importTs(relativePath) {
     "const { isSourceCaptureRequestPath } = globalThis.__kinicSourceContracts;"
   );
   globalThis.__kinicSourceContracts = { isSourceCaptureRequestPath };
-  return importStrippedTsForTest(source);
+  return importStrippedTsForTest(source.replaceAll('"@kinic/deepseek-client"', JSON.stringify(import.meta.resolve("@kinic/deepseek-client"))));
 }
 
 async function withMockFetch(handler, run) {

@@ -26,7 +26,7 @@ A runner file selects the external executable and model. Examples:
 ```
 
 ```json
-{"engine":"dsh","executable":"/absolute/path/to/dsh","model":"deepseek-official/deepseek-v4-flash","timeout_seconds":600,"max_output_bytes":8388608,"environment":{}}
+{"engine":"dsh","executable":"/absolute/path/to/dsh","model":"deepseek-official/deepseek-flash","timeout_seconds":600,"max_output_bytes":8388608,"environment":{}}
 ```
 
 An executable may be a normal launcher script that forwards argv. For the local

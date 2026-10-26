@@ -16,6 +16,7 @@
     "audit:moderate": "pnpm audit --audit-level moderate"
   },
   "dependencies": {
+    "@kinic/deepseek-client": "workspace:*",
     "@icp-sdk/core": "^5.4.0",
     "@kinic/jev-reranker": "workspace:*",
     "@kinic/source-contracts": "workspace:*",
