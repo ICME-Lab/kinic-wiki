@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}}/scripts/learning-hook.sh\"",
-            "timeout": 8,
+            "timeout": 15,
             "statusMessage": "Recalling Kinic task context",
             "additionalContextLimit": 0
           }

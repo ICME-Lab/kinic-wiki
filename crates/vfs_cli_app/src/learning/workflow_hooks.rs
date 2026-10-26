@@ -209,23 +209,13 @@ pub async fn handle(
         }
         let opts = load_recall_optional(explicit, task, client, c, state, &cwd, None)?;
         let receipt = recall(client, c.database_id.as_deref().unwrap(), &id, &opts).await?;
-        let persisted = persist_receipt(client, c, state, &receipt).await?;
+        persist_receipt(client, c, state, &receipt, false).await?;
         let mut task_value = json!(task);
         redact(&mut task_value);
         let outbox = open_outbox(client, c, state)?;
         outbox.enqueue(&event(&id,"run",json!({"project_id":project.as_ref().map(|p|&p.project_id),"task":task_value,"engine":engine,"repository":cwd,"start_commit":git(&cwd,&["rev-parse","HEAD"]).await.ok(),"model":project.as_ref().and_then(|p|p.runner.model.clone()),"settings":project.as_ref().map(|p|safe_runner(&p.runner))})))?;
-        let _ = outbox
-            .flush(client, c.database_id.as_deref().unwrap())
-            .await;
-        // Retry pending finite work on the next normal entry as well as Stop.
-        let background = job_project
-            .filter(|p| p.enabled)
-            .map(|_| job_driver::launch(c, state, &cwd, &config))
-            .transpose()
-            .err()
-            .map(|e| e.to_string());
         return Ok(
-            json!({"routing_binding":binding,"additionalContext":receipt.rendered,"receipt_id":receipt.id,"run_id":id,"hookSpecificOutput":{"hookEventName":kind,"additionalContext":receipt.rendered},"pending_sync":persisted["pending_sync"],"background_error":background}),
+            json!({"routing_binding":binding,"additionalContext":receipt.rendered,"receipt_id":receipt.id,"run_id":id,"hookSpecificOutput":{"hookEventName":kind,"additionalContext":receipt.rendered},"pending_sync":true}),
         );
     }
     let mut payload = evidence(&request);
@@ -240,18 +230,8 @@ pub async fn handle(
     if terminal && let Some(p) = job_project {
         job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
     }
-    let sync = outbox
-        .flush(client, c.database_id.as_deref().unwrap())
-        .await;
-    let background = if terminal && job_project.is_some_and(|p| p.enabled) {
-        job_driver::launch(c, state, &cwd, &config)
-            .err()
-            .map(|e| e.to_string())
-    } else {
-        None
-    };
     Ok(
-        json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":sync.is_err(),"queued":terminal&&job_project.is_some_and(|p|p.enabled),"background_error":background}),
+        json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":true,"queued":terminal&&job_project.is_some_and(|p|p.enabled)}),
     )
 }
 
@@ -271,14 +251,13 @@ pub fn spool(
         .remove("__kinic_run_id");
     request.as_object_mut().unwrap().remove("__kinic_evidence");
     request["engine"] = json!(engine);
-    let cwd = Path::new(request["cwd"].as_str().context("hook cwd required")?);
-    let settings = crate::agent_config::AgentConfig::at(cwd)?;
+    let cwd = PathBuf::from(request["cwd"].as_str().context("hook cwd required")?);
+    let settings = crate::agent_config::AgentConfig::at(&cwd)?;
     let explicit = config.clone();
     let path = config
         .or(settings.hook_path()?)
         .map(std::fs::canonicalize)
         .transpose()?;
-    let config_binding = Some(settings.binding_digest(explicit.as_deref())?);
     let project = settings.portable_project(explicit.as_deref())?;
     request["__kinic_explicit_config"] = json!(explicit.is_some());
     let kind = request["event"]
@@ -299,16 +278,8 @@ pub fn spool(
     // Freeze evidence before remote identity/transport can fail and the log can grow.
     request["__kinic_evidence"] = evidence(&request);
     redact(&mut request);
-    let root = state_root(state)?
-        .join("hook-inbox")
-        .join(hash(&serde_json::to_string(&(
-            endpoint(c),
-            &c.database_id,
-            request["cwd"].clone(),
-            config_binding,
-            &path,
-            engine,
-        ))?));
+    let root = inbox_root(c, state, engine, explicit.as_deref(), &cwd)?;
+    request["__kinic_owner_pid"] = json!(std::process::id());
     std::fs::create_dir_all(&root)?;
     #[cfg(unix)]
     {
@@ -328,11 +299,57 @@ pub fn spool(
         options.mode(0o600);
     }
     use std::io::Write;
-    let mut file = options.open(&path)?;
+    // Replay only sees complete JSON. A killed writer leaves an ignored .tmp.
+    let temporary = path.with_extension("tmp");
+    let mut file = options.open(&temporary)?;
     file.write_all(&serde_json::to_vec(&request)?)?;
     file.sync_all()?;
+    std::fs::rename(&temporary, &path)?;
+    #[cfg(unix)]
+    std::fs::File::open(&root)?.sync_all()?;
     Ok(path)
 }
+pub(super) fn inbox_root(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    engine: &str,
+    explicit: Option<&Path>,
+    cwd: &Path,
+) -> Result<PathBuf> {
+    let settings = crate::agent_config::AgentConfig::at(cwd)?;
+    let path = explicit
+        .map(Path::to_path_buf)
+        .or(settings.hook_path()?)
+        .map(std::fs::canonicalize)
+        .transpose()?;
+    let digest = Some(settings.binding_digest(explicit)?);
+    Ok(state_root(state)?
+        .join("hook-inbox")
+        .join(hash(&serde_json::to_string(&(
+            endpoint(c),
+            &c.database_id,
+            json!(cwd),
+            digest,
+            path,
+            engine,
+        ))?)))
+}
+fn quarantine(path: &Path, code: &str) -> Result<()> {
+    let root = path
+        .parent()
+        .context("inbox parent required")?
+        .join("quarantine");
+    std::fs::create_dir_all(&root)?;
+    let target = root.join(path.file_name().context("inbox name required")?);
+    let reason = target.with_extension("reason");
+    std::fs::write(
+        &reason,
+        serde_json::to_vec(&json!({"code":code,"at":chrono::Utc::now().to_rfc3339()}))?,
+    )?;
+    std::fs::rename(path, target)?;
+    Ok(())
+}
+#[cfg(test)]
 pub async fn replay(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -341,7 +358,29 @@ pub async fn replay(
     state: &StateArgs,
     current: &Path,
 ) -> Result<()> {
+    for file in std::fs::read_dir(current.parent().unwrap())? {
+        let path = file?.path();
+        if let Ok(mut v) = read_json::<Value>(&path)
+            && let Some(obj) = v.as_object_mut()
+        {
+            obj.remove("__kinic_owner_pid");
+            std::fs::write(&path, serde_json::to_vec(&v)?)?;
+        }
+    }
     let current_request: Value = read_json(current)?;
+    replay_after(client, c, engine, config, state, current, &current_request).await
+}
+/// Replay older spooled entries routed like `current_request`. The current entry
+/// may already be removed; its path only identifies the inbox and is skipped.
+pub async fn replay_after(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    engine: &str,
+    config: Option<PathBuf>,
+    state: &StateArgs,
+    current: &Path,
+    current_request: &Value,
+) -> Result<()> {
     let effective_config = current_request["__kinic_config"]
         .as_str()
         .map(PathBuf::from);
@@ -350,24 +389,77 @@ pub async fn replay(
         .map(|e| e.map(|e| e.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
     pending.sort();
-    for path in pending.into_iter().filter(|p| p != current).take(100) {
-        let mut request: Value = read_json(&path)?;
+    let mut processed = 0;
+    for path in pending
+        .into_iter()
+        .filter(|p| p != current && p.extension().is_some_and(|e| e == "json"))
+    {
+        let mut request: Value = match read_json(&path) {
+            Ok(v) => v,
+            Err(_) => {
+                quarantine(&path, "invalid_json")?;
+                continue;
+            }
+        };
+        if request["__kinic_owner_pid"]
+            .as_u64()
+            .and_then(|p| u32::try_from(p).ok())
+            .is_some_and(crate::learning::jobs::process_alive)
+        {
+            continue;
+        }
+        if !request.is_object()
+            || request["engine"].as_str().is_none()
+            || request["cwd"].as_str().is_none()
+            || request["__kinic_principal"].as_str().is_none()
+            || request["__kinic_config"].as_str().is_none()
+        {
+            quarantine(&path, "binding_unverifiable")?;
+            continue;
+        }
         let saved_engine = request["engine"]
             .as_str()
             .context("inbox engine missing")?
             .to_string();
         let saved_config = request["__kinic_config"].as_str().map(PathBuf::from);
-        ensure!(
-            saved_engine == engine && saved_config == effective_config,
-            "inbox routing binding differs"
-        );
+        if saved_engine != engine
+            || saved_config != effective_config
+            || request["cwd"] != current_request["cwd"]
+        {
+            continue;
+        }
         let Some(principal) = request["__kinic_principal"].as_str() else {
             continue;
         };
-        ensure!(
-            Some(principal.to_string()) == client.caller_principal(),
-            "inbox principal differs"
-        );
+        if Some(principal.to_string()) != client.caller_principal() {
+            continue;
+        }
+        let settings =
+            crate::agent_config::AgentConfig::at(Path::new(request["cwd"].as_str().unwrap()))?;
+        let explicit = if request["__kinic_explicit_config"] == false {
+            None
+        } else {
+            saved_config.as_deref()
+        };
+        let project = settings.portable_project(explicit)?;
+        let prefix = project
+            .as_ref()
+            .map(|p| p.project_id.as_str())
+            .unwrap_or("legacy");
+        let valid_run = request["__kinic_run_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with(&format!("{prefix}:")));
+        let valid_evidence = request
+            .get("__kinic_evidence")
+            .is_none_or(|v| v.is_object() && v["capture"].is_object());
+        if !valid_run || !valid_evidence {
+            quarantine(&path, "binding_unverifiable")?;
+            continue;
+        }
+        if processed == 100 {
+            break;
+        }
+        processed += 1;
         let kind = request["event"]
             .as_str()
             .or(request["hook_event_name"].as_str())

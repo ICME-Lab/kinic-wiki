@@ -36,29 +36,54 @@ pub fn enqueue(
     Ok(())
 }
 #[cfg(test)]
+thread_local! {
+    pub(super) static TEST_DELIVERY_PENDING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    pub(super) static TEST_LAUNCHES: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+#[cfg(test)]
 pub fn launch(
     _c: &ResolvedConnection,
     _state: &StateArgs,
-    _cwd: &Path,
+    cwd: &Path,
     _config: &Path,
 ) -> Result<()> {
+    TEST_LAUNCHES.with(|calls| calls.borrow_mut().push(cwd.to_path_buf()));
     Ok(())
 }
 #[cfg(not(test))]
 pub fn launch(c: &ResolvedConnection, state: &StateArgs, cwd: &Path, config: &Path) -> Result<()> {
-    let mut cmd = drain_command(c, state, cwd, config)?;
+    spawn_detached(drain_command(c, state, cwd, config)?)
+}
+pub fn launch_flush(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    engine: &str,
+    config: Option<&Path>,
+) -> Result<()> {
+    let mut cmd = cli_command(c, cwd)?;
+    cmd.args(["agent", "flush", "--replay-inbox", "--engine", engine]);
+    if let Some(config) = config {
+        cmd.arg("--recall-config").arg(config);
+    }
+    if let Some(dir) = &state.state_dir {
+        cmd.arg("--state-dir").arg(dir);
+    }
+    spawn_detached(cmd)
+}
+fn spawn_detached(mut cmd: std::process::Command) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     Ok(())
 }
-fn drain_command(
-    c: &ResolvedConnection,
-    state: &StateArgs,
-    cwd: &Path,
-    config: &Path,
-) -> Result<std::process::Command> {
+fn cli_command(c: &ResolvedConnection, cwd: &Path) -> Result<std::process::Command> {
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.args([
         "--replica-host",
@@ -73,6 +98,19 @@ fn drain_command(
     {
         cmd.arg("--allow-non-ii-identity");
     }
+    cmd.current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    Ok(cmd)
+}
+fn drain_command(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    config: &Path,
+) -> Result<std::process::Command> {
+    let mut cmd = cli_command(c, cwd)?;
     cmd.args(["learn", "drain", "--project-root"])
         .arg(cwd)
         .arg("--recall-config")
@@ -80,10 +118,6 @@ fn drain_command(
     if let Some(dir) = &state.state_dir {
         cmd.arg("--state-dir").arg(dir);
     }
-    cmd.current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
     Ok(cmd)
 }
 #[cfg(test)]
@@ -130,9 +164,31 @@ pub async fn drain_with_config(
         let Some(lease) = q.acquire()? else {
             return Ok(json!({"busy":true,"jobs":q.list()?}));
         };
-        open_outbox(client, c, state)?
-            .flush(client, c.database_id.as_deref().unwrap())
+        let outbox = open_outbox(client, c, state)?;
+        outbox
+            .flush_exclusive(client, c.database_id.as_deref().unwrap())
             .await?;
+        if q.list()?
+            .iter()
+            .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+        {
+            #[cfg(test)]
+            if let Some(after_pending) = TEST_DELIVERY_PENDING.with(|hook| hook.borrow_mut().take())
+            {
+                after_pending();
+            }
+            // A sender may have finished and launched a replacement while we
+            // held the job lease. Release before rechecking so either that
+            // replacement can acquire it or this drain resumes the ready work.
+            drop(lease);
+            if q.list()?
+                .iter()
+                .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+            {
+                return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+            }
+            continue;
+        }
         for mut job in q.list()? {
             if attempted.contains(&job.run_id) {
                 continue;
@@ -381,6 +437,34 @@ fn unattempted(jobs: &[LearningJob], attempted: &std::collections::BTreeSet<Stri
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn detached_delivery_uses_a_separate_process_group() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.args([
+            "-c",
+            "ps -o pgid= -p $$ > group; sleep 0.1; printf done > done",
+        ])
+        .current_dir(root.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+        spawn_detached(cmd).unwrap();
+        let start = std::time::Instant::now();
+        while !root.path().join("done").exists() && start.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let group = std::fs::read_to_string(root.path().join("group")).unwrap();
+        let parent = std::process::Command::new("ps")
+            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+            .output()
+            .unwrap();
+        assert_ne!(
+            group.trim(),
+            String::from_utf8(parent.stdout).unwrap().trim()
+        );
+    }
     #[test]
     fn release_then_recheck_observes_work_enqueued_while_owner_was_busy() {
         let root = tempfile::tempdir().unwrap();

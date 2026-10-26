@@ -209,6 +209,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
         started.elapsed().as_nanos()
     );
     let mut state = State::new(root);
+    let mut count = 0usize;
     let drive = async {
         match config.engine {
             AgentEngine::Codex => {
@@ -235,7 +236,6 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
                 .await?;
             }
         }
-        let mut count = 0usize;
         while let Some(chunk) = receiver.recv().await {
             let chunk = chunk?;
             let remaining = config.max_output_bytes.saturating_sub(count);
@@ -306,7 +306,8 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
         state.execution.events.push(json!({"stream":"stdout","text":String::from_utf8_lossy(&state.pending),"partial":true}));
     }
     let expected_success = state.done && state.execution.exit_reason == "completed";
-    if config.engine == AgentEngine::Dsh && expected_success {
+    if config.engine == AgentEngine::Dsh && state.done {
+        // Failed turns also need root disposal to drain DSH session persistence.
         // SDK has no per-prompt cancellation. Shut down only this owned runtime.
         let _ = tokio::time::timeout(
             Duration::from_millis(100),
@@ -325,8 +326,36 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
             .await
             .ok()
             .transpose()?
-    } else if config.engine == AgentEngine::Dsh && expected_success {
-        tokio::time::timeout(Duration::from_millis(200), child.wait())
+    } else if config.engine == AgentEngine::Dsh && state.done {
+        // Keep draining both pipes while the owned runtime flushes its sessions.
+        // The bounded reader channel otherwise blocks verbose teardown before exit.
+        // Teardown diagnostics never change the already observed turn outcome.
+        let teardown = async {
+            let mut reading = true;
+            loop {
+                tokio::select! {
+                    status = child.wait() => return status,
+                    chunk = receiver.recv(), if reading => match chunk {
+                        Some(Ok(chunk)) => {
+                            let remaining = config.max_output_bytes.saturating_sub(count);
+                            let retained = &chunk.bytes[..chunk.bytes.len().min(remaining)];
+                            count = count.saturating_add(chunk.bytes.len());
+                            if !retained.is_empty() {
+                                state.execution.events.push(json!({
+                                    "stream": if chunk.stderr { "stderr" } else { "stdout" },
+                                    "text": String::from_utf8_lossy(retained),
+                                    "teardown": true,
+                                    "partial": retained.len() < chunk.bytes.len(),
+                                }));
+                            }
+                        }
+                        Some(Err(_)) => {}
+                        None => reading = false,
+                    }
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(2), teardown)
             .await
             .ok()
             .transpose()?
@@ -807,6 +836,75 @@ os.write(1, ('\n'.join(json.dumps(x) for x in lines)+'\n'+'x'*3000).encode());sy
         assert!(run.complete, "{}", run.exit_reason);
         assert!(!dir.path().join("PWNED").exists());
     }
+    fn shutdown_fixture(reason: &str, teardown: &str) -> (tempfile::TempDir, RunnerConfig) {
+        fixture(
+            &format!(
+                r#"def emit(x): print(json.dumps(x),flush=True)
+i=json.loads(sys.stdin.readline())
+emit({{'jsonrpc':'2.0','id':1,'result':{{'serverInfo':{{'name':'deepseek-harness-sdk-runtime'}}}}}})
+p=json.loads(sys.stdin.readline());s=p['params']['sessionId']
+emit({{'jsonrpc':'2.0','id':2,'result':{{'messageId':'m'}}}})
+emit({{'jsonrpc':'2.0','method':'session.event','params':{{'sessionId':s,'event':{{'type':'agent/inbox/spliced','data':{{'inserted':[{{'id':'m'}}]}}}}}}}})
+emit({{'jsonrpc':'2.0','method':'session.event','params':{{'sessionId':s,'event':{{'type':'turn/end','data':{{'reason':{{'kind':'{reason}'}}}}}}}}}})
+emit({{'jsonrpc':'2.0','method':'session.status','params':{{'sessionId':s,'status':'idle'}}}})
+request=json.loads(sys.stdin.readline());assert request['method']=='shutdown'
+{teardown}
+"#
+            ),
+            AgentEngine::Dsh,
+        )
+    }
+
+    #[tokio::test]
+    async fn dsh_shutdown_flushes_success_and_failure_without_output_backpressure() {
+        for reason in ["error", "completed"] {
+            let (dir, mut cfg) = shutdown_fixture(
+                reason,
+                r#"time.sleep(0.35)
+for stream in [sys.stdout,sys.stderr]:
+ stream.write('x'*262144);stream.flush()
+with open('flushed','w') as marker:
+ marker.write('durable');marker.flush();os.fsync(marker.fileno())"#,
+            );
+            cfg.max_output_bytes = 4096;
+            let run = execute(&cfg, dir.path(), "x").await.unwrap();
+            assert!(
+                dir.path().join("flushed").exists(),
+                "{reason}: missing durable shutdown marker"
+            );
+            let teardown_bytes: usize = run
+                .events
+                .iter()
+                .filter(|event| event["teardown"] == true)
+                .filter_map(|event| event["text"].as_str())
+                .map(str::len)
+                .sum();
+            assert!(teardown_bytes > 0 && teardown_bytes <= cfg.max_output_bytes);
+            assert_eq!(run.complete, reason == "completed");
+            assert_eq!(
+                run.exit_reason,
+                if reason == "completed" {
+                    "completed"
+                } else {
+                    "turn_error"
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dsh_hung_shutdown_is_bounded_and_preserves_failed_turn() {
+        let (dir, cfg) = shutdown_fixture(
+            "error",
+            "open('shutdown-received','w').close();time.sleep(20)",
+        );
+        let run = execute(&cfg, dir.path(), "x").await.unwrap();
+        assert!(dir.path().join("shutdown-received").exists());
+        assert!(!run.complete);
+        assert_eq!(run.exit_reason, "turn_error");
+        assert!(run.elapsed_ms < 5000, "{}", run.elapsed_ms);
+    }
+
     #[tokio::test]
     async fn dsh_scopes_descendants_and_requires_receipt_terminal_and_idle() {
         let body = r#"assert sys.argv[1:3] == ['--profile','sdk']

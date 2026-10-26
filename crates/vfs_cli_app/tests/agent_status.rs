@@ -946,3 +946,35 @@ fn unresolved_legacy_repository_is_unknown_instead_of_an_exact_zero() {
     assert!(value["records"]["pending_records"].is_null());
     assert_eq!(value["records"]["unattributed_records"], 2);
 }
+
+#[test]
+fn delivery_status_reports_persisted_failure_and_unknown_legacy_age_without_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    seed_records(root, &state);
+    let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+    db.execute_batch("UPDATE learning_outbox SET enqueued_at=NULL WHERE id='record-a'; INSERT INTO learning_delivery(scope,last_failure_at,last_error_code) SELECT DISTINCT scope,'2026-10-16T00:00:00Z','delivery_failed' FROM learning_outbox;").unwrap();
+    drop(db);
+    let before = tree(root);
+    let v = report(status(
+        root,
+        &root.join("home"),
+        &[
+            "agent",
+            "status",
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(v["records"]["last_send_failure"]["code"], "delivery_failed");
+    assert_eq!(
+        v["records"]["last_send_failure"]["at"],
+        "2026-10-16T00:00:00Z"
+    );
+    assert!(v["records"]["oldest_pending_at"].is_null());
+    assert_eq!(v["records"]["pending_time_unknown"], true);
+    assert_eq!(before, tree(root));
+}
