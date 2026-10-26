@@ -11,6 +11,111 @@ use vfs_types::{
     SearchPreviewField, SearchPreviewMode, WriteNodeRequest,
 };
 
+#[test]
+fn search_nodes_keeps_sse_evidence_above_incidental_title_substrings() {
+    let (_dir, store) = new_store();
+    for index in 0..32 {
+        let path = format!("/Knowledge/ranking/WebAssembly-precompressed-{index}.md");
+        ensure_parent_folders(&store, &path, 1);
+        store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_owned(),
+                    path,
+                    kind: NodeKind::File,
+                    content: "precompressed WebAssembly assets".to_owned(),
+                    metadata_json: "{}".to_owned(),
+                    expected_etag: None,
+                },
+                2,
+            )
+            .unwrap();
+    }
+    let path = "/Knowledge/ranking/notes.md";
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_owned(),
+                path: path.to_owned(),
+                kind: NodeKind::File,
+                content: "SSE timeout: call stream.close() to close the SSE stream.".to_owned(),
+                metadata_json: "{}".to_owned(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .unwrap();
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_owned(),
+            query_text: "SSE".to_owned(),
+            prefix: Some("/Knowledge/ranking".to_owned()),
+            top_k: 20,
+            preview_mode: Some(SearchPreviewMode::Light),
+        })
+        .unwrap();
+    assert!(
+        hits.iter().any(|hit| hit.path == path),
+        "SSE evidence was displaced by incidental title matches"
+    );
+}
+
+#[test]
+fn search_nodes_boosts_only_term_boundaries_in_ascii_titles_and_paths() {
+    let (_dir, store) = new_store();
+    let cases = [
+        ("streamSSE.md", "sSe", true),
+        ("SSEHandler.md", "SSE", true),
+        ("log-SSE_notes.md", "sse", true),
+        ("WebAssembly.md", "SSE", false),
+        ("precompressed.md", "SSE", false),
+        ("myreq.jsonBackup.md", "req.json", false),
+        ("read-req.json.md", "req.json", true),
+        ("ML-guides.md", "ML", true),
+        ("日本語-streamSSE.md", "SSE", true),
+        ("İ-streamSSE.md", "SSE", true),
+        ("日本語検索改善.md", "検索", true),
+    ];
+    for (index, (name, query, boosted)) in cases.into_iter().enumerate() {
+        let path = format!("/Knowledge/boundaries-{index}/{name}");
+        ensure_parent_folders(&store, &path, 1);
+        store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_owned(),
+                    path: path.clone(),
+                    kind: NodeKind::File,
+                    content: format!("Search evidence: {query}"),
+                    metadata_json: "{}".to_owned(),
+                    expected_etag: None,
+                },
+                2,
+            )
+            .unwrap();
+        let hits = store
+            .search_nodes(SearchNodesRequest {
+                database_id: "default".to_owned(),
+                query_text: query.to_owned(),
+                prefix: Some(path.clone()),
+                top_k: 1,
+                preview_mode: Some(SearchPreviewMode::Light),
+            })
+            .unwrap();
+        assert_eq!(hits.len(), 1, "partial candidate must remain for {name}");
+        let reasons = &hits[0].match_reasons;
+        assert_eq!(
+            reasons.iter().any(|r| r == "title_fts"),
+            boosted,
+            "title: {name}"
+        );
+        assert_eq!(
+            reasons.iter().any(|r| r == "path_substring"),
+            boosted,
+            "path: {name}"
+        );
+    }
+}
+
 fn seed_sql_budget_rows(database_path: &Path, count: i64) {
     let mut conn = Connection::open(database_path).expect("db should open");
     let tx = conn.transaction().expect("seed transaction should start");
