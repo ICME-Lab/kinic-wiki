@@ -14,6 +14,7 @@
     "test:live:private": "vitest run --config vitest.private-live.config.ts"
   },
   "dependencies": {
+    "@kinic/deepseek-client": "workspace:*",
     "@icp-sdk/core": "6.0.0",
     "@kinic/ii-server": "workspace:*",
     "@kinic/jev-reranker": "workspace:*",

@@ -1,3 +1,4 @@
+import { DEEPSEEK_MODEL, DeepSeekResponseTooLargeError, requestDeepSeekCompletion, readDeepSeekResponseText } from "@kinic/deepseek-client";
 import { z } from "zod";
 import { AssistantError, instructions, toolsForScope, type Scope } from "./contracts";
 import type { AskAiRoute } from "./routing";
@@ -175,13 +176,12 @@ async function requestCompletion(
   const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
   let stage = "fetch";
   try {
-    const response = await (options.fetchImpl ?? fetch)("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      redirect: "manual",
+    const response = await requestDeepSeekCompletion({
+      apiKey: options.apiKey!,
       signal,
-      headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json" },
+      fetchImpl: options.fetchImpl,
       body: JSON.stringify({
-        model: "deepseek-flash", thinking: { type: "disabled" },
+        model: DEEPSEEK_MODEL, thinking: { type: "disabled" },
         max_tokens: 4096, stream: false, messages, response_format: { type: "json_object" },
         ...(options.route === "conversation" || options.canUseTools?.() === false ? {} : {
           tools: toolsForScope(options.scope).filter(({ name }) =>
@@ -197,25 +197,9 @@ async function requestCompletion(
       await response.body?.cancel();
       throw new AssistantError("deepseek_unavailable", 502);
     }
-    const reader = response.body?.getReader();
     stage = "read";
-    if (!reader) throw new AssistantError("deepseek_invalid_response", 502);
-    const decoder = new TextDecoder();
-    let bytes = 0;
-    let text = "";
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > 256 * 1024) throw new AssistantError("deepseek_response_too_large", 502);
-        text += decoder.decode(value, { stream: true });
-      }
-      text += decoder.decode();
-    } finally {
-      await reader.cancel();
-      reader.releaseLock();
-    }
+    if (!response.body) throw new AssistantError("deepseek_invalid_response", 502);
+    const text = await readDeepSeekResponseText(response);
     stage = "parse";
     const parsed = z.object({
       choices: z.array(z.object({
@@ -229,6 +213,8 @@ async function requestCompletion(
     return { message: choice.message, inputTokens: parsed.usage?.prompt_tokens ?? 0, outputTokens: parsed.usage?.completion_tokens ?? 0 };
   } catch (error) {
     if (error instanceof AssistantError) throw error;
+    if (error instanceof DeepSeekResponseTooLargeError)
+      throw new AssistantError("deepseek_response_too_large", 502);
     console.error(JSON.stringify({ event: "deepseek_failure", stage, kind: failureKind(error) }));
     if (error instanceof z.ZodError || error instanceof SyntaxError)
       throw new AssistantError("deepseek_invalid_response", 502);

@@ -1,10 +1,10 @@
 // Where: workers/wiki-generator/src/config.ts
 // What: Runtime config normalization for the generator Worker.
 // Why: Env vars need validation before queueing or generation.
+import { DEEPSEEK_MODEL } from "@kinic/deepseek-client";
 import type { WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
-const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_TARGET_ROOT = "/Knowledge/conversations";
 const DEFAULT_SOURCE_PREFIX = "/Sources";
 const DEFAULT_CONTEXT_PREFIX = "/";
@@ -25,7 +25,7 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     canisterId,
     allowedDatabaseId: optionalIdentifier(env.KINIC_WIKI_ALLOWED_DATABASE_ID, "KINIC_WIKI_ALLOWED_DATABASE_ID"),
     icHost: env.KINIC_WIKI_IC_HOST || "https://icp0.io",
-    model: env.KINIC_WIKI_WORKER_MODEL || DEFAULT_MODEL,
+    model: env.KINIC_WIKI_WORKER_MODEL || DEEPSEEK_MODEL,
     targetRoot: normalizeNonRootPrefix(env.KINIC_WIKI_WORKER_TARGET_ROOT || DEFAULT_TARGET_ROOT, "KINIC_WIKI_WORKER_TARGET_ROOT"),
     sourcePrefix: normalizeNonRootPrefix(env.KINIC_WIKI_WORKER_SOURCE_PREFIX || DEFAULT_SOURCE_PREFIX, "KINIC_WIKI_WORKER_SOURCE_PREFIX"),
     contextPrefix: normalizeRootPrefix(env.KINIC_WIKI_WORKER_CONTEXT_PREFIX || DEFAULT_CONTEXT_PREFIX, "KINIC_WIKI_WORKER_CONTEXT_PREFIX"),

@@ -1,6 +1,7 @@
 // Where: wikibrowser/app/api/query/answer/route.ts
 // What: Bounded LLM answer proxy for wiki query Q&A.
 // Why: Browser reads database context with the user identity; this route only answers from supplied excerpts.
+import { DEEPSEEK_MODEL, requestDeepSeekCompletion, readDeepSeekResponseText } from "@kinic/deepseek-client";
 type AnswerContext = {
   path: string;
   title: string;
@@ -37,8 +38,6 @@ type QueryAnswerDeps = {
   timeoutMs: number;
 };
 
-const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
-const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const RATE_LIMIT_PER_MINUTE = 10;
 const RATE_LIMIT_TTL_SECONDS = 120;
@@ -169,15 +168,12 @@ async function callDeepSeek(input: AnswerRequest, apiKey: string, fetchImpl: Fet
   };
   let response: Response;
   try {
-    response = await fetchImpl(DEEPSEEK_CHAT_COMPLETIONS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
+    response = await requestDeepSeekCompletion({
+      apiKey,
+      fetchImpl,
       signal: controller.signal,
       body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
+        model: model || DEEPSEEK_MODEL,
         max_tokens: 1_200,
         thinking: { type: "disabled" },
         response_format: { type: "json_object" },
@@ -205,15 +201,15 @@ async function callDeepSeek(input: AnswerRequest, apiKey: string, fetchImpl: Fet
         ]
       })
     });
+    const body: unknown = JSON.parse(await readDeepSeekResponseText(response));
+    if (!response.ok) throw new Error("DeepSeek request failed");
+    return parseLlmAnswer(body);
   } catch (cause) {
     if (controller.signal.aborted) throw new LlmTimeoutError();
     throw cause;
   } finally {
     clearTimeout(timeout);
   }
-  const body = await response.json();
-  if (!response.ok) throw new Error("DeepSeek request failed");
-  return parseLlmAnswer(body);
 }
 
 function parseLlmAnswer(body: unknown): LlmAnswer {

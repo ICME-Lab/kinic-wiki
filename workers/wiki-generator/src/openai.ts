@@ -1,6 +1,7 @@
 // Where: workers/wiki-generator/src/openai.ts
 // What: DeepSeek Chat Completions integration and draft schema validation.
 // Why: The model only produces structured JSON; worker code performs all writes.
+import { DeepSeekResponseTooLargeError, requestDeepSeekCompletion, readDeepSeekResponseText } from "@kinic/deepseek-client";
 import { buildWikiDraftSystemPrompt } from "./wiki-skill.js";
 import type { OutputLanguage, SearchNodeHit, WikiDraft, WikiDraftItem, WikiNode, WorkerConfig } from "./types.js";
 
@@ -14,9 +15,7 @@ type DeepSeekChoice = {
   };
 };
 
-const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_TIMEOUT_MS = 180_000;
-const MAX_DEEPSEEK_RESPONSE_BYTES = 256 * 1024;
 
 type DraftSectionKey = "key_facts" | "decisions" | "open_questions" | "follow_ups";
 type DraftLabelKey = "summary" | "key_facts" | "decisions" | "open_questions" | "follow_ups" | "related_context" | "provenance" | "none";
@@ -71,21 +70,23 @@ export async function requestDeepSeekDraft(
   });
   let response: Response;
   try {
-    response = await fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${deepSeekApiKey}`,
-        "Content-Type": "application/json"
-      },
+    response = await requestDeepSeekCompletion({
+      apiKey: deepSeekApiKey,
       body: requestPayload,
-      redirect: "manual",
       signal: AbortSignal.timeout(DEEPSEEK_TIMEOUT_MS)
     });
   } catch (error) {
     const timedOut = error instanceof DOMException && error.name === "TimeoutError";
     throw new DeepSeekRequestError(timedOut ? "deepseek_timeout" : "deepseek_network", timedOut ? "DeepSeek request timed out" : "DeepSeek request failed", true);
   }
-  const text = await readBoundedResponseText(response);
+  let text: string;
+  try {
+    text = await readDeepSeekResponseText(response);
+  } catch (error) {
+    if (error instanceof DeepSeekResponseTooLargeError)
+      throw new DeepSeekRequestError("deepseek_response_too_large", "DeepSeek response exceeded 256 KiB", true);
+    throw error;
+  }
   if (!response.ok) {
     const retryable = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500;
     console.warn(
@@ -246,38 +247,6 @@ export function extractDeepSeekResponseText(body: unknown): string {
     }
   }
   throw new DeepSeekResponseError("DeepSeek response did not include text");
-}
-
-async function readBoundedResponseText(response: Response): Promise<string> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null && Number(declaredLength) > MAX_DEEPSEEK_RESPONSE_BYTES) {
-    throw new DeepSeekRequestError("deepseek_response_too_large", "DeepSeek response exceeded 256 KiB", true);
-  }
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_DEEPSEEK_RESPONSE_BYTES) {
-        await reader.cancel("response too large");
-        throw new DeepSeekRequestError("deepseek_response_too_large", "DeepSeek response exceeded 256 KiB", true);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
 }
 
 function retryAfterSeconds(value: string | null): number | undefined {

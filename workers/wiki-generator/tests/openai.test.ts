@@ -107,7 +107,7 @@ test("generateDraft calls DeepSeek chat completions", async () => {
     assert.equal(requestInit?.redirect, "manual");
     assert.ok(requestInit?.signal instanceof AbortSignal);
     assert.ok(isRecord(requestBody));
-    assert.equal(requestBody.model, "deepseek-v4-flash");
+    assert.equal(requestBody.model, "deepseek-flash");
     assert.deepEqual(requestBody.thinking, { type: "disabled" });
     assert.deepEqual(requestBody.response_format, { type: "json_object" });
     assert.match(JSON.stringify(requestBody.messages), /pattern/);
@@ -194,7 +194,7 @@ test("DeepSeek failure diagnostics include sizes without request content or secr
     const diagnostic = JSON.parse(warnings[0] ?? "{}") as Record<string, unknown>;
     assert.equal(diagnostic.event, "deepseek_request_failed");
     assert.equal(diagnostic.status, 503);
-    assert.equal(diagnostic.model, "deepseek-v4-flash");
+    assert.equal(diagnostic.model, "deepseek-flash");
     assert.equal(typeof diagnostic.inputCharacters, "number");
     assert.equal(typeof diagnostic.requestBytes, "number");
     assert.equal(diagnostic.retryable, true);
@@ -247,7 +247,7 @@ function config(): WorkerConfig {
     canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     icHost: "https://icp0.io",
     allowedDatabaseId: null,
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     targetRoot: "/Knowledge/conversations",
     sourcePrefix: "/Sources",
     contextPrefix: "/",

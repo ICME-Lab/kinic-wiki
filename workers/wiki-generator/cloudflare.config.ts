@@ -30,7 +30,7 @@ export default defineConfig((ctx) => {
 						KINIC_WIKI_CANISTER_ID: bindings.text("3ryrw-kyaaa-aaaaf-qgxpq-cai"),
 						KINIC_WIKI_IC_HOST: bindings.text("https://icp0.io"),
 						KINIC_WIKI_ALLOWED_DATABASE_ID: bindings.text("db_nuzrspghca5q"),
-						KINIC_WIKI_WORKER_MODEL: bindings.text("deepseek-v4-flash"),
+						KINIC_WIKI_WORKER_MODEL: bindings.text("deepseek-flash"),
 						KINIC_WIKI_WORKER_TARGET_ROOT: bindings.text("/Knowledge/conversations"),
 						KINIC_WIKI_WORKER_SOURCE_PREFIX: bindings.text("/Sources"),
 						KINIC_WIKI_WORKER_CONTEXT_PREFIX: bindings.text("/"),
@@ -83,7 +83,7 @@ export default defineConfig((ctx) => {
 					env: {
 						KINIC_WIKI_CANISTER_ID: bindings.text("6emaw-iyaaa-aaaay-aacka-cai"),
 						KINIC_WIKI_IC_HOST: bindings.text("https://icp0.io"),
-						KINIC_WIKI_WORKER_MODEL: bindings.text("deepseek-v4-flash"),
+						KINIC_WIKI_WORKER_MODEL: bindings.text("deepseek-flash"),
 						KINIC_WIKI_WORKER_TARGET_ROOT: bindings.text("/Knowledge/conversations"),
 						KINIC_WIKI_WORKER_SOURCE_PREFIX: bindings.text("/Sources"),
 						KINIC_WIKI_WORKER_CONTEXT_PREFIX: bindings.text("/"),
