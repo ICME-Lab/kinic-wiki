@@ -1522,7 +1522,9 @@ pub async fn deliver(
     };
     let Some(lease) = lease else {
         if engine.is_some() {
-            anyhow::bail!("delivery_busy_timeout: retry agent flush --replay-inbox for this project");
+            anyhow::bail!(
+                "delivery_busy_timeout: retry agent flush --replay-inbox for this project"
+            );
         }
         return Ok(json!({"sent":0,"busy":true}));
     };
