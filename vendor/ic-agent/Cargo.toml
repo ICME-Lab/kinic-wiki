@@ -53,6 +53,11 @@ targets = [
     "wasm32-unknown-unknown",
 ]
 
+# Enables rangemap's StepLite implementation on candid's re-exported Principal.
+# There is no direct import for cargo-machete to detect.
+[package.metadata.cargo-machete]
+ignored = ["ic_principal"]
+
 [features]
 _internal_dynamic-routing = []
 default = ["pem"]
@@ -198,9 +203,6 @@ version = "0.11.15"
 
 [dependencies.serde_cbor]
 version = "0.11.2"
-
-[dependencies.serde_repr]
-version = "0.1.19"
 
 [dependencies.sha2]
 version = "0.10.8"

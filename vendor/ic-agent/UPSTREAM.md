@@ -22,6 +22,9 @@ Local changes are confined to:
 - `Cargo.toml`: use `elliptic-curve` 0.14.3, `ecdsa` 0.17, `k256`/`p256` 0.14,
   `pkcs8` 0.11 and `sec1` 0.8; include the local license. The root lockfile
   resolves `crypto-bigint` 0.7.9. Earlier 0.7.6–0.7.8 releases are yanked.
+  Remove unused `serde_repr`. Mark `ic_principal` as a dependency-check exception:
+  its `rangemap` feature supplies `StepLite` for candid's re-exported principal,
+  so it is required even without a direct import (removal fails compilation).
 - `src/identity/basic.rs` and `src/identity/mod.rs`: use the borrowed PKCS#8
   structure and explicit octet-string bytes introduced by the new ASN.1 API.
 - `src/identity/secp256k1.rs` and `src/identity/prime256v1.rs`: adapt the PKCS#8
