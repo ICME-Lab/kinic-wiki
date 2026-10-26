@@ -17,14 +17,14 @@
     "@icp-sdk/core": "6.0.0",
     "@kinic/ii-server": "workspace:*",
     "@kinic/jev-reranker": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260921.1",
     "@cloudflare/vitest-pool-workers": "0.20.2",
     "@types/node": "24.10.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.11",
+    "vitest": "4.1.12",
     "wrangler": "4.136.0",
     "cf": "1.0.0-beta.2"
   }

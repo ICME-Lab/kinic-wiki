@@ -86,6 +86,9 @@ const DEFAULT_PREFIX = "/";
 const DEFAULT_CONTEXT_NAMESPACE = "/";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
 const MAX_MCP_BODY_BYTES = 256 * 1024;
+// Bound validation work even when a request fits within the byte limit.
+// This leaves room for 100-operation mutation batches and nested edit objects.
+const MAX_TOOL_INPUT_ELEMENTS = 10_000;
 const MAX_MUTATION_BATCH_ITEMS = 100;
 const databaseResultOutputSchema = z.object({
   database_id: z.string(),
@@ -542,6 +545,7 @@ export function createServer(
       version: "0.1.0"
     },
     {
+      maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,
       jsonSchemaValidator: sharedJsonSchemaValidator,
       instructions:
         `Resolve the database with find_databases only if its id is unknown. Choose reads by intent: context for a normal question; search plus list for broad investigations; fetch_many in one call for known search ids or page URLs, even across databases (no preliminary search or conversion to paths); read_paths for 1-10 known paths. Known paths need no preceding search or context call. Use memory_manifest only for database capabilities and limits. Search limit is 1-20 (default 10); list limit is 1-99 (default 99). Omit limit to use its default. For broad investigations search across relevant prefixes (including /Sources), fetch candidate bodies, and report coverage and truncation. ${apiGuidance.shared.evidence} ` +
