@@ -225,8 +225,15 @@ separate process group. Normal `agent flush` retains outbox-only delivery;
 `--replay-inbox` also replays the selected cwd/config/engine inbox. Use
 `--recall-config` for an explicit configuration and `--state-dir` for its state.
 All outbox writers share the same destination/identity lease. Replay does not
-recursively launch workers. After delivery, enabled project jobs resume through
-`learn drain`.
+recursively launch workers. After background/replay delivery, enabled project jobs resume through
+`learn drain`. Plain `agent flush` never starts learning, even with queued jobs.
+A replay worker that encounters a live sender waits up to 30 seconds for the
+shared lease, then processes its own project inbox and starts its own drain.
+This preserves project wakeups when another project or a synchronous record
+command owns delivery. On expiry it records `delivery_busy_timeout` and retains
+local evidence/jobs for the next hook or an explicit
+`agent flush --replay-inbox --engine codex` (or `dsh`). The hook response does not
+wait for this child; ordinary flush remains fail-fast when delivery is busy.
 
 `learn propose --run-id` sends pending local evidence before reading the run.
 If another sender owns the queue and the run is still pending, it reports

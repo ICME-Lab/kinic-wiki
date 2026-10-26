@@ -108,6 +108,26 @@ impl Outbox {
         }
         Ok(Some(FlushLease { outbox: self }))
     }
+    /// Only detached hook delivery waits; foreground commands remain fail-fast.
+    pub(super) async fn acquire_wait(
+        &self,
+        limit: std::time::Duration,
+    ) -> Result<Option<FlushLease<'_>>> {
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            if let Some(lease) = self.acquire()? {
+                return Ok(Some(lease));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                self.failure("delivery_busy_timeout")?;
+                return Ok(None);
+            }
+            tokio::time::sleep_until(
+                (tokio::time::Instant::now() + std::time::Duration::from_millis(100)).min(deadline),
+            )
+            .await;
+        }
+    }
     /// Single-owner flush. Returns None when another live process owns the lease.
     /// The lease is released before the final pending check: an enqueuer either
     /// sees a live owner that will recheck, or may start its own flusher.
@@ -406,6 +426,46 @@ mod batch_tests {
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
+    #[tokio::test]
+    async fn busy_delivery_timeout_preserves_evidence_and_records_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Outbox::open(root.path(), "c", "d", "p").unwrap();
+        let waiter = Outbox::open(root.path(), "c", "d", "p").unwrap();
+        let lease = owner.acquire().unwrap().unwrap();
+        waiter
+            .enqueue(&Event {
+                id: "pending".into(),
+                run_id: "run".into(),
+                kind: "hook".into(),
+                payload: serde_json::json!({}),
+            })
+            .unwrap();
+        assert!(
+            waiter
+                .acquire_wait(std::time::Duration::ZERO)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(waiter.pending_count().unwrap(), 1);
+        let code: String = waiter
+            .conn
+            .query_row(
+                "SELECT last_error_code FROM learning_delivery WHERE scope=?1",
+                [&waiter.scope],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(code, "delivery_busy_timeout");
+        drop(lease);
+        assert!(
+            waiter
+                .acquire_wait(std::time::Duration::ZERO)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
     #[test]
     fn migration_keeps_unknown_old_time_and_records_new_event_time() {
         let root = tempfile::tempdir().unwrap();

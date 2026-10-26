@@ -1039,3 +1039,83 @@ async fn intake_publication_never_exposes_partial_json() {
         "replay observed partially published intake"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_review_plain_flush_never_launches_learning() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"plain","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    open_outbox(&client, &c, &state)
+        .unwrap()
+        .flush(&client, "db")
+        .await
+        .unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, None, None).await.unwrap();
+    job_driver::TEST_LAUNCHES
+        .with(|calls| assert!(calls.borrow().is_empty(), "plain flush launched learning"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_review_busy_background_preserves_its_project_wakeup() {
+    let (_dir, client, state, a, b) = fixture().await;
+    let c = connection();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":b,"session_id":"busy","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    let owner = open_outbox(&client, &c, &state).unwrap();
+    let lease = owner.acquire().unwrap().unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    let send = async {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        owner.flush_owned(&client, "db").await.unwrap();
+        drop(lease);
+    };
+    let worker = deliver(&client, &c, &state, &b, Some("codex"), None);
+    let (_, result) = tokio::join!(send, worker);
+    assert_ne!(
+        result.unwrap()["busy"],
+        true,
+        "background abandoned project wakeup"
+    );
+    assert_eq!(owner.pending_count().unwrap(), 0);
+    job_driver::TEST_LAUNCHES.with(|calls| {
+        assert_eq!(*calls.borrow(), vec![b]);
+        assert!(!calls.borrow().contains(&a));
+    });
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_review_plain_flush_stays_fail_fast_when_busy() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let owner = open_outbox(&client, &c, &state).unwrap();
+    let _lease = owner.acquire().unwrap().unwrap();
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        deliver(&client, &c, &state, &a, None, None),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(reply["busy"], true);
+}

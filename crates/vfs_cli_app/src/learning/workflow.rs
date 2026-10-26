@@ -1511,7 +1511,19 @@ pub async fn deliver(
     config: Option<&Path>,
 ) -> Result<Value> {
     let outbox = open_outbox(client, c, state)?;
-    let Some(lease) = outbox.acquire()? else {
+    // Retain this project's wakeup even if another project or a synchronous
+    // sender currently owns delivery. The wait occurs only in the finite child.
+    let lease = if engine.is_some() {
+        outbox
+            .acquire_wait(std::time::Duration::from_secs(30))
+            .await?
+    } else {
+        outbox.acquire()?
+    };
+    let Some(lease) = lease else {
+        if engine.is_some() {
+            anyhow::bail!("delivery_busy_timeout: retry agent flush --replay-inbox for this project");
+        }
         return Ok(json!({"sent":0,"busy":true}));
     };
     if let Some(engine) = engine {
@@ -1554,7 +1566,8 @@ pub async fn deliver(
             .await?
             .unwrap_or(0);
     let settings = crate::agent_config::AgentConfig::at(cwd)?;
-    if let Some(path) = config.map(Path::to_path_buf).or(settings.hook_path()?)
+    if engine.is_some()
+        && let Some(path) = config.map(Path::to_path_buf).or(settings.hook_path()?)
         && let Ok(project) = load_project(&path)
         && project.enabled
     {

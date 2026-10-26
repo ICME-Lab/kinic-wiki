@@ -36,12 +36,17 @@ pub fn enqueue(
     Ok(())
 }
 #[cfg(test)]
+thread_local! {
+    pub(super) static TEST_LAUNCHES: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+#[cfg(test)]
 pub fn launch(
     _c: &ResolvedConnection,
     _state: &StateArgs,
-    _cwd: &Path,
+    cwd: &Path,
     _config: &Path,
 ) -> Result<()> {
+    TEST_LAUNCHES.with(|calls| calls.borrow_mut().push(cwd.to_path_buf()));
     Ok(())
 }
 #[cfg(not(test))]

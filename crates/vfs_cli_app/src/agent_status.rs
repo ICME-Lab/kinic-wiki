@@ -222,7 +222,8 @@ fn delivery(path: &Path, scope: &str, record: &mut Value) {
                 | "inbox_replay_failed"
                 | "spawn_failed"
                 | "drain_spawn_failed"
-                | "identity_unavailable"),
+                | "identity_unavailable"
+                | "delivery_busy_timeout"),
             ) => json!({"status":"observed","code":code,"at":timestamp(failure)}),
             Some(_) => unknown("unrecognized_failure_code", None),
             None => json!({"status":"not_observed","code":"no_failure_recorded","at":null}),
