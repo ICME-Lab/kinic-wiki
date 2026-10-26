@@ -37,6 +37,7 @@ pub fn enqueue(
 }
 #[cfg(test)]
 thread_local! {
+    pub(super) static TEST_DELIVERY_PENDING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
     pub(super) static TEST_LAUNCHES: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 #[cfg(test)]
@@ -171,7 +172,22 @@ pub async fn drain_with_config(
             .iter()
             .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
         {
-            return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+            #[cfg(test)]
+            if let Some(after_pending) = TEST_DELIVERY_PENDING.with(|hook| hook.borrow_mut().take())
+            {
+                after_pending();
+            }
+            // A sender may have finished and launched a replacement while we
+            // held the job lease. Release before rechecking so either that
+            // replacement can acquire it or this drain resumes the ready work.
+            drop(lease);
+            if q.list()?
+                .iter()
+                .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+            {
+                return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+            }
+            continue;
         }
         for mut job in q.list()? {
             if attempted.contains(&job.run_id) {

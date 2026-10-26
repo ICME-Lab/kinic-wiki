@@ -1119,3 +1119,68 @@ async fn delivery_review_plain_flush_stays_fail_fast_when_busy() {
     .unwrap();
     assert_eq!(reply["busy"], true);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn drain_rechecks_delivery_after_sender_replacement_exits_busy() {
+    let (dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    hooks::handle(&client, &c, "codex", None, &state, json!({"event":"UserPromptSubmit","cwd":a,"session_id":"handoff","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"handoff","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    let db_path = state
+        .state_dir
+        .as_ref()
+        .unwrap()
+        .join("learning-outbox.sqlite3");
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute(
+        "INSERT INTO learning_outbox_owner SELECT DISTINCT scope, ?1 FROM learning_outbox",
+        [std::process::id()],
+    )
+    .unwrap();
+    let sender_root = dir.path().to_path_buf();
+    let sender_state = state.clone();
+    let sender_project = a.clone();
+    // Finish delivery after the old drain observes pending evidence, while it
+    // still owns the job lease. The sender's replacement drain loses that race.
+    job_driver::TEST_DELIVERY_PENDING.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::thread::spawn(move || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(async move {
+                        let sender = StoreClient::new(&sender_root);
+                        let db = rusqlite::Connection::open(db_path).unwrap();
+                        db.execute("DELETE FROM learning_outbox_owner", []).unwrap();
+                        let outbox = open_outbox(&sender, &connection(), &sender_state).unwrap();
+                        outbox.flush_exclusive(&sender, "db").await.unwrap();
+                        assert_eq!(outbox.pending_count().unwrap(), 0);
+                        let replacement = job_driver::drain(
+                            &sender,
+                            &connection(),
+                            &sender_project,
+                            &sender_state,
+                        )
+                        .await
+                        .unwrap();
+                        assert_eq!(replacement["busy"], true);
+                        assert_eq!(replacement["jobs"][0]["state"], "pending");
+                    });
+            })
+            .join()
+            .unwrap();
+        }));
+    });
+    let result = job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(result["jobs"][0]["state"], "candidate", "{result}");
+    assert!(result["jobs"][0]["candidate_path"].is_string());
+}
