@@ -143,3 +143,22 @@ Median identity/client initialization was 29 ms; median remaining recall was
 Codex application. No mainnet writes or model calls were used for measurement.
 The configured outer deadline and installed-wrapper tests are verified; actual
 Codex host hook behavior still depends on loading/trusting the updated plugin.
+
+
+## DSH terminal shutdown extraction — 2026-10-26
+
+The generic runner fix from research commit `a92f47d4` is adapted onto the current
+CLI without replacing newer inherited-environment/credential handling. After a
+received terminal turn and root idle, DSH is asked to shut down for both successful
+and failed turns. The CLI continues consuming both output pipes during a bounded
+two-second grace period so a verbose teardown does not block session persistence.
+Recorded output shares the invocation's existing byte budget. A hung owned process
+is terminated; failed outcomes remain failed. No experimental stream/paired policy
+or process-tree cleanup code is included.
+
+The delayed persistence-marker regression failed on the previous product runner
+(`error: missing durable shutdown marker`) before the fix. Focused runner tests:
+13 passed, covering success/failure under output backpressure, failed hung
+shutdown, and existing protocol/output/environment behavior. These use controlled
+JSON-RPC fixture processes, not a live DSH/provider; the grace period cannot
+promise durable logs when teardown fails or takes longer than its bound.

@@ -36,7 +36,12 @@ credentials as a side effect. DSH always launches `--profile sdk`, initializes i
 provider/model, enqueues one prompt, then waits for that message's receipt,
 completed root turn and root idle. Startup idle, unrelated sessions and enqueue
 acknowledgments are not success. Codex uses `exec --json` and requires a completed
-turn. Both capture bounded evidence, time and available token counts. Missing costs
+turn. After a DSH terminal turn and root idle, both successful and failed turns
+receive a shutdown request. The CLI drains bounded stdout/stderr while waiting up
+to two seconds for session persistence/disposal, then terminates an owned runtime
+that has not exited. Teardown does not turn a failed task into success, and the
+bounded grace period does not guarantee persistence when shutdown fails or hangs.
+Both capture bounded evidence, time and available token counts. Missing costs
 stay unknown. Timeouts and malformed/truncated streams produce incomplete runs.
 
 `reasoning_effort` is optional. `read_only` defaults to false; Codex explicitly
