@@ -12,7 +12,11 @@ members = [
     "crates/vfs_store",
 ]
 resolver = "2"
+exclude = ["vendor/ic-agent"]
 
 [workspace.dependencies]
 # See docs/internal/DEPENDENCY_FORKS.md for fork scope and update policy.
 ic-sqlite-vfs = { git = "https://github.com/humandebri/ic-sqlite-vfs", rev = "a3a454ff749c5be59b00725ced7ede5ac200496f", default-features = false }
+
+[patch.crates-io]
+ic-agent = { path = "vendor/ic-agent" }
