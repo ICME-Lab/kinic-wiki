@@ -61,7 +61,12 @@ cd npm/kinic-vfs-cli
 npm pack --dry-run
 ```
 
-Then run the `Publish npm CLI` workflow from the exact release tag `v${package.version}`. It refuses branch runs, checks Cargo/npm version alignment, checks release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
+Then run the `Publish npm CLI` workflow from the exact release tag `v${package.version}`. Without an explicit `release_tag`, it refuses branch runs. It checks Cargo/npm version alignment, release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
+Alternatively, run the current workflow from `main` with `release_tag=v${package.version}`
+to publish an existing immutable release with updated workflow checks. It checks out
+that tag and requires the checked-out commit to match the tag and the Cargo/npm
+versions. The setup smoke validates the current non-writing `--dry-run` contract;
+it does not treat plugin preparation as confirmed activation.
 Configure GitHub Environment approval for the publish workflow when release approval must be explicit.
 Use an npm automation token scoped to this package; keep 2FA/provenance policy in the npm organization settings.
 
@@ -83,16 +88,16 @@ target/release/kinic-vfs-cli database current
 Tag a release with a `v*` version:
 
 ```bash
-git tag v2.0.2
-git push origin v2.0.2
+git tag v2.0.3
+git push origin v2.0.3
 ```
 
 The `Release CLI` workflow builds and uploads:
 
-- `kinic-vfs-cli-v2.0.2-linux-x86_64.tar.gz`
-- `kinic-vfs-cli-v2.0.2-linux-x86_64.sha256`
-- `kinic-vfs-cli-v2.0.2-macos-arm64.tar.gz`
-- `kinic-vfs-cli-v2.0.2-macos-arm64.sha256`
+- `kinic-vfs-cli-v2.0.3-linux-x86_64.tar.gz`
+- `kinic-vfs-cli-v2.0.3-linux-x86_64.sha256`
+- `kinic-vfs-cli-v2.0.3-macos-arm64.tar.gz`
+- `kinic-vfs-cli-v2.0.3-macos-arm64.sha256`
 
 Each tarball contains only:
 
@@ -103,8 +108,8 @@ Each tarball contains only:
 Verify after download:
 
 ```bash
-shasum -a 256 -c kinic-vfs-cli-v2.0.2-macos-arm64.sha256
-tar -xzf kinic-vfs-cli-v2.0.2-macos-arm64.tar.gz
+shasum -a 256 -c kinic-vfs-cli-v2.0.3-macos-arm64.sha256
+tar -xzf kinic-vfs-cli-v2.0.3-macos-arm64.tar.gz
 ./kinic-vfs-cli --help
 ./kinic-vfs-cli --version
 ```

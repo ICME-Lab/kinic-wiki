@@ -14,6 +14,21 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function evaluatedDescriptorJson(value: unknown): string {
+  // Zod 4.6 compacts bare nullable string unions to type: ["string", "null"].
+  // Expand only that equivalent form when comparing with the historical
+  // evaluation. The wire descriptor snapshots below still hash actual output.
+  return JSON.stringify(value, (_key, schema: unknown) => {
+    if (schema !== null && typeof schema === "object" && !Array.isArray(schema)
+      && Object.keys(schema).length === 1 && "type" in schema
+      && Array.isArray(schema.type) && schema.type.length === 2
+      && schema.type[0] === "string" && schema.type[1] === "null") {
+      return { anyOf: [{ type: "string" }, { type: "null" }] };
+    }
+    return schema;
+  });
+}
+
 for (const privateMode of [false, true]) {
   it(`preserves the ${privateMode ? "private 16 registered / 15 model" : "public 7"}-tool descriptor contract`, async () => {
     const server = createServer({}, { accessPolicy: privateMode ? "private_required" : "public", writesAvailable: privateMode });
@@ -26,7 +41,7 @@ for (const privateMode of [false, true]) {
         // The app-only profile is outside the evaluated fifteen business tools.
         const result = message.result as { tools: Array<{ _meta?: { ui?: { visibility?: string[] } } }> };
         const modelTools = result.tools.filter(tool => tool._meta?.ui?.visibility?.includes("model") ?? true);
-        modelDescriptorHash = createHash("sha256").update(JSON.stringify({ ...result, tools: modelTools })).digest("hex");
+        modelDescriptorHash = createHash("sha256").update(evaluatedDescriptorJson({ ...result, tools: modelTools })).digest("hex");
       }
       return send(message, options);
     };

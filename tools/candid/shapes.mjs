@@ -838,6 +838,7 @@ export const didTypeAliases = {
 };
 
 export const expectedMethods = {
+  get_api_doc: { input: [], output: "text", mode: "query" },
   scope_revision: {input:["ScopeRevisionRequest"],output:"ResultNat64",mode:"query"},
   current_node_revision: {input:["NodeRevisionRequest"],output:"ResultNodeRevision",mode:"query"},
   node_history: {input:["NodeHistoryRequest"],output:"ResultNodeHistory",mode:"query"},

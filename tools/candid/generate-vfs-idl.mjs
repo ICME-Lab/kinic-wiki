@@ -183,6 +183,7 @@ const typeOrder = [
 ];
 
 const methodOrder = [
+  "get_api_doc",
   "scope_revision",
   "current_node_revision",
   "node_history",

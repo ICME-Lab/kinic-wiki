@@ -81,18 +81,37 @@ jobs:
 
           js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^patches/|^scripts/cloudflare/|^crates/vfs_canister/vfs\.did$)'
 
-          set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
-          set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
+          set_output canister '^(packages/vfs-client-core/api-guidance\.json$|Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
+          set_output rust_all '^(Cargo\.(toml|lock)$|vendor/ic-agent/|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
-          set_output cli '^(crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
+          set_output cli '^(Cargo\.lock$|vendor/ic-agent/|crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
           set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^wikibrowser/)"
           set_output extension "($js_workspace|^extensions/wiki-clipper/)"
           set_output wiki_generator "($js_workspace|^packages/deepseek-client/|^workers/wiki-generator/)"
-          set_output wiki_mcp "($js_workspace|^workers/wiki-mcp/)"
+          set_output wiki_mcp "($js_workspace|^packages/vfs-client-core/api-guidance\.json$|^workers/wiki-mcp/)"
           set_output wiki_assistant "($js_workspace|^packages/deepseek-client/|^packages/ii-server/|^workers/wiki-assistant/|^\.github/workflows/ci\.yml$)"
           set_output payment "($js_workspace|^workers/payment/|^packages/|^\.github/workflows/ci\.yml$)"
           set_output skill_registry_web "($js_workspace|^packages/vfs-candid/|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
-          set_output ios '^(mobile/ios/|\.github/workflows/ci\.yml)'
+          ios_changed=false
+          if has_path '^mobile/ios/'; then
+            ios_changed=true
+          elif has_path '^\.github/workflows/ci\.yml$'; then
+            # Compare the iOS job and shared workflow settings, not unrelated jobs.
+            ios_configuration() {
+              awk '
+                /^[[:alnum:]_-]+:/ { in_jobs = ($0 ~ /^jobs:/); in_ios = 0 }
+                !in_jobs { print; next }
+                /^  [[:alnum:]_-]+:/ { in_ios = ($0 ~ /^  ios-check:/) }
+                in_ios { print }
+              '
+            }
+            base_ios_configuration="$(git show '${{ github.event.pull_request.base.sha }}:.github/workflows/ci.yml' | ios_configuration)"
+            head_ios_configuration="$(git show '${{ github.event.pull_request.head.sha }}:.github/workflows/ci.yml' | ios_configuration)"
+            if [[ "$base_ios_configuration" != "$head_ios_configuration" ]]; then
+              ios_changed=true
+            fi
+          fi
+          echo "ios=$ios_changed" >> "$GITHUB_OUTPUT"
 
   cloudflare-config-check:
     runs-on: ubuntu-latest

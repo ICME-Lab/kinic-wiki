@@ -5,6 +5,10 @@ This project patches selected IC stable-memory crates while multi-database canis
 ## Current patches
 
 - `ic-stable-structures`: `https://github.com/humandebri/stable-structures`, rev `a24a7d7572e36eda104abd8280946aeb7ac4e060`
+- `ic-agent`: local source in `vendor/ic-agent`, based on published 0.49.2 at
+  `5053d3585eb829eb8e75ad1099ad8a4a19721099`. Its RustCrypto dependencies and
+  identity API adapters are updated to remove RUSTSEC-2026-0387. See
+  `vendor/ic-agent/UPSTREAM.md` for provenance, exact scope, verification and removal.
 
 ## Reason
 

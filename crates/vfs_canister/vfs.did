@@ -888,6 +888,7 @@ service : (CyclesBillingConfig) -> {
   edit_node : (EditNodeRequest) -> (Result_7);
   export_snapshot : (ExportSnapshotRequest) -> (Result_8) query;
   fetch_updates : (FetchUpdatesRequest) -> (Result_9) query;
+  get_api_doc : () -> (text) query;
   get_cycles_billing_config : () -> (Result_10) query;
   get_initial_free_database_grant_status : () -> (Result_11) query;
   get_node_publication : (PublishNodeRequest) -> (Result_12) query;

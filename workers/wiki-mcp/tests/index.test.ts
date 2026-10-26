@@ -1844,6 +1844,22 @@ describe("wiki mcp worker", () => {
     );
   });
 
+  it.each([
+    ["array", { entities: Array(10_001).fill("x") }],
+    ["unknown object", { extra: Object.fromEntries(Array.from({ length: 10_001 }, (_, i) => [`k${i}`, 0])) }]
+  ])("rejects excessive tool input elements in an %s before invoking the tool", async (_label, extra) => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 20,
+      method: "tools/call",
+      params: { name: "context", arguments: { database_id: "db_alpha", task: "agent", ...extra } }
+    });
+
+    expect(response.result.isError).toBe(true);
+    expect(response.result.content[0].text).toContain("maximum of 10000 elements");
+    expect(mocks.queryContext).not.toHaveBeenCalled();
+  });
+
   it("returns 413 only when the complete MCP body exceeds 256 KiB", async () => {
     const maxBytes = 256 * 1024;
     const atLimit = await worker.fetch(
