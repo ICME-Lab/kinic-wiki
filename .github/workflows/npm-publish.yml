@@ -2,6 +2,11 @@ name: Publish npm CLI
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to publish (empty uses the workflow ref)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -11,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -18,9 +25,14 @@ jobs:
           package-manager-cache: false
       - name: Check version and release assets
         working-directory: npm/kinic-vfs-cli
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           version="$(node -p "require('./package.json').version")"
-          bash ../../scripts/guard_kinic_vfs_cli_npm_publish.sh
+          expected_tag="$(bash ../../scripts/kinic_vfs_cli_release_version.sh)"
+          test "$RELEASE_TAG" = "$expected_tag"
+          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          test "$tag_commit" = "$(git rev-parse HEAD)"
           for platform in macos-arm64 linux-x86_64; do
             asset="kinic-vfs-cli-v${version}-${platform}.tar.gz"
             checksum="${asset%.tar.gz}.sha256"
@@ -41,8 +53,9 @@ jobs:
           npm install --global --prefix "$prefix" "./${package_tgz}"
           "$prefix/bin/kinic-vfs-cli" --version
           "$prefix/bin/kinic-vfs-cli" codex setup --help
-          setup_json="$(HOME="$(mktemp -d)" "$prefix/bin/kinic-vfs-cli" codex setup --json)"
-          node -e 'const setup = JSON.parse(process.argv[1]); if (setup.status !== "ready") process.exit(1);' "$setup_json"
+          smoke_dir="$(mktemp -d)"
+          setup_json="$(cd "$smoke_dir" && "$prefix/bin/kinic-vfs-cli" codex setup --json --dry-run --executable "$prefix/bin/kinic-vfs-cli")"
+          node -e 'const setup = JSON.parse(process.argv[1]); if (setup.status !== "dry_run" || setup.engine !== "codex" || setup.activation !== "unknown" || !Array.isArray(setup.changes) || setup.changes.length === 0) process.exit(1);' "$setup_json"
       - name: Publish
         working-directory: npm/kinic-vfs-cli
         env:
