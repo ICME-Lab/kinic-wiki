@@ -4,6 +4,7 @@
 // Why: satori (SVG layout) + @resvg/resvg-wasm (rasterize) are used directly instead of next/og or @vercel/og,
 //      both of which load a default font via `new URL(..., import.meta.url)` at module scope and cannot
 //      initialize in the Workers runtime, where `import.meta.url` is undefined.
+// Why: workerd rejects runtime Wasm compilation, so every Wasm module (Yoga, HarfBuzz, resvg) comes from a static import.
 import type { Resvg as ResvgClass } from "@resvg/resvg-wasm";
 import type { PublicDatabaseSummary } from "./types.js";
 import {
@@ -57,8 +58,7 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
     ? [{ name: PREVIEW_FONT_NAME, data: fontData, weight: 400, style: "normal" }]
     : [];
   try {
-    // Keep Yoga's dynamic Wasm initialization off the Worker startup path.
-    const { default: satori } = await import("satori");
+    const satori = (await satoriLoader()) as SatoriRender;
     const svg = await satori(
     element(
       "div",
@@ -206,19 +206,39 @@ function shortenPreviewText(value: string, maxLength: number): string {
   return `${trimmed.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
+let satoriPromise: Promise<SatoriRender> | null = null;
 let resvgPromise: Promise<{ Resvg: typeof ResvgClass }> | null = null;
 let previewFontPromise: Promise<ArrayBuffer | null> | null = null;
 let fetchImpl: typeof fetch = globalThis.fetch;
+let satoriLoader: () => Promise<unknown> = loadSatori;
 let resvgLoader: () => Promise<unknown> = loadResvg;
 
 export type Rasterizer = {
   Resvg: new (svg: string, options?: unknown) => { render(): { asPng(): Uint8Array } };
 };
 
-export function setLinkPreviewDepsForTest(deps: { fetch?: typeof fetch; loadResvg?: () => Promise<unknown> } = {}) {
+export function setLinkPreviewDepsForTest(deps: { fetch?: typeof fetch; loadSatori?: () => Promise<unknown>; loadResvg?: () => Promise<unknown> } = {}) {
   fetchImpl = deps.fetch || globalThis.fetch;
+  satoriLoader = deps.loadSatori || loadSatori;
   resvgLoader = deps.loadResvg || loadResvg;
   previewFontPromise = null;
+}
+
+type SatoriRender = (typeof import("satori/standalone"))["default"];
+
+// Loaded on first render to keep the Wasm instantiation off the Worker startup path.
+async function loadSatori(): Promise<SatoriRender> {
+  if (!satoriPromise) {
+    satoriPromise = (async () => {
+      const [{ default: satori, init }, wasm] = await Promise.all([
+        import("satori/standalone"),
+        import("satori/yoga.wasm")
+      ]);
+      await init((wasm as { default: unknown }).default as Parameters<typeof init>[0]);
+      return satori;
+    })();
+  }
+  return satoriPromise;
 }
 
 type ResvgModule = { Resvg: typeof ResvgClass; initWasm: (input: unknown) => Promise<void> };

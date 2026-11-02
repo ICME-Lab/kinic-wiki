@@ -450,6 +450,9 @@ importers:
       '@resvg/resvg-wasm':
         specifier: 2.4.1
         version: 2.4.1
+      harfbuzzjs:
+        specifier: 0.10.0
+        version: 0.10.0
       satori:
         specifier: 0.33.5
         version: 0.33.5
