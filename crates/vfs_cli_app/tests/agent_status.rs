@@ -1516,3 +1516,226 @@ fn failed_snapshot_refresh_preserves_enqueue_but_never_displays_prior_success() 
     assert_eq!(value["summary"]["latest_send"]["outcome"], "unknown");
     assert!(value["records"]["pending_records"].is_null());
 }
+
+#[test]
+fn metadata_projection_counts_large_valid_bodies_in_closed_and_live_outbox() {
+    use vfs_cli_app::learning::Outbox;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    drop(Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap());
+    let scope = vfs_cli_app::learning::hash(
+        &json!(["http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller"]).to_string(),
+    );
+    let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+    for i in 0..40 {
+        let body = json!({"id":format!("event-{i}"),"run_id":if i<36 {"selected-run"} else {"other-run"},"kind":if i==35 {"context"} else {"run"},"payload":{"project_id":if i<36 {PROJECT} else {"other-project"},"repository":root,"id":"receipt-large","task":format!("private-large-task{}", "x".repeat(500_000))}}).to_string();
+        db.execute(
+            "INSERT INTO learning_outbox(scope,id,body,acknowledged) VALUES(?1,?2,?3,?4)",
+            rusqlite::params![scope, format!("event-{i}"), body, i64::from(i < 6)],
+        )
+        .unwrap();
+    }
+    let total: i64 = db
+        .query_row("SELECT SUM(length(body)) FROM learning_outbox", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(total > 16 * 1024 * 1024);
+    drop(db);
+    let read = || {
+        report(status(
+            root,
+            &root.join("home"),
+            &[
+                "agent",
+                "status",
+                "--state-dir",
+                state.to_str().unwrap(),
+                "--json",
+            ],
+        ))
+    };
+    for live in [false, true] {
+        let writer = live.then(|| {
+            Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap()
+        });
+        let value = read();
+        assert_eq!(value["records"]["status"], "observed", "live={live}");
+        assert_eq!(value["records"]["pending_records"], 30, "live={live}");
+        assert_eq!(value["records"]["acknowledged_records"], 6, "live={live}");
+        assert_eq!(value["context"]["receipt_id"], "receipt-large");
+        assert!(!value.to_string().contains("private-large-task"));
+        if live {
+            assert_eq!(value["records"]["code"], "delivery_snapshot_read");
+        }
+        drop(writer);
+    }
+}
+
+#[test]
+fn metadata_projection_does_not_repair_invalid_or_ambiguous_event_fields() {
+    use vfs_cli_app::learning::{Event, Outbox};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    let initial =
+        Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap();
+    initial
+        .enqueue(&Event {
+            id: "valid".into(),
+            run_id: "selected-run".into(),
+            kind: "run".into(),
+            payload: json!({"project_id":PROJECT}),
+        })
+        .unwrap();
+    drop(initial);
+    let scope = vfs_cli_app::learning::hash(
+        &json!(["http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller"]).to_string(),
+    );
+    let valid =
+        json!({"id":"bad","run_id":"selected-run","kind":"run","payload":{"project_id":PROJECT}});
+    let mut invalid = Vec::new();
+    for (field, value) in [
+        ("id", Value::Null),
+        ("run_id", json!(17)),
+        ("kind", json!({})),
+    ] {
+        let mut row = valid.clone();
+        row[field] = value;
+        invalid.push(row.to_string());
+    }
+    invalid.push("{truncated".into());
+    invalid.push("[]".into());
+    invalid.push(format!(r#"{{"id":"first","id":"last","run_id":"selected-run","kind":"run","payload":{{"project_id":"{PROJECT}"}}}}"#));
+    invalid.push(format!(r#"{{"id":"bad","run_id":"selected-run","kind":"run","payload":{{"project_id":"{PROJECT}"}},"payload":{{}}}}"#));
+    // Invalid ownership metadata must not fall back to a repository or inherit a known owner.
+    invalid.push(json!({"id":"bad","run_id":"selected-run","kind":"run","payload":{"project_id":42,"repository":root}}).to_string());
+    invalid.push(format!(r#"{{"id":"bad","run_id":"selected-run","kind":"run","payload":{{"project_id":"{PROJECT}","task":1e999}}}}"#));
+    invalid.push(format!(r#"{{"id":"bad","run_id":"selected-run","kind":"run","payload":{{"project_id":"{PROJECT}","task":"\ud800"}}}}"#));
+    invalid.push(format!(r#"{{"id":"bad","run_id":"selected-run","kind":"run","payload":{{"project_id":"{PROJECT}","task":{}0{}}}}}"#, "[".repeat(140),"]".repeat(140)));
+    invalid.push(format!(r#"{{"id":"bad","run_id":"selected-run","kind":"run","payload":{{"project_id":"{PROJECT}","project_id":false}}}}"#));
+    for value in [json!({"nested":PROJECT}), json!([PROJECT]), json!(false)] {
+        invalid.push(
+            json!({"id":"bad","run_id":"bad-run","kind":"run","payload":{"project_id":value}})
+                .to_string(),
+        );
+    }
+    for (index, body) in invalid.iter().enumerate() {
+        let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+        db.execute("DELETE FROM learning_outbox WHERE id='bad'", [])
+            .unwrap();
+        db.execute(
+            "INSERT INTO learning_outbox(scope,id,body) VALUES(?1,'bad',?2)",
+            rusqlite::params![scope, body],
+        )
+        .unwrap();
+        drop(db);
+        for live in [false, true] {
+            let writer = live.then(|| {
+                Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap()
+            });
+            let value = report(status(
+                root,
+                &root.join("home"),
+                &[
+                    "agent",
+                    "status",
+                    "--state-dir",
+                    state.to_str().unwrap(),
+                    "--json",
+                ],
+            ));
+            assert_ne!(
+                value["records"]["status"], "observed",
+                "case={index}, live={live}"
+            );
+            assert!(
+                value["records"]["pending_records"].is_null(),
+                "case={index}, live={live}"
+            );
+            drop(writer);
+        }
+    }
+    let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+    let body = format!(
+        r#"{{"id":"last-wins","run_id":"selected-run","kind":"context","payload":{{"project_id":false,"project_id":"{PROJECT}","id":"first-receipt","id":"last-receipt"}}}}"#
+    );
+    db.execute("UPDATE learning_outbox SET body=?1 WHERE id='bad'", [body])
+        .unwrap();
+    drop(db);
+    for live in [false, true] {
+        let writer = live.then(|| {
+            Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap()
+        });
+        let value = report(status(
+            root,
+            &root.join("home"),
+            &[
+                "agent",
+                "status",
+                "--state-dir",
+                state.to_str().unwrap(),
+                "--json",
+            ],
+        ));
+        assert_eq!(value["records"]["pending_records"], 2);
+        assert_eq!(value["context"]["receipt_id"], "last-receipt");
+        drop(writer);
+    }
+}
+
+#[test]
+fn send_failure_actions_distinguish_database_billing_canister_cycles_and_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    seed_records(root, &state);
+    for (code, action) in [
+        ("cycles_suspended", "database billing"),
+        ("canister_cycles_frozen", "execution cycles"),
+        ("identity_unavailable", "pinned identity"),
+    ] {
+        let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+        db.execute("INSERT INTO learning_delivery(scope,last_attempt_at,last_failure_at,last_error_code) SELECT DISTINCT scope,?1,?1,?2 FROM learning_outbox WHERE true ON CONFLICT(scope) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,last_failure_at=excluded.last_failure_at,last_error_code=excluded.last_error_code",rusqlite::params![chrono::Utc::now().to_rfc3339(),code]).unwrap();
+        drop(db);
+        for live in [false, true] {
+            let writer = live.then(|| {
+                vfs_cli_app::learning::Outbox::open(
+                    &state,
+                    "http://127.0.0.1:1:aaaaa-aa",
+                    "db",
+                    "bound-caller",
+                )
+                .unwrap()
+            });
+            let value = report(status(
+                root,
+                &root.join("home"),
+                &[
+                    "agent",
+                    "status",
+                    "--state-dir",
+                    state.to_str().unwrap(),
+                    "--json",
+                ],
+            ));
+            let send = &value["summary"]["latest_send"];
+            assert_eq!(send["code"], "send_outcome_recorded");
+            assert_eq!(send["outcome"], "failure");
+            assert_eq!(send["failure_code"], code);
+            assert!(
+                send["next_action"].as_str().unwrap().contains(action),
+                "{code}: {}",
+                send["next_action"]
+            );
+            if code == "canister_cycles_frozen" {
+                assert!(send["next_action"].as_str().unwrap().contains("ledger"));
+            }
+            drop(writer);
+        }
+    }
+}

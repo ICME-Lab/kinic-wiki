@@ -319,7 +319,11 @@ fn delivery_failure_code(error: &anyhow::Error, db: &str) -> &'static str {
         return "canister_cycles_frozen";
     }
     let suspended = format!("database cycles are suspended: {db}");
-    if error.chain().any(|cause| cause.to_string() == suspended) {
+    let sqlite_suspended = format!("sqlite error 1: {suspended}");
+    if error.chain().any(|cause| {
+        let message = cause.to_string();
+        message == suspended || message == sqlite_suspended
+    }) {
         "cycles_suspended"
     } else {
         "delivery_failed"
@@ -731,6 +735,14 @@ mod snapshot_tests {
     fn delivery_failure_classifies_only_the_known_database_suspension() {
         for (message, expected) in [
             ("database cycles are suspended: db", "cycles_suspended"),
+            (
+                "sqlite error 1: database cycles are suspended: db",
+                "cycles_suspended",
+            ),
+            (
+                "sqlite error 1: database cycles are suspended: another-db",
+                "delivery_failed",
+            ),
             (
                 "database cycles are suspended: another-db",
                 "delivery_failed",
