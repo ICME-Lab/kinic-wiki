@@ -73,7 +73,7 @@ backup. Keep this pre-update 2.0.4 backup and binary/package available until the
 new version has been accepted.
 
 Use the same pinned npm install command above to update to 2.0.5. Inspect
-`learn status --project-root /path/to/project --json` and `agent status --json`,
+`learn status --project-root /path/to/project --json` and `agent status --cwd /path/to/project --json`,
 confirm the expected target/identity and queue state, and review paused or
 ambiguous jobs before starting host sessions. Enable learning only after those
 checks with `learn enable --project-root /path/to/project --json`.
@@ -93,7 +93,7 @@ manually.
 Run local checks before tagging (Python 3.11+ is required for release scripts):
 
 ```bash
-python3 -B -m unittest scripts.test_cli_release
+python3 -B -m unittest scripts.test_cli_release scripts.test_cli_upgrade
 bash scripts/kinic_vfs_cli_release_version.sh
 npm --prefix npm/kinic-vfs-cli test
 cd npm/kinic-vfs-cli
@@ -110,8 +110,17 @@ source; do not change old tags or release metadata to bypass that check.
 
 Both platform archives and checksum files are downloaded and their actual hashes
 verified, including macOS assets when npm publishing runs on Linux. The workflow
-runs package tests and packing, installs the package in an isolated prefix,
-asserts its binary version and checks the non-writing setup dry-run contract.
+runs package tests and packs one tarball. It checks a fresh install in an
+isolated prefix, asserts its binary version and verifies the non-writing setup
+dry-run contract. A separate prefix installs the public `kinic-vfs-cli@2.0.4`
+package, verifies that version, and reads a synthetic 2.0.4 project configuration
+and SQLite retry job. It then upgrades that same prefix using the same packed
+tarball, asserts the new version, and requires `agent status` to read the existing
+configuration and job without changing either file's bytes. Legacy retry attempts
+must remain unknown. This is local state compatibility acceptance, not remote
+learning acceptance. Diagnostics use isolated home/config directories, disabled
+learning, no credentials or models, and a loopback target. npm downloads are
+bounded by timeouts and the workflow stops on any failed acceptance check.
 Immediately before `npm publish`, it repeats the tag/commit and both-platform
 checksum checks. A checksum mismatch, missing asset or draft release stops npm
 publication. `NPM_TOKEN` is used only by the publish step. Setup dry-run does not

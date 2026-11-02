@@ -46,18 +46,13 @@ jobs:
       - name: Dry-run package
         working-directory: npm/kinic-vfs-cli
         run: npm pack --dry-run
-      - name: Smoke install packed package
+      - name: Smoke fresh install and upgrade from 2.0.4
+        timeout-minutes: 15
         working-directory: npm/kinic-vfs-cli
         run: |
           package_tgz="$(npm pack --silent)"
-          prefix="$(mktemp -d)"
-          npm install --global --prefix "$prefix" "./${package_tgz}"
           expected_version="$(bash ../../scripts/kinic_vfs_cli_release_version.sh --plain)"
-          test "$("$prefix/bin/kinic-vfs-cli" --version)" = "kinic-vfs-cli $expected_version"
-          "$prefix/bin/kinic-vfs-cli" codex setup --help
-          smoke_dir="$(mktemp -d)"
-          setup_json="$(cd "$smoke_dir" && "$prefix/bin/kinic-vfs-cli" codex setup --json --dry-run --executable "$prefix/bin/kinic-vfs-cli")"
-          node -e 'const setup = JSON.parse(process.argv[1]); if (setup.status !== "dry_run" || setup.engine !== "codex" || setup.activation !== "unknown" || !Array.isArray(setup.changes) || setup.changes.length === 0) process.exit(1);' "$setup_json"
+          python3 ../../scripts/smoke_cli_upgrade.py --package "$package_tgz" --version "$expected_version"
       - name: Publish
         working-directory: npm/kinic-vfs-cli
         env:
