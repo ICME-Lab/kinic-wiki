@@ -40,6 +40,7 @@ const addedMethods = [...candidateMethods].filter((method) => !liveMethods.has(m
 const expectedAddedMethods = [
   "configure_voice_rate",
   "current_node_revision",
+  "get_api_doc",
   "get_voice_access",
   "get_voice_policy",
   "get_voice_rate",

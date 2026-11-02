@@ -14,6 +14,8 @@ Configure the project's learning connection and validation suite with `learn set
 
 The existing `Stop` session recorder remains available. It saves turn transcripts to local pending storage before attempting a CLI write under `/Sources/sessions/codex/...`. The `kinic-record-skill-run` skill records evidence after a skill materially affects a task. These capture features retain their existing behavior independently of automatic learning.
 
+Session recording requires `kinic-vfs-cli` version 2.0.2 or newer for batched folder and source writes. Older versions leave failed captures in local pending storage; upgrade the CLI to retry them.
+
 After updating the CLI, rerun `kinic-vfs-cli agent setup --engine codex --dry-run` and use `--apply` to install the updated plugin files. Prompt recall can wait up to 10 seconds for the CLI, and can return without context after a timeout.
 
 Restart Codex after setup, then review and trust hooks with `/hooks`. Setup reports configuration, not verified activation. If your Codex version does not load plugin hooks, use the installed `hooks/hooks.json` with absolute script paths in the supported hook settings, or use `kinic-vfs-cli agent run`. The installation name remains `kinic-skill-recorder` so existing installations can upgrade; its visible name is Kinic Wiki.
