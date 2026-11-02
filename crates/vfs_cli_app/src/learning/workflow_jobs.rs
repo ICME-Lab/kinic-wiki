@@ -60,9 +60,13 @@ pub fn launch_flush(
     cwd: &Path,
     engine: &str,
     config: Option<&Path>,
+    new_jobs_only: bool,
 ) -> Result<()> {
     let mut cmd = cli_command(c, cwd)?;
     cmd.args(["agent", "flush", "--replay-inbox", "--engine", engine]);
+    if new_jobs_only {
+        cmd.arg("--new-jobs-only");
+    }
     if let Some(config) = config {
         cmd.arg("--recall-config").arg(config);
     }

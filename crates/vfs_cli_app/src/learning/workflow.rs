@@ -324,6 +324,7 @@ pub async fn run_agent(
             cwd,
             replay_inbox,
             engine,
+            new_jobs_only,
             recall_config,
         } => {
             let cwd = cwd.unwrap_or(std::env::current_dir()?);
@@ -339,6 +340,7 @@ pub async fn run_agent(
                         None
                     },
                     recall_config.as_deref(),
+                    new_jobs_only,
                 )
                 .await?,
             )
@@ -1472,12 +1474,21 @@ pub async fn run_hook_request(
     }
     if reply["skipped"] != true && reply["error_code"].is_null() {
         let outbox = open_outbox(client, c, state)?;
-        if job_driver::launch_flush(c, state, &cwd, engine, config.as_deref()).is_err() {
+        let new_jobs_only = evidence_only_reply(&reply);
+        if job_driver::launch_flush(c, state, &cwd, engine, config.as_deref(), new_jobs_only)
+            .is_err()
+        {
             outbox.failure("spawn_failed")?;
             reply["sync_error"] = json!("spawn_failed");
         }
     }
     print(&reply)
+}
+
+/// Tool events only deliver evidence. Failed jobs retry on recall and terminal
+/// events, so a job that keeps failing cannot rerun its model on every tool call.
+fn evidence_only_reply(reply: &Value) -> bool {
+    reply["receipt_id"].is_null() && reply["queued"] != true
 }
 
 pub fn record_delivery_startup_failure(
@@ -1509,6 +1520,7 @@ pub async fn deliver(
     cwd: &Path,
     engine: Option<&str>,
     config: Option<&Path>,
+    new_jobs_only: bool,
 ) -> Result<Value> {
     let outbox = open_outbox(client, c, state)?;
     // Retain this project's wakeup even if another project or a synchronous
@@ -1574,7 +1586,13 @@ pub async fn deliver(
         && project.enabled
     {
         project.validate_connection(c)?;
-        if job_driver::launch(c, state, cwd, &path).is_err() {
+        // A pending job has never been attempted: a failed attempt leaves "retry".
+        let wake = !new_jobs_only
+            || job_driver::queue(client, c, state, &project)?
+                .list()?
+                .iter()
+                .any(|job| job.state == "pending");
+        if wake && job_driver::launch(c, state, cwd, &path).is_err() {
             outbox.failure("drain_spawn_failed")?;
         }
     }

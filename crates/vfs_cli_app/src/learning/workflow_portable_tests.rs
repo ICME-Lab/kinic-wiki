@@ -989,7 +989,7 @@ async fn live_unbound_intake_is_not_quarantined_by_delivery() {
     let mut value: Value = read_json(&current).unwrap();
     value["__kinic_principal"] = Value::Null;
     std::fs::write(&current, serde_json::to_vec(&value).unwrap()).unwrap();
-    deliver(&client, &c, &state, &a, Some("codex"), None)
+    deliver(&client, &c, &state, &a, Some("codex"), None, false)
         .await
         .unwrap();
     assert!(current.exists());
@@ -1061,7 +1061,9 @@ async fn delivery_review_plain_flush_never_launches_learning() {
         .await
         .unwrap();
     job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
-    deliver(&client, &c, &state, &a, None, None).await.unwrap();
+    deliver(&client, &c, &state, &a, None, None, false)
+        .await
+        .unwrap();
     job_driver::TEST_LAUNCHES
         .with(|calls| assert!(calls.borrow().is_empty(), "plain flush launched learning"));
 }
@@ -1089,7 +1091,7 @@ async fn delivery_review_busy_background_preserves_its_project_wakeup() {
         owner.flush_owned(&client, "db").await.unwrap();
         drop(lease);
     };
-    let worker = deliver(&client, &c, &state, &b, Some("codex"), None);
+    let worker = deliver(&client, &c, &state, &b, Some("codex"), None, false);
     let (_, result) = tokio::join!(send, worker);
     assert_ne!(
         result.unwrap()["busy"],
@@ -1105,6 +1107,58 @@ async fn delivery_review_busy_background_preserves_its_project_wakeup() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn delivery_review_tool_events_start_new_jobs_but_do_not_retry_failures() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"retry","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    let launches = || job_driver::TEST_LAUNCHES.with(|calls| calls.borrow().len());
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None, true)
+        .await
+        .unwrap();
+    assert_eq!(launches(), 1, "new job was not started");
+
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    let mut job = queue.list().unwrap().remove(0);
+    job.state = "retry".into();
+    queue.save(&job).unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None, true)
+        .await
+        .unwrap();
+    assert_eq!(launches(), 0, "tool event retried a failed job");
+    deliver(&client, &c, &state, &a, Some("codex"), None, false)
+        .await
+        .unwrap();
+    assert_eq!(launches(), 1, "recall or Stop did not resume the retry");
+}
+
+#[test]
+fn only_recall_and_queued_terminal_replies_resume_retries() {
+    assert!(evidence_only_reply(
+        &json!({"recorded":true,"queued":false})
+    ));
+    assert!(!evidence_only_reply(
+        &json!({"recorded":true,"queued":true})
+    ));
+    assert!(!evidence_only_reply(&json!({"receipt_id":"receipt"})));
+    assert!(evidence_only_reply(
+        &json!({"additionalContext":"","reason":"no task supplied"})
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn delivery_review_plain_flush_stays_fail_fast_when_busy() {
     let (_dir, client, state, a, _) = fixture().await;
     let c = connection();
@@ -1112,7 +1166,7 @@ async fn delivery_review_plain_flush_stays_fail_fast_when_busy() {
     let _lease = owner.acquire().unwrap().unwrap();
     let reply = tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        deliver(&client, &c, &state, &a, None, None),
+        deliver(&client, &c, &state, &a, None, None, false),
     )
     .await
     .unwrap()
