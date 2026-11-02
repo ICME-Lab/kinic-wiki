@@ -100,7 +100,10 @@ pub(super) fn sanitize_selection(output: &str, config: &RunnerConfig) -> Result<
     let mut value = object["selection"].clone();
     ensure!(value.is_array(), "selection must be a JSON array");
     super::super::redaction::redact(&mut value);
-    super::super::redaction::redact_with_secrets(&mut value, &evaluation::secret_values(config));
+    super::super::redaction::redact_with_secrets(
+        &mut value,
+        &evaluation::all_secret_values(config)?,
+    );
     Ok(serde_json::to_string(&value)?)
 }
 
@@ -289,7 +292,10 @@ pub async fn run(client: &impl VfsApi, c: &ResolvedConnection, args: &PairedArgs
     runner.executable = resolve_runner(&runner)?;
     let mut input: Value = read_json(&args.histories)?;
     super::super::redaction::redact(&mut input);
-    super::super::redaction::redact_with_secrets(&mut input, &evaluation::secret_values(&runner));
+    super::super::redaction::redact_with_secrets(
+        &mut input,
+        &evaluation::all_secret_values(&runner)?,
+    );
     let histories: BTreeMap<String, History> = serde_json::from_value(input.clone())?;
     ensure!(
         histories.len() == suite.tasks.len(),

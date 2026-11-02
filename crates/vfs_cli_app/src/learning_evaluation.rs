@@ -177,6 +177,11 @@ pub(crate) fn secret_values(runner: &RunnerConfig) -> Vec<String> {
         .map(|(_, value)| value.clone())
         .collect()
 }
+pub(crate) fn all_secret_values(runner: &RunnerConfig) -> Result<Vec<String>> {
+    let mut secrets = secret_values(runner);
+    secrets.extend(runner.inherited_values()?.into_values());
+    Ok(secrets)
+}
 fn redact_value(value: &mut serde_json::Value, secrets: &[String]) {
     match value {
         serde_json::Value::String(text) => {

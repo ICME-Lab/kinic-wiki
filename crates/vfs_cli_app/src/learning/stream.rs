@@ -812,7 +812,7 @@ async fn infer(
         )
     })?);
     super::redaction::redact(&mut public);
-    super::redaction::redact_with_secrets(&mut public, &evaluation::secret_values(&config));
+    super::redaction::redact_with_secrets(&mut public, &evaluation::all_secret_values(&config)?);
     let output = public.as_str().unwrap().to_string();
     Ok(Call {
         role: role.into(),
@@ -1137,7 +1137,7 @@ pub async fn run(client: &impl VfsApi, c: &ResolvedConnection, args: &StreamArgs
             super::redaction::redact(&mut trajectory);
             super::redaction::redact_with_secrets(
                 &mut trajectory,
-                &evaluation::secret_values(&runner),
+                &evaluation::all_secret_values(&runner)?,
             );
             pending.trajectory = Some(trajectory);
             pending.calls.push(Call {

@@ -448,7 +448,7 @@ fn external_verifier_changes_are_bound_even_when_argv_is_unchanged() {
     let tmp = tempfile::tempdir().unwrap();
     let verifier = tmp.path().join("verifier.py");
     std::fs::write(&verifier, "assert False").unwrap();
-    let before = content_bindings(&[verifier.clone()]).unwrap();
+    let before = content_bindings(std::slice::from_ref(&verifier)).unwrap();
     std::fs::write(&verifier, "assert True").unwrap();
     assert_ne!(before, content_bindings(&[verifier]).unwrap());
 }
@@ -458,8 +458,10 @@ fn runner_path_is_resolved_before_artifact_binding() {
     let tmp = tempfile::tempdir().unwrap();
     let executable = tmp.path().join("my-runner");
     std::fs::write(&executable, "fake binary").unwrap();
-    let mut runner = RunnerConfig::default();
-    runner.executable = "my-runner".into();
+    let mut runner = RunnerConfig {
+        executable: "my-runner".into(),
+        ..Default::default()
+    };
     runner
         .environment
         .insert("PATH".into(), tmp.path().to_string_lossy().into_owned());
@@ -1046,4 +1048,44 @@ fn selector_redaction_preserves_json_and_reports_failed_usage() {
     let rows: Value = serde_json::from_str(&result).unwrap();
     assert_eq!(rows[0]["evidence"][0]["quote"], "Authorization: [REDACTED]");
     assert!(paired::sanitize_selection(r#"{"wrong":[]}"#, &RunnerConfig::default()).is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn inherited_credentials_are_redacted_from_memory_and_selection() {
+    const NAME: &str = "KINIC_TEST_REHARNESS_ACCESS";
+    const SECRET: &str = "private-fixture-value-not-a-token";
+    if std::env::var_os(NAME).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "learning::stream::tests::inherited_credentials_are_redacted_from_memory_and_selection"])
+            .env(NAME, SECRET)
+            .status().unwrap();
+        assert!(status.success());
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let script = temp.path().join("agent.py");
+    std::fs::write(&script, r##"#!/usr/bin/env python3
+import json,os,sys
+sys.stdin.read()
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps({'reflection':'value '+os.environ['KINIC_TEST_REHARNESS_ACCESS']})}}))
+print(json.dumps({'type':'turn.completed'}))
+"##).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = RunnerConfig {
+        executable: script,
+        inherited_environment: vec![NAME.into()],
+        ..Default::default()
+    };
+    let call = infer(&config, temp.path(), "source", "reflection", "write")
+        .await
+        .unwrap();
+    assert!(
+        !call.output.contains(SECRET),
+        "reflection leaked credential"
+    );
+    let selection = json!({"selection":[{"reason":format!("value {SECRET}")}]});
+    let output = paired::sanitize_selection(&selection.to_string(), &config).unwrap();
+    assert!(!output.contains(SECRET), "selection leaked credential");
 }
