@@ -1521,3 +1521,59 @@ async fn stop_during_wakeup_snapshot_does_not_retry_same_failure_twice() {
         "one stop retried the model twice"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn no_revision_needed_is_saved_once_and_held_without_retry_or_publication() {
+    let (dir, client, state, root, _) = fixture().await;
+    let script = dir.path().join("model-peer.py");
+    std::fs::write(&script,r#"#!/usr/bin/env python3
+import json,sys
+from pathlib import Path
+sys.stdin.read()
+marker=Path(__file__).with_suffix('.calls')
+with marker.open('a') as f:f.write('call\n')
+proposal={'operation':'keep','rationale':'The recorded read-only task supplies no reason to alter existing lessons.','targets':[],'dependency_paths':[]}
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(proposal)}}))
+print(json.dumps({'type':'turn.completed'}))
+"#).unwrap();
+    let c = connection();
+    let project = load_project(&root.join(CONFIG_FILE)).unwrap();
+    let prior_path = format!("{}/prior.md", project.knowledge_scope());
+    let before = client.read_node("db", &prior_path).await.unwrap().unwrap();
+    hooks::handle(&client,&c,"codex",None,&state,json!({"cwd":root,"session_id":"noop","turn_id":"one","event":"UserPromptSubmit","prompt":"Read portable advice only"})).await.unwrap();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"cwd":root,"session_id":"noop","turn_id":"one","event":"Stop"}),
+    )
+    .await
+    .unwrap();
+    let result = job_driver::drain(&client, &c, &root, &state).await.unwrap();
+    assert_eq!(result["jobs"][0]["state"], "held", "{result}");
+    let path = result["jobs"][0]["candidate_path"].as_str().unwrap();
+    let candidate: RevisionCandidate = remote_json(&client, "db", path).await.unwrap();
+    assert_eq!(candidate.operation, "keep");
+    assert!(candidate.targets.is_empty());
+    assert!(!candidate.evidence.is_empty());
+    job_driver::drain(&client, &c, &root, &state).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(script.with_extension("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert_eq!(
+        client
+            .read_node("db", &prior_path)
+            .await
+            .unwrap()
+            .unwrap()
+            .etag,
+        before.etag
+    );
+}

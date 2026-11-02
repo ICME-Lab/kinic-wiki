@@ -2,15 +2,14 @@ use super::super::integration_tests::StoreClient;
 use super::*;
 use std::sync::atomic::Ordering;
 
-// Publication fixtures are deliberately project-less and must not discover a
-// developer's project configuration from the repository checkout.
-async fn run_learn(
+// Legacy fixtures must not discover the developer's live portable configuration.
+async fn run_legacy_fixture(
     client: &StoreClient,
-    connection: &ResolvedConnection,
+    c: &ResolvedConnection,
     command: LearnCommand,
 ) -> Result<()> {
     let cwd = tempfile::tempdir()?;
-    learn_value(client, connection, command, cwd.path())
+    learn_value_at(client, c, command, cwd.path(), None)
         .await
         .map(|_| ())
 }
@@ -173,7 +172,7 @@ async fn promotion_replays_exact_signed_intent_after_committed_response_is_lost(
         state: state(&local),
     };
     assert!(
-        run_learn(&client, &connection(), command())
+        run_legacy_fixture(&client, &connection(), command())
             .await
             .unwrap_err()
             .to_string()
@@ -188,7 +187,9 @@ async fn promotion_replays_exact_signed_intent_after_committed_response_is_lost(
         .unwrap()
         .unwrap();
     assert_eq!(committed.node.content, "revised advice");
-    run_learn(&client, &connection(), command()).await.unwrap();
+    run_legacy_fixture(&client, &connection(), command())
+        .await
+        .unwrap();
     let replayed = client
         .current_node_revision(NodeRevisionRequest {
             database_id: "db".into(),
@@ -231,7 +232,7 @@ async fn rejected_scope_attempt_allows_fresh_evaluation_but_committed_candidate_
         evaluation_path,
         state: state(&local),
     };
-    let rejected = run_learn(&client, &connection(), promote(old_evaluation.clone()))
+    let rejected = run_legacy_fixture(&client, &connection(), promote(old_evaluation.clone()))
         .await
         .unwrap_err();
     assert!(rejected.to_string().contains("retrieval scope changed"));
@@ -269,7 +270,7 @@ async fn rejected_scope_attempt_allows_fresh_evaluation_but_committed_candidate_
     )
     .await
     .unwrap();
-    run_learn(&client, &connection(), promote(fresh_evaluation.clone()))
+    run_legacy_fixture(&client, &connection(), promote(fresh_evaluation.clone()))
         .await
         .unwrap();
     let committed = reference(&client, "db", "/Knowledge/lesson.md")
@@ -288,7 +289,7 @@ async fn rejected_scope_attempt_allows_fresh_evaluation_but_committed_candidate_
         old_node.content
     );
 
-    run_learn(&client, &connection(), promote(fresh_evaluation))
+    run_legacy_fixture(&client, &connection(), promote(fresh_evaluation))
         .await
         .unwrap();
     assert_eq!(
@@ -314,7 +315,7 @@ async fn rejected_scope_attempt_allows_fresh_evaluation_but_committed_candidate_
     )
     .await
     .unwrap();
-    let rejected = run_learn(&client, &connection(), promote(other_evaluation))
+    let rejected = run_legacy_fixture(&client, &connection(), promote(other_evaluation))
         .await
         .unwrap_err();
     assert!(
@@ -357,7 +358,11 @@ async fn tampered_intent_and_rollback_preimages_cannot_authorize_writes() {
         evaluation_path: evaluation_path.clone(),
         state: state(&local),
     };
-    assert!(run_learn(&client, &connection(), command()).await.is_err());
+    assert!(
+        run_legacy_fixture(&client, &connection(), command())
+            .await
+            .is_err()
+    );
     assert_eq!(
         client
             .read_node("db", "/Knowledge/lesson.md")
@@ -378,7 +383,9 @@ async fn tampered_intent_and_rollback_preimages_cannot_authorize_writes() {
         })
         .await
         .unwrap();
-    run_learn(&client, &connection(), command()).await.unwrap();
+    run_legacy_fixture(&client, &connection(), command())
+        .await
+        .unwrap();
     let stored_publication = client
         .read_node("db", &publication_path)
         .await
@@ -398,7 +405,7 @@ async fn tampered_intent_and_rollback_preimages_cannot_authorize_writes() {
         .await
         .unwrap();
     assert!(
-        run_learn(
+        run_legacy_fixture(
             &client,
             &connection(),
             LearnCommand::Rollback {
@@ -426,7 +433,7 @@ async fn rollback_replays_exact_signed_request_after_committed_response_is_lost(
     let client = StoreClient::new(root.path());
     let local = root.path().join("local");
     let (candidate_path, evaluation_path, publication_path) = signed_intent(&client, &local).await;
-    run_learn(
+    run_legacy_fixture(
         &client,
         &connection(),
         LearnCommand::Promote {
@@ -443,7 +450,7 @@ async fn rollback_replays_exact_signed_request_after_committed_response_is_lost(
         state: state(&local),
     };
     assert!(
-        run_learn(&client, &connection(), command())
+        run_legacy_fixture(&client, &connection(), command())
             .await
             .unwrap_err()
             .to_string()
@@ -458,7 +465,9 @@ async fn rollback_replays_exact_signed_request_after_committed_response_is_lost(
         .unwrap()
         .unwrap();
     assert_eq!(restored.node.content, "original advice");
-    run_learn(&client, &connection(), command()).await.unwrap();
+    run_legacy_fixture(&client, &connection(), command())
+        .await
+        .unwrap();
     let replayed = client
         .current_node_revision(NodeRevisionRequest {
             database_id: "db".into(),

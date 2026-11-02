@@ -14,6 +14,70 @@ reads/writes. Setup does not create a database, authenticate to a model, enable
 learning jobs, or publish knowledge. The existing evaluation and promotion rules
 remain in force.
 
+## Explicit local activation
+
+Inspect privileged steps before applying them:
+
+```sh
+kinic-vfs-cli agent setup --engine codex --authorize-keyring --install-plugin --dry-run --json
+kinic-vfs-cli agent setup --engine codex --authorize-keyring --install-plugin --apply
+```
+
+`--authorize-keyring` is optional for users already using Internet Identity. It
+pins the currently selected **keyring** identity's name and principal, canonical
+project directory, replica, canister and database in a private user file under
+`~/.config/kinic-vfs-cli/identity-grants/`. It does not change the active identity
+or enable non-II identities for other projects. A changed destination, identity
+name, identity kind or principal stops ordinary commands, hooks and background
+delivery, including anonymous reads in that bound project. Dry-run never exports
+a key. Apply exports through icp-cli only in memory; no private key is stored in
+the grant. Reapplying the same binding is idempotent; replacing a different grant
+requires deliberate reconciliation of that user file.
+
+Database management commands must also name the authorized database in their
+positional argument. A matching global `--database-id` cannot authorize a different
+positional database. These checks run before any credential helper, even with
+`--allow-non-ii-identity` or anonymous mode. A database-scoped grant cannot authorize
+database creation/listing, marketplace entitlements, canister cycles configuration,
+or public-ID reads, which have no matching database scope. Use a separate, explicitly
+authorized administration workspace for those operations. Local commands that do
+not acquire credentials, such as `database current`, `unlink`, and opening the
+browser cycles page, retain their existing behavior.
+
+`--install-plugin` uses `codex plugin list` and `codex plugin add`, and verifies the
+expected installed/enabled version. It preserves the existing marketplace name
+and unrelated metadata and honors `CODEX_HOME`. File placement alone does not
+mean installation, hook trust or operation. Review `/hooks` in Codex and trust the
+Kinic hooks; restart the application if requested. Neither setup nor doctor
+silently trusts hooks. Without `--apply`, these two privileged steps are only
+reported; setup's existing file-preparation behavior remains unchanged.
+
+Register automatic learning separately using a runner JSON. For a proposal-only
+project, omit `--validation-suite`:
+
+```sh
+kinic-vfs-cli learn setup --project-root . --runner-file /absolute/path/runner.json
+kinic-vfs-cli agent doctor --engine codex
+kinic-vfs-cli agent status --json
+```
+
+For the agreed local trial the runner uses `engine: "codex"`,
+`model: "gpt-6.1-sol"`, `reasoning_effort: "high"`, and `read_only: true`.
+The runner file uses the existing RunnerConfig format; `learn setup --help`
+lists optional explicit shared knowledge scopes. No validation suite means
+candidate storage only: it does not authorize automatic knowledge publication.
+A justified `keep` response with no changes is saved as evidence and held with
+`no_revision_needed`; it does not trigger repeated model attempts.
+
+To pause project learning, run `kinic-vfs-cli learn disable --project-root .`;
+`learn enable` restores it. Disable the Kinic hooks in Codex to stop all automatic
+intake. Preserve pending local state while diagnosing; do not delete queues to
+clear an error. To revoke scoped keyring authorization, remove only this
+project's reviewed grant file, then use explicit setup to authorize again.
+Never replace it with a global non-II environment flag. Check `agent status`
+and retry delivery with `agent flush --replay-inbox --engine codex` after fixing
+the reported cause; do not repeatedly drain failing model jobs.
+
 ## Project and user settings
 
 Connection settings retain their existing names and precedence. Add learning and
@@ -203,11 +267,35 @@ projects, doctor separately compares the resolved destination and stored caller
 with the project binding. A successful remote read cannot hide a binding mismatch;
 an unavailable stored caller leaves the identity comparison unknown.
 
+For a selected keyring identity, diagnostics distinguish a missing scoped grant
+(`keyring_authorization_missing`) from a matching saved grant whose credential
+access has not been tested (`keyring_access_unverified`). The former points to
+`kinic-vfs-cli agent setup --engine codex --authorize-keyring --apply` (use
+`dsh` for that engine); the latter points to a normal `agent recall` operation.
+A saved grant contains an expected identity binding, not evidence of successful
+keyring access. Doctor and status never run a credential helper to validate it.
+
 Doctor never starts an executable (including wrappers or `--version`), creates a
 model/embedding request, writes to the Wiki, opens/creates queues, refreshes
 credentials, creates directories/databases, retries records or repairs state.
 Existing file presence does not prove model connectivity, hook activation or
 write permission. Custom DSH payload locations require separate inspection.
+
+Both doctor and status include a `readiness` report. Recall configuration and
+portable automatic learning configuration are separate stages: `[learning]` in
+`.kinic/config.toml` can configure recall while `.kinic-learning.json` is still
+missing. In that case, `learning.project` reports `learning_project_missing` and
+points to `kinic-vfs-cli learn setup --help`. A configured portable project can
+also be disabled or invalid; neither is reported as ready.
+
+Engine stages distinguish payload placement, plugin installation, persisted
+plugin enablement, hook trust and observed operation. Codex enablement is read
+from the selected Codex home's `config.toml` (`CODEX_HOME`, otherwise
+`~/.codex`), and only describes that file's configuration. Installation and hook
+trust remain unknown without reliable local evidence. File placement and an
+`enabled=true` setting do not establish that the current application loaded the
+plugin or executed a hook. Incomplete stages include a `next_action`; no
+diagnostic invokes plugin commands or changes application settings.
 
 Checks have `ok`, `warning`, `error`, `unknown` or `skipped`, a stable code,
 evidence and a suggested next action. JSON includes `schema_version: 1`, UTC
@@ -261,19 +349,28 @@ The report includes:
   excluded explicitly, rather than silently counted as empty.
 
 JSON has `schema_version: 1`, UTC `checked_at`, `mode: local_read_only`, target,
-configuration, records, context, learning, intake, publication and rollback.
+configuration, records, context, learning, intake, publication and rollback, plus
+additive `readiness` and `summary` fields. Existing fields retain their meanings.
 Each available source carries its path and scope. Values without evidence remain
 `unknown`/`null`; partially readable data is `partial`. Configuration or source
 errors produce partial reports without raw parser, transcript or error bodies.
 A successfully produced report exits 0, including unknown/partial sections;
 use doctor for connection diagnosis and its diagnostic exit-code contract.
 
-The existing events and jobs do not persist reliable event/send timestamps.
-Status therefore shows event time as unknown. A storage-file modification time
-is labeled as such and is never substituted for an event or send time. Final
-send failures, remote publication/rollback details and actual context delivery
-remain unknown when there is no local evidence. Even a job recorded as published
-is not remote verification of its publication artifact.
+The summary exposes pending outbox events, the latest observed send outcome,
+recorded candidate/job states, and the last actual context delivery. Pending
+hook inputs remain separate. Send outcomes use persisted delivery timestamps
+when available; an attempt newer than the last result remains unknown. Delivery
+metadata is shared by the selected destination and principal across projects.
+Receipt assembly is not actual engine delivery, so `last_context_delivered`
+remains unknown when no delivery evidence exists. A local run record establishes
+recorded activity only, not that a trusted application hook produced it.
+
+Existing events and jobs do not persist reliable event timestamps. Status
+therefore shows event time as unknown. A storage-file modification time is
+labeled as such and is never substituted for an event or send time. Remote
+publication/rollback details remain unknown without remote evidence. Even a job
+recorded as published is not remote verification of its publication artifact.
 
 SQLite reads use a dedicated read-only path with a short lock timeout, without
 opening the creation-capable outbox or job APIs. Live WAL/shared-memory files and

@@ -487,3 +487,26 @@ pub fn config_for_command(command: &crate::cli::Command, cwd: &Path) -> Result<O
     }
     discover_config(root)
 }
+
+/// Shared portable defaults for normal commands and explicit authorization setup.
+pub fn apply_connection_defaults(
+    args: &mut vfs_cli::cli::ConnectionArgs,
+    path: Option<&Path>,
+) -> Result<Option<ProjectConfig>> {
+    let Some(path) = path else { return Ok(None) };
+    let raw: Value = serde_json::from_slice(&vfs_cli::connection::read_local_config_bytes(path)?)?;
+    if raw["version"] != 2 {
+        return Ok(None);
+    }
+    let project = load_project(path)?;
+    if !args.local && args.replica_host.is_none() {
+        args.replica_host = Some(project.replica_host.clone());
+    }
+    if args.canister_id.is_none() && std::env::var_os("VFS_CANISTER_ID").is_none() {
+        args.canister_id = Some(project.canister_id.clone());
+    }
+    if args.database_id.is_none() && std::env::var_os("VFS_DATABASE_ID").is_none() {
+        args.database_id = Some(project.database_id.clone());
+    }
+    Ok(Some(project))
+}

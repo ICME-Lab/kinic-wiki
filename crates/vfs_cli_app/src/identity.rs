@@ -16,6 +16,14 @@ pub async fn load_default_identity(
     canister_id: &str,
     allow_non_ii_identity: bool,
 ) -> Result<Box<dyn ic_agent::Identity>> {
+    load_scoped_identity(canister_id, allow_non_ii_identity, None).await
+}
+
+pub async fn load_scoped_identity(
+    canister_id: &str,
+    allow_non_ii_identity: bool,
+    grant: Option<&crate::identity_policy::Grant>,
+) -> Result<Box<dyn ic_agent::Identity>> {
     let identity_name = command_stdout("icp", &["identity", "default"])
         .await
         .context("failed to read active icp-cli identity")?;
@@ -25,6 +33,9 @@ pub async fn load_default_identity(
     }
     let identity_dir = default_identity_dir()?;
     let metadata = read_identity_metadata(&identity_dir, identity_name)?;
+    if let Some(grant) = grant {
+        grant.check_name(identity_name, &metadata.kind)?;
+    }
     match metadata.kind.as_str() {
         "internet-identity" => {
             let session_pem = export_identity_pem(identity_name).await?;
@@ -33,11 +44,56 @@ pub async fn load_default_identity(
         "pending-delegation" => Err(refresh_required(identity_name)),
         "anonymous" => bail!("active icp-cli identity `{identity_name}` is anonymous"),
         kind => {
-            ensure_identity_kind_allowed(kind, identity_name, allow_non_ii_identity)?;
+            ensure_identity_kind_allowed(
+                kind,
+                identity_name,
+                allow_non_ii_identity || grant.is_some(),
+            )?;
             let identity_pem = export_identity_pem(identity_name).await?;
-            vfs_client::identity_from_pem(&identity_pem)
+            let identity = vfs_client::identity_from_pem(&identity_pem)?;
+            if let Some(grant) = grant {
+                grant.check_identity(
+                    identity_name,
+                    kind,
+                    &identity
+                        .sender()
+                        .map_err(|_| anyhow!("identity principal unavailable"))?
+                        .to_text(),
+                )?;
+            }
+            Ok(identity)
         }
     }
+}
+
+/// Explicit setup operation: reads the selected keyring identity and pins its principal.
+pub async fn keyring_grant(
+    root: &Path,
+    connection: &vfs_cli::connection::ResolvedConnection,
+) -> Result<crate::identity_policy::Grant> {
+    let name = command_stdout("icp", &["identity", "default"]).await?;
+    let name = name.trim();
+    let metadata = read_identity_metadata(&default_identity_dir()?, name)?;
+    anyhow::ensure!(
+        metadata.kind == "keyring",
+        "scoped authorization requires the selected keyring identity"
+    );
+    let pem = export_identity_pem(name).await?;
+    let identity = vfs_client::identity_from_pem(&pem)?;
+    Ok(crate::identity_policy::Grant {
+        project_root: root.to_path_buf(),
+        replica_host: connection.replica_host.trim_end_matches('/').into(),
+        canister_id: connection.canister_id.clone(),
+        database_id: connection
+            .database_id
+            .clone()
+            .context("database required for scoped authorization")?,
+        identity_name: name.into(),
+        principal: identity
+            .sender()
+            .map_err(|_| anyhow!("identity principal unavailable"))?
+            .to_text(),
+    })
 }
 
 /// Read-only doctor path. Never invokes icp, a wrapper, keyring helpers or login.
@@ -332,6 +388,24 @@ struct StoredDelegation {
     pubkey: String,
     expiration: String,
     targets: Option<Vec<String>>,
+}
+
+/// Read selected identity metadata only; never exports a key or starts a helper.
+pub fn diagnostic_selection() -> Result<(String, String)> {
+    let dir = default_identity_dir()?;
+    let defaults: serde_json::Value = serde_json::from_slice(
+        &vfs_cli::connection::read_local_config_bytes(&dir.join("identity_defaults.json"))?,
+    )
+    .map_err(|_| anyhow!("invalid identity defaults"))?;
+    let name = defaults
+        .get("default")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("identity default missing"))?;
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == ".." {
+        bail!("invalid identity name");
+    }
+    let metadata = read_identity_metadata(&dir, name)?;
+    Ok((name.to_owned(), metadata.kind))
 }
 
 #[cfg(test)]
