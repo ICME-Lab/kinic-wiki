@@ -1047,37 +1047,34 @@ def unique_quarantine_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.name}.{millis}.{suffix}")
 
 
-def ensure_session_source_parent_folders(cli: str, remote_path: str) -> None:
+def ensure_session_source_parent_folders(remote_path: str) -> list[str]:
     if not remote_path.startswith("/Sources/sessions/"):
-        return
+        return []
     segments = [segment for segment in remote_path.split("/") if segment]
     if len(segments) < 4:
-        return
+        return []
     provider = segments[2]
-    for folder_path in ["/Sources/sessions", f"/Sources/sessions/{provider}"]:
-        run_cli(cli, "mkdir-node", "--path", folder_path)
+    return ["/Sources/sessions", f"/Sources/sessions/{provider}"]
 
 
 def write_payload(cli: str, payload: dict[str, Any]) -> None:
     content = required_text(payload, "content")
     remote_path = required_text(payload, "path")
     metadata_json = required_text(payload, "metadata_json")
-    ensure_session_source_parent_folders(cli, remote_path)
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
-        handle.write(content)
+    nodes = [
+        {"path": path, "kind": "folder", "content": "", "metadata_json": "{}", "expected_etag": None}
+        for path in ensure_session_source_parent_folders(remote_path)
+    ]
+    nodes.append({"path": remote_path, "kind": "source", "content": content, "metadata_json": metadata_json, "expected_etag": None})
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(nodes, handle)
         temp_path = Path(handle.name)
     try:
         run_cli(
             cli,
-            "write-node",
-            "--path",
-            remote_path,
-            "--kind",
-            "source",
+            "write-nodes",
             "--input",
             str(temp_path),
-            "--metadata-json",
-            metadata_json,
             "--json",
         )
     finally:
