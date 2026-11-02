@@ -307,7 +307,32 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         }
         ClientIdentityMode::Identity => match identity_client {
             Some(client) => client,
-            None => new_identity_client(&connection, cli.connection.allow_non_ii_identity).await?,
+            None => match new_identity_client(&connection, cli.connection.allow_non_ii_identity)
+                .await
+            {
+                Ok(client) => client,
+                Err(error) => {
+                    // A background process can fail before it opens the outbox.
+                    // Attribute only to an explicitly configured principal, never a guess.
+                    let state = match &cli.command {
+                        Command::Agent {
+                            command: vfs_cli_app::learning::cli::AgentCommand::Flush { state, .. },
+                        } => Some(state),
+                        Command::Learn {
+                            command: vfs_cli_app::learning::cli::LearnCommand::Drain { state, .. },
+                        } => Some(state),
+                        _ => None,
+                    };
+                    if let Some(state) = state {
+                        let _ = vfs_cli_app::learning::workflow::record_delivery_startup_failure(
+                            &connection,
+                            state,
+                            &cli.command,
+                        );
+                    }
+                    return Err(error);
+                }
+            },
         },
     };
     if let Some(mut request) = hook_input
@@ -345,29 +370,16 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
             request = vfs_cli_app::learning::workflow::read_json(&path)?;
             hook_spool = Some(path);
         }
-        if let Some(path) = &hook_spool {
-            vfs_cli_app::learning::workflow::replay_hook_inbox(
-                &client,
-                &connection,
-                &engine,
-                recall_config.clone(),
-                &state,
-                path,
-            )
-            .await?;
-        }
         vfs_cli_app::learning::workflow::run_hook_request(
             &client,
             &connection,
             &engine,
-            recall_config,
+            recall_config.clone(),
             &state,
             request,
+            hook_spool.as_deref(),
         )
         .await?;
-        if let Some(path) = hook_spool {
-            std::fs::remove_file(path)?;
-        }
         return Ok(());
     }
     run_command(&client, cli, &connection).await

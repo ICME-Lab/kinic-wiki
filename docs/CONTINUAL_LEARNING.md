@@ -36,7 +36,12 @@ credentials as a side effect. DSH always launches `--profile sdk`, initializes i
 provider/model, enqueues one prompt, then waits for that message's receipt,
 completed root turn and root idle. Startup idle, unrelated sessions and enqueue
 acknowledgments are not success. Codex uses `exec --json` and requires a completed
-turn. Both capture bounded evidence, time and available token counts. Missing costs
+turn. After a DSH terminal turn and root idle, both successful and failed turns
+receive a shutdown request. The CLI drains bounded stdout/stderr while waiting up
+to two seconds for session persistence/disposal, then terminates an owned runtime
+that has not exited. Teardown does not turn a failed task into success, and the
+bounded grace period does not guarantee persistence when shutdown fails or hangs.
+Both capture bounded evidence, time and available token counts. Missing costs
 stay unknown. Timeouts and malformed/truncated streams produce incomplete runs.
 
 `reasoning_effort` is optional. `read_only` defaults to false; Codex explicitly
@@ -107,6 +112,14 @@ Identical IDs deduplicate; changed content under an existing ID fails. Remote
 `/Sources/learning-runs/<run-hash>/<event-hash>.json` evidence is immutable through
 this path. Lost write acknowledgments are reconciled by exact content reads.
 Acknowledged IDs remain reserved. Failed sync stays pending and is reported.
+
+Hooks never wait on remote writes: they only enqueue, then start one detached
+`agent flush` when events are pending and no live flusher holds the outbox lease.
+The flusher sends the backlog as atomic create-only `write_nodes` batches (at most
+100 nodes and about 1 MB each); if a batch fails it verifies each event
+individually, so conflicting remote content still fails without overwrite. Each
+hook answers its own request before best-effort replay of older spooled entries,
+so a backlog or an unreplayable entry cannot delay recall.
 
 ## Revise, evaluate and publish
 
@@ -207,3 +220,72 @@ activation should follow held-out task-quality evaluation and regression review.
 Implementation evidence and release limits: the existing Wiki workflow `/Knowledge/kinic-wiki/workflows/a1cf9738-5e80-40bd-88b0-6ce259d50be5/completion.md`.
 
 For arbitrary-project setup and CLI-only plugins, see [portable learning](PORTABLE_LEARNING.md).
+
+### Hook delivery recovery
+
+Hooks persist intake and evidence locally, remove the completed intake file, start
+one finite `agent flush --replay-inbox --engine codex` (or `dsh`) process, and
+return without awaiting replay or remote writes. Unix delivery processes use a
+separate process group. Normal `agent flush` retains outbox-only delivery;
+`--replay-inbox` also replays the selected cwd/config/engine inbox. Use
+`--recall-config` for an explicit configuration and `--state-dir` for its state.
+All outbox writers share the same destination/identity lease. Replay does not
+recursively launch workers. After background/replay delivery, enabled project jobs resume through
+`learn drain`. Plain `agent flush` never starts learning, even with queued jobs.
+A replay worker that encounters a live sender waits up to 30 seconds for the
+shared lease, then processes its own project inbox and starts its own drain.
+This preserves project wakeups when another project or a synchronous record
+command owns delivery. On expiry it records `delivery_busy_timeout` and retains
+local evidence/jobs for the next hook or an explicit
+`agent flush --replay-inbox --engine codex` (or `dsh`). The hook response does not
+wait for this child; ordinary flush remains fail-fast when delivery is busy.
+
+`learn propose --run-id` sends pending local evidence before reading the run.
+If another sender owns the queue and the run is still pending, it reports
+`delivery_pending`; retry after delivery. Drain leaves these jobs pending.
+Remote evidence completeness and immutable-content validation still apply.
+
+`agent status --json` exposes additive record fields `oldest_pending_at`,
+`pending_time_unknown`, `last_send_attempt_at`, `last_send_success_at`, and
+`last_send_failure`. Delivery timestamps/errors belong to the selected
+**destination and principal across projects**, whereas record counts retain their
+existing project scope. Historical failures remain visible after recovery;
+compare their timestamps with the latest success. Old event enqueue times stay
+unknown. Status never migrates a database and continues to report active WALs as
+unverified rather than mutating their shared memory.
+
+Malformed or unverifiable inbox records move into that partition's `quarantine`
+folder with a bounded reason code. Status shows its count, reasons and location.
+Foreign valid bindings and live hook owners are skipped. No quarantine item is
+automatically replayed; inspect it before any manual recovery. Network failures
+remain retryable. Startup/send errors store fixed diagnostic codes, not stderr or
+transcripts. Local storage failure can itself prevent diagnostic persistence.
+
+No resident worker is installed. After an unsuccessful finite attempt, the next
+hook or explicit flush retries delivery. Delivery is not guaranteed while the
+CLI is not running. Separating delivery does not guarantee that identity loading
+and remote recall always fit the Python adapter's deadline.
+
+Explicit local-canister acceptance is available in
+`evaluation/continual-learning/check_delivery_live.py` (see `--help`). It uses a
+caller-supplied local test database and a delaying/failing proxy, invokes no model,
+and checks real plugin/CLI context delivery, concurrent flushing, quarantine,
+network recovery, and survival of a host process-group kill. The
+`recall_readonly_timing` Rust example measures fresh identity and recall without
+sending evidence or making remote writes; local retrieval indexes are retained.
+
+### Codex recall deadlines (2026-10-26)
+
+The Python adapter allows 10 seconds for UserPromptSubmit recall; the distributed
+Codex hook configuration allows 15 seconds, leaving startup/cleanup margin.
+PostToolUse and Stop still allow 2 seconds inside the adapter and 8 seconds in
+the learning hook configuration. Completion returns immediately; these are limits,
+not fixed waits. Update/reinstall the plugin and reload its hook configuration
+for existing installations; repository changes alone do not activate installed hooks.
+
+Timeouts return an empty hook response and emit a fixed JSON diagnostic to stderr:
+`recall_timeout` or `evidence_timeout`, the configured deadline and elapsed time.
+No prompts, paths, CLI arguments, or captured stderr are included. Empty successful
+searches do not emit a timeout diagnostic. This diagnostic is in the hook host's
+stderr, not persisted in `agent status`; keep the host log when investigating.
+There is no cache or resident worker. Ten seconds is not a recall latency guarantee.

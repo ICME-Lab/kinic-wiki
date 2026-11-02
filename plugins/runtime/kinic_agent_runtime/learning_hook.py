@@ -7,12 +7,14 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 from .cli import cli_command, resolve_cli
 
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 1024 * 1024
 CLI_TIMEOUT_SECONDS = 2
+RECALL_TIMEOUT_SECONDS = 10
 
 
 def handle(data: dict) -> dict:
@@ -40,7 +42,8 @@ def handle(data: dict) -> dict:
     with tempfile.TemporaryFile() as output:
         subprocess.run(command, input=json.dumps(request, ensure_ascii=False).encode(),
                        cwd=cwd, stdout=output, stderr=subprocess.DEVNULL,
-                       timeout=CLI_TIMEOUT_SECONDS, check=True)
+                       timeout=RECALL_TIMEOUT_SECONDS if event == "UserPromptSubmit" else CLI_TIMEOUT_SECONDS,
+                       check=True)
         output.seek(0)
         raw = output.read(MAX_OUTPUT_BYTES + 1)
     if len(raw) > MAX_OUTPUT_BYTES:
@@ -65,6 +68,8 @@ def handle(data: dict) -> dict:
 
 
 def main() -> int:
+    started = time.monotonic()
+    data = {}
     try:
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         if len(raw) > MAX_INPUT_BYTES:
@@ -73,6 +78,14 @@ def main() -> int:
         if not isinstance(data, dict):
             raise ValueError("hook input must be an object")
         output = handle(data)
+    except subprocess.TimeoutExpired:
+        # Fixed fields only: never echo task text, command arguments or CLI output.
+        print(json.dumps({"source": "kinic_hook", "code": "recall_timeout"
+                          if data.get("hook_event_name") == "UserPromptSubmit" else "evidence_timeout",
+                          "timeout_seconds": RECALL_TIMEOUT_SECONDS
+                          if data.get("hook_event_name") == "UserPromptSubmit" else CLI_TIMEOUT_SECONDS,
+                          "elapsed_ms": round((time.monotonic() - started) * 1000)}), file=sys.stderr)
+        output = {}
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         print("Kinic Wiki: hook not acknowledged by CLI; evidence may be incomplete", file=sys.stderr)
         output = {}

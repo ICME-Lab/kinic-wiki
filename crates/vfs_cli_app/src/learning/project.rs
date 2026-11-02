@@ -431,7 +431,8 @@ pub fn config_for_command(command: &crate::cli::Command, cwd: &Path) -> Result<O
     use crate::cli::Command as AppCommand;
     let (explicit, root) = match command {
         AppCommand::Agent {
-            command: AgentCommand::Hook { recall_config, .. },
+            command:
+                AgentCommand::Hook { recall_config, .. } | AgentCommand::Flush { recall_config, .. },
         } => (recall_config.as_ref(), cwd),
         AppCommand::Agent {
             command: AgentCommand::Recall { recall_config, .. },

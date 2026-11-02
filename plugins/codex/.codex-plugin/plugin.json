@@ -1,6 +1,6 @@
 {
   "name": "kinic-skill-recorder",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Connect any project to Kinic Wiki context, evidence, and continual learning through kinic-vfs-cli.",
   "author": {
     "name": "Kinic"

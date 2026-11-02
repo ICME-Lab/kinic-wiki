@@ -31,34 +31,61 @@ pub fn enqueue(
     path: &Path,
 ) -> Result<()> {
     if project.enabled {
-        queue(client, c, state, project)?.enqueue(run, cwd, path)?;
+        let queue = queue(client, c, state, project)?;
+        queue.enqueue_with_wakeup(run, cwd, path)?;
     }
     Ok(())
+}
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEST_DELIVERY_PENDING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    pub(super) static TEST_AFTER_OUTBOX_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    pub(super) static TEST_LAUNCHES: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 #[cfg(test)]
 pub fn launch(
     _c: &ResolvedConnection,
     _state: &StateArgs,
-    _cwd: &Path,
+    cwd: &Path,
     _config: &Path,
 ) -> Result<()> {
+    TEST_LAUNCHES.with(|calls| calls.borrow_mut().push(cwd.to_path_buf()));
     Ok(())
 }
 #[cfg(not(test))]
 pub fn launch(c: &ResolvedConnection, state: &StateArgs, cwd: &Path, config: &Path) -> Result<()> {
-    let mut cmd = drain_command(c, state, cwd, config)?;
+    spawn_detached(drain_command(c, state, cwd, config)?)
+}
+pub fn launch_flush(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    engine: &str,
+    config: Option<&Path>,
+) -> Result<()> {
+    let mut cmd = cli_command(c, cwd)?;
+    cmd.args(["agent", "flush", "--replay-inbox", "--engine", engine]);
+    if let Some(config) = config {
+        cmd.arg("--recall-config").arg(config);
+    }
+    if let Some(dir) = &state.state_dir {
+        cmd.arg("--state-dir").arg(dir);
+    }
+    spawn_detached(cmd)
+}
+fn spawn_detached(mut cmd: std::process::Command) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     Ok(())
 }
-fn drain_command(
-    c: &ResolvedConnection,
-    state: &StateArgs,
-    cwd: &Path,
-    config: &Path,
-) -> Result<std::process::Command> {
+fn cli_command(c: &ResolvedConnection, cwd: &Path) -> Result<std::process::Command> {
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.args([
         "--replica-host",
@@ -73,17 +100,26 @@ fn drain_command(
     {
         cmd.arg("--allow-non-ii-identity");
     }
-    cmd.args(["learn", "drain", "--project-root"])
+    cmd.current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    Ok(cmd)
+}
+fn drain_command(
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    cwd: &Path,
+    config: &Path,
+) -> Result<std::process::Command> {
+    let mut cmd = cli_command(c, cwd)?;
+    cmd.args(["learn", "drain", "--require-wakeup", "--project-root"])
         .arg(cwd)
         .arg("--recall-config")
         .arg(config);
     if let Some(dir) = &state.state_dir {
         cmd.arg("--state-dir").arg(dir);
     }
-    cmd.current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
     Ok(cmd)
 }
 #[cfg(test)]
@@ -93,7 +129,7 @@ pub async fn drain(
     root: &Path,
     state: &StateArgs,
 ) -> Result<Value> {
-    drain_with_config(client, c, root, state, None).await
+    drain_with_config(client, c, root, state, None, false).await
 }
 pub async fn drain_with_config(
     client: &impl VfsApi,
@@ -101,6 +137,7 @@ pub async fn drain_with_config(
     root: &Path,
     state: &StateArgs,
     config: Option<&Path>,
+    require_wakeup: bool,
 ) -> Result<Value> {
     let effective_state = target_state(state, root)?;
     let state = &effective_state;
@@ -126,15 +163,52 @@ pub async fn drain_with_config(
     // lease before the final queue check: an enqueuer either sees an owner that
     // will recheck, or can start its own owner after release.
     let mut attempted = std::collections::BTreeSet::new();
+    let mut first_pass = true;
     loop {
         let Some(lease) = q.acquire()? else {
             return Ok(json!({"busy":true,"jobs":q.list()?}));
         };
-        open_outbox(client, c, state)?
-            .flush(client, c.database_id.as_deref().unwrap())
+        if first_pass && require_wakeup && q.pending_wakeup()?.is_none() {
+            return Ok(json!({"already_woken":true,"jobs":q.list()?}));
+        }
+        first_pass = false;
+        let outbox = open_outbox(client, c, state)?;
+        outbox
+            .flush_exclusive(client, c.database_id.as_deref().unwrap())
             .await?;
-        for mut job in q.list()? {
+        if q.list()?
+            .iter()
+            .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+        {
+            #[cfg(test)]
+            if let Some(after_pending) = TEST_DELIVERY_PENDING.with(|hook| hook.borrow_mut().take())
+            {
+                after_pending();
+            }
+            // A sender may have finished and launched a replacement while we
+            // held the job lease. Release before rechecking so either that
+            // replacement can acquire it or this drain resumes the ready work.
+            drop(lease);
+            if q.list()?
+                .iter()
+                .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+            {
+                return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+            }
+            continue;
+        }
+        #[cfg(test)]
+        if let Some(callback) = TEST_AFTER_OUTBOX_CHECK.with(|hook| hook.borrow_mut().take()) {
+            callback();
+        }
+        let (wake_generation, jobs) = q.wakeup_and_jobs()?;
+        let mut delivery_blocked = false;
+        for mut job in jobs {
             if attempted.contains(&job.run_id) {
+                continue;
+            }
+            if outbox.pending_run(&job.run_id)? {
+                delivery_blocked = true;
                 continue;
             }
             let current = load_project(&path)?;
@@ -187,8 +261,27 @@ pub async fn drain_with_config(
                 q.save(&job)?;
             }
         }
+        if !delivery_blocked && let Some(generation) = wake_generation {
+            q.acknowledge_wakeup(generation)?;
+        }
         drop(lease);
-        if !load_project(&path)?.enabled || !unattempted(&q.list()?, &attempted) {
+        if delivery_blocked {
+            if q.list()?
+                .iter()
+                .any(|job| outbox.pending_run(&job.run_id).unwrap_or(true))
+            {
+                return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+            }
+            continue;
+        }
+        if !load_project(&path)?.enabled {
+            break;
+        }
+        if q.pending_wakeup()?.is_some() {
+            attempted.clear();
+            continue;
+        }
+        if !unattempted(&q.list()?, &attempted) {
             break;
         }
     }
@@ -381,6 +474,34 @@ fn unattempted(jobs: &[LearningJob], attempted: &std::collections::BTreeSet<Stri
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn detached_delivery_uses_a_separate_process_group() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.args([
+            "-c",
+            "ps -o pgid= -p $$ > group; sleep 0.1; printf done > done",
+        ])
+        .current_dir(root.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+        spawn_detached(cmd).unwrap();
+        let start = std::time::Instant::now();
+        while !root.path().join("done").exists() && start.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let group = std::fs::read_to_string(root.path().join("group")).unwrap();
+        let parent = std::process::Command::new("ps")
+            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+            .output()
+            .unwrap();
+        assert_ne!(
+            group.trim(),
+            String::from_utf8(parent.stdout).unwrap().trim()
+        );
+    }
     #[test]
     fn release_then_recheck_observes_work_enqueued_while_owner_was_busy() {
         let root = tempfile::tempdir().unwrap();

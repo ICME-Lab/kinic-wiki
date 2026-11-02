@@ -197,6 +197,78 @@ fn run_ownership(entries: &[Entry]) -> HashMap<&str, Ownership> {
     }
     runs
 }
+fn delivery(path: &Path, scope: &str, record: &mut Value) {
+    // Keep status strictly read-only, including old schemas and active WALs.
+    let Ok(conn) = open_readonly(path) else {
+        return;
+    };
+    record["delivery_scope"] = json!("selected destination and principal; shared across projects");
+    let age = conn.query_row("SELECT MIN(enqueued_at),COUNT(*)-COUNT(enqueued_at) FROM learning_outbox WHERE scope=?1 AND acknowledged=0", [scope], |r| Ok((r.get::<_,Option<String>>(0)?, r.get::<_,i64>(1)?)));
+    if let Ok((oldest, unknown)) = age {
+        record["pending_time_unknown"] = json!(unknown > 0);
+        record["oldest_pending_at"] = if unknown > 0 {
+            Value::Null
+        } else {
+            timestamp(oldest)
+        };
+    }
+    let row = conn.query_row("SELECT last_attempt_at,last_success_at,last_failure_at,last_error_code FROM learning_delivery WHERE scope=?1",[scope],|r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?)));
+    if let Ok((attempt, success, failure, code)) = row {
+        record["last_send_attempt_at"] = timestamp(attempt);
+        record["last_send_success_at"] = timestamp(success);
+        record["last_send_failure"] = match code.as_deref() {
+            Some(
+                code @ ("delivery_failed"
+                | "inbox_replay_failed"
+                | "spawn_failed"
+                | "drain_spawn_failed"
+                | "identity_unavailable"
+                | "delivery_busy_timeout"),
+            ) => json!({"status":"observed","code":code,"at":timestamp(failure)}),
+            Some(_) => unknown("unrecognized_failure_code", None),
+            None => json!({"status":"not_observed","code":"no_failure_recorded","at":null}),
+        };
+    }
+}
+fn timestamp(value: Option<String>) -> Value {
+    value
+        .filter(|s| s.len() <= 64 && chrono::DateTime::parse_from_rfc3339(s).is_ok())
+        .map_or(Value::Null, Value::String)
+}
+fn quarantine_status(path: &Path) -> Value {
+    let root = path.join("quarantine");
+    if !root.exists() {
+        return json!({"count":0,"source":root,"reasons":[]});
+    }
+    let read = || -> ReadResult<Value> {
+        let mut count = 0;
+        let mut reasons = Vec::new();
+        let mut scanned = 0;
+        for item in std::fs::read_dir(&root).map_err(|_| "source_unreadable")? {
+            scanned += 1;
+            if scanned > MAX_ROWS {
+                return Err("evidence_truncated");
+            }
+            let file = item.map_err(|_| "source_unreadable")?.path();
+            if file.extension().is_some_and(|e| e == "json") {
+                count += 1;
+            }
+            if file.extension().is_some_and(|e| e == "reason") {
+                let v = read_json(&file)?;
+                let code = match v["code"].as_str() {
+                    Some("invalid_json") => "invalid_json",
+                    Some("binding_unverifiable") => "binding_unverifiable",
+                    _ => "unknown",
+                };
+                if !reasons.contains(&code) {
+                    reasons.push(code);
+                }
+            }
+        }
+        Ok(json!({"count":count,"source":root,"reasons":reasons}))
+    };
+    read().unwrap_or_else(|code| json!({"count":null,"source":root,"code":code}))
+}
 fn records(
     path: &Path,
     scope: &str,
@@ -229,6 +301,7 @@ fn records(
     let pending = entries.iter().filter(|e| !e.acknowledged).count();
     let mut record = json!({"status":if incomplete {"partial"} else {"observed"},"code":if incomplete {"evidence_truncated_or_invalid"} else {"local_records_read"},"source":path,"storage_modified_at":modified(path),"scope":"selected destination, principal and identified project runs","pending_records":if incomplete {None} else {Some(pending)},"acknowledged_records":if incomplete {None} else {Some(entries.len()-pending)},"last_record":null,"last_send_failure":unknown("failure_not_persisted",None),"last_send_success_at":null});
     record["unattributed_records"] = json!(unattributed);
+    delivery(path, scope, &mut record);
     if let Some(entry) = entries.first() {
         record["last_record"] = json!({"id":safe_id(&entry.event.id),"run_id":safe_id(&entry.event.run_id),"kind":safe_id(&entry.event.kind),"local_sequence":entry.sequence,"observed_at":null,"acknowledged":entry.acknowledged});
     }
@@ -360,7 +433,9 @@ fn inbox(
                     json!({"engine":engine,"status":if incomplete {"partial"} else {"observed"},"code":if incomplete {"evidence_truncated_or_invalid"} else {"pending_intake_read"},"pending_inputs":if incomplete {None} else {Some(count)},"source":path}),
                 )
             };
-            counts.push(inspect().unwrap_or_else(|code|json!({"engine":engine,"status":"unknown","code":code,"pending_inputs":null,"source":path})));
+            let mut value = inspect().unwrap_or_else(|code|json!({"engine":engine,"status":"unknown","code":code,"pending_inputs":null,"source":path}));
+            value["quarantine"] = quarantine_status(&path);
+            counts.push(value);
         }
         Ok(
             json!({"status":if counts.iter().any(|c|c["status"]!="observed"){"partial"}else{"observed"},"code":"current_partitions_only","per_engine":counts,"scope":"current cwd, destination and configuration fingerprint only; older partitions and legacy adapter queues are not counted","combined_total":null}),
@@ -567,6 +642,22 @@ fn print_text(value: &Value) {
         text(&value["records"]["pending_records"])
     );
     println!(
+        "Oldest pending: {} (unknown legacy timestamps: {})",
+        text(&value["records"]["oldest_pending_at"]),
+        text(&value["records"]["pending_time_unknown"])
+    );
+    println!(
+        "Last send attempt: {}; success: {}; failure: {} at {}",
+        text(&value["records"]["last_send_attempt_at"]),
+        text(&value["records"]["last_send_success_at"]),
+        text(&value["records"]["last_send_failure"]["code"]),
+        text(&value["records"]["last_send_failure"]["at"])
+    );
+    println!(
+        "Delivery scope: {}",
+        text(&value["records"]["delivery_scope"])
+    );
+    println!(
         "Acknowledged records: {}",
         text(&value["records"]["acknowledged_records"])
     );
@@ -606,6 +697,12 @@ fn print_text(value: &Value) {
                 text(&engine["code"])
             );
             println!("  Source: {}", text(&engine["source"]));
+            println!(
+                "  Quarantined: {} at {}; reasons: {}",
+                text(&engine["quarantine"]["count"]),
+                text(&engine["quarantine"]["source"]),
+                engine["quarantine"]["reasons"]
+            );
         }
     }
     if let Some(sources) = value["configuration"]["sources"].as_object() {
