@@ -232,9 +232,6 @@ separate process group. Normal `agent flush` retains outbox-only delivery;
 All outbox writers share the same destination/identity lease. Replay does not
 recursively launch workers. After background/replay delivery, enabled project jobs resume through
 `learn drain`. Plain `agent flush` never starts learning, even with queued jobs.
-Tool-event hooks pass `--new-jobs-only`, which starts a drain only for a job that
-has not been attempted. Failed jobs retry on the next recall or terminal event, so
-a job that keeps failing does not rerun its model on every tool call.
 A replay worker that encounters a live sender waits up to 30 seconds for the
 shared lease, then processes its own project inbox and starts its own drain.
 This preserves project wakeups when another project or a synchronous record

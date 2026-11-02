@@ -63,9 +63,6 @@ pub enum AgentCommand {
         replay_inbox: bool,
         #[arg(long, value_parser = ["codex", "dsh"], requires = "replay_inbox")]
         engine: Option<String>,
-        /// Start learning only for jobs that have not been attempted yet.
-        #[arg(long, requires = "replay_inbox")]
-        new_jobs_only: bool,
         #[arg(long)]
         recall_config: Option<PathBuf>,
         #[command(flatten)]
