@@ -11,34 +11,35 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: npm-cli-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Check version and release assets
-        working-directory: npm/kinic-vfs-cli
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      - id: source
+        name: Verify release source and both platform checksums
         run: |
-          version="$(node -p "require('./package.json').version")"
-          expected_tag="$(bash ../../scripts/kinic_vfs_cli_release_version.sh)"
-          test "$RELEASE_TAG" = "$expected_tag"
-          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
-          test "$tag_commit" = "$(git rev-parse HEAD)"
-          for platform in macos-arm64 linux-x86_64; do
-            asset="kinic-vfs-cli-v${version}-${platform}.tar.gz"
-            checksum="${asset%.tar.gz}.sha256"
-            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/${asset}" >/dev/null
-            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/${checksum}" >/dev/null
-          done
+          commit="$(python3 scripts/cli_release.py source --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY")"
+          python3 scripts/cli_release.py verify --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - name: Test npm package
         working-directory: npm/kinic-vfs-cli
         run: npm test
@@ -51,7 +52,8 @@ jobs:
           package_tgz="$(npm pack --silent)"
           prefix="$(mktemp -d)"
           npm install --global --prefix "$prefix" "./${package_tgz}"
-          "$prefix/bin/kinic-vfs-cli" --version
+          expected_version="$(bash ../../scripts/kinic_vfs_cli_release_version.sh --plain)"
+          test "$("$prefix/bin/kinic-vfs-cli" --version)" = "kinic-vfs-cli $expected_version"
           "$prefix/bin/kinic-vfs-cli" codex setup --help
           smoke_dir="$(mktemp -d)"
           setup_json="$(cd "$smoke_dir" && "$prefix/bin/kinic-vfs-cli" codex setup --json --dry-run --executable "$prefix/bin/kinic-vfs-cli")"
@@ -60,4 +62,7 @@ jobs:
         working-directory: npm/kinic-vfs-cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish
+          RELEASE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          python3 ../../scripts/cli_release.py verify --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$RELEASE_COMMIT"
+          npm publish
