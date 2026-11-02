@@ -19,12 +19,16 @@ struct AskAITraceView: View {
 
     private var activeStatus: some View {
         HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-                .tint(KinicDesign.hotPink)
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(KinicDesign.hotPink)
+                .symbolEffect(.pulse, options: .repeating)
             Text(summary)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(KinicDesign.bodyGray)
+                .kinicShimmer()
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: summary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -41,13 +45,13 @@ struct AskAITraceView: View {
             .padding(.top, 12)
         } label: {
             Label("How this answer was found", systemImage: "sparkles")
-                .font(.subheadline)
-                .bold()
-                .foregroundStyle(KinicDesign.electricIndigo)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(KinicDesign.hotPink)
         }
-        .padding(16)
-        .background(KinicDesign.palePink.opacity(0.35))
-        .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
+        .tint(.secondary)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .kinicCard(radius: 18)
         .accessibilityHint("Shows search queries, candidate counts, and verified notes")
     }
 

@@ -10,27 +10,36 @@ struct AskAISourcesView: View {
     let openSource: (AskAISource) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(heading)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(heading.uppercased())
+                .font(.caption2.weight(.semibold))
+                .tracking(1.2)
+                .foregroundStyle(KinicDesign.bodyGray)
 
-            AskAISourceFlowLayout(spacing: 6) {
+            AskAISourceFlowLayout(spacing: 4) {
                 ForEach(Array(sources.enumerated()), id: \.element.id) { index, source in
                     Button {
                         openSource(source)
                     } label: {
-                        Text("[\(index + 1)] \(source.displayName)")
-                            .font(.footnote)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                            .padding(.horizontal, 10)
-                            .frame(minHeight: 44)
-                            .background(KinicDesign.palePink.opacity(0.28))
-                            .clipShape(Capsule())
+                        HStack(spacing: 8) {
+                            Text("\(index + 1)")
+                                .font(.caption2.weight(.bold).monospacedDigit())
+                                .foregroundStyle(.white)
+                                .frame(width: 20, height: 20)
+                                .background(KinicDesign.auroraGradient, in: Circle())
+                            Text(source.displayName)
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .padding(.leading, 6)
+                        .padding(.trailing, 12)
+                        .padding(.vertical, 6)
+                        .frame(minHeight: 44)
+                        .kinicCard(radius: 22)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(KinicDesign.electricIndigo)
+                    .buttonStyle(KinicPressableStyle())
                     .accessibilityLabel("Source \(index + 1), \(source.displayName)")
                     .accessibilityHint("Opens this note in Browse")
                 }

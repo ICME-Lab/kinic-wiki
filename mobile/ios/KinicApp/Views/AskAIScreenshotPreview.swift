@@ -119,26 +119,27 @@ struct AskAIScreenshotPreview: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 10) {
-                Text("Message Kinic AI")
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .bottom, spacing: 8) {
+            Text("Message Kinic AI")
+                .foregroundStyle(.secondary)
+                .padding(.leading, 18)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 44, minHeight: 44)
-            }
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
+            Image(systemName: "arrow.up")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 36, height: 36)
+                .background(Color.primary.opacity(0.08), in: Circle())
+                .frame(minWidth: 44, minHeight: 44)
+                .padding(.trailing, 2)
         }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .shadow(color: Color(red: 0.078, green: 0.078, blue: 0.169).opacity(0.04), radius: 10, y: 4)
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.top, 8)
         .padding(.bottom, 6)
-        .background(.ultraThinMaterial)
     }
 }
 #endif

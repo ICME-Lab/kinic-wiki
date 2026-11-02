@@ -13,6 +13,14 @@ struct AskAIWorkspaceView: View {
             KinicDesign.appBackground
                 .ignoresSafeArea()
 
+            if model.messages.isEmpty {
+                // A quiet aurora wash at the top invites the first question; it fades once chatting starts.
+                KinicAurora(intensity: 0.55)
+                    .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .center))
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
+
             if appModel.selectedDatabaseId.isEmpty && appModel.isLoadingDatabases {
                 ProgressView("Loading databases…")
             } else if appModel.selectedDatabaseId.isEmpty, let error = appModel.databaseListError {
