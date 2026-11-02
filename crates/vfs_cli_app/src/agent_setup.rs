@@ -367,12 +367,25 @@ pub async fn run_connected(
     if args.authorize_keyring {
         value["identity_authorization"] = json!({"status":if args.dry_run {"planned"} else {"apply_required"},"next":"agent setup --authorize-keyring --apply"});
         if applying {
-            let c = vfs_cli::connection::resolve_connection(
-                connection.local,
-                connection.replica_host.clone(),
-                connection.canister_id.clone(),
-                connection.database_id.clone(),
+            let mut selected = connection.clone();
+            let config_path = if let Some(path) = &args.recall_config {
+                Some(path.clone())
+            } else {
+                crate::learning::project::discover_config(&cwd)?
+            };
+            let project = crate::learning::project::apply_connection_defaults(
+                &mut selected,
+                config_path.as_deref(),
             )?;
+            let c = vfs_cli::connection::resolve_connection(
+                selected.local,
+                selected.replica_host,
+                selected.canister_id,
+                selected.database_id,
+            )?;
+            if let Some(project) = project {
+                project.validate_connection(&c)?;
+            }
             let root = crate::identity_policy::project_root(&cwd)?;
             let grant=crate::identity::keyring_grant(&root,&c).await.map_err(|_| anyhow::anyhow!("cannot authorize selected keyring identity; check icp identity default and credential access"))?;
             crate::identity_policy::save(&home, &grant)?;

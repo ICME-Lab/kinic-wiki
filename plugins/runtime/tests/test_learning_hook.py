@@ -11,6 +11,20 @@ import unittest
 RUNTIME = Path(__file__).resolve().parents[1]
 
 class LearningHookTests(unittest.TestCase):
+    def test_packaged_stop_command_resolves_installed_plugin_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); plugin=root/'custom-codex-home'/'cache'/'recorder'
+            (plugin/'scripts').mkdir(parents=True)
+            script=plugin/'scripts'/'record-session.sh'
+            script.write_text('#!/bin/sh\nprintf "resolved-installed-root"\n'); script.chmod(0o700)
+            hooks=json.loads((RUNTIME.parent/'codex'/'hooks'/'hooks.json').read_text())
+            command=hooks['hooks']['Stop'][0]['hooks'][0]['command']
+            env={**os.environ,'HOME':str(root/'empty-home'),'CODEX_HOME':str(root/'custom-codex-home'),'PLUGIN_ROOT':str(plugin)}
+            env.pop('KINIC_CODEX_PLUGIN_ROOT',None)
+            result=subprocess.run(['/bin/sh','-c',command],env=env,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout,'resolved-installed-root')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

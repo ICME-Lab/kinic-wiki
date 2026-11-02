@@ -34,7 +34,7 @@ printf '%s\n' "$*" >> "$FAKE_PLUGIN_LOG"
 case "$*" in
   'plugin list --marketplace team-tools --json')
     if [ -f "$FAKE_PLUGIN_STATE" ]; then
-      printf '{"installed":[{"pluginId":"kinic-skill-recorder@team-tools","installed":true,"enabled":true,"version":"%s"}]}\n' "${FAKE_PLUGIN_VERSION:-0.2.1}"
+      printf '{"installed":[{"pluginId":"kinic-skill-recorder@team-tools","installed":true,"enabled":true,"version":"%s"}]}\n' "${FAKE_PLUGIN_VERSION:-0.2.2}"
     else
       printf '{"installed":[]}\n'
     fi ;;

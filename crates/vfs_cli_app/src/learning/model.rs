@@ -112,7 +112,10 @@ impl RevisionCandidate {
         Ok(hash(&serde_json::to_string(self)?))
     }
     pub fn validate(&self) -> Result<()> {
-        if self.evidence.is_empty() || self.targets.is_empty() || self.rationale.trim().is_empty() {
+        if self.evidence.is_empty()
+            || (self.targets.is_empty() && self.operation != "keep")
+            || self.rationale.trim().is_empty()
+        {
             bail!("candidate requires targets, rationale and source evidence");
         }
         if ![

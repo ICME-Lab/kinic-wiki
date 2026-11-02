@@ -119,22 +119,12 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     if let Some(path) =
         vfs_cli_app::learning::project::config_for_command(&cli.command, &std::env::current_dir()?)?
     {
-        let value: serde_json::Value = vfs_cli_app::learning::workflow::read_json(&path)?;
-        if value["version"] == 2 {
-            let project = vfs_cli_app::learning::project::load_project(&path)?;
-            if !cli.connection.local && cli.connection.replica_host.is_none() {
-                cli.connection.replica_host = Some(project.replica_host);
-            }
-            if cli.connection.canister_id.is_none() && std::env::var_os("VFS_CANISTER_ID").is_none()
-            {
-                cli.connection.canister_id = Some(project.canister_id);
-            }
-            if cli.connection.database_id.is_none() && std::env::var_os("VFS_DATABASE_ID").is_none()
-            {
-                cli.connection.database_id = Some(project.database_id);
-            }
-        }
+        vfs_cli_app::learning::project::apply_connection_defaults(
+            &mut cli.connection,
+            Some(&path),
+        )?;
     }
+
     if let Command::Eval { command } = cli.command.clone() {
         return vfs_cli_app::learning::workflow::run_eval(command).await;
     }
@@ -234,20 +224,6 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     } else {
         None
     };
-    // A persisted grant is a binding, including on explicitly anonymous reads.
-    // Validate it before any network access; never silently fall back on mismatch.
-    let mut identity_client = if grant.is_some() {
-        Some(
-            new_identity_client(
-                &connection,
-                cli.connection.allow_non_ii_identity,
-                grant.as_ref(),
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
     let mut hook_spool = if let (
         Some(request),
         Command::Agent {
@@ -279,6 +255,25 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     if let Some(path) = &hook_spool {
         hook_input = Some(vfs_cli_app::learning::workflow::read_json(path)?);
     }
+    // Preserve durable hook intake before fallible credential access, but check
+    // persisted bindings before network access or any anonymous fallback.
+    let mut identity_client = if grant.is_some() {
+        match new_identity_client(
+            &connection,
+            cli.connection.allow_non_ii_identity,
+            grant.as_ref(),
+        )
+        .await
+        {
+            Ok(client) => Some(client),
+            Err(error) => {
+                record_startup_failure(&connection, &cli.command);
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
     let auto_probes_database = matches!(cli.connection.identity_mode, IdentityModeArg::Auto)
         && cli.command.probes_anonymous_database_read()
         && !cli.command.requires_identity();
@@ -357,24 +352,7 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
             {
                 Ok(client) => client,
                 Err(error) => {
-                    // A background process can fail before it opens the outbox.
-                    // Attribute only to an explicitly configured principal, never a guess.
-                    let state = match &cli.command {
-                        Command::Agent {
-                            command: vfs_cli_app::learning::cli::AgentCommand::Flush { state, .. },
-                        } => Some(state),
-                        Command::Learn {
-                            command: vfs_cli_app::learning::cli::LearnCommand::Drain { state, .. },
-                        } => Some(state),
-                        _ => None,
-                    };
-                    if let Some(state) = state {
-                        let _ = vfs_cli_app::learning::workflow::record_delivery_startup_failure(
-                            &connection,
-                            state,
-                            &cli.command,
-                        );
-                    }
+                    record_startup_failure(&connection, &cli.command);
                     return Err(error);
                 }
             },
@@ -428,6 +406,23 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         return Ok(());
     }
     run_command(&client, cli, &connection).await
+}
+
+fn record_startup_failure(connection: &ResolvedConnection, command: &Command) {
+    let state = match command {
+        Command::Agent {
+            command: vfs_cli_app::learning::cli::AgentCommand::Flush { state, .. },
+        } => Some(state),
+        Command::Learn {
+            command: vfs_cli_app::learning::cli::LearnCommand::Drain { state, .. },
+        } => Some(state),
+        _ => None,
+    };
+    if let Some(state) = state {
+        let _ = vfs_cli_app::learning::workflow::record_delivery_startup_failure(
+            connection, state, command,
+        );
+    }
 }
 
 async fn new_identity_client(

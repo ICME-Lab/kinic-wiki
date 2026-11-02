@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}/scripts/record-session.sh\"",
+            "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}}/scripts/record-session.sh\"",
             "timeout": 10,
             "statusMessage": "Saving Codex turn to Kinic"
           }

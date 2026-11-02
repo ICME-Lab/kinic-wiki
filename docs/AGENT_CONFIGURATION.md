@@ -56,6 +56,8 @@ For the agreed local trial the runner uses `engine: "codex"`,
 The runner file uses the existing RunnerConfig format; `learn setup --help`
 lists optional explicit shared knowledge scopes. No validation suite means
 candidate storage only: it does not authorize automatic knowledge publication.
+A justified `keep` response with no changes is saved as evidence and held with
+`no_revision_needed`; it does not trigger repeated model attempts.
 
 To pause project learning, run `kinic-vfs-cli learn disable --project-root .`;
 `learn enable` restores it. Disable the Kinic hooks in Codex to stop all automatic
