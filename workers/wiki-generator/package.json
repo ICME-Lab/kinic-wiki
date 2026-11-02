@@ -22,6 +22,7 @@
     "@kinic/source-contracts": "workspace:*",
     "@kinic/vfs-client-core": "workspace:*",
     "@resvg/resvg-wasm": "2.4.1",
+    "harfbuzzjs": "0.10.0",
     "satori": "0.33.5"
   },
   "devDependencies": {

@@ -1,8 +1,9 @@
 // Where: workers/wiki-generator/tests/link-preview.test.ts
 // What: Link preview module helpers, constants, and the render path with deps stubbed.
 // Why: satori + a fake rasterizer exercise the full pipeline (font fetch, SVG layout,
-//      PNG response) under plain node --test. The real @resvg/resvg-wasm rasterizer
-//      stays runtime-only because its wasm only initializes in the Workers runtime.
+//      PNG response) under plain node --test. The default satori entry stands in for the
+//      standalone one, and the real @resvg/resvg-wasm rasterizer stays runtime-only: their
+//      static Wasm imports only resolve in the Workers bundle (see worker-tests/).
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -25,6 +26,10 @@ function fakeRasterizer() {
       }
     }
   });
+}
+
+async function nodeSatori() {
+  return (await import("satori")).default;
 }
 
 function failingFetch() {
@@ -50,7 +55,7 @@ test("database link preview image key is namespaced and URL-encoded", () => {
 });
 
 test("renderLinkPreviewImage returns a PNG using the bundled fallback font when the CDN is unreachable", async () => {
-  setLinkPreviewDepsForTest({ fetch: failingFetch(), loadResvg: fakeRasterizer() });
+  setLinkPreviewDepsForTest({ fetch: failingFetch(), loadSatori: nodeSatori, loadResvg: fakeRasterizer() });
   const response = await renderLinkPreviewImage({ title: "Ask AI", description: "Query a Kinic Wiki database." });
 
   assert.equal(response.status, 200);
@@ -63,6 +68,7 @@ test("renderLinkPreviewImage returns a PNG using the bundled fallback font when 
 test("renderLinkPreviewImage returns a PNG when the CDN font fetch succeeds", async () => {
   setLinkPreviewDepsForTest({
     fetch: async () => new Response(decodeBase64(FALLBACK_FONT_BASE64), { status: 200 }),
+    loadSatori: nodeSatori,
     loadResvg: fakeRasterizer()
   });
   const response = await renderLinkPreviewImage({ title: "Ask AI", description: "Query a Kinic Wiki database." });
@@ -77,6 +83,7 @@ test("renderLinkPreviewImage returns a PNG when the CDN font fetch succeeds", as
 test("renderLinkPreviewImage falls back to a placeholder PNG when the whole render fails", async () => {
   setLinkPreviewDepsForTest({
     fetch: failingFetch(),
+    loadSatori: nodeSatori,
     loadResvg: async () => {
       throw new Error("wasm init failed");
     }
