@@ -17,6 +17,8 @@ use vfs_cli::{
     connection::{ResolvedConnection, resolve_connection_optional_canister},
 };
 
+pub(crate) mod delivery_snapshot;
+
 const MAX_ROWS: usize = 4096;
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_BYTES: usize = 16 * MAX_BODY;
@@ -121,6 +123,9 @@ struct Entry {
 }
 fn events(path: &Path, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
     let conn = open_readonly(path)?;
+    events_from_connection(&conn, scope)
+}
+fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
     let mut stmt = conn.prepare("SELECT CASE WHEN length(body)<=1048576 THEN body ELSE NULL END,acknowledged,rowid FROM learning_outbox NOT INDEXED WHERE scope=?1 ORDER BY rowid DESC LIMIT 4097").map_err(|_|"source_unreadable")?;
     let rows = stmt
         .query_map([scope], |r| {
@@ -158,7 +163,7 @@ fn events(path: &Path, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
     }
     Ok((out, incomplete))
 }
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 enum RunOwner {
     Project(String),
     Workspace(PathBuf),
@@ -202,6 +207,9 @@ fn delivery(path: &Path, scope: &str, record: &mut Value) {
     let Ok(conn) = open_readonly(path) else {
         return;
     };
+    delivery_from_connection(&conn, scope, record);
+}
+fn delivery_from_connection(conn: &Connection, scope: &str, record: &mut Value) {
     record["delivery_scope"] = json!("selected destination and principal; shared across projects");
     let age = conn.query_row("SELECT MIN(enqueued_at),COUNT(*)-COUNT(enqueued_at) FROM learning_outbox WHERE scope=?1 AND acknowledged=0", [scope], |r| Ok((r.get::<_,Option<String>>(0)?, r.get::<_,i64>(1)?)));
     if let Ok((oldest, unknown)) = age {
@@ -229,7 +237,9 @@ fn delivery(path: &Path, scope: &str, record: &mut Value) {
                 | "spawn_failed"
                 | "drain_spawn_failed"
                 | "identity_unavailable"
-                | "delivery_busy_timeout"),
+                | "delivery_busy_timeout"
+                | "cycles_suspended"
+                | "canister_cycles_frozen"),
             ) => json!({"status":"observed","code":code,"at":timestamp(failure)}),
             Some(_) => unknown("unrecognized_failure_code", None),
             None => json!({"status":"not_observed","code":"no_failure_recorded","at":null}),
@@ -281,14 +291,27 @@ fn records(
     project: Option<&ProjectConfig>,
     root: &Path,
 ) -> (Value, Value) {
+    if sidecar(path, "-wal").exists() || sidecar(path, "-shm").exists() {
+        return delivery_snapshot::read(path, scope, project, root);
+    }
     let (entries, incomplete) = match events(path, scope) {
         Ok(v) => v,
         Err(code) => return (unknown(code, Some(path)), unknown(code, Some(path))),
     };
-    let ownership = run_ownership(&entries);
     let target = project
         .map(|p| RunOwner::Project(p.project_id.clone()))
         .unwrap_or_else(|| RunOwner::Workspace(root.into()));
+    let (mut record, context) = records_from_entries(path, &entries, incomplete, &target);
+    delivery(path, scope, &mut record);
+    (record, context)
+}
+fn records_from_entries(
+    path: &Path,
+    entries: &[Entry],
+    incomplete: bool,
+    target: &RunOwner,
+) -> (Value, Value) {
+    let ownership = run_ownership(entries);
     let unattributed = entries
         .iter()
         .filter(|entry| {
@@ -301,13 +324,12 @@ fn records(
         .iter()
         .filter(|entry| {
             let owner = &ownership[entry.event.run_id.as_str()];
-            !owner.unresolved && owner.owners.len() == 1 && owner.owners.contains(&target)
+            !owner.unresolved && owner.owners.len() == 1 && owner.owners.contains(target)
         })
         .collect();
     let pending = entries.iter().filter(|e| !e.acknowledged).count();
     let mut record = json!({"status":if incomplete {"partial"} else {"observed"},"code":if incomplete {"evidence_truncated_or_invalid"} else {"local_records_read"},"source":path,"storage_modified_at":modified(path),"scope":"selected destination, principal and identified project runs","pending_records":if incomplete {None} else {Some(pending)},"acknowledged_records":if incomplete {None} else {Some(entries.len()-pending)},"last_record":null,"last_send_failure":unknown("failure_not_persisted",None),"last_send_success_at":null});
     record["unattributed_records"] = json!(unattributed);
-    delivery(path, scope, &mut record);
     if let Some(entry) = entries.first() {
         record["last_record"] = json!({"id":safe_id(&entry.event.id),"run_id":safe_id(&entry.event.run_id),"kind":safe_id(&entry.event.kind),"local_sequence":entry.sequence,"observed_at":null,"acknowledged":entry.acknowledged});
     }
@@ -351,10 +373,26 @@ fn jobs(path: &Path, config_path: Option<&Path>) -> Value {
             }
             let state = match job.state.as_str() {
                 "pending" | "candidate" | "evaluated" | "publishing" | "published" | "held"
-                | "retry" => job.state.as_str(),
+                | "retry" | "paused" => job.state.as_str(),
                 _ => "unknown",
             };
             let reason = match state {
+                "paused" => job
+                    .pause
+                    .as_ref()
+                    .map(|p| p.reason.as_str())
+                    .filter(|reason| {
+                        [
+                            "operator_paused",
+                            "evidence_missing",
+                            "binding_or_evidence_changed",
+                            "configuration_changed",
+                            "legacy_attempt_count_unknown",
+                            "attempt_limit_reached",
+                        ]
+                        .contains(reason)
+                    })
+                    .unwrap_or("pause_reason_unverified"),
                 "held" if job.evaluation_path.is_some() => "evaluation_not_eligible",
                 "held" => "held_reason_unverified",
                 "retry" => "retry_pending",
@@ -362,7 +400,25 @@ fn jobs(path: &Path, config_path: Option<&Path>) -> Value {
                 _ if job.error.is_some() => "job_error_recorded",
                 _ => "state_recorded",
             };
-            jobs.push(json!({"run_id":safe_id(&job.run_id),"state":state,"candidate_path":job.candidate_path.as_deref().and_then(safe_id),"evaluation_path":job.evaluation_path.as_deref().and_then(safe_id),"reason_code":reason,"observed_at":null}));
+            let next_action = match state {
+                "paused" => {
+                    "Inspect the evidence, target and prior attempts; preview learn jobs resume --run-id <run-id> before applying."
+                }
+                "publishing" => "Reconcile the recorded publication outcome; do not force resume.",
+                "held" => "Review the retained proposal; no automatic retry is scheduled.",
+                "candidate" => {
+                    "Read the saved candidate; existing knowledge has not been automatically changed by candidate storage."
+                }
+                "retry" => {
+                    "Wait until next_attempt_at_ms; the next normal event can retry within the attempt budget."
+                }
+                "pending" => {
+                    "Use learn drain --run-id <run-id> for bounded processing after checking delivery."
+                }
+                "published" => "Read back the recorded publication.",
+                _ => "Inspect the selected project's recorded state.",
+            };
+            jobs.push(json!({"run_id":safe_id(&job.run_id),"state":state,"candidate_path":job.candidate_path.as_deref().and_then(safe_id),"evaluation_path":job.evaluation_path.as_deref().and_then(safe_id),"reason_code":reason,"observed_at":null,"attempts":job.retry_policy.as_ref().map(|r|r.attempts),"next_attempt_at_ms":job.retry_policy.as_ref().and_then(|r|r.next_attempt_at_ms),"next_action":next_action}));
         }
         Ok(
             json!({"status":if incomplete {"partial"} else {"observed"},"code":if incomplete {"evidence_truncated_or_invalid"} else {"local_jobs_read"},"source":path,"storage_modified_at":modified(path),"jobs":jobs,"scope":"selected destination, configured principal, project and config file; recorded states, not live process health"}),
@@ -764,6 +820,7 @@ fn print_text(value: &Value) {
                 text(&job["candidate_path"]),
                 text(&job["evaluation_path"])
             );
+            println!("  Next: {}", text(&job["next_action"]));
         }
     }
     if let Some(engines) = value["intake"]["per_engine"].as_array() {

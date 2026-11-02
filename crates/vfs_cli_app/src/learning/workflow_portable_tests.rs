@@ -696,6 +696,8 @@ async fn review_fix_external_config_flows_from_hook_to_job_processing() {
         &client,
         &c,
         LearnCommand::Drain {
+            run_id: None,
+            max_jobs: None,
             require_wakeup: false,
             project_root: a.clone(),
             recall_config: Some(external.clone()),
@@ -761,6 +763,8 @@ async fn status_and_drain_use_target_project_state_outside_project() {
         &client,
         &c,
         LearnCommand::Drain {
+            run_id: None,
+            max_jobs: None,
             require_wakeup: false,
             project_root: b.clone(),
             state,
@@ -1446,7 +1450,8 @@ async fn stop_arriving_after_delivery_check_keeps_wakeup_until_evidence_sent() {
     job_driver::drain(&client, &c, &a, &state).await.unwrap();
     assert_eq!(q.pending_wakeup().unwrap(), None);
     let job = q.list().unwrap().remove(0);
-    assert_eq!(job.state, "retry"); // The fixture has no preceding recall/run event.
+    assert_eq!(job.state, "paused"); // Missing recall/run evidence requires inspection, not automatic retries.
+    assert_eq!(job.pause.as_ref().unwrap().reason, "evidence_missing");
     assert!(!job.error.unwrap_or_default().contains("delivery_pending"));
 }
 
@@ -1519,6 +1524,80 @@ async fn stop_during_wakeup_snapshot_does_not_retry_same_failure_twice() {
         std::fs::read_to_string(count).unwrap(),
         "x",
         "one stop retried the model twice"
+    );
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.request_wakeup().unwrap();
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("calls")).unwrap(),
+        "x",
+        "a new event bypassed retry backoff"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_drain_and_job_controls_do_not_process_other_runs() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    for run in ["first", "second", "third"] {
+        q.enqueue(run, &a, &config).unwrap();
+    }
+    let value = job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: Some("second".into()),
+            max_jobs: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["jobs"][0]["state"], "pending");
+    assert_eq!(value["jobs"][1]["state"], "paused");
+    assert_eq!(value["jobs"][1]["pause"]["reason"], "evidence_missing");
+    assert_eq!(value["jobs"][2]["state"], "pending");
+    job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: None,
+            max_jobs: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(q.list().unwrap()[2].state, "pending");
+    let control = |apply| {
+        JobCommand::Resume(JobControlArgs {
+            run_id: "second".into(),
+            apply,
+            dry_run: false,
+        })
+    };
+    let preview = job_driver::control_job(&client, &c, &a, &state, &control(false)).unwrap();
+    assert_eq!(preview["dry_run"], true);
+    assert_eq!(q.list().unwrap()[1].state, "paused");
+    let applied = job_driver::control_job(&client, &c, &a, &state, &control(true)).unwrap();
+    assert_eq!(applied["model_started"], false);
+    assert_eq!(
+        q.list().unwrap()[1].retry_policy.as_ref().unwrap().attempts,
+        0
+    );
+    assert_eq!(
+        q.list().unwrap()[1].pause.as_ref().unwrap().reason,
+        "evidence_missing"
     );
 }
 

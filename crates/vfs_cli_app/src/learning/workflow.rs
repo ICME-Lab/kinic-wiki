@@ -570,19 +570,34 @@ async fn learn_value_at(
     }
     let db = c.database_id.as_deref().context("database required")?;
     match command {
+        LearnCommand::Jobs {
+            project_root,
+            state_dir,
+            json,
+            command,
+        } => job_driver::control_job(
+            client,
+            c,
+            &project_root,
+            &StateArgs { state_dir, json },
+            &command,
+        ),
         LearnCommand::Drain {
             project_root,
             state,
             recall_config,
             require_wakeup,
+            run_id,
+            max_jobs,
         } => {
-            job_driver::drain_with_config(
+            job_driver::drain_selected(
                 client,
                 c,
                 &project_root,
                 &state,
                 recall_config.as_deref(),
                 require_wakeup,
+                &job_driver::DrainSelection { run_id, max_jobs },
             )
             .await
         }

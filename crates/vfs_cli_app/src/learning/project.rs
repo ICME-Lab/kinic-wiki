@@ -471,6 +471,7 @@ pub fn config_for_command(command: &crate::cli::Command, cwd: &Path) -> Result<O
         AppCommand::Learn {
             command:
                 LearnCommand::Setup { project_root, .. }
+                | LearnCommand::Jobs { project_root, .. }
                 | LearnCommand::Status { project_root, .. }
                 | LearnCommand::Enable { project_root, .. }
                 | LearnCommand::Disable { project_root, .. },

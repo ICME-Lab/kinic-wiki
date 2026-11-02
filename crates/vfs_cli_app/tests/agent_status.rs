@@ -206,6 +206,11 @@ fn status_reads_job_references_and_sanitizes_failure_reason() {
     job.evaluation_path = Some("/Sources/learning-evaluations/evaluation-a.json".into());
     job.error = Some("secret-job-error-value".into());
     q.save(&job).unwrap();
+    q.enqueue("job-paused", root, &root.join(".kinic-learning.json"))
+        .unwrap();
+    let mut paused = q.list().unwrap().remove(1);
+    paused.pause("evidence_missing");
+    q.save(&paused).unwrap();
     drop(q);
     let before = tree(root);
     let output = status(
@@ -221,12 +226,23 @@ fn status_reads_job_references_and_sanitizes_failure_reason() {
     );
     let raw = String::from_utf8_lossy(&output.stdout).to_string();
     let value = report(output);
-    assert_eq!(value["learning"]["jobs"][0]["state"], "retry");
+    assert_eq!(value["learning"]["jobs"][1]["state"], "retry");
     assert_eq!(
-        value["learning"]["jobs"][0]["candidate_path"],
+        value["learning"]["jobs"][1]["candidate_path"],
         "/Sources/learning-candidates/candidate-a.json"
     );
-    assert_eq!(value["learning"]["jobs"][0]["reason_code"], "retry_pending");
+    assert_eq!(value["learning"]["jobs"][1]["reason_code"], "retry_pending");
+    assert_eq!(value["learning"]["jobs"][0]["state"], "paused");
+    assert_eq!(
+        value["learning"]["jobs"][0]["reason_code"],
+        "evidence_missing"
+    );
+    assert!(
+        value["learning"]["jobs"][0]["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("evidence")
+    );
     assert!(!raw.contains("secret-job-error-value"));
     assert_eq!(value["publication"]["status"], "unknown");
     assert_eq!(tree(root), before);
@@ -1256,4 +1272,247 @@ fn doctor_placement_honors_selected_codex_home_consistently() {
             .any(|c| c["id"] == "engine.codex.placement" && c["code"] == "payload_missing")
     );
     assert!(!root.join("selected-codex").exists());
+}
+
+#[test]
+fn writer_snapshot_reports_project_counts_with_live_wal_without_mutation() {
+    use vfs_cli_app::learning::{Event, Outbox};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    let outbox = Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap();
+    for (id, run, payload) in [
+        (
+            "one",
+            "run-one",
+            json!({"project_id":PROJECT,"secret":"private payload"}),
+        ),
+        ("two", "run-one", json!({})),
+        ("other", "run-other", json!({"project_id":"other-project"})),
+    ] {
+        outbox
+            .enqueue(&Event {
+                id: id.into(),
+                run_id: run.into(),
+                kind: "observation".into(),
+                payload,
+            })
+            .unwrap();
+    }
+    assert!(state.join("learning-outbox.sqlite3-wal").exists());
+    let before = tree(root);
+    let value = report(status(
+        root,
+        &root.join("home"),
+        &[
+            "agent",
+            "status",
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(value["records"]["pending_records"], 2);
+    assert_eq!(value["records"]["code"], "delivery_snapshot_read");
+    assert_eq!(value["records"]["last_record"]["id"], "two");
+    assert_eq!(
+        value["summary"]["last_context_delivered"]["status"],
+        "unknown"
+    );
+    assert_eq!(
+        tree(root),
+        before,
+        "status must not mutate WAL, SHM or snapshot"
+    );
+    let snapshots: Vec<_> = fs::read_dir(&state)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .collect();
+    assert_eq!(snapshots.len(), 1);
+    assert!(
+        !fs::read_to_string(&snapshots[0])
+            .unwrap()
+            .contains("private payload")
+    );
+}
+
+#[test]
+fn delivery_snapshot_rejects_stale_mismatched_and_malformed_evidence() {
+    use vfs_cli_app::learning::{Event, Outbox};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    let outbox = Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap();
+    outbox
+        .enqueue(&Event {
+            id: "one".into(),
+            run_id: "run-one".into(),
+            kind: "run".into(),
+            payload: json!({"project_id":PROJECT}),
+        })
+        .unwrap();
+    let path = fs::read_dir(&state)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "json"))
+        .expect("writer snapshot");
+    let original: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let read = || {
+        report(status(
+            root,
+            &root.join("home"),
+            &[
+                "agent",
+                "status",
+                "--state-dir",
+                state.to_str().unwrap(),
+                "--json",
+            ],
+        ))
+    };
+    for (name, field, replacement) in [
+        ("wrong scope", "scope", json!("different")),
+        (
+            "wrong identity",
+            "identity",
+            json!(["another-endpoint", "db", "bound-caller"]),
+        ),
+        (
+            "stale",
+            "observed_at",
+            json!((chrono::Utc::now() - chrono::Duration::seconds(301)).to_rfc3339()),
+        ),
+        (
+            "future",
+            "observed_at",
+            json!((chrono::Utc::now() + chrono::Duration::seconds(31)).to_rfc3339()),
+        ),
+        (
+            "bad timestamp",
+            "observed_at",
+            json!("private invalid timestamp"),
+        ),
+    ] {
+        let mut changed = original.clone();
+        changed[field] = replacement;
+        fs::write(&path, changed.to_string()).unwrap();
+        let before = tree(root);
+        let value = read();
+        assert_eq!(value["records"]["status"], "unknown", "{name}");
+        assert!(value["records"]["pending_records"].is_null(), "{name}");
+        assert_eq!(
+            value["summary"]["latest_send"]["outcome"], "unknown",
+            "{name}"
+        );
+        assert_eq!(tree(root), before, "{name}");
+    }
+    for bytes in [b"{\"version\":".to_vec(), vec![b' '; 1024 * 1024 + 1]] {
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(read()["records"]["status"], "unknown");
+    }
+    #[cfg(unix)]
+    {
+        fs::remove_file(&path).unwrap();
+        let target = root.join("untrusted.json");
+        fs::write(&target, original.to_string()).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert_eq!(read()["records"]["status"], "unknown");
+    }
+}
+
+#[test]
+fn snapshot_never_broadens_unattributed_counts_or_trusts_superseded_success() {
+    use vfs_cli_app::learning::{Event, Outbox};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    let outbox = Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap();
+    for (id, run, payload) in [
+        ("target", "run-one", json!({"project_id":PROJECT})),
+        ("orphan", "run-orphan", json!({})),
+    ] {
+        outbox
+            .enqueue(&Event {
+                id: id.into(),
+                run_id: run.into(),
+                kind: "run".into(),
+                payload,
+            })
+            .unwrap();
+    }
+    let read = || {
+        report(status(
+            root,
+            &root.join("home"),
+            &[
+                "agent",
+                "status",
+                "--state-dir",
+                state.to_str().unwrap(),
+                "--json",
+            ],
+        ))
+    };
+    let value = read();
+    assert_eq!(value["records"]["status"], "partial");
+    assert!(value["records"]["pending_records"].is_null());
+    assert_eq!(value["records"]["unattributed_records"], 1);
+    // A legacy/raw writer cannot leave a prior snapshot appearing current.
+    let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+    db.execute_batch("INSERT INTO learning_delivery(scope,last_success_at) SELECT DISTINCT scope,'2026-01-01T00:00:00Z' FROM learning_outbox").unwrap();
+    let value = read();
+    assert_eq!(value["records"]["code"], "delivery_snapshot_superseded");
+    assert!(value["records"]["pending_records"].is_null());
+    assert_eq!(value["summary"]["latest_send"]["outcome"], "unknown");
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_snapshot_refresh_preserves_enqueue_but_never_displays_prior_success() {
+    use std::os::unix::fs::PermissionsExt;
+    use vfs_cli_app::learning::{Event, Outbox};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    let outbox = Outbox::open(&state, "http://127.0.0.1:1:aaaaa-aa", "db", "bound-caller").unwrap();
+    let event = |id: &str| Event {
+        id: id.into(),
+        run_id: "run-one".into(),
+        kind: "run".into(),
+        payload: json!({"project_id":PROJECT}),
+    };
+    outbox.enqueue(&event("one")).unwrap();
+    let db = rusqlite::Connection::open(state.join("learning-outbox.sqlite3")).unwrap();
+    db.execute_batch("INSERT INTO learning_delivery(scope,last_attempt_at,last_success_at) SELECT DISTINCT scope,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' FROM learning_outbox").unwrap();
+    outbox.enqueue(&event("two")).unwrap();
+    let read = || {
+        report(status(
+            root,
+            &root.join("home"),
+            &[
+                "agent",
+                "status",
+                "--state-dir",
+                state.to_str().unwrap(),
+                "--json",
+            ],
+        ))
+    };
+    assert_eq!(read()["summary"]["latest_send"]["outcome"], "success");
+    // Existing SQLite WAL descriptors remain writable, while invalidating or
+    // publishing the filesystem summary fails. The DB mutation must survive.
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = outbox.enqueue(&event("three"));
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    result.unwrap();
+    assert_eq!(outbox.pending_count().unwrap(), 3);
+    let value = read();
+    assert_eq!(value["records"]["status"], "unknown");
+    assert_eq!(value["summary"]["latest_send"]["outcome"], "unknown");
+    assert!(value["records"]["pending_records"].is_null());
 }

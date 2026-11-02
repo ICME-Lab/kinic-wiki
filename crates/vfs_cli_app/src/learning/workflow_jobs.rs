@@ -21,6 +21,45 @@ pub fn queue(
         &project.project_id,
     )
 }
+pub fn control_job(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    root: &Path,
+    state: &StateArgs,
+    command: &JobCommand,
+) -> Result<Value> {
+    let path = discover_config(root)?
+        .context("project learning setup required")?
+        .canonicalize()?;
+    let project = load_project(&path)?;
+    project.validate_connection(c)?;
+    ensure!(
+        project
+            .principal
+            .as_deref()
+            .is_some_and(|p| Some(p.to_string()) == client.caller_principal()),
+        "project identity changed or unconfigured"
+    );
+    let (pause, args) = match command {
+        JobCommand::Pause(args) => (true, args),
+        JobCommand::Resume(args) => (false, args),
+    };
+    let state = target_state(state, root)?;
+    // Preview uses the existing queue without creating directories, schemas or jobs.
+    let q = if args.apply {
+        queue(client, c, &state, &project)?
+    } else {
+        JobQueue::open_existing(
+            &state_root(&state)?,
+            &binding(client, c)?,
+            &project.project_id,
+        )?
+    };
+    let job = q.control(&args.run_id, &path, pause, args.apply)?;
+    Ok(
+        json!({"dry_run":!args.apply,"applied":args.apply,"run_id":job.run_id,"state":job.state,"pause":job.pause,"retry_policy":job.retry_policy,"model_started":false,"next_action":if pause {"Inspect evidence and binding before learn jobs resume --run-id <run-id> --apply"} else {"Run learn drain --run-id <run-id> when ready; resume alone starts no work"}}),
+    )
+}
 pub fn enqueue(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -131,6 +170,18 @@ pub async fn drain(
 ) -> Result<Value> {
     drain_with_config(client, c, root, state, None, false).await
 }
+#[derive(Default)]
+pub struct DrainSelection {
+    pub run_id: Option<String>,
+    pub max_jobs: Option<u32>,
+}
+impl DrainSelection {
+    fn includes(&self, job: &LearningJob) -> bool {
+        self.run_id.as_ref().is_none_or(|run| run == &job.run_id)
+            && !["paused", "held", "published", "publishing"].contains(&job.state.as_str())
+    }
+}
+#[cfg(test)]
 pub async fn drain_with_config(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -139,6 +190,31 @@ pub async fn drain_with_config(
     config: Option<&Path>,
     require_wakeup: bool,
 ) -> Result<Value> {
+    drain_selected(
+        client,
+        c,
+        root,
+        state,
+        config,
+        require_wakeup,
+        &DrainSelection::default(),
+    )
+    .await
+}
+pub async fn drain_selected(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    root: &Path,
+    state: &StateArgs,
+    config: Option<&Path>,
+    require_wakeup: bool,
+    selection: &DrainSelection,
+) -> Result<Value> {
+    ensure!(
+        selection.run_id.is_none() || selection.max_jobs.is_none(),
+        "run-id and max-jobs are mutually exclusive"
+    );
+    ensure!(selection.max_jobs != Some(0), "max-jobs must be positive");
     let effective_state = target_state(state, root)?;
     let state = &effective_state;
     let path = config
@@ -156,6 +232,12 @@ pub async fn drain_with_config(
         "project identity changed"
     );
     let q = queue(client, c, state, &project)?;
+    if let Some(run) = &selection.run_id {
+        ensure!(
+            q.list()?.iter().any(|job| &job.run_id == run),
+            "job not found in selected project"
+        );
+    }
     if !project.enabled {
         return Ok(json!({"disabled":true,"jobs":q.list()?}));
     }
@@ -163,6 +245,7 @@ pub async fn drain_with_config(
     // lease before the final queue check: an enqueuer either sees an owner that
     // will recheck, or can start its own owner after release.
     let mut attempted = std::collections::BTreeSet::new();
+    let mut started = 0u32;
     let mut first_pass = true;
     loop {
         let Some(lease) = q.acquire()? else {
@@ -178,7 +261,7 @@ pub async fn drain_with_config(
             .await?;
         if q.list()?
             .iter()
-            .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+            .any(|j| selection.includes(j) && outbox.pending_run(&j.run_id).unwrap_or(true))
         {
             #[cfg(test)]
             if let Some(after_pending) = TEST_DELIVERY_PENDING.with(|hook| hook.borrow_mut().take())
@@ -191,7 +274,7 @@ pub async fn drain_with_config(
             drop(lease);
             if q.list()?
                 .iter()
-                .any(|j| outbox.pending_run(&j.run_id).unwrap_or(true))
+                .any(|j| selection.includes(j) && outbox.pending_run(&j.run_id).unwrap_or(true))
             {
                 return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
             }
@@ -204,21 +287,34 @@ pub async fn drain_with_config(
         let (wake_generation, jobs) = q.wakeup_and_jobs()?;
         let mut delivery_blocked = false;
         for mut job in jobs {
-            if attempted.contains(&job.run_id) {
+            if attempted.contains(&job.run_id) || !selection.includes(&job) {
                 continue;
+            }
+            if selection.max_jobs.is_some_and(|max| started >= max) {
+                break;
             }
             if outbox.pending_run(&job.run_id)? {
                 delivery_blocked = true;
                 continue;
             }
             let current = load_project(&path)?;
-            current.validate_connection(c)?;
-            ensure!(
-                current.project_id == project.project_id,
-                "project identity changed during drain"
-            );
+            if current.validate_connection(c).is_err()
+                || current.project_id != project.project_id
+                || current.principal != project.principal
+            {
+                job.pause("binding_or_evidence_changed");
+                q.save(&job)?;
+                anyhow::bail!("project binding changed during drain; selected job paused");
+            }
             if !current.enabled {
                 break;
+            }
+            attempted.insert(job.run_id.clone());
+            if job.state == "candidate"
+                && job.candidate_path.is_some()
+                && current.validation_suite.is_none()
+            {
+                continue;
             }
             let current_hash = config_fingerprint(&current)?;
             if job
@@ -226,50 +322,35 @@ pub async fn drain_with_config(
                 .as_ref()
                 .is_some_and(|old| old != &current_hash)
             {
-                if job.state == "publishing" {
-                    job.error=Some("configuration changed during an ambiguous publication; exact attempt preserved for manual reconciliation".into());
-                    q.save(&job)?;
-                    attempted.insert(job.run_id.clone());
-                    continue;
-                }
-                if job.state != "published" {
-                    job.candidate_path = None;
-                    job.evaluation_path = None;
-                    job.state = "pending".into();
-                }
-            }
-            if ["published", "held"].contains(&job.state.as_str()) {
+                job.pause("configuration_changed");
+                q.save(&job)?;
                 continue;
             }
-            attempted.insert(job.run_id.clone());
+            if !job.begin_attempt(chrono::Utc::now().timestamp_millis()) {
+                q.save(&job)?;
+                continue;
+            }
+            started += 1;
             job.config_hash = Some(current_hash);
             q.save(&job)?;
             let outcome = process(client, c, &path, &current, state, &q, &mut job).await;
             if let Err(e) = outcome {
-                if job.state != "publishing" {
-                    let message = e.to_string();
-                    if ["changed", "mismatch", "conflict"]
-                        .iter()
-                        .any(|s| message.contains(s))
-                    {
-                        job.candidate_path = None;
-                        job.evaluation_path = None;
-                    }
-                    job.state = "retry".into();
-                }
-                job.error = Some(e.to_string());
+                job.fail_attempt(&e.to_string(), chrono::Utc::now().timestamp_millis());
                 q.save(&job)?;
             }
         }
-        if !delivery_blocked && let Some(generation) = wake_generation {
+        if !delivery_blocked
+            && selection.run_id.is_none()
+            && selection.max_jobs.is_none()
+            && let Some(generation) = wake_generation
+        {
             q.acknowledge_wakeup(generation)?;
         }
         drop(lease);
         if delivery_blocked {
-            if q.list()?
-                .iter()
-                .any(|job| outbox.pending_run(&job.run_id).unwrap_or(true))
-            {
+            if q.list()?.iter().any(|job| {
+                selection.includes(job) && outbox.pending_run(&job.run_id).unwrap_or(true)
+            }) {
                 return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
             }
             continue;
@@ -277,8 +358,10 @@ pub async fn drain_with_config(
         if !load_project(&path)?.enabled {
             break;
         }
+        if selection.run_id.is_some() || selection.max_jobs.is_some() {
+            break;
+        }
         if q.pending_wakeup()?.is_some() {
-            attempted.clear();
             continue;
         }
         if !unattempted(&q.list()?, &attempted) {
@@ -444,9 +527,10 @@ async fn process(
             .iter()
             .any(|s| message.contains(s))
             {
-                job.candidate_path = None;
-                job.evaluation_path = None;
-                job.state = "retry".into();
+                // This pre-publication validation failed with a known outcome.
+                // Preserve its evidence and require inspection before another attempt.
+                job.state = "evaluated".into();
+                job.fail_attempt(&message, chrono::Utc::now().timestamp_millis());
             }
             job.error = Some(message);
             q.save(job)?;
@@ -467,9 +551,8 @@ fn config_fingerprint(project: &ProjectConfig) -> Result<String> {
 }
 
 fn unattempted(jobs: &[LearningJob], attempted: &std::collections::BTreeSet<String>) -> bool {
-    jobs.iter().any(|j| {
-        !attempted.contains(&j.run_id) && !["held", "published"].contains(&j.state.as_str())
-    })
+    jobs.iter()
+        .any(|j| DrainSelection::default().includes(j) && !attempted.contains(&j.run_id))
 }
 #[cfg(test)]
 mod recovery_tests {
@@ -550,6 +633,8 @@ mod fingerprint_tests {
             evaluation_path: None,
             error: None,
             config_hash: Some(config_fingerprint(&project).unwrap()),
+            retry_policy: None,
+            pause: None,
         };
         ensure_current_config(&project, &job).unwrap();
         std::fs::write(&suite, "changed validation").unwrap();
