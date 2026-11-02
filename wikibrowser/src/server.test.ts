@@ -31,12 +31,12 @@ describe("service discovery", () => {
       expect(mocks.put).not.toHaveBeenCalled();
     });
 
-    it.each(["wiki.kinic.xyz", "kinic.xyz"])(`publishes the canonical II seed for ${id} at %s`, async (host) => {
+    it.each(["wiki.kinic.xyz", "kinic.xyz"])(`publishes the reachable browser II origin for ${id} at %s`, async (host) => {
       mocks.env.KINIC_WIKI_CANISTER_ID = id;
       const response = await server.fetch(new Request(`https://${host}/.well-known/ii-derivation-origin`));
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toContain("text/plain");
-      expect(await response.text()).toBe(`https://${id}.ic0.app\n`);
+      expect(await response.text()).toBe(`https://${id}.icp0.io\n`);
       expect(mocks.fetch).not.toHaveBeenCalled();
     });
   }
