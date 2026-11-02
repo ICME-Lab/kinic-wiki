@@ -353,7 +353,15 @@ pub async fn read_nodes_chunked(
             ));
         }
         for (path, result) in chunk.iter().zip(results) {
-            nodes.push(result.map_err(|error| anyhow!("read_nodes {path}: {error}"))?);
+            let node = match result {
+                Ok(node) => node,
+                Err(error) if error == "read_nodes item exceeds response byte limit" => client
+                    .read_node(database_id, path)
+                    .await
+                    .with_context(|| format!("read_node {path} after batch response limit"))?,
+                Err(error) => return Err(anyhow!("read_nodes {path}: {error}")),
+            };
+            nodes.push(node);
         }
     }
     Ok(nodes)

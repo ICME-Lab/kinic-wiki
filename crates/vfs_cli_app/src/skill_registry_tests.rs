@@ -19,6 +19,17 @@ use tempfile::TempDir;
 use vfs_client::VfsApi;
 
 #[tokio::test]
+async fn skill_prune_without_obsolete_files_skips_mutation_batch() {
+    let client = SkillMockClient::default();
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "SKILL.md", "# Example\n\nA skill.\n");
+    upsert_skill(&client, "default", temp.path(), "example", true)
+        .await
+        .unwrap();
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn batched_read_preserves_order_and_reports_item_errors() {
     let client = SkillMockClient::default();
     let paths = (0..11).map(|i| format!("/{i}")).collect::<Vec<_>>();
@@ -62,6 +73,10 @@ async fn batched_read_preserves_order_and_reports_item_errors() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("item failed"));
+    let oversized = vfs_client::read_nodes_chunked(&client, "db", &["oversized".into()])
+        .await
+        .unwrap();
+    assert_eq!(oversized, vec![None]);
 }
 use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
@@ -97,7 +112,9 @@ impl VfsApi for SkillMockClient {
         Ok(paths
             .iter()
             .map(|path| {
-                if path == "error" {
+                if path == "oversized" {
+                    Err("read_nodes item exceeds response byte limit".into())
+                } else if path == "error" {
                     Err("item failed".into())
                 } else {
                     Ok(self.nodes.lock().unwrap().get(path).cloned())
