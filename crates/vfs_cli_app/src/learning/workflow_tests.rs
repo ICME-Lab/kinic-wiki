@@ -14,6 +14,31 @@ async fn run_legacy_fixture(
         .map(|_| ())
 }
 
+#[tokio::test]
+async fn raw_context_reads_search_results_in_one_batch() {
+    let temp = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(temp.path());
+    for path in ["/Sources/alpha.md", "/Sources/beta.md"] {
+        client
+            .write_node(WriteNodeRequest {
+                database_id: "db".into(),
+                path: path.into(),
+                kind: NodeKind::Source,
+                content: "quokka evidence".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            })
+            .await
+            .unwrap();
+    }
+    let result = raw_context(&client, "db", "quokka", 10000, None)
+        .await
+        .unwrap();
+    assert!(result.contains("alpha.md"));
+    assert!(result.contains("beta.md"));
+    assert_eq!(client.batch_reads.load(Ordering::SeqCst), 1);
+}
+
 fn connection() -> ResolvedConnection {
     ResolvedConnection {
         replica_host: "http://localhost:4943".into(),

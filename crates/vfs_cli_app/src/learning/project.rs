@@ -10,7 +10,7 @@ use std::{
 };
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
-use vfs_types::MkdirNodeRequest;
+use vfs_types::{NodeKind, WriteNodeItem, WriteNodesRequest};
 
 pub const CONFIG_FILE: &str = ".kinic-learning.json";
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -285,19 +285,31 @@ fn resolve_executable(executable: &Path, base: &Path) -> Result<PathBuf> {
     )
 }
 async fn ensure_roots(client: &impl VfsApi, config: &ProjectConfig) -> Result<()> {
+    let mut paths = std::collections::BTreeSet::new();
     for scope in config.private_scopes() {
         let mut current = String::new();
         for part in scope.split('/').filter(|s| !s.is_empty()) {
             current.push('/');
             current.push_str(part);
-            client
-                .mkdir_node(MkdirNodeRequest {
-                    database_id: config.database_id.clone(),
-                    path: current.clone(),
-                })
-                .await?;
+            paths.insert(current.clone());
         }
     }
+    let nodes = paths
+        .into_iter()
+        .map(|path| WriteNodeItem {
+            path,
+            kind: NodeKind::Folder,
+            content: String::new(),
+            metadata_json: "{}".into(),
+            expected_etag: None,
+        })
+        .collect();
+    client
+        .write_nodes(WriteNodesRequest {
+            database_id: config.database_id.clone(),
+            nodes,
+        })
+        .await?;
     Ok(())
 }
 pub async fn handle_project_command(

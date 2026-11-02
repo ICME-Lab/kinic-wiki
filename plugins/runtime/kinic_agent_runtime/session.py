@@ -1047,37 +1047,34 @@ def unique_quarantine_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.name}.{millis}.{suffix}")
 
 
-def ensure_session_source_parent_folders(cli: str, remote_path: str) -> None:
+def ensure_session_source_parent_folders(remote_path: str) -> list[str]:
     if not remote_path.startswith("/Sources/sessions/"):
-        return
+        return []
     segments = [segment for segment in remote_path.split("/") if segment]
     if len(segments) < 4:
-        return
+        return []
     provider = segments[2]
-    for folder_path in ["/Sources/sessions", f"/Sources/sessions/{provider}"]:
-        run_cli(cli, "mkdir-node", "--path", folder_path)
+    return ["/Sources/sessions", f"/Sources/sessions/{provider}"]
 
 
 def write_payload(cli: str, payload: dict[str, Any]) -> None:
     content = required_text(payload, "content")
     remote_path = required_text(payload, "path")
     metadata_json = required_text(payload, "metadata_json")
-    ensure_session_source_parent_folders(cli, remote_path)
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
-        handle.write(content)
+    nodes = [
+        {"path": path, "kind": "folder", "content": "", "metadata_json": "{}", "expected_etag": None}
+        for path in ensure_session_source_parent_folders(remote_path)
+    ]
+    nodes.append({"path": remote_path, "kind": "source", "content": content, "metadata_json": metadata_json, "expected_etag": None})
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(nodes, handle)
         temp_path = Path(handle.name)
     try:
         run_cli(
             cli,
-            "write-node",
-            "--path",
-            remote_path,
-            "--kind",
-            "source",
+            "write-nodes",
             "--input",
             str(temp_path),
-            "--metadata-json",
-            metadata_json,
             "--json",
         )
     finally:
@@ -1094,6 +1091,21 @@ def record_codex_session(raw_input: str, cli: str | None, pending_dir: Path, now
     hook = parse_codex_hook_input(raw_input)
     source = build_codex_source(hook, now_ms=now_ms)
     return record_source(source, cli, pending_dir, now_ms=now_ms)
+
+
+def session_write_error(cli: str, cause: OSError | subprocess.CalledProcessError) -> str:
+    if isinstance(cause, subprocess.CalledProcessError):
+        try:
+            version = run_cli(cli, "--version")
+            match = re.fullmatch(r"kinic-vfs-cli (\d+)\.(\d+)\.(\d+)\s*", version.stdout)
+            stderr = cause.stderr or ""
+            unsupported = ("unknown variant `folder`" in stderr or
+                           "unrecognized subcommand 'write-nodes'" in stderr)
+            if unsupported and match and tuple(int(part) for part in match.groups()) < (2, 0, 2):
+                return "Session capture requires kinic-vfs-cli 2.0.2 or newer; upgrade the CLI to retry the pending recording."
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return str(cause)[:800]
 
 
 def record_source(source: SourcePayload, cli: str | None, pending_dir: Path, now_ms: int | None = None) -> dict[str, Any]:
@@ -1117,7 +1129,7 @@ def record_source(source: SourcePayload, cli: str | None, pending_dir: Path, now
             )
             recorded = True
         except (OSError, subprocess.CalledProcessError) as cause:
-            error = str(cause)[:800]
+            error = session_write_error(resolved_cli, cause)
         if recorded:
             skip_paths: set[Path] = set()
             try:

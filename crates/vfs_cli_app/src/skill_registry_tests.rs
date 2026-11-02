@@ -17,6 +17,67 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 use vfs_client::VfsApi;
+
+#[tokio::test]
+async fn skill_prune_without_obsolete_files_skips_mutation_batch() {
+    let client = SkillMockClient::default();
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "SKILL.md", "# Example\n\nA skill.\n");
+    upsert_skill(&client, "default", temp.path(), "example", true)
+        .await
+        .unwrap();
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn batched_read_preserves_order_and_reports_item_errors() {
+    let client = SkillMockClient::default();
+    let paths = (0..11).map(|i| format!("/{i}")).collect::<Vec<_>>();
+    for path in &paths {
+        client.nodes.lock().unwrap().insert(
+            path.clone(),
+            Node {
+                path: path.clone(),
+                kind: NodeKind::File,
+                content: path.clone(),
+                created_at: 0,
+                updated_at: 0,
+                etag: path.clone(),
+                metadata_json: "{}".into(),
+            },
+        );
+    }
+    let nodes = vfs_client::read_nodes_chunked(&client, "db", &paths)
+        .await
+        .unwrap();
+    assert_eq!(nodes.len(), 11);
+    assert_eq!(
+        nodes
+            .into_iter()
+            .map(|n| n.unwrap().path)
+            .collect::<Vec<_>>(),
+        paths
+    );
+    assert_eq!(
+        client
+            .read_batches
+            .lock()
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>(),
+        vec![10, 1]
+    );
+    assert_eq!(client.read_batches.lock().unwrap().concat(), paths);
+    let error = vfs_client::read_nodes_chunked(&client, "db", &["error".into()])
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("item failed"));
+    let oversized = vfs_client::read_nodes_chunked(&client, "db", &["oversized".into()])
+        .await
+        .unwrap();
+    assert_eq!(oversized, vec![None]);
+}
 use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
@@ -27,6 +88,75 @@ use vfs_types::{
     WriteNodeResult, WriteNodesRequest,
 };
 
+#[tokio::test]
+async fn prune_accepts_complete_listing_of_99_entries() {
+    let client = SkillMockClient::default();
+    for i in 0..97 {
+        client
+            .write_node(WriteNodeRequest {
+                database_id: "db".into(),
+                path: format!("/Skills/example/old-{i}.md"),
+                kind: NodeKind::File,
+                content: "old".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            })
+            .await
+            .unwrap();
+    }
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "SKILL.md", "# Example\n");
+    let result = upsert_skill(&client, "db", temp.path(), "example", true)
+        .await
+        .unwrap();
+    assert_eq!(result["pruned_paths"].as_array().unwrap().len(), 97);
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn prune_rejects_full_listing_before_any_writes() {
+    let client = SkillMockClient::default();
+    for i in 0..100 {
+        let path = format!("/Skills/example/old-{i}.md");
+        client
+            .write_node(WriteNodeRequest {
+                database_id: "db".into(),
+                path,
+                kind: NodeKind::File,
+                content: "old".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            })
+            .await
+            .unwrap();
+    }
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "SKILL.md", "# Example\n");
+    let error = upsert_skill(&client, "db", temp.path(), "example", true)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("100"));
+    assert_eq!(client.write_batches.load(Ordering::SeqCst), 0);
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 0);
+    assert!(client.mkdirs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn prune_reports_when_listing_fills_after_package_write() {
+    let client = SkillMockClient::default();
+    client
+        .inflate_listing_after_write
+        .store(true, Ordering::SeqCst);
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "SKILL.md", "# Example\n");
+    let error = upsert_skill(&client, "db", temp.path(), "example", true)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("written"));
+    assert_eq!(client.write_batches.load(Ordering::SeqCst), 1);
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 0);
+}
+
 #[derive(Default)]
 struct SkillMockClient {
     nodes: Mutex<BTreeMap<String, Node>>,
@@ -36,10 +166,32 @@ struct SkillMockClient {
     caller_principal: Mutex<Option<String>>,
     writes: AtomicUsize,
     write_batches: AtomicUsize,
+    mutation_batches: AtomicUsize,
+    read_batches: Mutex<Vec<Vec<String>>>,
+    inflate_listing_after_write: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait]
 impl VfsApi for SkillMockClient {
+    async fn read_nodes(
+        &self,
+        _database_id: &str,
+        paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>> {
+        self.read_batches.lock().unwrap().push(paths.to_vec());
+        Ok(paths
+            .iter()
+            .map(|path| {
+                if path == "oversized" {
+                    Err("read_nodes item exceeds response byte limit".into())
+                } else if path == "error" {
+                    Err("item failed".into())
+                } else {
+                    Ok(self.nodes.lock().unwrap().get(path).cloned())
+                }
+            })
+            .collect())
+    }
     fn caller_principal(&self) -> Option<String> {
         self.caller_principal.lock().expect("caller lock").clone()
     }
@@ -56,7 +208,7 @@ impl VfsApi for SkillMockClient {
     }
 
     async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
-        Ok(self
+        let mut entries: Vec<_> = self
             .nodes
             .lock()
             .expect("nodes lock")
@@ -74,7 +226,21 @@ impl VfsApi for SkillMockClient {
                 has_children: false,
             })
             .take(request.limit as usize)
-            .collect())
+            .collect();
+        if self.inflate_listing_after_write.load(Ordering::SeqCst)
+            && self.write_batches.load(Ordering::SeqCst) > 0
+        {
+            while entries.len() < 100 {
+                entries.push(NodeEntry {
+                    path: format!("{}/extra-{}", request.prefix, entries.len()),
+                    kind: NodeEntryKind::File,
+                    updated_at: 0,
+                    etag: "etag".into(),
+                    has_children: false,
+                });
+            }
+        }
+        Ok(entries)
     }
 
     async fn list_children(&self, _request: ListChildrenRequest) -> Result<Vec<ChildNode>> {
@@ -144,6 +310,34 @@ impl VfsApi for SkillMockClient {
         }
         nodes.remove(&request.path);
         Ok(DeleteNodeResult { path: request.path })
+    }
+
+    async fn mutate_nodes_batch(
+        &self,
+        request: vfs_types::MutateNodesBatchRequest,
+    ) -> Result<Vec<vfs_types::NodeMutationResult>> {
+        self.mutation_batches.fetch_add(1, Ordering::SeqCst);
+        let mut nodes = self.nodes.lock().unwrap();
+        let mut next = nodes.clone();
+        let mut results = Vec::new();
+        for operation in request.operations {
+            let vfs_types::NodeMutation::Delete(item) = operation else {
+                anyhow::bail!("unexpected mutation")
+            };
+            let current = next
+                .get(&item.path)
+                .ok_or_else(|| anyhow::anyhow!("node missing"))?;
+            anyhow::ensure!(
+                item.expected_etag.as_deref() == Some(&current.etag),
+                "etag conflict"
+            );
+            next.remove(&item.path);
+            results.push(vfs_types::NodeMutationResult::Delete(DeleteNodeResult {
+                path: item.path,
+            }));
+        }
+        *nodes = next;
+        Ok(results)
     }
 
     async fn move_node(&self, _request: MoveNodeRequest) -> Result<MoveNodeResult> {
@@ -402,6 +596,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
     let pruned = upsert_skill(&client, "default", temp.path(), "legal-review", true)
         .await
         .expect("prune upsert");
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 1);
     assert_eq!(
         pruned["pruned_paths"],
         serde_json::json!([

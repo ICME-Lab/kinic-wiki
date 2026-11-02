@@ -22,8 +22,7 @@ use std::process::{Command, Output, Stdio};
 pub(crate) use vfs_cli::skill_kb::{find_skills, inspect_skill};
 use vfs_client::VfsApi;
 use vfs_types::{
-    DeleteNodeRequest, ListNodesRequest, NodeEntryKind, NodeKind, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    ListNodesRequest, NodeEntryKind, NodeKind, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 const SKILL_PACKAGE_FILE_LIMIT_MAX: usize = 100;
@@ -190,6 +189,9 @@ async fn write_skill_package(
 ) -> Result<serde_json::Value> {
     validate_skill_package_file_count(files.len())?;
     let base_path = skill_base_path(skill_id);
+    if prune {
+        list_complete_package_entries(client, database_id, &base_path).await?;
+    }
     let file_names = files.keys().cloned().collect::<BTreeSet<_>>();
     let entries = files.into_iter().collect::<Vec<_>>();
     let paths = entries
@@ -219,7 +221,9 @@ async fn write_skill_package(
         })
         .await?;
     let pruned_paths = if prune {
-        prune_package_files(client, database_id, &base_path, &file_names).await?
+        prune_package_files(client, database_id, &base_path, &file_names)
+            .await
+            .context("package files were written; pruning did not complete")?
     } else {
         Vec::new()
     };
@@ -951,15 +955,7 @@ async fn prune_package_files(
     keep_files: &BTreeSet<String>,
 ) -> Result<Vec<String>> {
     let mut pruned_paths = Vec::new();
-    for entry in client
-        .list_nodes(ListNodesRequest {
-            database_id: database_id.to_string(),
-            prefix: base_path.to_string(),
-            recursive: true,
-            limit: 100,
-        })
-        .await?
-    {
+    for entry in list_complete_package_entries(client, database_id, base_path).await? {
         if entry.kind != NodeEntryKind::File {
             continue;
         }
@@ -972,17 +968,46 @@ async fn prune_package_files(
         if keep_files.contains(relative_path) {
             continue;
         }
+        pruned_paths.push((entry.path, entry.etag));
+    }
+    if !pruned_paths.is_empty() {
         client
-            .delete_node(DeleteNodeRequest {
+            .mutate_nodes_batch(vfs_types::MutateNodesBatchRequest {
                 database_id: database_id.to_string(),
-                path: entry.path.clone(),
-                expected_etag: Some(entry.etag),
-                expected_folder_index_etag: None,
+                operations: pruned_paths
+                    .iter()
+                    .map(|(path, etag)| {
+                        vfs_types::NodeMutation::Delete(vfs_types::DeleteNodeItem {
+                            path: path.clone(),
+                            expected_etag: Some(etag.clone()),
+                            expected_folder_index_etag: None,
+                        })
+                    })
+                    .collect(),
             })
             .await?;
-        pruned_paths.push(entry.path);
     }
-    Ok(pruned_paths)
+    Ok(pruned_paths.into_iter().map(|(path, _)| path).collect())
+}
+
+async fn list_complete_package_entries(
+    client: &impl VfsApi,
+    database_id: &str,
+    base_path: &str,
+) -> Result<Vec<vfs_types::NodeEntry>> {
+    let entries = client
+        .list_nodes(ListNodesRequest {
+            database_id: database_id.to_string(),
+            prefix: base_path.to_string(),
+            recursive: true,
+            limit: 100,
+        })
+        .await?;
+    anyhow::ensure!(
+        entries.len() < 100,
+        "package listing reached the 100-entry limit; pruning cannot safely determine all files"
+    );
+    Ok(entries)
 }
 
 fn discover_skill_package_files(

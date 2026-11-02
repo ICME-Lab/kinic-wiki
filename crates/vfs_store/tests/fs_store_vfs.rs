@@ -64,6 +64,51 @@ fn ensure_parent_folders(store: &FsStore, path: &str, now: i64) {
 }
 
 #[test]
+fn delete_batch_rolls_back_earlier_deletion_on_late_etag_conflict() {
+    let (_dir, store) = new_store();
+    let mut etags = Vec::new();
+    for path in ["/Skills/prune-first.md", "/Skills/prune-second.md"] {
+        let result = store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".into(),
+                    path: path.into(),
+                    kind: NodeKind::File,
+                    content: "keep until commit".into(),
+                    metadata_json: "{}".into(),
+                    expected_etag: None,
+                },
+                1,
+            )
+            .unwrap();
+        etags.push(result.node.etag);
+    }
+    let delete = |path: &str, etag: &str| {
+        NodeMutation::Delete(DeleteNodeItem {
+            path: path.into(),
+            expected_etag: Some(etag.into()),
+            expected_folder_index_etag: None,
+        })
+    };
+    let error = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".into(),
+                operations: vec![
+                    delete("/Skills/prune-first.md", &etags[0]),
+                    delete("/Skills/prune-second.md", "stale"),
+                ],
+            },
+            2,
+        )
+        .unwrap_err();
+    assert_eq!(error.failed_index, Some(1));
+    for path in ["/Skills/prune-first.md", "/Skills/prune-second.md"] {
+        assert!(store.read_node(path).unwrap().is_some());
+    }
+}
+
+#[test]
 fn heterogeneous_mutation_batch_is_ordered_and_atomic() {
     let (_dir, store) = new_store();
     let original = store

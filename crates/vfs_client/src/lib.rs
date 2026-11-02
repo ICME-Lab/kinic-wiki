@@ -229,6 +229,13 @@ pub trait VfsApi: Sync {
         ))
     }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>>;
+    async fn read_nodes(
+        &self,
+        _database_id: &str,
+        _paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>> {
+        Err(anyhow!("read_nodes is not implemented by this client"))
+    }
     async fn current_node_revision(
         &self,
         _request: NodeRevisionRequest,
@@ -330,6 +337,34 @@ pub trait VfsApi: Sync {
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse>;
     async fn fetch_updates(&self, request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse>;
+}
+
+pub async fn read_nodes_chunked(
+    client: &(impl VfsApi + ?Sized),
+    database_id: &str,
+    paths: &[String],
+) -> Result<Vec<Option<Node>>> {
+    let mut nodes = Vec::with_capacity(paths.len());
+    for chunk in paths.chunks(10) {
+        let results = client.read_nodes(database_id, chunk).await?;
+        if results.len() != chunk.len() {
+            return Err(anyhow!(
+                "read_nodes returned an unexpected number of results"
+            ));
+        }
+        for (path, result) in chunk.iter().zip(results) {
+            let node = match result {
+                Ok(node) => node,
+                Err(error) if error == "read_nodes item exceeds response byte limit" => client
+                    .read_node(database_id, path)
+                    .await
+                    .with_context(|| format!("read_node {path} after batch response limit"))?,
+                Err(error) => return Err(anyhow!("read_nodes {path}: {error}")),
+            };
+            nodes.push(node);
+        }
+    }
+    Ok(nodes)
 }
 
 #[derive(Clone)]
@@ -824,6 +859,17 @@ impl VfsApi for CanisterVfsClient {
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>> {
         let result: Result<Option<Node>, String> = self
             .query2("read_node", &database_id.to_string(), &path.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn read_nodes(
+        &self,
+        database_id: &str,
+        paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>> {
+        let result: Result<Vec<Result<Option<Node>, String>>, String> = self
+            .query2("read_nodes", &database_id.to_string(), &paths.to_vec())
             .await?;
         result.map_err(|error| anyhow!(error))
     }

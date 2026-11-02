@@ -215,6 +215,13 @@ async fn rebuild_scope_index_renders_direct_children_and_updates_root_entry() {
         .await
         .expect("rebuild scope index should succeed");
 
+    assert_eq!(
+        client
+            .batch_writes
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+
     let writes = client.writes.lock().expect("writes should lock");
     assert_eq!(writes.len(), 2);
     assert_eq!(writes[0].path, "/Knowledge/foo/index.md");

@@ -6,6 +6,7 @@ Why: SessionEnd hooks must retain evidence without leaking obvious secrets.
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -20,6 +21,57 @@ from kinic_agent_runtime import session
 
 
 class SessionCaptureTests(unittest.TestCase):
+    def test_old_cli_failure_preserves_pending_and_explains_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = session.SourcePayload('/Sources/sessions/codex/a.md', 'text', {'provider': 'codex'})
+            failure = subprocess.CalledProcessError(2, ['cli', 'write-nodes'], stderr='unknown variant `folder`, expected `file` or `source`')
+            version = subprocess.CompletedProcess(['cli', '--version'], 0, 'kinic-vfs-cli 2.0.1\n', '')
+            with mock.patch.object(session, 'resolve_cli', return_value='cli'), mock.patch.object(session, 'run_cli', side_effect=[failure, version]) as run:
+                result = session.record_source(source, 'cli', Path(tmp), now_ms=1)
+            self.assertFalse(result['recorded'])
+            self.assertTrue(Path(result['pending_path']).is_file())
+            self.assertIn('2.0.2', result['error'])
+            self.assertEqual(run.call_count, 2)
+
+    def test_current_or_unknown_cli_failure_keeps_original_error(self) -> None:
+        for output in ('kinic-vfs-cli 2.0.4\n', 'unknown version'):
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as tmp:
+                source = session.SourcePayload('/Sources/sessions/codex/a.md', 'text', {})
+                failure = subprocess.CalledProcessError(7, ['cli', 'write-nodes'])
+                version = subprocess.CompletedProcess(['cli', '--version'], 0, output, '')
+                with mock.patch.object(session, 'resolve_cli', return_value='cli'), mock.patch.object(session, 'run_cli', side_effect=[failure, version]):
+                    result = session.record_source(source, 'cli', Path(tmp), now_ms=1)
+                self.assertEqual(result['error'], str(failure))
+                self.assertTrue(Path(result['pending_path']).is_file())
+
+    def test_old_cli_unrelated_failure_keeps_original_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = session.SourcePayload('/Sources/sessions/codex/a.md', 'text', {})
+            failure = subprocess.CalledProcessError(7, ['cli', 'write-nodes'], stderr='network unavailable')
+            version = subprocess.CompletedProcess(['cli', '--version'], 0, 'kinic-vfs-cli 2.0.1\n', '')
+            with mock.patch.object(session, 'resolve_cli', return_value='cli'), mock.patch.object(session, 'run_cli', side_effect=[failure, version]):
+                result = session.record_source(source, 'cli', Path(tmp), now_ms=1)
+            self.assertEqual(result['error'], str(failure))
+    def test_write_payload_batches_parents_and_source(self) -> None:
+        calls = []
+
+        def capture(*args):
+            calls.append((args, json.loads(Path(args[args.index('--input') + 1]).read_text())))
+
+        with mock.patch.object(session, 'run_cli', side_effect=capture):
+            session.write_payload('cli', {'path': '/Sources/sessions/codex/a.md', 'content': 'text', 'metadata_json': '{}'})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0][1], 'write-nodes')
+        self.assertEqual([(n['path'], n['kind']) for n in calls[0][1]], [('/Sources/sessions', 'folder'), ('/Sources/sessions/codex', 'folder'), ('/Sources/sessions/codex/a.md', 'source')])
+
+    def test_write_payload_outside_sessions_has_only_source(self) -> None:
+        nodes = []
+        def capture(*args):
+            nodes.extend(json.loads(Path(args[args.index('--input') + 1]).read_text()))
+        with mock.patch.object(session, 'run_cli', side_effect=capture):
+            session.write_payload('cli', {'path': '/Sources/other.md', 'content': 'text', 'metadata_json': '{}'})
+        self.assertEqual([(node['path'], node['kind']) for node in nodes], [('/Sources/other.md', 'source')])
+
     def test_parse_hook_input_requires_session_and_transcript(self) -> None:
         with self.assertRaisesRegex(ValueError, "session_id"):
             session.parse_hook_input(json.dumps({"transcript_path": "/tmp/t.jsonl"}))
@@ -793,7 +845,8 @@ class SessionCaptureTests(unittest.TestCase):
                 "python3 - \"$@\" <<'PY'\n"
                 "import json, sys\n"
                 "args = sys.argv[1:]\n"
-                "path = args[args.index('--path') + 1]\n"
+                "nodes = json.load(open(args[args.index('--input') + 1]))\n"
+                "path = nodes[-1]['path']\n"
                 f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
                 "PY\n"
             )
@@ -814,11 +867,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertEqual(
                 paths,
                 [
-                    "/Sources/sessions",
-                    "/Sources/sessions/claudecode",
                     expected_current,
-                    "/Sources/sessions",
-                    "/Sources/sessions/claudecode",
                     "/Sources/sessions/claudecode/old.md",
                 ],
             )
@@ -855,7 +904,8 @@ class SessionCaptureTests(unittest.TestCase):
                 "python3 - \"$@\" <<'PY'\n"
                 "import json, sys\n"
                 "args = sys.argv[1:]\n"
-                "path = args[args.index('--path') + 1]\n"
+                "nodes = json.load(open(args[args.index('--input') + 1]))\n"
+                "path = nodes[-1]['path']\n"
                 f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
                 "PY\n"
             )
@@ -883,11 +933,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertEqual(
                 paths,
                 [
-                    "/Sources/sessions",
-                    "/Sources/sessions/claudecode",
                     f"/Sources/sessions/claudecode/{current_source_id}.md",
-                    "/Sources/sessions",
-                    "/Sources/sessions/claudecode",
                     "/Sources/sessions/claudecode/old.md",
                 ],
             )
@@ -942,9 +988,10 @@ class SessionCaptureTests(unittest.TestCase):
                 "python3 - \"$@\" <<'PY'\n"
                 "import json, sys\n"
                 "args = sys.argv[1:]\n"
-                "path = args[args.index('--path') + 1]\n"
+                "nodes = json.load(open(args[args.index('--input') + 1]))\n"
+                "path = nodes[-1]['path']\n"
                 f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
-                "if args[0] == 'write-node': sys.exit(7)\n"
+                "if args[0] == 'write-nodes': sys.exit(7)\n"
                 "PY\n"
             )
             fake_cli.chmod(0o755)
@@ -954,8 +1001,7 @@ class SessionCaptureTests(unittest.TestCase):
 
             paths = [json.loads(line) for line in calls.read_text().splitlines()]
             self.assertFalse(result["recorded"])
-            self.assertEqual(paths[:2], ["/Sources/sessions", "/Sources/sessions/claudecode"])
-            self.assertEqual(len(paths), 3)
+            self.assertEqual(len(paths), 1)
             self.assertTrue(old_pending.is_file())
             self.assertEqual(result["flushed_pending"], 0)
             self.assertEqual(result["failed_pending"], 0)
@@ -1150,7 +1196,8 @@ class SessionCaptureTests(unittest.TestCase):
                 "python3 - \"$@\" <<'PY'\n"
                 "import json, sys\n"
                 "args = sys.argv[1:]\n"
-                "path = args[args.index('--path') + 1]\n"
+                "nodes = json.load(open(args[args.index('--input') + 1]))\n"
+                "path = nodes[-1]['path']\n"
                 f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
                 "PY\n"
             )
@@ -1176,8 +1223,6 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertEqual(
                 paths,
                 [
-                    "/Sources/sessions",
-                    "/Sources/sessions/codex",
                     f"/Sources/sessions/codex/{expected_source_id}.md",
                 ],
             )
@@ -1210,8 +1255,9 @@ class SessionCaptureTests(unittest.TestCase):
                 "python3 - \"$@\" <<'PY'\n"
                 "import json, sys\n"
                 "args = sys.argv[1:]\n"
-                "path = args[args.index('--path') + 1]\n"
-                "record = {'command': args[0], 'path': path, 'args': args}\n"
+                "nodes = json.load(open(args[args.index('--input') + 1]))\n"
+                "path = nodes[-1]['path']\n"
+                "record = {'command': args[0], 'path': path, 'nodes': nodes}\n"
                 f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(record) + '\\n')\n"
                 "PY\n"
             )
@@ -1225,15 +1271,10 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertEqual(
                 [(record["command"], record["path"]) for record in records],
                 [
-                    ("mkdir-node", "/Sources/sessions"),
-                    ("mkdir-node", "/Sources/sessions/claudecode"),
-                    ("write-node", "/Sources/sessions/claudecode/session.md"),
+                    ("write-nodes", "/Sources/sessions/claudecode/session.md"),
                 ],
             )
-            argv = records[-1]["args"]
-            self.assertIn("write-node", argv)
-            self.assertIn("--kind", argv)
-            self.assertIn("source", argv)
+            self.assertEqual([n["kind"] for n in records[-1]["nodes"]], ["folder", "folder", "source"])
 
     def test_flush_pending_quarantines_invalid_file_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1254,7 +1295,7 @@ class SessionCaptureTests(unittest.TestCase):
             )
             fake_cli = root / "kinic-vfs-cli"
             calls = root / "calls.txt"
-            fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
+            fake_cli.write_text("#!/usr/bin/env bash\n" f"cat \"$3\" >> {str(calls)!r}\n")
             fake_cli.chmod(0o755)
 
             result = session.flush_pending_report(str(fake_cli), pending_dir)
@@ -1296,10 +1337,8 @@ class SessionCaptureTests(unittest.TestCase):
             calls = root / "calls.txt"
             fake_cli.write_text(
                 "#!/usr/bin/env bash\n"
-                "for arg in \"$@\"; do\n"
-                "  if [ \"$arg\" = \"/Sources/sessions/claudecode/fail.md\" ]; then exit 7; fi\n"
-                "done\n"
-                f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n"
+                "if grep -q /Sources/sessions/claudecode/fail.md \"$3\"; then exit 7; fi\n"
+                f"cat \"$3\" >> {str(calls)!r}\n"
             )
             fake_cli.chmod(0o755)
 
@@ -1313,7 +1352,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse((pending_dir / "1-fail.json.failed").exists())
             self.assertIn("/Sources/sessions/claudecode/good.md", calls.read_text())
 
-            fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
+            fake_cli.write_text("#!/usr/bin/env bash\n" f"cat \"$3\" >> {str(calls)!r}\n")
             result = session.flush_pending_report(str(fake_cli), pending_dir)
 
             self.assertEqual(result.flushed, [failed])
@@ -1347,7 +1386,7 @@ class SessionCaptureTests(unittest.TestCase):
             )
             fake_cli = root / "kinic-vfs-cli"
             calls = root / "calls.txt"
-            fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
+            fake_cli.write_text("#!/usr/bin/env bash\n" f"cat \"$3\" >> {str(calls)!r}\n")
             fake_cli.chmod(0o755)
             original_unlink = Path.unlink
 
