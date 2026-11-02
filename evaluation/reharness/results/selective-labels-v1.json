@@ -1,0 +1,32 @@
+{
+  "billing-partial-change": {
+    "billing-source-1": true
+  },
+  "billing-return-old": {
+    "billing-source-1": true
+  },
+  "billing-distractors": {
+    "billing-other-0": false,
+    "billing-other-1": false,
+    "billing-other-2": false,
+    "billing-other-3": false,
+    "billing-other-4": false,
+    "billing-other-5": false,
+    "billing-source-1": true
+  },
+  "cache-partial-change": {
+    "cache-source-1": true
+  },
+  "cache-return-old": {
+    "cache-source-1": true
+  },
+  "cache-distractors": {
+    "cache-other-0": false,
+    "cache-other-1": false,
+    "cache-other-2": false,
+    "cache-other-3": false,
+    "cache-other-4": false,
+    "cache-other-5": false,
+    "cache-source-1": true
+  }
+}

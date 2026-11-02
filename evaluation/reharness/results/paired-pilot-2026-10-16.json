@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "complete": true,
+  "engine": "codex",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "high",
+  "timeout_seconds": 180,
+  "trials": 2,
+  "task_families": 2,
+  "tasks": 6,
+  "quality_report_schema": 1,
+  "call_count_unit": "agent_invocations_not_provider_api_requests",
+  "source_binary_sha256": "ba7c748afdf56d632bf3e386a11d9f0e4d2a34056d1c3946b6ceb2e91dfdb5e5",
+  "metrics": {
+    "none": {
+      "successes": 0,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "agent_invocations": 12,
+      "elapsed_ms": 364093,
+      "context_bytes_unique_tasks": 0,
+      "input_tokens": 2262470,
+      "output_tokens": 7985
+    },
+    "raw": {
+      "successes": 12,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "agent_invocations": 12,
+      "elapsed_ms": 365544,
+      "context_bytes_unique_tasks": 4572,
+      "input_tokens": 1146751,
+      "output_tokens": 13376
+    },
+    "current": {
+      "successes": 12,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "agent_invocations": 12,
+      "elapsed_ms": 388460,
+      "context_bytes_unique_tasks": 3618,
+      "input_tokens": 1210018,
+      "output_tokens": 13889
+    },
+    "revision": {
+      "successes": 12,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "agent_invocations": 12,
+      "elapsed_ms": 422062,
+      "context_bytes_unique_tasks": 12325,
+      "input_tokens": 1285785,
+      "output_tokens": 14888
+    }
+  },
+  "revision_generation": {
+    "agent_invocations": 18,
+    "elapsed_ms": 215494,
+    "input_tokens": 262317,
+    "output_tokens": 5750
+  },
+  "families": {
+    "none": {
+      "billing": {
+        "successes": 0,
+        "samples": 6
+      },
+      "cache": {
+        "successes": 0,
+        "samples": 6
+      }
+    },
+    "raw": {
+      "billing": {
+        "successes": 6,
+        "samples": 6
+      },
+      "cache": {
+        "successes": 6,
+        "samples": 6
+      }
+    },
+    "current": {
+      "billing": {
+        "successes": 6,
+        "samples": 6
+      },
+      "cache": {
+        "successes": 6,
+        "samples": 6
+      }
+    },
+    "revision": {
+      "billing": {
+        "successes": 6,
+        "samples": 6
+      },
+      "cache": {
+        "successes": 6,
+        "samples": 6
+      }
+    }
+  },
+  "tasks_by_mode": {
+    "none": {
+      "billing-distractors": {
+        "successes": 0,
+        "samples": 2
+      },
+      "billing-partial-change": {
+        "successes": 0,
+        "samples": 2
+      },
+      "billing-return-old": {
+        "successes": 0,
+        "samples": 2
+      },
+      "cache-distractors": {
+        "successes": 0,
+        "samples": 2
+      },
+      "cache-partial-change": {
+        "successes": 0,
+        "samples": 2
+      },
+      "cache-return-old": {
+        "successes": 0,
+        "samples": 2
+      }
+    },
+    "raw": {
+      "billing-distractors": {
+        "successes": 2,
+        "samples": 2
+      },
+      "billing-partial-change": {
+        "successes": 2,
+        "samples": 2
+      },
+      "billing-return-old": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-distractors": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-partial-change": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-return-old": {
+        "successes": 2,
+        "samples": 2
+      }
+    },
+    "current": {
+      "billing-distractors": {
+        "successes": 2,
+        "samples": 2
+      },
+      "billing-partial-change": {
+        "successes": 2,
+        "samples": 2
+      },
+      "billing-return-old": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-distractors": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-partial-change": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-return-old": {
+        "successes": 2,
+        "samples": 2
+      }
+    },
+    "revision": {
+      "billing-distractors": {
+        "successes": 2,
+        "samples": 2
+      },
+      "billing-partial-change": {
+        "successes": 2,
+        "samples": 2
+      },
+      "billing-return-old": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-distractors": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-partial-change": {
+        "successes": 2,
+        "samples": 2
+      },
+      "cache-return-old": {
+        "successes": 2,
+        "samples": 2
+      }
+    }
+  },
+  "controls_verified": {
+    "shared_new_reflection": true,
+    "same_selected_ids_order": true,
+    "context_fixed_across_trials": true
+  },
+  "limits": [
+    "Synthetic predecision histories; two validation families, no final split",
+    "Revisions generated once per task; decision trials conditional on those revisions",
+    "Common byte ceiling, not matched token counts",
+    "MacOS file-content boundary; network and metadata allowed",
+    "No DSH paired quality trial after prior balance exhaustion",
+    "No exact-rule-store fifth arm",
+    "Live binary predates report-schema2 packaging-only follow-ups; artifacts retain measured schema1",
+    "Agents were not blinded to arm names in workspace paths; order reversal is deterministic, not random assignment."
+  ],
+  "comparison": {
+    "baseline_mode": "current",
+    "baseline_snapshot_ids": [
+      "303d42f20bfa0d60ebc63c943cab0531f03b5e85e77e6c4a8f077846df54c149",
+      "3eb99e9af27f3abf730f58fba93ccfb6775ee8b222b6b116bb183bb3c2cf3a2f",
+      "d2242f3e923e236a7842f32947e466e4ac1bef93695e5db42a7b1e368f28cdbc",
+      "ec12ffc5b52fc37567efa81623c2fb432383eb0a965c0d57c2bc315b0f5763dd"
+    ],
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 5424953302714369366,
+    "candidate_mode": "revision",
+    "candidate_snapshot_ids": [
+      "39ae0acb5e483029e8a0dd52fe6563f6995d47bc4a76f8f0f7905439f0c4d02f",
+      "4ec26645548e8e7d04c2401ca16bf3e35b39b78456f059aeb467aa8e4a7bcb76",
+      "9984ed3e1c954d59f0536a2cf7f74e7e85715c91155141a8c8d7239e8159b17a",
+      "a17fb8747b901b3a633a849824710d6de5458bd036abfac96e4582a44b354847",
+      "c6619031ca284b353d09b24754889a0fceb26793e316699e8b78bf28bef3a21c",
+      "f435f433db22e416e8f81a6e59155b54f466b9606178f7ef1854a4bf363feea8"
+    ],
+    "confidence_level": 0.95,
+    "config_fingerprint": "b49a0f9cb9cceeece832823eee245744709772bdcd4d1c8a48666f2efa22558f",
+    "eligible": false,
+    "independent_families": 2,
+    "lower_bound": 0.0,
+    "mean_delta": 0.0,
+    "paired_samples": 12,
+    "per_family": [
+      {
+        "baseline_success": 6,
+        "candidate_success": 6,
+        "delta": 0.0,
+        "family": "billing",
+        "pairs": 6,
+        "regression": false
+      },
+      {
+        "baseline_success": 6,
+        "candidate_success": 6,
+        "delta": 0.0,
+        "family": "cache",
+        "pairs": 6,
+        "regression": false
+      }
+    ],
+    "reasons": [
+      "insufficient evidence: require at least three independent families and six paired trials",
+      "family-cluster 95% confidence interval does not show a positive improvement"
+    ],
+    "split": "validation",
+    "upper_bound": 0.0
+  },
+  "canonical_readback": {
+    "history_ref": {
+      "bytes": 8321,
+      "chunks": 1,
+      "sha256": "203a8f2c1fdf343c9c72392462542e9555d2bb46bba96a8ddbaa7527bc2dc458",
+      "matches_local": true
+    },
+    "contexts_ref": {
+      "bytes": 24017,
+      "chunks": 1,
+      "sha256": "b2979ede1131a583c832e9bbf4733cc5e7694f57834cb6c7795bb86296633e1b",
+      "matches_local": true
+    },
+    "report_ref": {
+      "bytes": 1355718,
+      "chunks": 21,
+      "sha256": "506dbde43c63559455c6cc4230ffe737b775200f8843877c2d89084149798455",
+      "matches_local": true
+    }
+  }
+}

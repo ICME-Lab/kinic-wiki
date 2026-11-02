@@ -1,0 +1,458 @@
+{
+  "schema_version": 1,
+  "complete": true,
+  "revision_policy": "selective",
+  "source": "0985d656266323cdbd54a4f5918f6d96532738fd",
+  "binary_sha256": "54beffe49114b33ec748ba9338b391d10ffa1bb552fcae8515b6ba1bf0401b5c",
+  "runner": {
+    "engine": "codex",
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "high",
+    "timeout_seconds": 180
+  },
+  "metrics": {
+    "none": {
+      "successes": 0,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "context_bytes_unique_tasks": 0,
+      "elapsed_ms": 420033,
+      "input_tokens": 2862541,
+      "output_tokens": 8171
+    },
+    "raw": {
+      "successes": 12,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "context_bytes_unique_tasks": 4572,
+      "elapsed_ms": 367516,
+      "input_tokens": 1081161,
+      "output_tokens": 12680
+    },
+    "current": {
+      "successes": 12,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "context_bytes_unique_tasks": 3618,
+      "elapsed_ms": 361535,
+      "input_tokens": 1095746,
+      "output_tokens": 12942
+    },
+    "revision": {
+      "successes": 12,
+      "samples": 12,
+      "incomplete_executions": 0,
+      "context_bytes_unique_tasks": 6849,
+      "elapsed_ms": 374509,
+      "input_tokens": 1087481,
+      "output_tokens": 13099
+    }
+  },
+  "selection_generation": {
+    "agent_invocations": 6,
+    "elapsed_ms": 77537,
+    "input_tokens": 88881,
+    "output_tokens": 2252
+  },
+  "revision_generation": {
+    "agent_invocations": 6,
+    "elapsed_ms": 90596,
+    "input_tokens": 87796,
+    "output_tokens": 2240
+  },
+  "total_preparation": {
+    "agent_invocations": 12,
+    "elapsed_ms": 168133,
+    "input_tokens": 176677,
+    "output_tokens": 4492
+  },
+  "selection_score": {
+    "true_positive": 6,
+    "false_positive": 0,
+    "false_negative": 0,
+    "true_negative": 12,
+    "uncertain": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "labels_sha256": "771488a6b4e4669e44fac2463664792984520120f73e52ea1e46df35fa7dcf64",
+    "label_truth_independently_verified": false,
+    "interpretation": "Relative to supplied labels only; uncertain triggers revision."
+  },
+  "failed_v1_pilot": {
+    "complete": false,
+    "scored_decisions": 0,
+    "failure": "malformed nested JSON selection array; missing final closing bracket",
+    "cost": {
+      "agent_invocations": 7,
+      "elapsed_ms": 84672,
+      "input_tokens": 103033,
+      "output_tokens": 2395
+    }
+  },
+  "controls_verified": {
+    "same_histories": true,
+    "identical_none_raw_frozen_contexts_to_all_pilot": true,
+    "shared_new_reflection": true,
+    "selected_ids_order": true,
+    "kept_bytes_unchanged": true,
+    "fixed_across_trials": true
+  },
+  "limits": [
+    "Six synthetic tasks, two validation families; no final split",
+    "Cross-run comparison to all revision; different binary/time, not randomized fifth arm",
+    "Independent fixture labels are seeded defects, not exhaustive natural-data truth",
+    "Revision and selection generated once per task, shared across decision trials",
+    "Agent elapsed sums exclude controller/storage time; tokens include caching, monetary cost unknown",
+    "No DSH rerun after balance exhaustion",
+    "No production promotion"
+  ],
+  "comparison": {
+    "baseline_mode": "current",
+    "baseline_snapshot_ids": [
+      "303d42f20bfa0d60ebc63c943cab0531f03b5e85e77e6c4a8f077846df54c149",
+      "3eb99e9af27f3abf730f58fba93ccfb6775ee8b222b6b116bb183bb3c2cf3a2f",
+      "d2242f3e923e236a7842f32947e466e4ac1bef93695e5db42a7b1e368f28cdbc",
+      "ec12ffc5b52fc37567efa81623c2fb432383eb0a965c0d57c2bc315b0f5763dd"
+    ],
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 5424953302714369366,
+    "candidate_mode": "revision",
+    "candidate_snapshot_ids": [
+      "15240d30af41e9abb6361e3b803fa3ef0d914ff4846dc94a64f311b06fa01fe3",
+      "2ba37cb8dc72403a83fbdb475ba7fd5179ddf06f0d694ac3ad79e85a98ac36eb",
+      "54a313014949b5f218460948e2a5d0959f97c9d9297acfd61f1e788f37c93205",
+      "6d1e4e86e5d64088103f90d657386bf5779b99a428b9f14ade2da6de326647b3",
+      "9b38a232b21146f3a13576d0ee3af6d8b3b6e104f0bb7026aabcd821bad4774b",
+      "fe50a9dfefd0b4094d202dc1fac8a9e958ac895d78db22fd97d43f2262014d88"
+    ],
+    "confidence_level": 0.95,
+    "config_fingerprint": "65e013cf6622dc8f617d85b4c319398925de851d8a0881a07c3f1312fdcb7a97",
+    "eligible": false,
+    "independent_families": 2,
+    "lower_bound": 0.0,
+    "mean_delta": 0.0,
+    "paired_samples": 12,
+    "per_family": [
+      {
+        "baseline_success": 6,
+        "candidate_success": 6,
+        "delta": 0.0,
+        "family": "billing",
+        "pairs": 6,
+        "regression": false
+      },
+      {
+        "baseline_success": 6,
+        "candidate_success": 6,
+        "delta": 0.0,
+        "family": "cache",
+        "pairs": 6,
+        "regression": false
+      }
+    ],
+    "reasons": [
+      "insufficient evidence: require at least three independent families and six paired trials",
+      "family-cluster 95% confidence interval does not show a positive improvement"
+    ],
+    "split": "validation",
+    "upper_bound": 0.0
+  },
+  "canonical_readback": {
+    "history_ref": {
+      "bytes": 8321,
+      "chunks": 1,
+      "sha256": "203a8f2c1fdf343c9c72392462542e9555d2bb46bba96a8ddbaa7527bc2dc458",
+      "matches_local": true
+    },
+    "contexts_ref": {
+      "bytes": 18459,
+      "chunks": 1,
+      "sha256": "13756b3eb0b3956628a31615353aea98556bd47a6933b111aa94fe3f13cfa417",
+      "matches_local": true
+    },
+    "report_ref": {
+      "bytes": 1249120,
+      "chunks": 20,
+      "sha256": "c327f8b3ddad23ba8765f07866c4b11c39cf57290e77160ce1151dcb3c18b0a8",
+      "matches_local": true
+    }
+  },
+  "selections": {
+    "billing-distractors": [
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "billing-other-0",
+        "reason": "Supported by its original rule; the ledger release change does not affect unrelated-0."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "billing-other-1",
+        "reason": "Supported by its original rule; the ledger release change does not affect unrelated-1."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "billing-other-2",
+        "reason": "Supported by its original rule; the ledger release change does not affect unrelated-2."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "billing-other-3",
+        "reason": "Supported by its original rule; the ledger release change does not affect unrelated-3."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "billing-other-4",
+        "reason": "Supported by its original rule; the ledger release change does not affect unrelated-4."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "billing-other-5",
+        "reason": "Supported by its original rule; the ledger release change does not affect unrelated-5."
+      },
+      {
+        "action": "revise",
+        "evidence": [
+          {
+            "pointer": "/rules",
+            "quote": "Service ledger, release 1: key is acme: plus stripped id; minor is decimal amount times 100 rounded HALF_UP. Return exactly key and minor.",
+            "source": "original"
+          },
+          {
+            "pointer": "/checks",
+            "quote": "[false,false,false,false,false]",
+            "source": "original"
+          },
+          {
+            "pointer": "/rules",
+            "quote": "Authoritative ledger release 2 delta: only rounding changes to HALF_EVEN. All other release 1 rules remain. Release 1 remains valid when explicitly requested.",
+            "source": "latest"
+          }
+        ],
+        "memory_id": "billing-source-1",
+        "reason": "The future-release claim contradicts release 2 rounding, and all five checks were false. Release 1 remains valid when explicitly requested."
+      }
+    ],
+    "billing-partial-change": [
+      {
+        "action": "revise",
+        "evidence": [
+          {
+            "pointer": "/checks",
+            "quote": "[false,false,false,false,false]",
+            "source": "original"
+          },
+          {
+            "pointer": "/rules",
+            "quote": "Authoritative ledger release 2 delta: only rounding changes to HALF_EVEN. All other release 1 rules remain. Release 1 remains valid when explicitly requested.",
+            "source": "latest"
+          }
+        ],
+        "memory_id": "billing-source-1",
+        "reason": "The future-release claim conflicts with release 2's rounding change, and all five original checks failed. The explicitly requested release 1 rules remain valid."
+      }
+    ],
+    "billing-return-old": [
+      {
+        "action": "revise",
+        "evidence": [
+          {
+            "pointer": "/checks",
+            "quote": "[false,false,false,false,false]",
+            "source": "original"
+          },
+          {
+            "pointer": "/rules",
+            "quote": "Authoritative ledger release 2 delta: only rounding changes to HALF_EVEN. All other release 1 rules remain. Release 1 remains valid when explicitly requested.",
+            "source": "latest"
+          }
+        ],
+        "memory_id": "billing-source-1",
+        "reason": "The claim that these conventions apply to every future release conflicts with release 2's HALF_EVEN rounding. Also, none of the five original checks passed, rather than one. Release 1 remains valid when explicitly requested."
+      }
+    ],
+    "cache-distractors": [
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-other-0",
+        "reason": "Supported by its original rule; latest edge changes do not affect this unrelated service."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-other-1",
+        "reason": "Supported by its original rule; latest edge changes do not affect this unrelated service."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-other-2",
+        "reason": "Supported by its original rule; latest edge changes do not affect this unrelated service."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-other-3",
+        "reason": "Supported by its original rule; latest edge changes do not affect this unrelated service."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-other-4",
+        "reason": "Supported by its original rule; latest edge changes do not affect this unrelated service."
+      },
+      {
+        "action": "keep",
+        "evidence": [
+          {
+            "pointer": "/rule",
+            "quote": "Keep keys unchanged; no release specified.",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-other-5",
+        "reason": "Supported by its original rule; latest edge changes do not affect this unrelated service."
+      },
+      {
+        "action": "revise",
+        "evidence": [
+          {
+            "pointer": "/rules",
+            "quote": "Authoritative edge release 2 delta: only ttl changes to integer 120. All other release 1 rules remain. Release 1 remains valid when explicitly requested.",
+            "source": "latest"
+          },
+          {
+            "pointer": "/checks",
+            "quote": "[false,false,false,false,false]",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-source-1",
+        "reason": "Release 1 remains valid when explicitly requested, but release 2 contradicts the universal future-release claim. All five original checks failed, contradicting the claimed pass."
+      }
+    ],
+    "cache-partial-change": [
+      {
+        "action": "revise",
+        "evidence": [
+          {
+            "pointer": "/rules",
+            "quote": "Authoritative edge release 2 delta: only ttl changes to integer 120.",
+            "source": "latest"
+          },
+          {
+            "pointer": "/rules",
+            "quote": "ttl is integer 60",
+            "source": "original"
+          },
+          {
+            "pointer": "/checks",
+            "quote": "[false,false,false,false,false]",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-source-1",
+        "reason": "The future-release claim conflicts with release 2's ttl change, and zero of five original checks passed, not one."
+      }
+    ],
+    "cache-return-old": [
+      {
+        "action": "revise",
+        "evidence": [
+          {
+            "pointer": "/rules",
+            "quote": "Authoritative edge release 2 delta: only ttl changes to integer 120. All other release 1 rules remain. Release 1 remains valid when explicitly requested.",
+            "source": "latest"
+          },
+          {
+            "pointer": "/checks",
+            "quote": "[false,false,false,false,false]",
+            "source": "original"
+          }
+        ],
+        "memory_id": "cache-source-1",
+        "reason": "The future-release claim contradicts release 2's TTL change, and all five original checks failed. Release 1 remains valid when explicitly requested."
+      }
+    ]
+  },
+  "baseline_artifact": "paired-pilot-2026-10-16.json",
+  "verification": {
+    "rust_passed": 906,
+    "rust_failed": 0,
+    "rust_ignored": 3,
+    "python_passed": 28,
+    "existing_clippy_findings": 18
+  }
+}

@@ -66,7 +66,7 @@ static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     }).collect()
 });
 
-fn redact_with_secrets(value: &mut Value, secrets: &[String]) {
+pub(crate) fn redact_with_secrets(value: &mut Value, secrets: &[String]) {
     match value {
         Value::Object(map) => {
             for (key, value) in map {

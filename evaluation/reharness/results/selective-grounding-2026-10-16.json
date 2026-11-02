@@ -1,0 +1,149 @@
+{
+  "memories": {
+    "billing-partial-change": {
+      "reflection": "Consequential operational evidence:\n- The release 1 observation specified key = \"acme:\" + stripped id; minor = decimal amount \u00d7 100 rounded HALF_UP; output exactly key and minor.\n- All five checks failed (0/5 passed). No successful recovery or failure diagnosis was recorded.\n\nSupported interpretations and reusable strategies:\n- Apply these conventions when the task explicitly requests service ledger release 1. Do not assume they apply to every future release.\n- Treat the recorded rules as release-specific requirements, not validated implementation success. The failed checks do not establish which requirement was mishandled.",
+      "original": {
+        "checks": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "observed_release": 1,
+        "rules": "Service ledger, release 1: key is acme: plus stripped id; minor is decimal amount times 100 rounded HALF_UP. Return exactly key and minor.",
+        "source_id": "billing-observation-1"
+      }
+    },
+    "billing-return-old": {
+      "reflection": "Consequential operational evidence:\n- The source specifies Service ledger release 1: key = \"acme:\" + stripped id; minor = decimal amount \u00d7 100 rounded HALF_UP; return exactly key and minor.\n- All five checks failed: zero passed. No implementation details or recovery are recorded.\n\nStrongly supported interpretations and reusable strategies:\n- Match these conventions to tasks explicitly requesting Service ledger release 1. The source does not establish conventions for every future release; establish the applicable release before reuse.\n- Preserve the specified decimal calculation, rounding mode, id stripping, prefix, and exact output fields when release 1 applies.\n- Treat the rules as recorded requirements, not a validated implementation. The failed checks do not identify which operation caused failure.",
+      "original": {
+        "checks": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "observed_release": 1,
+        "rules": "Service ledger, release 1: key is acme: plus stripped id; minor is decimal amount times 100 rounded HALF_UP. Return exactly key and minor.",
+        "source_id": "billing-observation-1"
+      }
+    },
+    "billing-distractors": {
+      "reflection": "Operational evidence:\n- The release 1 contract specified key = 'acme:' + stripped id, minor = decimal amount \u00d7 100 rounded HALF_UP, and exactly the fields key and minor.\n- All five checks failed (0/5). No failure cause or successful recovery is recorded.\n\nInterpretations and reusable strategies:\n- Match this contract to service-ledger tasks explicitly requesting release 1; do not generalize it to every future release.\n- Treat the stated contract as requirements, not evidence of successful execution. Validate formatting, conversion, rounding, and exact output fields against the applicable release.\n- The failed checks alone do not establish which requirement was mishandled.",
+      "original": {
+        "checks": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "observed_release": 1,
+        "rules": "Service ledger, release 1: key is acme: plus stripped id; minor is decimal amount times 100 rounded HALF_UP. Return exactly key and minor.",
+        "source_id": "billing-observation-1"
+      }
+    },
+    "cache-partial-change": {
+      "reflection": "Consequential operational evidence:\n- Source cache-observation-1 records Service edge release 1 rules: strip and lowercase key; ttl must be integer 60; compress is true iff size >= 1024; return exactly key, ttl, compress.\n- All five checks failed (0/5). No failure explanations or recovery are recorded.\n\nStrongly supported interpretations and reusable strategies:\n- Use these recorded rules when the task targets Service edge release 1, including an explicit request for that release. Do not extend them to every future release.\n- Treat the rules as recorded requirements, not a demonstrated successful implementation. The failed checks do not establish which requirement was violated.\n- For matching tasks, verify normalization, integer ttl, the compression threshold, and exact output fields against the requested release\u2019s requirements.",
+      "original": {
+        "checks": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "observed_release": 1,
+        "rules": "Service edge, release 1: strip and lowercase key; ttl is integer 60; compress is true iff size is at least 1024. Return exactly key, ttl, compress.",
+        "source_id": "cache-observation-1"
+      }
+    },
+    "cache-return-old": {
+      "reflection": "Consequential operational evidence:\n- The source records Service edge release 1 rules: strip and lowercase key; ttl is integer 60; compress is true iff size >= 1024; return exactly key, ttl, compress.\n- All five recorded checks failed. No successful outcome, failure cause, or recovery is documented.\n\nStrongly supported interpretations and reusable strategies:\n- Use these conventions for requests explicitly targeting Service edge release 1. Do not assume they apply to other releases.\n- Preserve the exact output fields, integer ttl, and inclusive compression threshold when applying the recorded rules.\n- Treat the rules as recorded requirements, not a validated implementation; the failed checks do not establish which requirement was violated.",
+      "original": {
+        "checks": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "observed_release": 1,
+        "rules": "Service edge, release 1: strip and lowercase key; ttl is integer 60; compress is true iff size is at least 1024. Return exactly key, ttl, compress.",
+        "source_id": "cache-observation-1"
+      }
+    },
+    "cache-distractors": {
+      "reflection": "Consequential operational evidence:\n- Observed service edge release 1 rules: strip and lowercase key; ttl is integer 60; compress is true iff size >= 1024; return exactly key, ttl, compress.\n- All five recorded checks failed. No failure diagnosis or recovery was recorded.\n\nStrongly supported interpretations and reusable strategies:\n- Apply this recipe when release 1 is explicitly requested or the applicable rules are confirmed to match release 1. Do not assume it applies to every future release.\n- Preserve the exact output fields, integer ttl, and inclusive compression threshold when implementing these requirements.\n- Treat the recipe as recorded requirements, not demonstrated success. The check results do not identify which requirement or implementation caused failure.",
+      "original": {
+        "checks": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "observed_release": 1,
+        "rules": "Service edge, release 1: strip and lowercase key; ttl is integer 60; compress is true iff size is at least 1024. Return exactly key, ttl, compress.",
+        "source_id": "cache-observation-1"
+      }
+    }
+  },
+  "annotations": [
+    {
+      "memory_id": "billing-partial-change",
+      "quote": "All five checks failed (0/5 passed).",
+      "verdict": "supported",
+      "evidence_pointer": "/checks",
+      "rationale": "All five entries are false; zero passed."
+    },
+    {
+      "memory_id": "billing-return-old",
+      "quote": "All five checks failed: zero passed.",
+      "verdict": "supported",
+      "evidence_pointer": "/checks",
+      "rationale": "All five entries are false; zero passed."
+    },
+    {
+      "memory_id": "billing-distractors",
+      "quote": "All five checks failed (0/5).",
+      "verdict": "supported",
+      "evidence_pointer": "/checks",
+      "rationale": "All five entries are false; zero passed."
+    },
+    {
+      "memory_id": "cache-partial-change",
+      "quote": "All five checks failed (0/5).",
+      "verdict": "supported",
+      "evidence_pointer": "/checks",
+      "rationale": "All five entries are false; zero passed."
+    },
+    {
+      "memory_id": "cache-return-old",
+      "quote": "All five recorded checks failed.",
+      "verdict": "supported",
+      "evidence_pointer": "/checks",
+      "rationale": "All five entries are false; zero passed."
+    },
+    {
+      "memory_id": "cache-distractors",
+      "quote": "All five recorded checks failed.",
+      "verdict": "supported",
+      "evidence_pointer": "/checks",
+      "rationale": "All five entries are false; zero passed."
+    }
+  ],
+  "score": {
+    "supported": 6,
+    "contradicted": 0,
+    "unverifiable": 0,
+    "annotated_claims": 6,
+    "exhaustiveness_verified": false,
+    "verdicts_independently_verified": false,
+    "unannotated_memories": [],
+    "input_sha256": "22067729608297a66c2215a4810018e348f9ea1d710a18112989f00a51654a04"
+  },
+  "scope": "Manual nonblind audit of six seeded count claims, sharing two synthetic originals. Twelve kept distractors excluded; not exhaustive grounding."
+}

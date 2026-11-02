@@ -77,6 +77,10 @@ pub enum AgentCommand {
 }
 #[derive(Subcommand, Debug, Clone)]
 pub enum LearnCommand {
+    /// Run a local, online ReHarness experiment with isolated canister memory.
+    Stream(super::stream::StreamArgs),
+    /// Compare frozen and revised memories from an identical predecision history.
+    Paired(super::stream::paired::PairedArgs),
     Setup {
         #[arg(long, default_value = ".")]
         project_root: PathBuf,

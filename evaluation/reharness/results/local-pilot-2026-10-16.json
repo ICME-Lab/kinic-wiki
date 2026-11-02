@@ -1,0 +1,465 @@
+{
+  "schema_version": 1,
+  "synthetic_pilot": true,
+  "task_family_count": 1,
+  "statistical_generalization_claim": false,
+  "paper_benchmark_reproduction": false,
+  "concurrent_wall_times": true,
+  "notes": [
+    "Different models and budgets across engines; compare within engines.",
+    "Raw04 is a separate repaired-code attempt, not an extra completed trial or same-code paired baseline.",
+    "Failed trials remain excluded from completed quality rates.",
+    "Raw04 task5 explicitly returned QUOTA HTTP402 Insufficient Balance.",
+    "ReHarness03 task7 decision and five revisions passed, forward-write incomplete; exact provider cause unknown.",
+    "All recorded live quality trials predate observed-tool memory acceptance guard."
+  ],
+  "runs": [
+    {
+      "artifact_id": "codex-qwen-append-only-02",
+      "comparison_sha256": "0a5cbb5e564af33b55d8cb8f2866dc0ef0d2fca1cfc0134f092c93040a6de50e",
+      "engine": "codex",
+      "runner": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high",
+        "timeout_seconds": 180
+      },
+      "policy": "append-only",
+      "status": "complete",
+      "error_code": null,
+      "observed_wall_seconds": 669.7513561251108,
+      "completed_policy_success_rate": 0.75,
+      "checkpointed_steps": 8,
+      "checkpointed_successes": 6,
+      "model_calls_complete_trial_only": 16,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": true
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": true
+        },
+        {
+          "task_id": "07-current-credit",
+          "success": true
+        },
+        {
+          "task_id": "08-current-payout",
+          "success": true
+        }
+      ]
+    },
+    {
+      "artifact_id": "codex-qwen-none-02",
+      "comparison_sha256": "803ac2de4a14d605fb91586a48b69b856a8f03220e8951be083dd549b7fd7014",
+      "engine": "codex",
+      "runner": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high",
+        "timeout_seconds": 180
+      },
+      "policy": "none",
+      "status": "complete",
+      "error_code": null,
+      "observed_wall_seconds": 810.9765054997988,
+      "completed_policy_success_rate": 0.0,
+      "checkpointed_steps": 8,
+      "checkpointed_successes": 0,
+      "model_calls_complete_trial_only": 8,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": false
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": false
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": false
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": false
+        },
+        {
+          "task_id": "07-current-credit",
+          "success": false
+        },
+        {
+          "task_id": "08-current-payout",
+          "success": false
+        }
+      ]
+    },
+    {
+      "artifact_id": "codex-qwen-raw-02",
+      "comparison_sha256": "71400320ed335f8ba8267eabeb991da25de541d578b4920a6fe9817ff1da36af",
+      "engine": "codex",
+      "runner": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high",
+        "timeout_seconds": 180
+      },
+      "policy": "raw",
+      "status": "complete",
+      "error_code": null,
+      "observed_wall_seconds": 539.7506873330567,
+      "completed_policy_success_rate": 0.75,
+      "checkpointed_steps": 8,
+      "checkpointed_successes": 6,
+      "model_calls_complete_trial_only": 8,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": true
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": true
+        },
+        {
+          "task_id": "07-current-credit",
+          "success": true
+        },
+        {
+          "task_id": "08-current-payout",
+          "success": true
+        }
+      ]
+    },
+    {
+      "artifact_id": "codex-qwen-reharness-02",
+      "comparison_sha256": "13005dca13fd602443e22c4ea203e25e89f16bde11be5398bd08be47121498b2",
+      "engine": "codex",
+      "runner": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high",
+        "timeout_seconds": 180
+      },
+      "policy": "reharness",
+      "status": "complete",
+      "error_code": null,
+      "observed_wall_seconds": 1199.2725531249307,
+      "completed_policy_success_rate": 0.75,
+      "checkpointed_steps": 8,
+      "checkpointed_successes": 6,
+      "model_calls_complete_trial_only": 41,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": true
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": true
+        },
+        {
+          "task_id": "07-current-credit",
+          "success": true
+        },
+        {
+          "task_id": "08-current-payout",
+          "success": true
+        }
+      ]
+    },
+    {
+      "artifact_id": "dsh-contained-append-only-03",
+      "comparison_sha256": "58c3a743350fcd69e2b8652b01ef035c7409195b4f9664f15f77dd52d3780812",
+      "engine": "dsh",
+      "runner": {
+        "engine": "dsh",
+        "model": "deepseek-official/deepseek-v4-flash",
+        "reasoning_effort": null,
+        "timeout_seconds": 360
+      },
+      "policy": "append-only",
+      "status": "complete",
+      "error_code": null,
+      "observed_wall_seconds": 679.5942310830578,
+      "completed_policy_success_rate": 0.75,
+      "checkpointed_steps": 8,
+      "checkpointed_successes": 6,
+      "model_calls_complete_trial_only": 16,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": true
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": true
+        },
+        {
+          "task_id": "07-current-credit",
+          "success": true
+        },
+        {
+          "task_id": "08-current-payout",
+          "success": true
+        }
+      ]
+    },
+    {
+      "artifact_id": "dsh-contained-none-03",
+      "comparison_sha256": "3638d15bd247511754cfe28f573a747e17031a367f7ed73830cff84f7eb15b1e",
+      "engine": "dsh",
+      "runner": {
+        "engine": "dsh",
+        "model": "deepseek-official/deepseek-v4-flash",
+        "reasoning_effort": null,
+        "timeout_seconds": 360
+      },
+      "policy": "none",
+      "status": "complete",
+      "error_code": null,
+      "observed_wall_seconds": 1597.2117832091171,
+      "completed_policy_success_rate": 0.0,
+      "checkpointed_steps": 8,
+      "checkpointed_successes": 0,
+      "model_calls_complete_trial_only": 8,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": false
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": false
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": false
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": false
+        },
+        {
+          "task_id": "07-current-credit",
+          "success": false
+        },
+        {
+          "task_id": "08-current-payout",
+          "success": false
+        }
+      ]
+    },
+    {
+      "artifact_id": "dsh-contained-raw-03",
+      "comparison_sha256": "a72692cb73fc2e8041b379b899f22686e311a8fd11ee8ffd9446d9ebbeb4b313",
+      "engine": "dsh",
+      "runner": {
+        "engine": "dsh",
+        "model": "deepseek-official/deepseek-v4-flash",
+        "reasoning_effort": null,
+        "timeout_seconds": 360
+      },
+      "policy": "raw",
+      "status": "failed",
+      "error_code": "state_size_limit",
+      "observed_wall_seconds": 555.6381273327861,
+      "completed_policy_success_rate": null,
+      "checkpointed_steps": 6,
+      "checkpointed_successes": 4,
+      "model_calls_complete_trial_only": null,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": true
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": true
+        }
+      ]
+    },
+    {
+      "artifact_id": "dsh-contained-reharness-03",
+      "comparison_sha256": "4346eb5752f33c34e506684681c27715ea5582dcb9fa10baebb9354d198df740",
+      "engine": "dsh",
+      "runner": {
+        "engine": "dsh",
+        "model": "deepseek-official/deepseek-v4-flash",
+        "reasoning_effort": null,
+        "timeout_seconds": 360
+      },
+      "policy": "reharness",
+      "status": "failed",
+      "error_code": "incomplete_agent_execution",
+      "observed_wall_seconds": 1733.9313900000416,
+      "completed_policy_success_rate": null,
+      "checkpointed_steps": 6,
+      "checkpointed_successes": 3,
+      "model_calls_complete_trial_only": null,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": false
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        },
+        {
+          "task_id": "05-current-sale",
+          "success": false
+        },
+        {
+          "task_id": "06-current-refund",
+          "success": true
+        }
+      ]
+    },
+    {
+      "artifact_id": "dsh-contained-raw-04",
+      "comparison_sha256": "e12b85f0b1742e7f2aa35c2edd3e5626e2fddab06eb63b73025cc9062ab99683",
+      "engine": "dsh",
+      "runner": {
+        "engine": "dsh",
+        "model": "deepseek-official/deepseek-v4-flash",
+        "reasoning_effort": null,
+        "timeout_seconds": 360
+      },
+      "policy": "raw",
+      "status": "failed",
+      "error_code": "incomplete_agent_execution",
+      "observed_wall_seconds": 602.1408637079876,
+      "completed_policy_success_rate": null,
+      "checkpointed_steps": 4,
+      "checkpointed_successes": 3,
+      "model_calls_complete_trial_only": null,
+      "trajectory": [
+        {
+          "task_id": "01-legacy-sale",
+          "success": false
+        },
+        {
+          "task_id": "02-legacy-refund",
+          "success": true
+        },
+        {
+          "task_id": "03-legacy-credit",
+          "success": true
+        },
+        {
+          "task_id": "04-legacy-payout",
+          "success": true
+        }
+      ]
+    }
+  ],
+  "primary_trials_per_mode": 1,
+  "call_count_unit": "agent_invocations_not_provider_api_requests"
+}

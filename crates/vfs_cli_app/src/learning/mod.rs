@@ -24,3 +24,5 @@ mod project_tests;
 pub mod jobs;
 
 pub mod redaction;
+
+pub mod stream;

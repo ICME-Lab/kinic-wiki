@@ -114,6 +114,8 @@ pub struct EvaluationSample {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationReport {
+    #[serde(default = "legacy_quality_eligible")]
+    pub quality_eligible: bool,
     pub schema_version: u32,
     pub trials: u32,
     pub redacted: bool,
@@ -127,6 +129,10 @@ pub struct EvaluationReport {
     pub created_at: String,
     pub samples: Vec<EvaluationSample>,
 }
+fn legacy_quality_eligible() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FamilyComparison {
     pub family: String,
@@ -163,7 +169,7 @@ fn secret_key(key: &str) -> bool {
         .iter()
         .any(|part| upper.contains(part))
 }
-fn secret_values(runner: &RunnerConfig) -> Vec<String> {
+pub(crate) fn secret_values(runner: &RunnerConfig) -> Vec<String> {
     runner
         .environment
         .iter()
@@ -317,6 +323,19 @@ pub async fn evaluate_suite(
     output: &Path,
     trials: u32,
 ) -> Result<EvaluationReport> {
+    evaluate_suite_ordered(manifest, runner, contexts, output, trials, false, true).await
+}
+
+/// Rotates arm position across task/trial pairs; preserves the standard report schema.
+pub(crate) async fn evaluate_suite_ordered(
+    manifest: &SuiteManifest,
+    runner: &RunnerConfig,
+    contexts: &PreparedContexts,
+    output: &Path,
+    trials: u32,
+    counterbalanced: bool,
+    quality_eligible: bool,
+) -> Result<EvaluationReport> {
     manifest.validate()?;
     ensure!(trials > 0, "trials must be positive");
     for task in &manifest.tasks {
@@ -358,7 +377,8 @@ pub async fn evaluate_suite(
     redact_value(&mut reported_manifest, &secrets);
     let reported_manifest: SuiteManifest = serde_json::from_value(reported_manifest)?;
     let mut report = EvaluationReport {
-        schema_version: 1,
+        quality_eligible,
+        schema_version: 2,
         trials,
         redacted: true,
         suite_id: manifest.suite_id.clone(),
@@ -373,9 +393,16 @@ pub async fn evaluate_suite(
     };
     write_redacted_json(&output.join("manifest.json"), manifest, &secrets)?;
     write_redacted_json(&output.join("contexts.json"), contexts, &secrets)?;
-    for task in &manifest.tasks {
+    for (task_index, task) in manifest.tasks.iter().enumerate() {
         for trial in 0..trials {
-            for mode in EvaluationMode::ALL {
+            let mut modes = EvaluationMode::ALL;
+            if counterbalanced {
+                modes.rotate_left((task_index + trial as usize / 2) % 4);
+                if trial % 2 == 1 {
+                    modes.reverse();
+                }
+            }
+            for mode in modes {
                 let context = &contexts[&task.id][&mode];
                 let directory = output.join(format!("{}-{}-{}", task.id, trial, mode.label()));
                 let sample = evaluate_one(task, runner, context, mode, trial, &directory).await?;
@@ -580,7 +607,7 @@ fn runtime_fingerprint(
     fingerprint(&identity)
 }
 
-async fn evaluate_one(
+pub(crate) async fn evaluate_one(
     task: &EvaluationTask,
     runner: &RunnerConfig,
     context: &PreparedContext,
@@ -830,7 +857,7 @@ fn sample_success(sample: &EvaluationSample) -> bool {
 /// accepted independently of their exit status, lifecycle, task contract and scope.
 pub fn validate_report(report: &EvaluationReport) -> Result<()> {
     ensure!(
-        report.schema_version == 1,
+        matches!(report.schema_version, 1 | 2),
         "unsupported evaluation report schema"
     );
     ensure!(
@@ -1007,6 +1034,10 @@ fn compare_selected(
 ) -> Result<Comparison> {
     validate_report(before)?;
     validate_report(after)?;
+    ensure!(
+        before.quality_eligible && after.quality_eligible,
+        "test-only reports are ineligible for quality comparison"
+    );
     ensure!(
         before.suite_fingerprint == after.suite_fingerprint,
         "comparison suites differ"
@@ -1305,6 +1336,7 @@ mod tests {
                 .collect(),
         };
         EvaluationReport {
+            quality_eligible: true,
             schema_version: 1,
             trials: 2,
             redacted: true,

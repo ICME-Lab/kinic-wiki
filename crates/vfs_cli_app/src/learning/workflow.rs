@@ -550,6 +550,8 @@ async fn learn_value_at(
     }
     let db = c.database_id.as_deref().context("database required")?;
     match command {
+        LearnCommand::Stream(args) => super::stream::run(client, c, &args).await,
+        LearnCommand::Paired(args) => super::stream::paired::run(client, c, &args).await,
         LearnCommand::Drain {
             project_root,
             state,
