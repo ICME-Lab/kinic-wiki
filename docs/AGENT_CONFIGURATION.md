@@ -34,6 +34,16 @@ a key. Apply exports through icp-cli only in memory; no private key is stored in
 the grant. Reapplying the same binding is idempotent; replacing a different grant
 requires deliberate reconciliation of that user file.
 
+Database management commands must also name the authorized database in their
+positional argument. A matching global `--database-id` cannot authorize a different
+positional database. These checks run before any credential helper, even with
+`--allow-non-ii-identity` or anonymous mode. A database-scoped grant cannot authorize
+database creation/listing, marketplace entitlements, canister cycles configuration,
+or public-ID reads, which have no matching database scope. Use a separate, explicitly
+authorized administration workspace for those operations. Local commands that do
+not acquire credentials, such as `database current`, `unlink`, and opening the
+browser cycles page, retain their existing behavior.
+
 `--install-plugin` uses `codex plugin list` and `codex plugin add`, and verifies the
 expected installed/enabled version. It preserves the existing marketplace name
 and unrelated metadata and honors `CODEX_HOME`. File placement alone does not

@@ -18,6 +18,88 @@ pub struct Grant {
     pub principal: String,
 }
 impl Grant {
+    /// Check the operation as well as its connection before accessing credentials.
+    /// Positional database arguments must not widen a saved connection grant.
+    pub fn check_command(&self, command: &crate::cli::Command) -> Result<()> {
+        use crate::cli::{Command, DatabaseCommand};
+        match command {
+            Command::Database { command } => match command {
+                DatabaseCommand::Metadata { database_id, .. }
+                | DatabaseCommand::PurchaseCycles { database_id, .. }
+                | DatabaseCommand::CyclesHistory { database_id, .. }
+                | DatabaseCommand::CyclesPending { database_id, .. }
+                | DatabaseCommand::Grant { database_id, .. }
+                | DatabaseCommand::GrantCurrentIdentity { database_id, .. }
+                | DatabaseCommand::Revoke { database_id, .. }
+                | DatabaseCommand::Members { database_id, .. }
+                | DatabaseCommand::Link { database_id }
+                | DatabaseCommand::Cycles { database_id, .. } => ensure!(
+                    database_id == &self.database_id,
+                    "scoped identity grant command database mismatch; use the authorized database"
+                ),
+                DatabaseCommand::Create { .. } | DatabaseCommand::List { .. } => {
+                    anyhow::bail!(
+                        "scoped identity grant cannot authorize this command; use a separately authorized administration workspace"
+                    );
+                }
+                DatabaseCommand::Current { .. } | DatabaseCommand::Unlink => {}
+            },
+            Command::Market { .. } | Command::Cycles { .. } | Command::ReadPublicNode { .. } => {
+                anyhow::bail!(
+                    "scoped identity grant cannot authorize this command; use a separately authorized administration workspace"
+                );
+            }
+            // These commands use the checked connection's database (or are local).
+            // Keep this exhaustive so new command families require a scope decision.
+            Command::Agent { .. }
+            | Command::Learn { .. }
+            | Command::Eval { .. }
+            | Command::Dsh { .. }
+            | Command::Identity { .. }
+            | Command::Skill { .. }
+            | Command::Hermes { .. }
+            | Command::Codex { .. }
+            | Command::Claude { .. }
+            | Command::Github { .. }
+            | Command::ContextPack { .. }
+            | Command::RebuildIndex
+            | Command::RebuildScopeIndex { .. }
+            | Command::GenerateConversationWiki { .. }
+            | Command::ReadNode { .. }
+            | Command::PublishNode { .. }
+            | Command::GetNodePublication { .. }
+            | Command::UnpublishNode { .. }
+            | Command::ListNodes { .. }
+            | Command::ListChildren { .. }
+            | Command::WriteNode { .. }
+            | Command::WriteNodes { .. }
+            | Command::AppendNode { .. }
+            | Command::EditNode { .. }
+            | Command::DeleteNode { .. }
+            | Command::DeleteTree { .. }
+            | Command::PurgeSourceCapture { .. }
+            | Command::MkdirNode { .. }
+            | Command::MoveNode { .. }
+            | Command::GlobNodes { .. }
+            | Command::ReadNodeContext { .. }
+            | Command::GraphNeighborhood { .. }
+            | Command::GraphLinks { .. }
+            | Command::IncomingLinks { .. }
+            | Command::OutgoingLinks { .. }
+            | Command::MultiEditNode { .. }
+            | Command::SearchRemote { .. }
+            | Command::SearchPathRemote { .. }
+            | Command::QuerySql { .. }
+            | Command::MemoryManifest { .. }
+            | Command::QueryContext { .. }
+            | Command::SourceEvidence { .. }
+            | Command::ExportSnapshot { .. }
+            | Command::FetchUpdates { .. }
+            | Command::Status { .. } => {}
+        }
+        Ok(())
+    }
+
     pub fn check_target(&self, connection: &ResolvedConnection) -> Result<()> {
         ensure!(
             self.replica_host.trim_end_matches('/')

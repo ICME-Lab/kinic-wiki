@@ -1,5 +1,160 @@
 use std::process::Command;
 
+#[cfg(unix)]
+fn scoped_command_case(args: &[&str], expected_rejection: Option<&str>) {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    use vfs_cli_app::identity_policy::{Grant, save};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let home = root.join("home");
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::create_dir(root.join(".git")).unwrap();
+    let id = home.join("icp/identity");
+    fs::create_dir_all(&id).unwrap();
+    fs::write(
+        id.join("identity_list.json"),
+        r#"{"v":1,"identities":{"fixture":{"kind":"keyring"}}}"#,
+    )
+    .unwrap();
+    // Credential export must be unreachable for denied targets. Accepted targets
+    // stop at this boundary too, without real secrets or network access.
+    fs::write(
+        bin.join("icp"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$HOME/credential-calls"
+if [ "$1 $2" = 'identity default' ]; then echo fixture; else exit 77; fi
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("icp"), fs::Permissions::from_mode(0o755)).unwrap();
+    save(
+        &home,
+        &Grant {
+            project_root: root.clone(),
+            replica_host: "http://127.0.0.1:1".into(),
+            canister_id: "aaaaa-aa".into(),
+            database_id: "allowed-db".into(),
+            identity_name: "fixture".into(),
+            principal: "aaaaa-aa".into(),
+        },
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_kinic-vfs-cli"))
+        .current_dir(&root)
+        .env_clear()
+        .env("HOME", &home)
+        .env("ICP_HOME", home.join("icp"))
+        .env("PATH", &bin)
+        .args([
+            "--replica-host",
+            "http://127.0.0.1:1",
+            "--canister-id",
+            "aaaaa-aa",
+            "--database-id",
+            "allowed-db",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{args:?}");
+    let error = String::from_utf8_lossy(&output.stderr);
+    if let Some(reason) = expected_rejection {
+        assert!(error.contains(reason), "{args:?}: {error}");
+        assert!(
+            !home.join("credential-calls").exists(),
+            "{args:?}: touched credentials"
+        );
+    } else {
+        assert!(
+            error.contains("failed to export icp-cli identity `fixture`"),
+            "{args:?}: {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(home.join("credential-calls")).unwrap(),
+            "identity default\nidentity export fixture\n"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_grant_rejects_positional_database_changes_before_credentials() {
+    for args in [
+        vec!["database", "grant", "other-db", "2vxsx-fae", "reader"],
+        vec!["database", "grant-current-identity", "other-db", "reader"],
+        vec!["database", "revoke", "other-db", "2vxsx-fae"],
+        vec!["database", "metadata", "other-db", "--input", "absent.json"],
+        vec!["database", "purchase-cycles", "other-db", "1"],
+        vec!["database", "cycles-history", "other-db"],
+        vec!["database", "cycles-pending", "other-db"],
+        vec!["database", "members", "other-db"],
+        vec!["database", "link", "other-db"],
+        vec![
+            "--allow-non-ii-identity",
+            "database",
+            "grant",
+            "other-db",
+            "2vxsx-fae",
+            "reader",
+        ],
+        vec![
+            "--identity-mode",
+            "anonymous",
+            "database",
+            "members",
+            "other-db",
+        ],
+    ] {
+        scoped_command_case(
+            &args,
+            Some("scoped identity grant command database mismatch"),
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_grant_rejects_operations_without_a_database_scope() {
+    for args in [
+        vec!["database", "create", "new-db"],
+        vec!["database", "list"],
+        vec!["market", "entitlements"],
+        vec!["cycles", "config"],
+        vec!["read-public-node", "--public-id", "public-node"],
+    ] {
+        scoped_command_case(
+            &args,
+            Some("scoped identity grant cannot authorize this command"),
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_grant_allows_same_database_and_normal_wiki_reads() {
+    for args in [
+        vec!["database", "grant", "allowed-db", "2vxsx-fae", "reader"],
+        vec!["database", "grant-current-identity", "allowed-db", "reader"],
+        vec!["database", "revoke", "allowed-db", "2vxsx-fae"],
+        vec![
+            "database",
+            "metadata",
+            "allowed-db",
+            "--input",
+            "absent.json",
+        ],
+        vec!["database", "purchase-cycles", "allowed-db", "1"],
+        vec!["database", "cycles-history", "allowed-db"],
+        vec!["database", "cycles-pending", "allowed-db"],
+        vec!["database", "members", "allowed-db"],
+        vec!["database", "link", "allowed-db"],
+        vec!["read-node", "--path", "/Knowledge/test"],
+    ] {
+        scoped_command_case(&args, None);
+    }
+}
+
 #[test]
 fn privileged_setup_preview_never_executes_or_writes() {
     let temp = tempfile::tempdir().unwrap();

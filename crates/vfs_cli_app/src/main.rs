@@ -224,6 +224,9 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     } else {
         None
     };
+    if let Some(grant) = &grant {
+        grant.check_command(&cli.command)?;
+    }
     let mut hook_spool = if let (
         Some(request),
         Command::Agent {
