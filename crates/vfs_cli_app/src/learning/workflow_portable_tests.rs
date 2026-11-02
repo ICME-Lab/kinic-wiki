@@ -1603,6 +1603,48 @@ async fn selected_drain_and_job_controls_do_not_process_other_runs() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn resume_rejects_changed_configuration_before_claiming_recovery() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let path = a.join(CONFIG_FILE);
+    let original = std::fs::read(&path).unwrap();
+    let project = load_project(&path).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("config-run", &a, &path.canonicalize().unwrap())
+        .unwrap();
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    let mut changed: Value = serde_json::from_slice(&original).unwrap();
+    changed["runner"]["timeout_seconds"] = json!(123);
+    std::fs::write(&path, changed.to_string()).unwrap();
+    for apply in [false, true] {
+        let command = JobCommand::Resume(JobControlArgs {
+            run_id: "config-run".into(),
+            apply,
+            dry_run: false,
+        });
+        let error = job_driver::control_job(&client, &c, &a, &state, &command).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("restore the original learning configuration"),
+            "{error}"
+        );
+        assert_eq!(q.list().unwrap()[0].state, "paused");
+    }
+    std::fs::write(&path, original).unwrap();
+    let command = JobCommand::Resume(JobControlArgs {
+        run_id: "config-run".into(),
+        apply: true,
+        dry_run: false,
+    });
+    assert_eq!(
+        job_driver::control_job(&client, &c, &a, &state, &command).unwrap()["applied"],
+        true
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn no_revision_needed_is_saved_once_and_held_without_retry_or_publication() {
     let (dir, client, state, root, _) = fixture().await;
     let script = dir.path().join("model-peer.py");

@@ -118,7 +118,11 @@ kinic-vfs-cli learn jobs resume --project-root . --run-id <run-id> --apply --jso
 `--apply` persists the change under the existing worker lease. Resume retains the
 pause reason and prior state, resets the explicit recovery allowance, and starts
 no model. Inspect evidence and configuration first; it cannot force an ambiguous
-publication to resume. Drain still respects the project's disabled setting and
+publication to resume. If the recorded configuration fingerprint differs,
+preview and apply both refuse resume: restore the original learning configuration
+and validation suite or reconcile the retained evidence separately. Resume does
+not silently rebind old candidates to a different runner or suite.
+Drain still respects the project's disabled setting and
 the retry delay. For a manual recovery batch, select at most three runs and
 attempt each once, then inspect failures before continuing.
 

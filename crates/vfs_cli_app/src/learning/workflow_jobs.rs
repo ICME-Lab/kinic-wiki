@@ -55,7 +55,14 @@ pub fn control_job(
             &project.project_id,
         )?
     };
-    let job = q.control(&args.run_id, &path, pause, args.apply)?;
+    let current_hash = if pause {
+        String::new()
+    } else {
+        config_fingerprint(&project).context(
+            "restore the original learning configuration and validation suite before resuming",
+        )?
+    };
+    let job = q.control(&args.run_id, &path, pause, args.apply, &current_hash)?;
     Ok(
         json!({"dry_run":!args.apply,"applied":args.apply,"run_id":job.run_id,"state":job.state,"pause":job.pause,"retry_policy":job.retry_policy,"model_started":false,"next_action":if pause {"Inspect evidence and binding before learn jobs resume --run-id <run-id> --apply"} else {"Run learn drain --run-id <run-id> when ready; resume alone starts no work"}}),
     )
@@ -335,7 +342,7 @@ pub async fn drain_selected(
             q.save(&job)?;
             let outcome = process(client, c, &path, &current, state, &q, &mut job).await;
             if let Err(e) = outcome {
-                job.fail_attempt(&e.to_string(), chrono::Utc::now().timestamp_millis());
+                job.fail_error(&e, chrono::Utc::now().timestamp_millis());
                 q.save(&job)?;
             }
         }

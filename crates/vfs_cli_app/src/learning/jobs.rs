@@ -67,44 +67,29 @@ impl LearningJob {
         }));
         true
     }
+    pub fn fail_error(&mut self, error: &anyhow::Error, now: i64) {
+        let reason = error
+            .chain()
+            .find_map(|cause| permanent_failure_reason(&cause.to_string()));
+        self.fail_attempt(&error.to_string(), now);
+        if self.state == "retry"
+            && let Some(reason) = reason
+        {
+            self.pause(reason);
+        }
+    }
     pub fn fail_attempt(&mut self, error: &str, now: i64) {
         self.error = Some(error.into());
         if self.state == "publishing" {
             return;
         }
         self.state = "retry".into();
-        let reason = if [
-            "no recorded context",
-            "no context receipt",
-            "no outcome evidence",
-            "artifact missing",
-            "source missing",
-        ]
-        .iter()
-        .any(|s| error.contains(s))
-        {
-            Some("evidence_missing")
-        } else if [
-            "identity",
-            "principal",
-            "another project",
-            "mismatch",
-            "configuration changed",
-            "config changed",
-            "conflict",
-            "evidence changed",
-            "target changed",
-            "retrieval scope changed",
-        ]
-        .iter()
-        .any(|s| error.contains(s))
-        {
-            Some("binding_or_evidence_changed")
-        } else if self.retry_policy.as_ref().is_some_and(|r| r.attempts >= 3) {
-            Some("attempt_limit_reached")
-        } else {
-            None
-        };
+        let reason = permanent_failure_reason(error).or_else(|| {
+            self.retry_policy
+                .as_ref()
+                .filter(|r| r.attempts >= 3)
+                .map(|_| "attempt_limit_reached")
+        });
         if let Some(reason) = reason {
             self.pause(reason);
         } else if let Some(retry) = &mut self.retry_policy {
@@ -114,6 +99,47 @@ impl LearningJob {
                 1_800_000
             }));
         }
+    }
+}
+fn permanent_failure_reason(error: &str) -> Option<&'static str> {
+    let message = error.to_lowercase();
+    if [
+        "no recorded context",
+        "no context receipt",
+        "no outcome evidence",
+        "artifact missing",
+        "source missing",
+        "dependent node missing",
+        "evidence revision missing",
+    ]
+    .iter()
+    .any(|s| message.contains(s))
+    {
+        Some("evidence_missing")
+    } else if [
+        "identity",
+        "principal",
+        "another project",
+        "mismatch",
+        "configuration changed",
+        "config changed",
+        "conflict",
+        "evidence changed",
+        "target changed",
+        "target missing",
+        "retrieval scope changed",
+        "anonymous caller not allowed",
+        "unauthorized",
+        "not authorized",
+        "permission denied",
+        "access denied",
+    ]
+    .iter()
+    .any(|s| message.contains(s))
+    {
+        Some("binding_or_evidence_changed")
+    } else {
+        None
     }
 }
 #[cfg(test)]
@@ -145,6 +171,7 @@ impl JobQueue {
         config: &Path,
         pause: bool,
         apply: bool,
+        current_hash: &str,
     ) -> Result<LearningJob> {
         let _lease =
             if apply {
@@ -172,6 +199,12 @@ impl JobQueue {
             job.pause("operator_paused");
         } else {
             ensure!(job.state == "paused", "only paused jobs can be resumed");
+            ensure!(
+                job.config_hash
+                    .as_deref()
+                    .is_none_or(|hash| hash == current_hash),
+                "restore the original learning configuration and validation suite before resuming; retained evidence requires reconciliation"
+            );
             let paused = job
                 .pause
                 .clone()
@@ -383,6 +416,17 @@ mod tests {
         assert!(j.begin_attempt(1000));
         j.fail_attempt("run has no context receipt", 1000);
         assert_eq!(j.state, "paused");
+        for error in [
+            "target missing before publication",
+            "dependent node missing",
+            "evidence revision missing",
+        ] {
+            let mut j = job();
+            assert!(j.begin_attempt(1000));
+            j.state = "evaluated".into();
+            j.fail_attempt(error, 1000);
+            assert_eq!(j.state, "paused", "{error}");
+        }
     }
     #[test]
     fn job_control_preview_preserves_queue_and_apply_respects_owner_and_binding() {
@@ -391,21 +435,24 @@ mod tests {
         q.enqueue("r", Path::new("/repo"), Path::new("/repo/config"))
             .unwrap();
         let preview = q
-            .control("r", Path::new("/repo/config"), true, false)
+            .control("r", Path::new("/repo/config"), true, false, "hash")
             .unwrap();
         assert_eq!(preview.state, "paused");
         assert_eq!(q.list().unwrap()[0].state, "pending");
-        assert!(q.control("r", Path::new("/other"), true, true).is_err());
+        assert!(
+            q.control("r", Path::new("/other"), true, true, "hash")
+                .is_err()
+        );
         let lease = q.acquire().unwrap().unwrap();
         assert!(
-            q.control("r", Path::new("/repo/config"), true, true)
+            q.control("r", Path::new("/repo/config"), true, true, "hash")
                 .is_err()
         );
         drop(lease);
-        q.control("r", Path::new("/repo/config"), true, true)
+        q.control("r", Path::new("/repo/config"), true, true, "hash")
             .unwrap();
         assert_eq!(q.list().unwrap()[0].state, "paused");
-        q.control("r", Path::new("/repo/config"), false, true)
+        q.control("r", Path::new("/repo/config"), false, true, "hash")
             .unwrap();
         assert_eq!(q.list().unwrap()[0].state, "pending");
         assert_eq!(q.pending_wakeup().unwrap(), None);
@@ -413,9 +460,19 @@ mod tests {
         j.state = "publishing".into();
         q.save(&j).unwrap();
         assert!(
-            q.control("r", Path::new("/repo/config"), true, true)
+            q.control("r", Path::new("/repo/config"), true, true, "hash")
                 .is_err()
         );
+    }
+    #[test]
+    fn contextual_authorization_failure_requires_inspection() {
+        let mut j = job();
+        assert!(j.begin_attempt(1000));
+        let error =
+            anyhow::anyhow!("anonymous caller not allowed").context("query failed for read_node");
+        j.fail_error(&error, 1000);
+        assert_eq!(j.state, "paused");
+        assert_eq!(j.pause.unwrap().reason, "binding_or_evidence_changed");
     }
     #[test]
     fn newer_wakeup_is_not_cleared_by_an_older_acknowledgement() {
