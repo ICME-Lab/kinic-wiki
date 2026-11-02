@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde::Serialize;
 use vfs_client::VfsApi;
-use vfs_types::{NodeKind, WriteNodeRequest};
+use vfs_types::{Node, NodeKind, WriteNodeItem, WriteNodesRequest};
 use wiki_domain::{KNOWLEDGE_SOURCES_PREFIX, validate_knowledge_source_path};
 
 const CONVERSATION_WIKI_PREFIX: &str = "/Knowledge/conversations";
@@ -49,13 +49,29 @@ pub async fn generate_conversation_wiki(
     let raw = parse_raw_conversation(&source.path, &source.content)?;
     let base_path = format!("{CONVERSATION_WIKI_PREFIX}/{}", raw.source_id);
     let mut documents = build_wiki_documents(&raw, &base_path);
-    documents.push(log_document(client, database_id, &base_path, &raw).await?);
-
-    let mut written_paths = Vec::with_capacity(documents.len());
-    for document in documents {
-        upsert_file(client, database_id, &document.path, &document.content).await?;
-        written_paths.push(document.path);
-    }
+    let log_path = format!("{base_path}/log.md");
+    let mut written_paths = documents.iter().map(|d| d.path.clone()).collect::<Vec<_>>();
+    written_paths.push(log_path.clone());
+    let current = vfs_client::read_nodes_chunked(client, database_id, &written_paths).await?;
+    let log_current = current.last().and_then(Option::as_ref);
+    documents.push(log_document(log_current, log_path, &raw));
+    let nodes = documents
+        .into_iter()
+        .zip(current)
+        .map(|(document, existing)| WriteNodeItem {
+            path: document.path,
+            kind: NodeKind::File,
+            content: document.content,
+            metadata_json: "{}".into(),
+            expected_etag: existing.map(|n| n.etag),
+        })
+        .collect();
+    client
+        .write_nodes(WriteNodesRequest {
+            database_id: database_id.into(),
+            nodes,
+        })
+        .await?;
 
     Ok(ConversationWikiResult {
         source_path: raw.source_path,
@@ -194,50 +210,19 @@ fn provenance_markdown(raw: &RawConversation, base_path: &str) -> String {
     )
 }
 
-async fn log_document(
-    client: &impl VfsApi,
-    database_id: &str,
-    base_path: &str,
-    raw: &RawConversation,
-) -> Result<WikiDocument> {
-    let path = format!("{base_path}/log.md");
-    let current = client
-        .read_node(database_id, &path)
-        .await?
-        .map(|node| node.content)
+fn log_document(existing: Option<&Node>, path: String, raw: &RawConversation) -> WikiDocument {
+    let current = existing
+        .map(|node| node.content.clone())
         .unwrap_or_else(|| "# Log\n\n".to_string());
     let entry = format!(
         "- {} generated conversation wiki from {}\n",
         Utc::now().to_rfc3339(),
         raw.source_path
     );
-    Ok(WikiDocument {
+    WikiDocument {
         path,
         content: format!("{}\n{entry}", current.trim_end()),
-    })
-}
-
-async fn upsert_file(
-    client: &impl VfsApi,
-    database_id: &str,
-    path: &str,
-    content: &str,
-) -> Result<()> {
-    let expected_etag = client
-        .read_node(database_id, path)
-        .await?
-        .map(|node| node.etag);
-    client
-        .write_node(WriteNodeRequest {
-            database_id: database_id.to_string(),
-            path: path.to_string(),
-            kind: NodeKind::File,
-            content: content.to_string(),
-            metadata_json: "{}".to_string(),
-            expected_etag,
-        })
-        .await?;
-    Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +230,42 @@ mod tests {
     use super::{build_wiki_documents, parse_raw_conversation};
 
     const RAW: &str = "# Raw Conversation Source\n\n## Metadata\n\n- provider: chatgpt\n- source_url: https://chatgpt.com/c/abc\n- captured_at: 2026-05-01T00:00:00.000Z\n- conversation_title: Project Notes\n- message_count: 2\n\n## Chat\n\n### Turn 0001\n\n- role: user\n\nsecret fact\n\n### Turn 0002\n\n- role: assistant\n\nanswer\n";
+
+    #[tokio::test]
+    async fn generation_batches_documents_and_guards_log_content() {
+        use crate::commands_fs_tests::MockClient;
+        use std::sync::atomic::Ordering;
+        use vfs_types::{Node, NodeKind};
+        let make = |path: &str, kind, content: &str| Node {
+            path: path.into(),
+            kind,
+            content: content.into(),
+            created_at: 0,
+            updated_at: 0,
+            etag: "old-etag".into(),
+            metadata_json: "{}".into(),
+        };
+        let client = MockClient {
+            nodes: vec![
+                make("/Sources/chatgpt/abc.md", NodeKind::Source, RAW),
+                make(
+                    "/Knowledge/conversations/chatgpt-abc/log.md",
+                    NodeKind::File,
+                    "# Log\n\nold entry\n",
+                ),
+            ],
+            ..Default::default()
+        };
+        super::generate_conversation_wiki(&client, "db", "/Sources/chatgpt/abc.md")
+            .await
+            .unwrap();
+        assert_eq!(client.batch_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
+        let writes = client.writes.lock().unwrap();
+        let log = writes.iter().find(|w| w.path.ends_with("/log.md")).unwrap();
+        assert!(log.content.contains("old entry"));
+        assert_eq!(log.expected_etag.as_deref(), Some("old-etag"));
+    }
 
     #[test]
     fn parse_raw_conversation_reads_metadata() {
