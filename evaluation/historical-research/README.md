@@ -64,6 +64,16 @@ python3 evaluation/historical-research/prepare.py \
   --output evaluation/historical-research/runs/new-frozen
 ```
 
+Some source commits predate squash merges and are not reachable from current branch
+heads. Fetch their immutable objects if absent (CI does this explicitly):
+
+```sh
+git fetch --no-tags origin \
+  07ac286ec5b39e879c4824f08d31c5efd25852c6 \
+  366f95b737ff9d4abd98e1288d73859336f3474f \
+  e776f1e9a3b798bcb16a15df524c1e9298d006cf
+```
+
 Preparation refuses existing output paths. The committed
 [frozen snapshot](results/2026-11-02/frozen/suite.json) and
 [hash manifest](results/2026-11-02/frozen/freeze.json) preserve the actual pre-inference

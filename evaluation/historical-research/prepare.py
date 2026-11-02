@@ -9,6 +9,9 @@ import time
 from research import freeze, write_json
 
 REPO = Path(__file__).resolve().parents[2]
+PINNED = {'07ac286e': '07ac286ec5b39e879c4824f08d31c5efd25852c6',
+          '366f95b7': '366f95b737ff9d4abd98e1288d73859336f3474f',
+          'e776f1e9': 'e776f1e9a3b798bcb16a15df524c1e9298d006cf'}
 
 
 def git(*args):
@@ -16,7 +19,9 @@ def git(*args):
 
 
 def evidence(revision, path, start, end=None):
-    commit = git('rev-parse', revision).strip()
+    base = revision.removesuffix('^')
+    pinned = PINNED[base] + ('^' if revision.endswith('^') else '')
+    commit = git('rev-parse', pinned).strip()
     body = git('show', f'{commit}:{path}')
     begin = body.index(start)
     finish = body.index(end, begin) if end else body.index('\n', begin)
