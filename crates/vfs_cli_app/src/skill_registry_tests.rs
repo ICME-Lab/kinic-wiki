@@ -17,6 +17,52 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 use vfs_client::VfsApi;
+
+#[tokio::test]
+async fn batched_read_preserves_order_and_reports_item_errors() {
+    let client = SkillMockClient::default();
+    let paths = (0..11).map(|i| format!("/{i}")).collect::<Vec<_>>();
+    for path in &paths {
+        client.nodes.lock().unwrap().insert(
+            path.clone(),
+            Node {
+                path: path.clone(),
+                kind: NodeKind::File,
+                content: path.clone(),
+                created_at: 0,
+                updated_at: 0,
+                etag: path.clone(),
+                metadata_json: "{}".into(),
+            },
+        );
+    }
+    let nodes = vfs_client::read_nodes_chunked(&client, "db", &paths)
+        .await
+        .unwrap();
+    assert_eq!(nodes.len(), 11);
+    assert_eq!(
+        nodes
+            .into_iter()
+            .map(|n| n.unwrap().path)
+            .collect::<Vec<_>>(),
+        paths
+    );
+    assert_eq!(
+        client
+            .read_batches
+            .lock()
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>(),
+        vec![10, 1]
+    );
+    assert_eq!(client.read_batches.lock().unwrap().concat(), paths);
+    let error = vfs_client::read_nodes_chunked(&client, "db", &["error".into()])
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("item failed"));
+}
 use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
@@ -36,10 +82,28 @@ struct SkillMockClient {
     caller_principal: Mutex<Option<String>>,
     writes: AtomicUsize,
     write_batches: AtomicUsize,
+    read_batches: Mutex<Vec<Vec<String>>>,
 }
 
 #[async_trait]
 impl VfsApi for SkillMockClient {
+    async fn read_nodes(
+        &self,
+        _database_id: &str,
+        paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>> {
+        self.read_batches.lock().unwrap().push(paths.to_vec());
+        Ok(paths
+            .iter()
+            .map(|path| {
+                if path == "error" {
+                    Err("item failed".into())
+                } else {
+                    Ok(self.nodes.lock().unwrap().get(path).cloned())
+                }
+            })
+            .collect())
+    }
     fn caller_principal(&self) -> Option<String> {
         self.caller_principal.lock().expect("caller lock").clone()
     }
