@@ -696,6 +696,7 @@ async fn review_fix_external_config_flows_from_hook_to_job_processing() {
         &client,
         &c,
         LearnCommand::Drain {
+            require_wakeup: false,
             project_root: a.clone(),
             recall_config: Some(external.clone()),
             state: state.clone(),
@@ -760,6 +761,7 @@ async fn status_and_drain_use_target_project_state_outside_project() {
         &client,
         &c,
         LearnCommand::Drain {
+            require_wakeup: false,
             project_root: b.clone(),
             state,
             recall_config: None,
@@ -1183,4 +1185,335 @@ async fn drain_rechecks_delivery_after_sender_replacement_exits_busy() {
     let result = job_driver::drain(&client, &c, &a, &state).await.unwrap();
     assert_eq!(result["jobs"][0]["state"], "candidate", "{result}");
     assert!(result["jobs"][0]["candidate_path"].is_string());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn tool_event_delivery_does_not_relaunch_retry_jobs() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    queue
+        .enqueue("retry-run", &a, &a.join(CONFIG_FILE))
+        .unwrap();
+    let mut job = queue.list().unwrap().remove(0);
+    job.state = "retry".into();
+    queue.save(&job).unwrap();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"PostToolUse","cwd":a,"session_id":"tool-only","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| {
+        assert!(
+            calls.borrow().is_empty(),
+            "tool-only delivery launched learning"
+        )
+    });
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn tool_delivery_wakes_learning_for_replayed_terminal() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let request = json!({"event":"Stop","cwd":a,"session_id":"replayed-stop","turn_id":"1"});
+    let path = hooks::spool(&c, &state, "codex", None, &request).unwrap();
+    let mut saved: Value = read_json(&path).unwrap();
+    saved.as_object_mut().unwrap().remove("__kinic_owner_pid");
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert!(!path.exists());
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let jobs = job_driver::queue(&client, &c, &state, &project)
+        .unwrap()
+        .list()
+        .unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(
+        open_outbox(&client, &c, &state)
+            .unwrap()
+            .pending_count()
+            .unwrap(),
+        0
+    );
+    job_driver::TEST_LAUNCHES.with(|calls| assert_eq!(*calls.borrow(), vec![a]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn terminal_wakeup_survives_failed_delivery_until_later_tool_event() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"persist-wake","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    // A delivery attempt fails after the terminal event has been enqueued.
+    client.deny.store(true, std::sync::atomic::Ordering::SeqCst);
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    assert!(
+        deliver(&client, &c, &state, &a, Some("codex"), None)
+            .await
+            .is_err()
+    );
+    job_driver::TEST_LAUNCHES.with(|calls| assert!(calls.borrow().is_empty()));
+    client
+        .deny
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| assert_eq!(*calls.borrow(), vec![a.clone()]));
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    assert!(
+        queue.pending_wakeup().unwrap().is_some(),
+        "spawning alone must not acknowledge wakeup"
+    );
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(queue.pending_wakeup().unwrap(), None);
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| assert!(calls.borrow().is_empty()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn recall_wakeup_survives_delivery_failure() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    hooks::handle(&client, &c, "codex", None, &state, json!({"event":"UserPromptSubmit","cwd":a,"session_id":"recall-wake","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    assert!(
+        queue.pending_wakeup().unwrap().is_some(),
+        "recall must persist its wakeup"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn wakeup_remains_pending_when_drain_owner_is_busy() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    hooks::handle(
+        &client,
+        &c,
+        "codex",
+        None,
+        &state,
+        json!({"event":"Stop","cwd":a,"session_id":"busy-owner","turn_id":"1"}),
+    )
+    .await
+    .unwrap();
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    let lease = queue.acquire().unwrap().unwrap();
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert!(queue.pending_wakeup().unwrap().is_some());
+    assert_eq!(
+        job_driver::drain(&client, &c, &a, &state).await.unwrap()["busy"],
+        true
+    );
+    assert!(queue.pending_wakeup().unwrap().is_some());
+    drop(lease);
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(queue.pending_wakeup().unwrap(), None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn replayed_recall_preserves_wakeup_without_recalling_again() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let request = json!({"event":"UserPromptSubmit","cwd":a,"session_id":"replayed-recall","turn_id":"1","prompt":"portable advice"});
+    let path = hooks::spool(&c, &state, "codex", None, &request).unwrap();
+    let mut saved: Value = read_json(&path).unwrap();
+    saved.as_object_mut().unwrap().remove("__kinic_owner_pid");
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert!(!path.exists());
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    assert!(q.pending_wakeup().unwrap().is_some());
+    job_driver::TEST_LAUNCHES.with(|calls| assert_eq!(*calls.borrow(), vec![a]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_without_wakeup_does_not_start_learning() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    job_driver::TEST_LAUNCHES.with(|calls| calls.borrow_mut().clear());
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    job_driver::TEST_LAUNCHES.with(|calls| {
+        assert!(
+            calls.borrow().is_empty(),
+            "delivery without wakeup launched learning"
+        )
+    });
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stale_background_drain_does_not_retry_without_wakeup() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    queue
+        .enqueue("retry-run", &a, &a.join(CONFIG_FILE))
+        .unwrap();
+    let mut job = queue.list().unwrap().remove(0);
+    job.state = "retry".into();
+    queue.save(&job).unwrap();
+    let result = job_driver::drain_with_config(&client, &c, &a, &state, None, true)
+        .await
+        .unwrap();
+    assert_eq!(result["already_woken"], true);
+    assert_eq!(queue.list().unwrap()[0].state, "retry");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_arriving_after_delivery_check_keeps_wakeup_until_evidence_sent() {
+    let (dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    let lease = outbox.acquire().unwrap().unwrap();
+    let source = dir.path().to_path_buf();
+    let target = a.clone();
+    let saved_state = state.clone();
+    job_driver::TEST_AFTER_OUTBOX_CHECK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            std::thread::spawn(move || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(async move {
+                        let other = StoreClient::new(&source);
+                        hooks::handle(&other, &connection(), "codex", None, &saved_state,
+                json!({"event":"Stop","cwd":target,"session_id":"late-stop","turn_id":"1"}))
+                .await.unwrap();
+                    })
+            })
+            .join()
+            .unwrap();
+        }))
+    });
+    let result = job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(result["reason"], "delivery_pending");
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    assert_eq!(q.list().unwrap()[0].state, "pending");
+    assert!(q.pending_wakeup().unwrap().is_some());
+    drop(lease);
+    deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(q.pending_wakeup().unwrap(), None);
+    let job = q.list().unwrap().remove(0);
+    assert_eq!(job.state, "retry"); // The fixture has no preceding recall/run event.
+    assert!(!job.error.unwrap_or_default().contains("delivery_pending"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn terminal_job_and_wakeup_commit_atomically() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    let root = state.state_dir.as_ref().unwrap();
+    let db_path = std::fs::read_dir(root)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("jobs-")
+                && path.extension().is_some_and(|e| e == "sqlite")
+        })
+        .unwrap();
+    let db = rusqlite::Connection::open(db_path).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_wakeup BEFORE INSERT ON wakeup BEGIN SELECT RAISE(ABORT, 'test wake failure'); END;").unwrap();
+    assert!(
+        job_driver::enqueue(
+            &client,
+            &c,
+            &state,
+            &project,
+            "atomic-run",
+            &a,
+            &a.join(CONFIG_FILE)
+        )
+        .is_err()
+    );
+    assert!(
+        q.list().unwrap().is_empty(),
+        "failed wake insert left a visible job"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_during_wakeup_snapshot_does_not_retry_same_failure_twice() {
+    let (dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let count = dir.path().join("calls");
+    std::fs::write(&project.runner.executable, format!("#!/usr/bin/env python3\nimport pathlib\np=pathlib.Path({:?})\np.write_text(p.read_text()+'x' if p.exists() else 'x')\nraise SystemExit(1)\n", count.to_str().unwrap())).unwrap();
+    hooks::handle(&client, &c, "codex", None, &state, json!({"event":"UserPromptSubmit","cwd":a,"session_id":"snapshot-stop","turn_id":"1","prompt":"portable advice"})).await.unwrap();
+    open_outbox(&client, &c, &state)
+        .unwrap()
+        .flush(&client, "db")
+        .await
+        .unwrap();
+    let source = dir.path().to_path_buf();
+    let target = a.clone();
+    let saved_state = state.clone();
+    crate::learning::jobs::TEST_AFTER_WAKE_SNAPSHOT.with(|slot| *slot.borrow_mut() = Some(Box::new(move || {
+        std::thread::spawn(move || tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            let other = StoreClient::new(&source);
+            hooks::handle(&other, &connection(), "codex", None, &saved_state, json!({"event":"Stop","cwd":target,"session_id":"snapshot-stop","turn_id":"1"})).await.unwrap();
+            open_outbox(&other, &connection(), &saved_state).unwrap().flush(&other, "db").await.unwrap();
+        })).join().unwrap();
+    })));
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(count).unwrap(),
+        "x",
+        "one stop retried the model twice"
+    );
 }

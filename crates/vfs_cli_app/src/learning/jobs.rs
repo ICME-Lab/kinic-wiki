@@ -17,6 +17,10 @@ pub struct LearningJob {
     #[serde(default)]
     pub config_hash: Option<String>,
 }
+#[cfg(test)]
+thread_local! {
+    pub(super) static TEST_AFTER_WAKE_SNAPSHOT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
 pub struct JobQueue {
     conn: Connection,
 }
@@ -39,7 +43,7 @@ impl JobQueue {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         }
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(run TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1), pid INTEGER NOT NULL);")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(run TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1), pid INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS wakeup(singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);")?;
         Ok(Self { conn })
     }
     pub fn enqueue(&self, run: &str, cwd: &Path, config: &Path) -> Result<()> {
@@ -80,6 +84,46 @@ impl JobQueue {
             )? == 1,
             "job missing"
         );
+        Ok(())
+    }
+    pub fn enqueue_with_wakeup(&self, run: &str, cwd: &Path, config: &Path) -> Result<()> {
+        let transaction = self.conn.unchecked_transaction()?;
+        self.enqueue(run, cwd, config)?;
+        self.request_wakeup()?;
+        transaction.commit()?;
+        Ok(())
+    }
+    pub fn wakeup_and_jobs(&self) -> Result<(Option<i64>, Vec<LearningJob>)> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let generation = self.pending_wakeup()?;
+        #[cfg(test)]
+        if let Some(callback) = TEST_AFTER_WAKE_SNAPSHOT.with(|hook| hook.borrow_mut().take()) {
+            callback();
+        }
+        let jobs = self.list()?;
+        transaction.commit()?;
+        Ok((generation, jobs))
+    }
+    pub fn request_wakeup(&self) -> Result<()> {
+        self.conn.execute("INSERT INTO wakeup(singleton,generation,acknowledged) VALUES(1,1,0) ON CONFLICT(singleton) DO UPDATE SET generation=generation+1", [])?;
+        Ok(())
+    }
+    pub fn pending_wakeup(&self) -> Result<Option<i64>> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT generation FROM wakeup WHERE singleton=1 AND generation > acknowledged",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+    pub fn acknowledge_wakeup(&self, generation: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE wakeup SET acknowledged=?1 WHERE singleton=1 AND generation=?1",
+            [generation],
+        )?;
         Ok(())
     }
     pub fn acquire(&self) -> Result<Option<JobLease<'_>>> {
@@ -140,6 +184,22 @@ pub(super) fn process_alive(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn newer_wakeup_is_not_cleared_by_an_older_acknowledgement() {
+        let temp = tempfile::tempdir().unwrap();
+        let q = JobQueue::open(temp.path(), "identity-db", "project-a").unwrap();
+        q.request_wakeup().unwrap();
+        let first = q.pending_wakeup().unwrap().unwrap();
+        q.request_wakeup().unwrap();
+        q.acknowledge_wakeup(first).unwrap();
+        let second = q.pending_wakeup().unwrap().unwrap();
+        assert!(second > first);
+        q.acknowledge_wakeup(second).unwrap();
+        assert_eq!(q.pending_wakeup().unwrap(), None);
+        q.request_wakeup().unwrap();
+        q.acknowledge_wakeup(first).unwrap();
+        assert!(q.pending_wakeup().unwrap().unwrap() > second);
+    }
     #[test]
     fn jobs_survive_reopen_deduplicate_and_partition_projects() {
         let temp = tempfile::tempdir().unwrap();

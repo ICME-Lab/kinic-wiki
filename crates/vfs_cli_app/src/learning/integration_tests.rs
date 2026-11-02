@@ -9,7 +9,7 @@ use vfs_types::*;
 
 pub(crate) struct StoreClient {
     pub(crate) store: FsStore,
-    deny: AtomicBool,
+    pub(crate) deny: AtomicBool,
     fail_after_write: AtomicBool,
     pub(crate) fail_after_publication: AtomicBool,
     fail_after_batch: AtomicBool,

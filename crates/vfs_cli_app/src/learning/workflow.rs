@@ -574,6 +574,7 @@ async fn learn_value_at(
             project_root,
             state,
             recall_config,
+            require_wakeup,
         } => {
             job_driver::drain_with_config(
                 client,
@@ -581,6 +582,7 @@ async fn learn_value_at(
                 &project_root,
                 &state,
                 recall_config.as_deref(),
+                require_wakeup,
             )
             .await
         }
@@ -1538,7 +1540,7 @@ pub async fn deliver(
                 .map(std::fs::canonicalize)
                 .transpose()?;
             let request = json!({"cwd":cwd,"__kinic_config":effective});
-            if let Err(error) = hooks::replay_after(
+            match hooks::replay_after(
                 client,
                 c,
                 engine,
@@ -1549,8 +1551,11 @@ pub async fn deliver(
             )
             .await
             {
-                outbox.failure("inbox_replay_failed")?;
-                return Err(error);
+                Ok(_) => {}
+                Err(error) => {
+                    outbox.failure("inbox_replay_failed")?;
+                    return Err(error);
+                }
             }
         }
     }
@@ -1574,7 +1579,9 @@ pub async fn deliver(
         && project.enabled
     {
         project.validate_connection(c)?;
-        if job_driver::launch(c, state, cwd, &path).is_err() {
+        let queue = job_driver::queue(client, c, state, &project)?;
+        let pending = queue.pending_wakeup()?;
+        if pending.is_some() && job_driver::launch(c, state, cwd, &path).is_err() {
             outbox.failure("drain_spawn_failed")?;
         }
     }
@@ -1603,7 +1610,9 @@ pub async fn replay_hook_inbox_after(
     current: &Path,
     current_request: &Value,
 ) -> Result<()> {
-    hooks::replay_after(client, c, engine, config, state, current, current_request).await
+    hooks::replay_after(client, c, engine, config, state, current, current_request)
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]

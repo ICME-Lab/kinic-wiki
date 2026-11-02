@@ -31,13 +31,15 @@ pub fn enqueue(
     path: &Path,
 ) -> Result<()> {
     if project.enabled {
-        queue(client, c, state, project)?.enqueue(run, cwd, path)?;
+        let queue = queue(client, c, state, project)?;
+        queue.enqueue_with_wakeup(run, cwd, path)?;
     }
     Ok(())
 }
 #[cfg(test)]
 thread_local! {
     pub(super) static TEST_DELIVERY_PENDING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    pub(super) static TEST_AFTER_OUTBOX_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
     pub(super) static TEST_LAUNCHES: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 #[cfg(test)]
@@ -111,7 +113,7 @@ fn drain_command(
     config: &Path,
 ) -> Result<std::process::Command> {
     let mut cmd = cli_command(c, cwd)?;
-    cmd.args(["learn", "drain", "--project-root"])
+    cmd.args(["learn", "drain", "--require-wakeup", "--project-root"])
         .arg(cwd)
         .arg("--recall-config")
         .arg(config);
@@ -127,7 +129,7 @@ pub async fn drain(
     root: &Path,
     state: &StateArgs,
 ) -> Result<Value> {
-    drain_with_config(client, c, root, state, None).await
+    drain_with_config(client, c, root, state, None, false).await
 }
 pub async fn drain_with_config(
     client: &impl VfsApi,
@@ -135,6 +137,7 @@ pub async fn drain_with_config(
     root: &Path,
     state: &StateArgs,
     config: Option<&Path>,
+    require_wakeup: bool,
 ) -> Result<Value> {
     let effective_state = target_state(state, root)?;
     let state = &effective_state;
@@ -160,10 +163,15 @@ pub async fn drain_with_config(
     // lease before the final queue check: an enqueuer either sees an owner that
     // will recheck, or can start its own owner after release.
     let mut attempted = std::collections::BTreeSet::new();
+    let mut first_pass = true;
     loop {
         let Some(lease) = q.acquire()? else {
             return Ok(json!({"busy":true,"jobs":q.list()?}));
         };
+        if first_pass && require_wakeup && q.pending_wakeup()?.is_none() {
+            return Ok(json!({"already_woken":true,"jobs":q.list()?}));
+        }
+        first_pass = false;
         let outbox = open_outbox(client, c, state)?;
         outbox
             .flush_exclusive(client, c.database_id.as_deref().unwrap())
@@ -189,8 +197,18 @@ pub async fn drain_with_config(
             }
             continue;
         }
-        for mut job in q.list()? {
+        #[cfg(test)]
+        if let Some(callback) = TEST_AFTER_OUTBOX_CHECK.with(|hook| hook.borrow_mut().take()) {
+            callback();
+        }
+        let (wake_generation, jobs) = q.wakeup_and_jobs()?;
+        let mut delivery_blocked = false;
+        for mut job in jobs {
             if attempted.contains(&job.run_id) {
+                continue;
+            }
+            if outbox.pending_run(&job.run_id)? {
+                delivery_blocked = true;
                 continue;
             }
             let current = load_project(&path)?;
@@ -243,8 +261,27 @@ pub async fn drain_with_config(
                 q.save(&job)?;
             }
         }
+        if !delivery_blocked && let Some(generation) = wake_generation {
+            q.acknowledge_wakeup(generation)?;
+        }
         drop(lease);
-        if !load_project(&path)?.enabled || !unattempted(&q.list()?, &attempted) {
+        if delivery_blocked {
+            if q.list()?
+                .iter()
+                .any(|job| outbox.pending_run(&job.run_id).unwrap_or(true))
+            {
+                return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
+            }
+            continue;
+        }
+        if !load_project(&path)?.enabled {
+            break;
+        }
+        if q.pending_wakeup()?.is_some() {
+            attempted.clear();
+            continue;
+        }
+        if !unattempted(&q.list()?, &attempted) {
             break;
         }
     }

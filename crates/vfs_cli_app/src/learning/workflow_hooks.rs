@@ -214,6 +214,9 @@ pub async fn handle(
         redact(&mut task_value);
         let outbox = open_outbox(client, c, state)?;
         outbox.enqueue(&event(&id,"run",json!({"project_id":project.as_ref().map(|p|&p.project_id),"task":task_value,"engine":engine,"repository":cwd,"start_commit":git(&cwd,&["rev-parse","HEAD"]).await.ok(),"model":project.as_ref().and_then(|p|p.runner.model.clone()),"settings":project.as_ref().map(|p|safe_runner(&p.runner))})))?;
+        if let Some(p) = job_project.filter(|p| p.enabled) {
+            job_driver::queue(client, c, state, p)?.request_wakeup()?;
+        }
         return Ok(
             json!({"routing_binding":binding,"additionalContext":receipt.rendered,"receipt_id":receipt.id,"run_id":id,"hookSpecificOutput":{"hookEventName":kind,"additionalContext":receipt.rendered},"pending_sync":true}),
         );
@@ -368,7 +371,9 @@ pub async fn replay(
         }
     }
     let current_request: Value = read_json(current)?;
-    replay_after(client, c, engine, config, state, current, &current_request).await
+    replay_after(client, c, engine, config, state, current, &current_request)
+        .await
+        .map(|_| ())
 }
 /// Replay older spooled entries routed like `current_request`. The current entry
 /// may already be removed; its path only identifies the inbox and is skipped.
@@ -380,7 +385,7 @@ pub async fn replay_after(
     state: &StateArgs,
     current: &Path,
     current_request: &Value,
-) -> Result<()> {
+) -> Result<bool> {
     let effective_config = current_request["__kinic_config"]
         .as_str()
         .map(PathBuf::from);
@@ -390,6 +395,7 @@ pub async fn replay_after(
         .collect::<std::io::Result<Vec<_>>>()?;
     pending.sort();
     let mut processed = 0;
+    let mut wake_learning = false;
     for path in pending
         .into_iter()
         .filter(|p| p != current && p.extension().is_some_and(|e| e == "json"))
@@ -464,7 +470,8 @@ pub async fn replay_after(
             .as_str()
             .or(request["hook_event_name"].as_str())
             .unwrap_or("record");
-        if ["recall", "UserPromptSubmit", "SessionStart"].contains(&kind) {
+        let replayed_recall = ["recall", "UserPromptSubmit", "SessionStart"].contains(&kind);
+        if replayed_recall {
             request["event"] = json!("record");
             request["missing_recall"] = json!(true);
         }
@@ -477,10 +484,22 @@ pub async fn replay_after(
                 .remove("transcript_path");
             request["session_evidence"] = json!({"complete":false,"missing":true,"reason":"legacy inbox has no captured transcript"});
         }
-        handle(client, c, &saved_engine, saved_config, state, request).await?;
+        let durable_project = project.as_ref().filter(|p| {
+            p.enabled
+                && (explicit.is_none()
+                    || explicit.is_some_and(|path| {
+                        crate::agent_config::read_json_value(path)
+                            .is_ok_and(|value| value["version"] == 2)
+                    }))
+        });
+        let reply = handle(client, c, &saved_engine, saved_config, state, request).await?;
+        if replayed_recall && let Some(p) = durable_project {
+            job_driver::queue(client, c, state, p)?.request_wakeup()?;
+        }
+        wake_learning |= reply["queued"] == true;
         std::fs::remove_file(path)?;
     }
-    Ok(())
+    Ok(wake_learning)
 }
 
 pub fn pending_count(state: &StateArgs, config: &Path) -> Result<usize> {

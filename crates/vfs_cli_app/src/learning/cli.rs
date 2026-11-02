@@ -118,6 +118,8 @@ pub enum LearnCommand {
         project_root: PathBuf,
         #[arg(long)]
         recall_config: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        require_wakeup: bool,
         #[command(flatten)]
         state: StateArgs,
     },
