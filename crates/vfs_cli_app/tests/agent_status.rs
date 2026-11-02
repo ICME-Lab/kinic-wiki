@@ -10,6 +10,7 @@ fn status(root: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(root)
         .env("HOME", home)
         .env("ICP_HOME", home.join("icp"))
+        .env_remove("CODEX_HOME")
         .env_remove("VFS_DATABASE_ID")
         .env_remove("VFS_CANISTER_ID")
         .env_remove("KINIC_LEARNING_HOME")
@@ -438,6 +439,7 @@ fn current_cli_intake_is_separate_from_records_and_old_config_partitions() {
             .env_clear()
             .env("HOME", &home)
             .env("ICP_HOME", home.join("icp"))
+            .env_remove("CODEX_HOME")
             .env("PATH", "/usr/bin:/bin")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -977,4 +979,281 @@ fn delivery_status_reports_persisted_failure_and_unknown_legacy_age_without_writ
     assert!(v["records"]["oldest_pending_at"].is_null());
     assert_eq!(v["records"]["pending_time_unknown"], true);
     assert_eq!(before, tree(root));
+}
+
+#[test]
+fn readiness_distinguishes_recall_from_portable_learning_and_hook_trust() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let home = root.join("home");
+    fs::create_dir_all(root.join(".kinic")).unwrap();
+    fs::write(
+        root.join(".kinic/config.toml"),
+        "[learning]\nbudget_tokens=1000\n[agents.codex]\nexecutable='/bin/false'\n",
+    )
+    .unwrap();
+    fs::create_dir_all(home.join(".codex/plugins/kinic-skill-recorder/hooks")).unwrap();
+    fs::write(
+        home.join(".codex/plugins/kinic-skill-recorder/hooks/hooks.json"),
+        "{}",
+    )
+    .unwrap();
+    fs::write(
+        home.join(".codex/config.toml"),
+        "[plugins.\"kinic-skill-recorder@personal-plugins\"]\nenabled=true\n",
+    )
+    .unwrap();
+    let before = tree(root);
+    for command in ["status", "doctor"] {
+        let output = status(root, &home, &["agent", command, "--json"]);
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["readiness"]["recall"]["status"], "ok");
+        assert_eq!(
+            value["readiness"]["automatic_learning"]["code"],
+            "learning_project_missing"
+        );
+        assert!(
+            value["readiness"]["automatic_learning"]["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("setup")
+        );
+        let engine = &value["readiness"]["engines"][0];
+        assert_eq!(engine["placement"]["status"], "ok");
+        assert_eq!(
+            engine["plugin_enablement"]["code"],
+            "plugin_enabled_in_config"
+        );
+        assert_eq!(engine["plugin_installation"]["status"], "unknown");
+        assert_eq!(engine["hook_trust"]["status"], "unknown");
+        assert_eq!(value["readiness"]["operation"]["status"], "unknown");
+        if command == "doctor" {
+            assert!(
+                value["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["id"] == "learning.project"
+                        && c["code"] == "learning_project_missing")
+            );
+        }
+    }
+    assert_eq!(tree(root), before);
+}
+
+#[test]
+fn readiness_reports_disabled_or_invalid_project_and_plugin_without_secret_excerpts() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let home = root.join("home");
+    project(root);
+    let path = root.join(".kinic-learning.json");
+    let mut configured: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    configured["enabled"] = json!(false);
+    fs::write(&path, configured.to_string()).unwrap();
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    fs::write(
+        home.join(".codex/config.toml"),
+        "[plugins.\"kinic-skill-recorder@personal-plugins\"]\nenabled=false\n",
+    )
+    .unwrap();
+    let value = report(status(root, &home, &["agent", "status", "--json"]));
+    assert_eq!(
+        value["readiness"]["automatic_learning"]["code"],
+        "learning_project_disabled"
+    );
+    assert_eq!(
+        value["readiness"]["engines"][0]["plugin_enablement"]["code"],
+        "plugin_disabled_in_config"
+    );
+    fs::write(path, "{secret-malformed-project").unwrap();
+    fs::write(home.join(".codex/config.toml"), "secret-malformed-config").unwrap();
+    let output = status(root, &home, &["agent", "status", "--json"]);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret-malformed"));
+    let value = report(output);
+    assert_eq!(
+        value["readiness"]["automatic_learning"]["code"],
+        "learning_project_invalid"
+    );
+}
+
+#[test]
+fn status_summary_uses_observed_delivery_outcome_without_claiming_context_delivery() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let state = root.join("state");
+    seed_records(root, &state);
+    let path = state.join("learning-outbox.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("INSERT INTO learning_delivery(scope,last_attempt_at,last_success_at,last_failure_at,last_error_code) SELECT DISTINCT scope,'2026-10-16T02:00:00Z','2026-10-16T01:00:00Z','2026-10-16T02:00:00Z','delivery_failed' FROM learning_outbox;").unwrap();
+    drop(db);
+    let value = report(status(
+        root,
+        &root.join("home"),
+        &[
+            "agent",
+            "status",
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(value["summary"]["pending_events"], 1);
+    assert_eq!(value["summary"]["latest_send"]["outcome"], "failure");
+    assert_eq!(
+        value["summary"]["last_context_delivered"]["status"],
+        "unknown"
+    );
+    assert_eq!(
+        value["summary"]["last_context_delivered"]["code"],
+        "receipt_not_delivery_evidence"
+    );
+    assert_eq!(
+        value["readiness"]["operation"]["code"],
+        "local_records_observed"
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("UPDATE learning_delivery SET last_attempt_at='2026-10-16T03:00:00Z'")
+        .unwrap();
+    drop(db);
+    let value = report(status(
+        root,
+        &root.join("home"),
+        &[
+            "agent",
+            "status",
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(value["summary"]["latest_send"]["outcome"], "unknown");
+    assert_eq!(
+        value["summary"]["latest_send"]["code"],
+        "send_outcome_not_observed"
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("UPDATE learning_delivery SET last_attempt_at='2026-10-16T01:00:00Z',last_failure_at='invalid secret timestamp'").unwrap();
+    drop(db);
+    let value = report(status(
+        root,
+        &root.join("home"),
+        &[
+            "agent",
+            "status",
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(value["summary"]["latest_send"]["outcome"], "unknown");
+    assert!(!value.to_string().contains("invalid secret timestamp"));
+}
+
+#[test]
+fn keyring_diagnostics_explain_scoped_authorization_without_loading_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let home = root.join("home");
+    project(root);
+    let identity = home.join("icp/identity");
+    fs::create_dir_all(&identity).unwrap();
+    fs::write(
+        identity.join("identity_defaults.json"),
+        r#"{"default":"fixture"}"#,
+    )
+    .unwrap();
+    fs::write(
+        identity.join("identity_list.json"),
+        r#"{"v":1,"identities":{"fixture":{"kind":"keyring"}}}"#,
+    )
+    .unwrap();
+    for granted in [false, true] {
+        if granted {
+            vfs_cli_app::identity_policy::save(
+                &home,
+                &vfs_cli_app::identity_policy::Grant {
+                    project_root: root.canonicalize().unwrap(),
+                    replica_host: "http://127.0.0.1:1".into(),
+                    canister_id: "aaaaa-aa".into(),
+                    database_id: "db".into(),
+                    identity_name: "fixture".into(),
+                    principal: "bound-caller".into(),
+                },
+            )
+            .unwrap();
+        }
+        let before = tree(root);
+        for command in ["doctor", "status"] {
+            let output = status(root, &home, &["agent", command, "--json"]);
+            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+            let check = &value["readiness"]["identity"];
+            assert_eq!(check["status"], "unknown");
+            assert_eq!(
+                check["code"],
+                if granted {
+                    "keyring_access_unverified"
+                } else {
+                    "keyring_authorization_missing"
+                }
+            );
+            assert!(check["next_action"].as_str().unwrap().contains(if granted {
+                "agent recall"
+            } else {
+                "--authorize-keyring --apply"
+            }));
+            if command == "doctor" {
+                assert!(
+                    value["checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|c| c["id"] == "identity" && c["code"] == check["code"])
+                );
+            } else {
+                assert!(value["target"]["stored_principal"].is_null());
+            }
+        }
+        assert_eq!(tree(root), before);
+    }
+}
+
+#[test]
+fn doctor_placement_honors_selected_codex_home_consistently() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let home = root.join("home");
+    fs::create_dir_all(home.join(".codex/plugins/kinic-skill-recorder/hooks")).unwrap();
+    fs::write(
+        home.join(".codex/plugins/kinic-skill-recorder/hooks/hooks.json"),
+        "{}",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_kinic-vfs-cli"))
+        .args(["agent", "doctor", "--engine", "codex", "--json"])
+        .current_dir(root)
+        .env("HOME", &home)
+        .env("ICP_HOME", home.join("icp"))
+        .env("CODEX_HOME", root.join("selected-codex"))
+        .env_remove("VFS_DATABASE_ID")
+        .env_remove("VFS_CANISTER_ID")
+        .env_remove("KINIC_LEARNING_CONFIG")
+        .env_remove("KINIC_LEARNING_HOME")
+        .output()
+        .unwrap();
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value["readiness"]["engines"][0]["placement"]["code"],
+        "payload_missing"
+    );
+    assert!(
+        value["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "engine.codex.placement" && c["code"] == "payload_missing")
+    );
+    assert!(!root.join("selected-codex").exists());
 }

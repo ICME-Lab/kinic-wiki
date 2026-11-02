@@ -2,7 +2,7 @@
 use crate::{agent_config::AgentConfig, agent_setup::path_candidates, learning::cli::DoctorArgs};
 use anyhow::Result;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use vfs_cli::{
     cli::ConnectionArgs,
@@ -162,6 +162,237 @@ pub async fn remote_checks(client: &impl VfsApi, db: &str, namespace: &str) -> V
     ));
     checks
 }
+fn project_check(config: &AgentConfig, explicit: Option<&Path>) -> Check {
+    let (status, code, evidence, remedy) = match config.portable_project(explicit) {
+        Ok(Some(project)) if project.enabled => (
+            "ok",
+            "learning_project_configured",
+            "Portable automatic learning project is configured and enabled; operation is not verified.",
+            "Run a normal task, then kinic-vfs-cli agent status to inspect recorded activity.",
+        ),
+        Ok(Some(_)) => (
+            "warning",
+            "learning_project_disabled",
+            "Portable automatic learning project is disabled.",
+            "Run kinic-vfs-cli learn enable for this project when automatic learning is intended.",
+        ),
+        Ok(None) => (
+            "warning",
+            "learning_project_missing",
+            "No portable automatic learning project is configured; recall settings alone do not enable it.",
+            "Run kinic-vfs-cli learn setup --help, then configure this project with its runner and destination.",
+        ),
+        Err(_) => (
+            "error",
+            "learning_project_invalid",
+            "Portable project configuration could not be validated; parser input is withheld.",
+            "Inspect .kinic-learning.json and run kinic-vfs-cli learn setup --help.",
+        ),
+    };
+    Check::new("learning.project", status, code, evidence, remedy)
+}
+fn stage(status: &str, code: &str, evidence: &str, next_action: &str) -> Value {
+    json!({"status":status,"code":code,"evidence":evidence,"next_action":next_action})
+}
+fn codex_enablement(codex_home: &Path) -> Value {
+    let config = vfs_cli::connection::read_local_config_bytes(&codex_home.join("config.toml"))
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok());
+    let entries: Vec<_> = config
+        .as_ref()
+        .and_then(|config| config.get("plugins"))
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|plugins| plugins.iter())
+        .filter(|(name, _)| name.starts_with("kinic-skill-recorder@"))
+        .collect();
+    // Multiple copies may have different effective selection. Do not guess.
+    let enabled = if entries.len() == 1 {
+        entries[0].1.get("enabled").and_then(toml::Value::as_bool)
+    } else {
+        None
+    };
+    let (status, code, evidence) = match enabled {
+        Some(true) => (
+            "ok",
+            "plugin_enabled_in_config",
+            "One matching plugin is enabled in the selected Codex config.toml; runtime loading is unverified.",
+        ),
+        Some(false) => (
+            "warning",
+            "plugin_disabled_in_config",
+            "The matching plugin is disabled in the selected Codex config.toml.",
+        ),
+        None => (
+            "unknown",
+            "plugin_enablement_unverified",
+            "No single readable plugin enablement setting was established.",
+        ),
+    };
+    stage(
+        status,
+        code,
+        evidence,
+        "Inspect the Kinic plugin in Codex settings, enable it if intended, and restart the application when required.",
+    )
+}
+/// Filesystem-only readiness. Application trust and runtime loading cannot be
+/// inferred from source placement, cache directories or persisted enablement.
+pub(crate) fn readiness(
+    config: Option<&AgentConfig>,
+    explicit: Option<&Path>,
+    home: Option<&Path>,
+    engines: &[String],
+) -> Value {
+    let recall = match config.map(|c| c.recall(explicit)) {
+        Some(Ok(Some(_))) => stage(
+            "ok",
+            "recall_configured",
+            "Recall settings resolved; retrieval is unverified.",
+            "Run kinic-vfs-cli agent recall for retrieval.",
+        ),
+        Some(Ok(None)) => stage(
+            "warning",
+            "recall_unconfigured",
+            "No recall configuration was found.",
+            "Run kinic-vfs-cli agent setup --help.",
+        ),
+        _ => stage(
+            "unknown",
+            "recall_configuration_unavailable",
+            "Recall configuration could not be resolved.",
+            "Inspect recall settings; raw parser input is withheld.",
+        ),
+    };
+    let project = config.map(|c| project_check(c, explicit));
+    let project = project
+        .map(|c| stage(c.status, c.code, c.evidence, c.remedy))
+        .unwrap_or_else(|| {
+            stage(
+                "unknown",
+                "learning_configuration_unavailable",
+                "Project settings could not be loaded.",
+                "Check HOME, cwd and existing configuration files.",
+            )
+        });
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home.map(|h| h.join(".codex")));
+    let engines: Vec<_> = engines.iter().map(|engine| {
+        let payload = if engine == "codex" {
+            codex_home.as_ref().map(|h| h.join("plugins/kinic-skill-recorder/hooks/hooks.json"))
+        } else {
+            config.map(|c| c.root.join(".kinic/plugins/dsh/kinic-learning.patch.yml"))
+        };
+        let present = payload.as_ref().is_some_and(|p| p.is_file());
+        let enablement = if engine == "codex" {
+            codex_home.as_deref().map(codex_enablement)
+        } else { None }.unwrap_or_else(|| stage("unknown", "plugin_enablement_unverified", "Application enablement was not established from local settings.", "Inspect the application's plugin or profile settings."));
+        json!({"engine":engine,
+            "placement":stage(if present {"ok"} else {"warning"},if present {"payload_present"} else {"payload_missing"},"Only the default hook or overlay file location was inspected.","Run kinic-vfs-cli agent setup --help; inspect custom output locations separately."),
+            "plugin_installation":stage("unknown","plugin_installation_unverified","Source placement and cache files do not establish application installation.","Inspect the installed Kinic plugin in the application's plugin settings."),
+            "plugin_enablement":enablement,
+            "hook_trust":stage("unknown","hook_trust_unverified","Application hook trust was not observed.","Review hook trust in the application, run a normal task, then kinic-vfs-cli agent status.")})
+    }).collect();
+    let next = if project["status"] != "ok" {
+        project["next_action"].clone()
+    } else {
+        json!(
+            "Run a normal task, then kinic-vfs-cli agent status; inspect application plugin and hook trust settings."
+        )
+    };
+    json!({"recall":recall,"automatic_learning":project,"engines":engines,
+        "operation":stage("unknown","operation_not_observed","No local operation evidence was inspected by this readiness check.","Run a normal task, then kinic-vfs-cli agent status."),"next_action":next})
+}
+pub(crate) fn print_readiness(value: &Value) {
+    for (label, key) in [
+        ("Recall", "recall"),
+        ("Automatic learning", "automatic_learning"),
+        ("Operation", "operation"),
+    ] {
+        let stage = &value[key];
+        println!(
+            "{label}: {} [{}]. {}",
+            stage["status"].as_str().unwrap_or("unknown"),
+            stage["code"].as_str().unwrap_or("unknown"),
+            stage["next_action"]
+                .as_str()
+                .unwrap_or("Inspect local configuration.")
+        );
+    }
+    if let Some(identity) = value.get("identity") {
+        println!(
+            "Identity: {} [{}]. {}",
+            identity["status"].as_str().unwrap_or("unknown"),
+            identity["code"].as_str().unwrap_or("unknown"),
+            identity["next_action"]
+                .as_str()
+                .unwrap_or("Inspect the selected identity.")
+        );
+    }
+    for engine in value["engines"].as_array().into_iter().flatten() {
+        for key in [
+            "placement",
+            "plugin_installation",
+            "plugin_enablement",
+            "hook_trust",
+        ] {
+            println!(
+                "{} {key}: {} [{}]. {}",
+                engine["engine"].as_str().unwrap_or("unknown"),
+                engine[key]["status"].as_str().unwrap_or("unknown"),
+                engine[key]["code"].as_str().unwrap_or("unknown"),
+                engine[key]["next_action"]
+                    .as_str()
+                    .unwrap_or("Inspect application settings.")
+            );
+        }
+    }
+}
+pub(crate) fn keyring_check(
+    home: Option<&Path>,
+    cwd: &Path,
+    connection: &ResolvedConnection,
+    engine: Option<&str>,
+) -> Option<Check> {
+    let (name, kind) = crate::identity::diagnostic_selection().ok()?;
+    if kind != "keyring" {
+        return None;
+    }
+    let policy = home
+        .ok_or_else(|| anyhow::anyhow!("home unavailable"))
+        .and_then(|home| {
+            crate::identity_policy::project_root(cwd)
+                .and_then(|root| crate::identity_policy::lookup(home, &root, connection))
+        });
+    let remedy = if engine == Some("dsh") {
+        "Run kinic-vfs-cli agent setup --engine dsh --authorize-keyring --apply to authorize this project and destination explicitly."
+    } else {
+        "Run kinic-vfs-cli agent setup --engine codex --authorize-keyring --apply to authorize this project and destination explicitly."
+    };
+    let (code, evidence, remedy) = match policy {
+        Ok(Some(grant)) if grant.check_name(&name, &kind).is_ok() => (
+            "keyring_access_unverified",
+            "A matching scoped keyring grant is saved; read-only diagnostics cannot verify credential access or the actual principal.",
+            "Run kinic-vfs-cli agent recall with a normal task query to exercise the scoped identity; diagnostics never export keyring credentials.",
+        ),
+        Ok(None) => (
+            "keyring_authorization_missing",
+            "Selected identity uses keyring storage; no matching project/destination grant was found and diagnostics cannot access its credentials.",
+            remedy,
+        ),
+        _ => (
+            "keyring_authorization_unavailable",
+            "Selected identity uses keyring storage; the saved grant could not be matched to this project, destination and identity.",
+            "Inspect the selected identity and destination before reconciling the saved scoped grant; run kinic-vfs-cli agent setup --help.",
+        ),
+    };
+    Some(Check::new("identity", "unknown", code, evidence, remedy))
+}
+pub(crate) fn check_stage(check: &Check) -> Value {
+    stage(check.status, check.code, check.evidence, check.remedy)
+}
 fn local_checks(config: &AgentConfig, args: &DoctorArgs, home: &Path) -> Vec<Check> {
     let mut checks = vec![Check::new(
         "configuration",
@@ -210,6 +441,7 @@ fn local_checks(config: &AgentConfig, args: &DoctorArgs, home: &Path) -> Vec<Che
             "Check budget_tokens and recall field types; parser input is withheld.",
         )),
     }
+    checks.push(project_check(config, None));
     let engines = args
         .engine
         .clone()
@@ -256,7 +488,10 @@ fn local_checks(config: &AgentConfig, args: &DoctorArgs, home: &Path) -> Vec<Che
             "Run a normal task to observe model access. This doctor has no --probe mode.",
         ));
         let plugin = if engine == "codex" {
-            home.join(".codex/plugins/kinic-skill-recorder/hooks/hooks.json")
+            std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".codex"))
+                .join("plugins/kinic-skill-recorder/hooks/hooks.json")
         } else {
             config
                 .root
@@ -347,6 +582,7 @@ pub async fn run(args: &DoctorArgs, connection: &ConnectionArgs) -> Result<i32> 
         connection.database_id.clone(),
     );
     let mut identity = None;
+    let mut identity_stage = None;
     let mut target = json!(null);
     match preview {
         Ok(preview) => {
@@ -374,13 +610,28 @@ pub async fn run(args: &DoctorArgs, connection: &ConnectionArgs) -> Result<i32> 
                 ));
             }
             if let Some(canister) = preview.canister_id.as_deref() {
+                let resolved = ResolvedConnection {
+                    replica_host: preview.replica_host.clone(),
+                    canister_id: canister.into(),
+                    database_id: preview.database_id.clone(),
+                    replica_host_source: preview.replica_host_source.clone(),
+                    canister_id_source: preview.canister_id_source.clone().unwrap_or_default(),
+                    database_id_source: preview.database_id_source.clone(),
+                };
+                let keyring = keyring_check(
+                    home.as_deref(),
+                    &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                    &resolved,
+                    args.engine.as_deref(),
+                );
+                identity_stage = keyring.as_ref().map(check_stage);
                 match crate::identity::load_diagnostic_identity(canister,connection.allow_non_ii_identity) {
                     Ok(Some(found))=> {
                         if let Some(expected) = portable.as_ref().and_then(|project| project.principal.as_deref()) {
                             checks.push(project_identity_check(expected, found.sender().ok().map(|p| p.to_text()).as_deref()));
                         }
                         identity=Some(found); checks.push(Check::new("identity","ok","credential_loaded","Stored identity and delegation loaded read-only; authentication will be tested by a read request.","No credential was exported or refreshed.")); }
-                    Ok(None)=>checks.push(Check::new("identity","unknown","credential_storage_unavailable","Identity storage cannot be accessed without an external credential operation.","Check the active icp-cli identity separately; doctor will identify any read as anonymous.")),
+                    Ok(None)=>checks.push(keyring.unwrap_or_else(|| Check::new("identity","unknown","credential_storage_unavailable","Identity storage cannot be accessed without an external credential operation.","Check the active icp-cli identity separately; doctor will identify any read as anonymous."))),
                     Err(_)=>checks.push(Check::new("identity","error","credential_missing_or_invalid","Active stored identity or delegation is missing, invalid or expired.","Configure/login to an icp-cli identity separately; doctor does not refresh it.")),
                 }
             }
@@ -463,11 +714,22 @@ pub async fn run(args: &DoctorArgs, connection: &ConnectionArgs) -> Result<i32> 
             "Check existing connection settings; other local checks remain available.",
         )),
     }
+    let settings = config.as_ref().and_then(|c| c.as_ref().ok());
+    let engines = args.engine.clone().map(|e| vec![e]).unwrap_or_else(|| {
+        settings
+            .map(AgentConfig::configured_engines)
+            .unwrap_or_default()
+    });
+    let mut readiness = readiness(settings, None, home.as_deref(), &engines);
+    if let Some(identity) = identity_stage {
+        readiness["identity"] = identity;
+    }
     let code = exit_code(&checks, args.strict);
-    let value = json!({"schema_version":1,"checked_at":chrono::Utc::now().to_rfc3339(),"target":target,"configuration_sources":config.as_ref().and_then(|v|v.as_ref().ok()).map(|c|&c.sources),"checks":checks});
+    let value = json!({"schema_version":1,"checked_at":chrono::Utc::now().to_rfc3339(),"target":target,"readiness":readiness,"configuration_sources":config.as_ref().and_then(|v|v.as_ref().ok()).map(|c|&c.sources),"checks":checks});
     if args.json {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
+        print_readiness(&value["readiness"]);
         for check in value["checks"].as_array().unwrap() {
             println!(
                 "{} {} [{}]: {} {}",

@@ -269,6 +269,12 @@ impl AgentCommand {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SetupArgs {
+    /// Install the prepared Codex plugin with its official CLI (requires --apply).
+    #[arg(long)]
+    pub install_plugin: bool,
+    /// Pin the selected keyring identity for this project and destination (requires --apply).
+    #[arg(long)]
+    pub authorize_keyring: bool,
     #[arg(long, value_parser = ["codex", "dsh"])]
     pub engine: String,
     #[arg(long)]

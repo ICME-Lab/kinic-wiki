@@ -214,6 +214,12 @@ fn delivery(path: &Path, scope: &str, record: &mut Value) {
     }
     let row = conn.query_row("SELECT last_attempt_at,last_success_at,last_failure_at,last_error_code FROM learning_delivery WHERE scope=?1",[scope],|r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?)));
     if let Ok((attempt, success, failure, code)) = row {
+        record["delivery_timestamps_valid"] =
+            json!([&attempt, &success, &failure].iter().all(|value| {
+                value.as_deref().is_none_or(|s| {
+                    s.len() <= 64 && chrono::DateTime::parse_from_rfc3339(s).is_ok()
+                })
+            }));
         record["last_send_attempt_at"] = timestamp(attempt);
         record["last_send_success_at"] = timestamp(success);
         record["last_send_failure"] = match code.as_deref() {
@@ -444,6 +450,51 @@ fn inbox(
     read().unwrap_or_else(|code| unknown(code, None))
 }
 
+fn latest_send(record: &Value) -> Value {
+    let parse = |value: &Value| {
+        value
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+    };
+    let attempt = parse(&record["last_send_attempt_at"]);
+    let success = parse(&record["last_send_success_at"]);
+    let failure = parse(&record["last_send_failure"]["at"]);
+    let result = match (success, failure) {
+        (Some(s), Some(f)) if s > f => Some(("success", s)),
+        (Some(s), Some(f)) if f > s => Some(("failure", f)),
+        (Some(s), None) if record["last_send_failure"]["code"] != "unrecognized_failure_code" => {
+            Some(("success", s))
+        }
+        (None, Some(f)) => Some(("failure", f)),
+        _ => None,
+    };
+    match result.filter(|(_, at)| {
+        record["delivery_timestamps_valid"] == true && attempt.is_none_or(|attempt| attempt <= *at)
+    }) {
+        Some((outcome, at)) => {
+            json!({"status":"observed","code":"send_outcome_recorded","outcome":outcome,"at":at.to_rfc3339(),"scope":record["delivery_scope"],"next_action":if outcome == "failure" {"Run kinic-vfs-cli agent doctor, then retry delivery with kinic-vfs-cli agent flush when the cause is resolved."} else {"Inspect pending events separately; a prior success does not prove the current queue is empty."}})
+        }
+        None => {
+            json!({"status":"unknown","code":"send_outcome_not_observed","outcome":"unknown","at":null,"scope":record["delivery_scope"],"next_action":"Inspect local delivery evidence after a normal task or an explicitly requested flush."})
+        }
+    }
+}
+fn summary(record: &Value, context: &Value, learning: &Value) -> Value {
+    let mut states = std::collections::BTreeMap::<String, usize>::new();
+    if let Some(jobs) = learning["jobs"].as_array() {
+        for job in jobs {
+            *states
+                .entry(job["state"].as_str().unwrap_or("unknown").into())
+                .or_default() += 1;
+        }
+    }
+    json!({"pending_events":record["pending_records"],"pending_events_status":record["status"],
+        "pending_events_next_action":"Use kinic-vfs-cli agent doctor for delivery diagnosis; hook intake counts are a separate stage.",
+        "latest_send":latest_send(record),
+        "last_context_delivered":{"status":"unknown","code":if context["status"] == "observed" {"receipt_not_delivery_evidence"} else {"context_delivery_not_observed"},"observed_at":null,"next_action":"Check the application's context output during a normal task; a stored receipt only proves assembly."},
+        "candidate_states":{"status":learning["status"],"counts":if learning["jobs"].is_array() {json!(states)} else {Value::Null},"scope":"locally recorded jobs for the selected project; partial counts are lower bounds","next_action":"Inspect learning.jobs for candidate/evaluation references; use kinic-vfs-cli learn drain --help for explicit processing."}})
+}
+
 pub fn run(args: &StatusArgs, connection: &ConnectionArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -582,10 +633,26 @@ pub fn run(args: &StatusArgs, connection: &ConnectionArgs) -> Result<()> {
             );
         }
     }
+    let mut readiness =
+        crate::agent_doctor::readiness(settings.as_ref(), explicit, home.as_deref(), &engines);
+    if let Some(connection) = &resolved
+        && let Some(check) = crate::agent_doctor::keyring_check(
+            home.as_deref(),
+            &cwd,
+            connection,
+            engines.first().map(String::as_str),
+        )
+    {
+        readiness["identity"] = crate::agent_doctor::check_stage(&check);
+    }
+    if record["last_record"].is_object() {
+        readiness["operation"] = json!({"status":"observed","code":"local_records_observed","evidence":"At least one attributed local record exists; its producer, hook trust and current process health are unverified.","next_action":"Inspect the latest record, context and send outcome; confirm hook execution in the application."});
+    }
+    let summary = summary(&record, &context, &learning);
     let value = json!({"schema_version":1,"checked_at":chrono::Utc::now().to_rfc3339(),"mode":"local_read_only",
         "target":{"project_root":root,"project_id":project.as_ref().map(|p|&p.project_id),"canister_id":preview.as_ref().and_then(|c|c.canister_id.as_ref()),"database_id":preview.as_ref().and_then(|c|c.database_id.as_ref()),"principal":principal,"stored_principal":stored,"principal_basis":if project.as_ref().and_then(|p|p.principal.as_ref()).is_some(){if stored.is_some(){"configured_project_compared_to_stored_identity"}else{"configured_project_not_authenticated"}}else if stored.is_some(){"stored_identity"}else{"unknown"},"binding":if !config_valid{"configuration_unavailable"}else if !binding_valid{"project_binding_mismatch"}else if resolved.is_some(){"resolved"}else{"incomplete"}},
         "configuration":{"status":if config_valid{"observed"}else{"unknown"},"code":if config_valid{"configuration_read"}else{"configuration_unavailable"},"sources":settings.as_ref().map(|s|&s.sources),"explicit_config":explicit,"engines":engines,"activation":"unverified","operation":"unverified"},
-        "records":record,"context":context,"learning":learning,"intake":intake,
+        "readiness":readiness,"summary":summary,"records":record,"context":context,"learning":learning,"intake":intake,
         "legacy_adapter_queue":unknown("legacy_queue_not_inspected",None),
         "publication":unknown("remote_evidence_not_read",None),"rollback":unknown("remote_evidence_not_read",None)});
     if args.state.json {
@@ -605,6 +672,7 @@ fn text(value: &Value) -> String {
 }
 fn print_text(value: &Value) {
     println!("Local learning evidence (no remote verification)");
+    crate::agent_doctor::print_readiness(&value["readiness"]);
     for (label, key) in [
         ("Project", "project_root"),
         ("Database", "database_id"),
@@ -672,6 +740,16 @@ fn print_text(value: &Value) {
         text(&value["context"]["run_id"])
     );
     println!("Delivery: {}", text(&value["context"]["delivery"]));
+    println!(
+        "Last actual context delivery: {} [{}]",
+        text(&value["summary"]["last_context_delivered"]["status"]),
+        text(&value["summary"]["last_context_delivered"]["code"])
+    );
+    println!(
+        "Latest send outcome: {}. {}",
+        text(&value["summary"]["latest_send"]["outcome"]),
+        text(&value["summary"]["latest_send"]["next_action"])
+    );
     println!("Adoption: {}", text(&value["context"]["adoption"]));
     if let Some(jobs) = value["learning"]["jobs"].as_array() {
         for job in jobs {
