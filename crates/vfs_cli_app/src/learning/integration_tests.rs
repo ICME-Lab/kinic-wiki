@@ -15,6 +15,7 @@ pub(crate) struct StoreClient {
     fail_after_batch: AtomicBool,
     pub(crate) writes: AtomicUsize,
     pub(crate) batch_writes: AtomicUsize,
+    pub(crate) batch_reads: AtomicUsize,
 }
 impl StoreClient {
     pub(crate) fn new(path: &std::path::Path) -> Self {
@@ -28,6 +29,7 @@ impl StoreClient {
             fail_after_batch: AtomicBool::new(false),
             writes: AtomicUsize::new(0),
             batch_writes: AtomicUsize::new(0),
+            batch_reads: AtomicUsize::new(0),
         }
     }
 }
@@ -55,6 +57,15 @@ impl VfsApi for StoreClient {
     async fn read_node(&self, _: &str, p: &str) -> Result<Option<Node>> {
         self.status("db").await?;
         self.store.read_node(p).map_err(|e| anyhow!(e))
+    }
+    async fn read_nodes(
+        &self,
+        _: &str,
+        paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>> {
+        self.batch_reads.fetch_add(1, Ordering::SeqCst);
+        self.status("db").await?;
+        self.store.read_nodes(paths).map_err(|e| anyhow!(e))
     }
     async fn list_nodes(&self, r: ListNodesRequest) -> Result<Vec<NodeEntry>> {
         self.store.list_nodes(r).map_err(|e| anyhow!(e))
