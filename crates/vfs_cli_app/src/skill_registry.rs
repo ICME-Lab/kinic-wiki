@@ -22,8 +22,7 @@ use std::process::{Command, Output, Stdio};
 pub(crate) use vfs_cli::skill_kb::{find_skills, inspect_skill};
 use vfs_client::VfsApi;
 use vfs_types::{
-    DeleteNodeRequest, ListNodesRequest, NodeEntryKind, NodeKind, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    ListNodesRequest, NodeEntryKind, NodeKind, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 const SKILL_PACKAGE_FILE_LIMIT_MAX: usize = 100;
@@ -972,17 +971,26 @@ async fn prune_package_files(
         if keep_files.contains(relative_path) {
             continue;
         }
+        pruned_paths.push((entry.path, entry.etag));
+    }
+    if !pruned_paths.is_empty() {
         client
-            .delete_node(DeleteNodeRequest {
+            .mutate_nodes_batch(vfs_types::MutateNodesBatchRequest {
                 database_id: database_id.to_string(),
-                path: entry.path.clone(),
-                expected_etag: Some(entry.etag),
-                expected_folder_index_etag: None,
+                operations: pruned_paths
+                    .iter()
+                    .map(|(path, etag)| {
+                        vfs_types::NodeMutation::Delete(vfs_types::DeleteNodeItem {
+                            path: path.clone(),
+                            expected_etag: Some(etag.clone()),
+                            expected_folder_index_etag: None,
+                        })
+                    })
+                    .collect(),
             })
             .await?;
-        pruned_paths.push(entry.path);
     }
-    Ok(pruned_paths)
+    Ok(pruned_paths.into_iter().map(|(path, _)| path).collect())
 }
 
 fn discover_skill_package_files(

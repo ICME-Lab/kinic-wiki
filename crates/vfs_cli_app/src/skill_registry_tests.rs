@@ -82,6 +82,7 @@ struct SkillMockClient {
     caller_principal: Mutex<Option<String>>,
     writes: AtomicUsize,
     write_batches: AtomicUsize,
+    mutation_batches: AtomicUsize,
     read_batches: Mutex<Vec<Vec<String>>>,
 }
 
@@ -208,6 +209,34 @@ impl VfsApi for SkillMockClient {
         }
         nodes.remove(&request.path);
         Ok(DeleteNodeResult { path: request.path })
+    }
+
+    async fn mutate_nodes_batch(
+        &self,
+        request: vfs_types::MutateNodesBatchRequest,
+    ) -> Result<Vec<vfs_types::NodeMutationResult>> {
+        self.mutation_batches.fetch_add(1, Ordering::SeqCst);
+        let mut nodes = self.nodes.lock().unwrap();
+        let mut next = nodes.clone();
+        let mut results = Vec::new();
+        for operation in request.operations {
+            let vfs_types::NodeMutation::Delete(item) = operation else {
+                anyhow::bail!("unexpected mutation")
+            };
+            let current = next
+                .get(&item.path)
+                .ok_or_else(|| anyhow::anyhow!("node missing"))?;
+            anyhow::ensure!(
+                item.expected_etag.as_deref() == Some(&current.etag),
+                "etag conflict"
+            );
+            next.remove(&item.path);
+            results.push(vfs_types::NodeMutationResult::Delete(DeleteNodeResult {
+                path: item.path,
+            }));
+        }
+        *nodes = next;
+        Ok(results)
     }
 
     async fn move_node(&self, _request: MoveNodeRequest) -> Result<MoveNodeResult> {
@@ -466,6 +495,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
     let pruned = upsert_skill(&client, "default", temp.path(), "legal-review", true)
         .await
         .expect("prune upsert");
+    assert_eq!(client.mutation_batches.load(Ordering::SeqCst), 1);
     assert_eq!(
         pruned["pruned_paths"],
         serde_json::json!([
