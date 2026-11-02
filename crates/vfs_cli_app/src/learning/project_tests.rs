@@ -61,6 +61,12 @@ async fn setup_is_idempotent_and_projects_are_isolated() {
     handle_project_command(&client, &connection(), &setup(&a, &runner))
         .await
         .unwrap();
+    assert_eq!(
+        client
+            .batch_writes
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
     let first = load_project(&a.join(CONFIG_FILE)).unwrap();
     handle_project_command(&client, &connection(), &setup(&a, &runner))
         .await
