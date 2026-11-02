@@ -1093,6 +1093,21 @@ def record_codex_session(raw_input: str, cli: str | None, pending_dir: Path, now
     return record_source(source, cli, pending_dir, now_ms=now_ms)
 
 
+def session_write_error(cli: str, cause: OSError | subprocess.CalledProcessError) -> str:
+    if isinstance(cause, subprocess.CalledProcessError):
+        try:
+            version = run_cli(cli, "--version")
+            match = re.fullmatch(r"kinic-vfs-cli (\d+)\.(\d+)\.(\d+)\s*", version.stdout)
+            stderr = cause.stderr or ""
+            unsupported = ("unknown variant `folder`" in stderr or
+                           "unrecognized subcommand 'write-nodes'" in stderr)
+            if unsupported and match and tuple(int(part) for part in match.groups()) < (2, 0, 2):
+                return "Session capture requires kinic-vfs-cli 2.0.2 or newer; upgrade the CLI to retry the pending recording."
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return str(cause)[:800]
+
+
 def record_source(source: SourcePayload, cli: str | None, pending_dir: Path, now_ms: int | None = None) -> dict[str, Any]:
     pending_path = save_pending(pending_dir, source, now_ms=now_ms)
     resolved_cli = resolve_cli(cli)
@@ -1114,7 +1129,7 @@ def record_source(source: SourcePayload, cli: str | None, pending_dir: Path, now
             )
             recorded = True
         except (OSError, subprocess.CalledProcessError) as cause:
-            error = str(cause)[:800]
+            error = session_write_error(resolved_cli, cause)
         if recorded:
             skip_paths: set[Path] = set()
             try:

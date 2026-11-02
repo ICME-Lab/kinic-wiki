@@ -6,6 +6,7 @@ Why: SessionEnd hooks must retain evidence without leaking obvious secrets.
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -20,6 +21,37 @@ from kinic_agent_runtime import session
 
 
 class SessionCaptureTests(unittest.TestCase):
+    def test_old_cli_failure_preserves_pending_and_explains_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = session.SourcePayload('/Sources/sessions/codex/a.md', 'text', {'provider': 'codex'})
+            failure = subprocess.CalledProcessError(2, ['cli', 'write-nodes'], stderr='unknown variant `folder`, expected `file` or `source`')
+            version = subprocess.CompletedProcess(['cli', '--version'], 0, 'kinic-vfs-cli 2.0.1\n', '')
+            with mock.patch.object(session, 'resolve_cli', return_value='cli'), mock.patch.object(session, 'run_cli', side_effect=[failure, version]) as run:
+                result = session.record_source(source, 'cli', Path(tmp), now_ms=1)
+            self.assertFalse(result['recorded'])
+            self.assertTrue(Path(result['pending_path']).is_file())
+            self.assertIn('2.0.2', result['error'])
+            self.assertEqual(run.call_count, 2)
+
+    def test_current_or_unknown_cli_failure_keeps_original_error(self) -> None:
+        for output in ('kinic-vfs-cli 2.0.4\n', 'unknown version'):
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as tmp:
+                source = session.SourcePayload('/Sources/sessions/codex/a.md', 'text', {})
+                failure = subprocess.CalledProcessError(7, ['cli', 'write-nodes'])
+                version = subprocess.CompletedProcess(['cli', '--version'], 0, output, '')
+                with mock.patch.object(session, 'resolve_cli', return_value='cli'), mock.patch.object(session, 'run_cli', side_effect=[failure, version]):
+                    result = session.record_source(source, 'cli', Path(tmp), now_ms=1)
+                self.assertEqual(result['error'], str(failure))
+                self.assertTrue(Path(result['pending_path']).is_file())
+
+    def test_old_cli_unrelated_failure_keeps_original_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = session.SourcePayload('/Sources/sessions/codex/a.md', 'text', {})
+            failure = subprocess.CalledProcessError(7, ['cli', 'write-nodes'], stderr='network unavailable')
+            version = subprocess.CompletedProcess(['cli', '--version'], 0, 'kinic-vfs-cli 2.0.1\n', '')
+            with mock.patch.object(session, 'resolve_cli', return_value='cli'), mock.patch.object(session, 'run_cli', side_effect=[failure, version]):
+                result = session.record_source(source, 'cli', Path(tmp), now_ms=1)
+            self.assertEqual(result['error'], str(failure))
     def test_write_payload_batches_parents_and_source(self) -> None:
         calls = []
 
