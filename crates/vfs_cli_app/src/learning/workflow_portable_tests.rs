@@ -864,6 +864,7 @@ async fn hooks_enqueue_evidence_without_remote_writes_and_flush_later() {
     assert_eq!(writes(), before, "hooks must not wait on remote writes");
     let outbox = open_outbox(&client, &c, &state).unwrap();
     let pending = outbox.pending_count().unwrap();
+    let batches_before_flush = client.batch_writes.load(Ordering::SeqCst);
     assert!(
         pending >= 5,
         "receipt, run and tool events stay queued: {pending}"
@@ -872,7 +873,10 @@ async fn hooks_enqueue_evidence_without_remote_writes_and_flush_later() {
         outbox.flush_exclusive(&client, "db").await.unwrap(),
         Some(pending)
     );
-    assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        client.batch_writes.load(Ordering::SeqCst) - batches_before_flush,
+        1
+    );
     assert_eq!(outbox.pending_count().unwrap(), 0);
 }
 

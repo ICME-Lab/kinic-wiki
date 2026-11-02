@@ -70,7 +70,10 @@ pub async fn rebuild_scope_index(
 ) -> Result<()> {
     let scope_name = normalize_scope_name(scope)?;
     let ancestors = scope_ancestors(&scope_name);
-    if ancestors.len() + 1 > 100 {
+    let adds_root = ancestors.last().is_some_and(|scope| {
+        !scope.contains('/') && !RESERVED_ROOT_SCOPES.contains(&scope.as_str())
+    });
+    if ancestors.len() + usize::from(adds_root) > 100 {
         bail!("scope index rebuild exceeds the 100 node batch limit");
     }
     let mut ensured_index_paths = Vec::new();
@@ -110,7 +113,7 @@ pub async fn rebuild_scope_index(
             .find(|node| node.path == scope_index_path)
             .expect("root scope index is pending")
             .content;
-        let summary = first_summary_line(&scope_index);
+        let summary = first_summary_line(scope_index);
         let current_root_node = client.read_node(database_id, WIKI_INDEX_PATH).await?;
         let current_root = current_root_node
             .as_ref()

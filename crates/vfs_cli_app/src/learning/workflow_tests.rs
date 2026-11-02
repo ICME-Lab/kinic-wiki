@@ -2,6 +2,19 @@ use super::super::integration_tests::StoreClient;
 use super::*;
 use std::sync::atomic::Ordering;
 
+// Publication fixtures are deliberately project-less and must not discover a
+// developer's project configuration from the repository checkout.
+async fn run_learn(
+    client: &StoreClient,
+    connection: &ResolvedConnection,
+    command: LearnCommand,
+) -> Result<()> {
+    let cwd = tempfile::tempdir()?;
+    learn_value(client, connection, command, cwd.path())
+        .await
+        .map(|_| ())
+}
+
 #[tokio::test]
 async fn raw_context_reads_search_results_in_one_batch() {
     let temp = tempfile::tempdir().unwrap();

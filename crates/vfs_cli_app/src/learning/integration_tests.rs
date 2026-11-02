@@ -16,6 +16,7 @@ pub(crate) struct StoreClient {
     pub(crate) writes: AtomicUsize,
     pub(crate) batch_writes: AtomicUsize,
     pub(crate) batch_reads: AtomicUsize,
+    pub(crate) reject_second_batch_item: AtomicBool,
 }
 impl StoreClient {
     pub(crate) fn new(path: &std::path::Path) -> Self {
@@ -30,8 +31,66 @@ impl StoreClient {
             writes: AtomicUsize::new(0),
             batch_writes: AtomicUsize::new(0),
             batch_reads: AtomicUsize::new(0),
+            reject_second_batch_item: AtomicBool::new(false),
         }
     }
+}
+
+#[tokio::test]
+async fn conversation_generation_rolls_back_when_later_document_conflicts() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    for path in [
+        "/Sources/chatgpt",
+        "/Knowledge/conversations",
+        "/Knowledge/conversations/chatgpt-abc",
+    ] {
+        client
+            .mkdir_node(MkdirNodeRequest {
+                database_id: "db".into(),
+                path: path.into(),
+            })
+            .await
+            .unwrap();
+    }
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "db".into(),
+            path: "/Sources/chatgpt/abc.md".into(),
+            kind: NodeKind::Source,
+            content: "# Raw Conversation Source\n- provider: chatgpt\n".into(),
+            metadata_json: "{}".into(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+    client
+        .reject_second_batch_item
+        .store(true, Ordering::SeqCst);
+    assert!(
+        crate::conversation_wiki::generate_conversation_wiki(
+            &client,
+            "db",
+            "/Sources/chatgpt/abc.md"
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(client.batch_writes.load(Ordering::SeqCst), 1);
+    assert!(
+        client
+            .read_node("db", "/Knowledge/conversations/chatgpt-abc/index.md")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        client
+            .read_node("db", "/Knowledge/conversations/chatgpt-abc/summary.md")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 #[async_trait]
 impl VfsApi for StoreClient {
@@ -73,8 +132,11 @@ impl VfsApi for StoreClient {
     async fn list_children(&self, r: ListChildrenRequest) -> Result<Vec<ChildNode>> {
         self.store.list_children(r).map_err(|e| anyhow!(e))
     }
-    async fn write_nodes(&self, r: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
+    async fn write_nodes(&self, mut r: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
         self.batch_writes.fetch_add(1, Ordering::SeqCst);
+        if self.reject_second_batch_item.swap(false, Ordering::SeqCst) {
+            r.nodes[1].expected_etag = Some("stale".into());
+        }
         let result = self
             .store
             .write_nodes(r, 10)

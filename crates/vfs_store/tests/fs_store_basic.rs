@@ -726,6 +726,54 @@ fn mutation_errors_do_not_classify_expected_etag_from_a_missing_path() {
 }
 
 #[test]
+fn session_folder_batch_rolls_back_if_source_write_fails() {
+    let (_dir, store) = new_store();
+    let item = |path: &str, kind, expected_etag| WriteNodeItem {
+        path: path.into(),
+        kind,
+        content: String::new(),
+        metadata_json: "{}".into(),
+        expected_etag,
+    };
+    let error = store
+        .write_nodes(
+            WriteNodesRequest {
+                database_id: "default".into(),
+                nodes: vec![
+                    item("/Sources/batch-rollback-test", NodeKind::Folder, None),
+                    item("/Sources/batch-rollback-test/codex", NodeKind::Folder, None),
+                    item(
+                        "/Sources/batch-rollback-test/codex/failed.md",
+                        NodeKind::Source,
+                        Some("stale".into()),
+                    ),
+                ],
+            },
+            10,
+        )
+        .unwrap_err();
+    assert_eq!(error.failed_index, Some(2));
+    assert!(
+        store
+            .read_node("/Sources/batch-rollback-test")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_node("/Sources/batch-rollback-test/codex")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_node("/Sources/batch-rollback-test/codex/failed.md")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn write_nodes_rolls_back_when_later_item_fails() {
     let (_dir, store) = new_store();
     let existing = write_file(&store, "/Knowledge/existing.md", None, 9);

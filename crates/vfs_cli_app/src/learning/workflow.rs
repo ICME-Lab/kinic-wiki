@@ -1021,16 +1021,18 @@ async fn raw_context(
         .await?;
     let mut nodes = vec![];
     let paths = hits.into_iter().map(|hit| hit.path).collect::<Vec<_>>();
-    for node in vfs_client::read_nodes_chunked(client, db, &paths).await? {
-        if let Some(n) = node {
-            if let Some(project) = project_id {
-                let source: Value = serde_json::from_str(&n.content).unwrap_or(Value::Null);
-                if source["payload"]["project_id"].as_str() != Some(project) {
-                    continue;
-                }
+    for n in vfs_client::read_nodes_chunked(client, db, &paths)
+        .await?
+        .into_iter()
+        .flatten()
+    {
+        if let Some(project) = project_id {
+            let source: Value = serde_json::from_str(&n.content).unwrap_or(Value::Null);
+            if source["payload"]["project_id"].as_str() != Some(project) {
+                continue;
             }
-            nodes.push(n);
         }
+        nodes.push(n);
     }
     Ok(assemble_context("raw", nodes, budget)?.rendered)
 }
