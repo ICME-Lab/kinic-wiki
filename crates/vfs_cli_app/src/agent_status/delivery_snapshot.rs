@@ -239,7 +239,7 @@ pub(super) fn read(
     };
     inspect().unwrap_or_else(|code| (unknown(code, Some(&source)), unknown(code, Some(&source))))
 }
-fn recognized_failure(code: &str) -> bool {
+pub(super) fn recognized_failure(code: &str) -> bool {
     matches!(
         code,
         "delivery_failed"

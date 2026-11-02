@@ -126,7 +126,10 @@ fn events(path: &Path, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
     events_from_connection(&conn, scope)
 }
 fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
-    let mut stmt = conn.prepare("SELECT CASE WHEN length(body)<=1048576 THEN body ELSE NULL END,acknowledged,rowid FROM learning_outbox NOT INDEXED WHERE scope=?1 ORDER BY rowid DESC LIMIT 4097").map_err(|_|"source_unreadable")?;
+    // Bound original bodies before they enter Rust. Read and validate one row
+    // at a time with the existing Event deserializer, preserving its malformed
+    // JSON, duplicate-field, numeric and recursion checks.
+    let mut stmt = conn.prepare("SELECT CASE WHEN typeof(body)='text' AND length(CAST(body AS BLOB))<=1048576 THEN body ELSE NULL END,acknowledged,rowid FROM learning_outbox NOT INDEXED WHERE scope=?1 ORDER BY rowid DESC LIMIT 4097").map_err(|_|"source_unreadable")?;
     let rows = stmt
         .query_map([scope], |r| {
             Ok((
@@ -147,19 +150,39 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
             incomplete = true;
             continue;
         };
-        bytes += body.len();
+        let mut event = match serde_json::from_str::<Event>(&body) {
+            Ok(event) if [0, 1].contains(&ack) => event,
+            _ => {
+                incomplete = true;
+                continue;
+            }
+        };
+        drop(body);
+        // Only ownership and receipt metadata survives this iteration. Charge
+        // the aggregate memory budget for retained metadata, not task bodies.
+        // Original field values/types are retained; no coercion repairs an
+        // invalid project ID or changes which duplicate payload key wins.
+        let mut metadata = serde_json::Map::new();
+        if let Some(payload) = event.payload.as_object_mut() {
+            for key in ["project_id", "repository", "id"] {
+                if let Some(value) = payload.remove(key) {
+                    metadata.insert(key.into(), value);
+                }
+            }
+        }
+        event.payload = Value::Object(metadata);
+        bytes += serde_json::to_vec(&event)
+            .map_err(|_| "source_unreadable")?
+            .len();
         if bytes > MAX_BYTES {
             incomplete = true;
             break;
         }
-        match serde_json::from_str::<Event>(&body) {
-            Ok(event) if [0, 1].contains(&ack) => out.push(Entry {
-                event,
-                acknowledged: ack == 1,
-                sequence,
-            }),
-            _ => incomplete = true,
-        }
+        out.push(Entry {
+            event,
+            acknowledged: ack == 1,
+            sequence,
+        });
     }
     Ok((out, incomplete))
 }
@@ -528,7 +551,29 @@ fn latest_send(record: &Value) -> Value {
         record["delivery_timestamps_valid"] == true && attempt.is_none_or(|attempt| attempt <= *at)
     }) {
         Some((outcome, at)) => {
-            json!({"status":"observed","code":"send_outcome_recorded","outcome":outcome,"at":at.to_rfc3339(),"scope":record["delivery_scope"],"next_action":if outcome == "failure" {"Run kinic-vfs-cli agent doctor, then retry delivery with kinic-vfs-cli agent flush when the cause is resolved."} else {"Inspect pending events separately; a prior success does not prove the current queue is empty."}})
+            let failure_code = (outcome == "failure")
+                .then(|| record["last_send_failure"]["code"].as_str())
+                .flatten()
+                .filter(|code| delivery_snapshot::recognized_failure(code));
+            let action = if outcome == "success" {
+                "Inspect pending events separately; a prior success does not prove the current queue is empty."
+            } else {
+                match failure_code {
+                    Some("cycles_suspended") => {
+                        "Restore database billing with the database administrator, then retry delivery with kinic-vfs-cli agent flush."
+                    }
+                    Some("canister_cycles_frozen") => {
+                        "Ask the canister administrator to restore canister execution cycles; a database ledger deposit does not fund canister execution. Retry delivery only after the canister is running."
+                    }
+                    Some("identity_unavailable") => {
+                        "Check access to the configured pinned identity with kinic-vfs-cli agent doctor, then retry delivery after identity access is restored."
+                    }
+                    _ => {
+                        "Run kinic-vfs-cli agent doctor, then retry delivery with kinic-vfs-cli agent flush when the cause is resolved."
+                    }
+                }
+            };
+            json!({"status":"observed","code":"send_outcome_recorded","outcome":outcome,"at":at.to_rfc3339(),"scope":record["delivery_scope"],"failure_code":failure_code,"next_action":action})
         }
         None => {
             json!({"status":"unknown","code":"send_outcome_not_observed","outcome":"unknown","at":null,"scope":record["delivery_scope"],"next_action":"Inspect local delivery evidence after a normal task or an explicitly requested flush."})
