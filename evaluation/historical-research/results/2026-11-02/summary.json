@@ -1,0 +1,41 @@
+{
+  "research_schema": 1,
+  "status": "stopped_diagnostic_only",
+  "quality_eligible": false,
+  "valid_efficacy_comparison": false,
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "high",
+  "reserved_agent_invocations": 14,
+  "provider_requests": "unknown; agent tool turns and provider retries are not separate ledger invocations",
+  "completed_contained_decisions": 7,
+  "completed_contained_revisions": 1,
+  "planned_decisions": 48,
+  "planned_revisions": 6,
+  "prepared_tasks": 6,
+  "independent_families": 3,
+  "elapsed_seconds_from_preparation_to_last_call_end": 592.4602313041687,
+  "reported_tokens_known_invocations_only": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 1209472,
+    "input_tokens": 1357614,
+    "output_tokens": 10016,
+    "reasoning_output_tokens": 1860
+  },
+  "invocations_with_usage": 11,
+  "invocations_without_usage": 3,
+  "total_tokens": null,
+  "cost_usd": null,
+  "reasons": [
+    "Observed external GitHub lookup through web search, codex_apps.github.fetch_commit and successful curl in contained mcp-single trial1 revision arm.",
+    "Reviewer deterministically demonstrated detached descendants can outlive the original process group; no actual model-created orphan was observed.",
+    "Only seven completed decisions from one task; no complete six-task paired comparison.",
+    "Earlier nesting failures and interruptions are counted; ledger launch_failed on interruptions is an old runner diagnostic bug, not proof no model request occurred."
+  ],
+  "later_hardening": [
+    "Live execution now refuses before reservation because remote-tool/egress and agent-lifetime boundaries are unsupported.",
+    "Verifier preflight checks known-good, known-bad and fork/posix_spawn denial before scoring.",
+    "Verifier scores immutable candidate bytes in read-only, no-network, no-fork boundary with CPU, output and wall-time bounds."
+  ],
+  "retroactive_validity": "Later hardening does not validate or replace the historical scores.",
+  "knowledge_promotion": false
+}

@@ -1,0 +1,283 @@
+[
+  {
+    "attempt": "2026-11-02-live",
+    "quality_eligible": false,
+    "implementation_sha256": null,
+    "revision_calls": [
+      {
+        "task": "mcp-single",
+        "status": "failed",
+        "returncode": 1,
+        "elapsed_seconds": 0.023841958958655596,
+        "usage": null,
+        "cost_usd": null,
+        "text": ""
+      }
+    ],
+    "samples": []
+  },
+  {
+    "attempt": "2026-11-02-corrected",
+    "quality_eligible": false,
+    "implementation_sha256": "b24f588ce9b026e3b7a3cb44dc2439547c68ccbc43ee95e17e46f222cd37e897",
+    "revision_calls": [
+      {
+        "task": "mcp-single",
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 13.226309083402157,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 12288,
+          "output_tokens": 246,
+          "input_tokens": 14708,
+          "reasoning_output_tokens": 126
+        },
+        "cost_usd": null,
+        "text": "At commit `9a0b6aa`, `read_path` read one known path using `database_id` and `path`. By commit `07ac286`, `read_path` was removed; use `read_paths` even for one known page, with `database_id` and a one-element `paths` array. The response still contains `results` and `metadata`. Check `results[0].is_error` before reading its `text` or `metadata.etag`: a missing or denied page produces an item error even when the tool call succeeds."
+      }
+    ],
+    "samples": [
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "none",
+        "trial": 0,
+        "context_bytes": 0,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 46.11150566581637,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 134912,
+          "output_tokens": 1266,
+          "input_tokens": 155486,
+          "reasoning_output_tokens": 459
+        },
+        "cost_usd": null,
+        "success": false,
+        "factual_correctness": {
+          "passed": 0,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "raw",
+        "trial": 0,
+        "context_bytes": 973,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 48.33086858317256,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 142720,
+          "output_tokens": 1434,
+          "input_tokens": 159748,
+          "reasoning_output_tokens": 476
+        },
+        "cost_usd": null,
+        "success": false,
+        "factual_correctness": {
+          "passed": 0,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      }
+    ]
+  },
+  {
+    "attempt": "2026-11-02-contained",
+    "quality_eligible": false,
+    "implementation_sha256": "0b99494e3f3afb82bdca73a2c5745cea8b091d597c66346c8b91a5e99ca1a800",
+    "revision_calls": [
+      {
+        "task": "mcp-single",
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 11.244883499573916,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 240,
+          "cached_input_tokens": 12288,
+          "input_tokens": 14690,
+          "reasoning_output_tokens": 125
+        },
+        "cost_usd": null,
+        "text": "Historically, `read_path` read one known path using `database_id` and `path`. In the latest version, `read_path` is removed. For a single known page, use `read_paths` with `{\"database_id\":\"db_example\",\"paths\":[\"/Knowledge/page.md\"]}`. The response still has `results` and `metadata`. Check `results[0].is_error` before reading its `text` or `metadata.etag`: a missing or denied page is an item error even when the tool call succeeds."
+      }
+    ],
+    "samples": [
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "none",
+        "trial": 0,
+        "context_bytes": 0,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 33.38839358277619,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1047,
+          "cached_input_tokens": 100352,
+          "input_tokens": 118184,
+          "reasoning_output_tokens": 119
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "raw",
+        "trial": 0,
+        "context_bytes": 973,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 27.702573500107974,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 791,
+          "cached_input_tokens": 88064,
+          "input_tokens": 92150,
+          "reasoning_output_tokens": 33
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "current",
+        "trial": 0,
+        "context_bytes": 141,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 26.46811345918104,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 832,
+          "cached_input_tokens": 99072,
+          "input_tokens": 119019,
+          "reasoning_output_tokens": 71
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "revision",
+        "trial": 0,
+        "context_bytes": 521,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 32.72202074993402,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 962,
+          "cached_input_tokens": 105472,
+          "input_tokens": 114995,
+          "reasoning_output_tokens": 80
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "revision",
+        "trial": 1,
+        "context_bytes": 521,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 57.156717041973025,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1313,
+          "cached_input_tokens": 310784,
+          "input_tokens": 342668,
+          "reasoning_output_tokens": 199
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "current",
+        "trial": 1,
+        "context_bytes": 141,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 27.416633957996964,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 862,
+          "cached_input_tokens": 100480,
+          "input_tokens": 117763,
+          "reasoning_output_tokens": 58
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      },
+      {
+        "task": "mcp-single",
+        "family": "stale-guidance",
+        "arm": "raw",
+        "trial": 1,
+        "context_bytes": 973,
+        "status": "completed",
+        "returncode": 0,
+        "elapsed_seconds": 34.7414119169116,
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1023,
+          "cached_input_tokens": 103040,
+          "input_tokens": 108203,
+          "reasoning_output_tokens": 114
+        },
+        "cost_usd": null,
+        "success": true,
+        "factual_correctness": {
+          "passed": 2,
+          "total": 2,
+          "scope": "frozen behavioral assertions; prose claims not independently adjudicated"
+        }
+      }
+    ]
+  }
+]

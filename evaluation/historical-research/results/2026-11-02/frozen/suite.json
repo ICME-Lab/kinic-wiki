@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "prepared_at": 1793593234.7125728,
+  "source_repo": "ICME-Lab/kinic-wiki",
+  "tasks": [
+    {
+      "id": "mcp-single",
+      "family": "stale-guidance",
+      "history": {
+        "original": {
+          "commit": "9a0b6aa7cc1a95f0c4a081586c8c3a465998f158",
+          "path": "skills/kinic-wiki-mcp/references/tools.md",
+          "start_line": 21,
+          "blob_sha256": "2ff8af1f62d972a9e342bc6bb8f12b077f4f07a374a61132ee949fe41a0e50c8",
+          "text": "| `read_path` | Read one known path | `database_id`, `path` |\n| `read_paths` | Read 2–10 known paths | `database_id`, `paths` |"
+        },
+        "lesson": "| `read_path` | Read one known path | `database_id`, `path` |",
+        "latest": {
+          "commit": "07ac286ec5b39e879c4824f08d31c5efd25852c6",
+          "path": "skills/kinic-wiki-mcp/references/tools.md",
+          "start_line": 35,
+          "blob_sha256": "9d8af683d5f967759a3e95dbedcc34a808cc6f035c609265040481df115da1ca",
+          "text": "For a single known page use `read_paths` with\n`{\"database_id\":\"db_example\",\"paths\":[\"/Knowledge/page.md\"]}`.\nThe response still has `results` and `metadata`. Inspect `results[0].is_error`\nbefore reading its `text` or `metadata.etag`; one missing or denied page is an\nitem error even when the tool call itself succeeded. Do not call the removed\n`read_path` tool."
+        },
+        "new_lesson": "The response still has `results` and `metadata`.",
+        "lesson_origin": "researcher-selected verbatim repository guidance, not a recovered agent reflection"
+      },
+      "prompt": "Repair a Kinic MCP request adapter for the interface introduced in commit 07ac286e. Input has database_id, path, request_id. Return tool, arguments, request_id for one known page read. Use the public tool appropriate to that interface without preliminary discovery.\nImplement adapt(value) in adapter.py, returning JSON-compatible values. Preserve request_id unchanged.",
+      "files": {
+        "adapter.py": "def adapt(value):\n    return {\"tool\": \"read_path\", \"arguments\": {\"database_id\": value[\"database_id\"], \"path\": value[\"path\"]}, \"request_id\": value[\"request_id\"]}\n"
+      },
+      "target_lesson_count": 1
+    },
+    {
+      "id": "mcp-result",
+      "family": "stale-guidance",
+      "history": {
+        "original": {
+          "commit": "9a0b6aa7cc1a95f0c4a081586c8c3a465998f158",
+          "path": "skills/kinic-wiki-mcp/references/tools.md",
+          "start_line": 21,
+          "blob_sha256": "2ff8af1f62d972a9e342bc6bb8f12b077f4f07a374a61132ee949fe41a0e50c8",
+          "text": "| `read_path` | Read one known path | `database_id`, `path` |\n| `read_paths` | Read 2–10 known paths | `database_id`, `paths` |"
+        },
+        "lesson": "| `read_path` | Read one known path | `database_id`, `path` |",
+        "latest": {
+          "commit": "07ac286ec5b39e879c4824f08d31c5efd25852c6",
+          "path": "skills/kinic-wiki-mcp/references/tools.md",
+          "start_line": 35,
+          "blob_sha256": "9d8af683d5f967759a3e95dbedcc34a808cc6f035c609265040481df115da1ca",
+          "text": "For a single known page use `read_paths` with\n`{\"database_id\":\"db_example\",\"paths\":[\"/Knowledge/page.md\"]}`.\nThe response still has `results` and `metadata`. Inspect `results[0].is_error`\nbefore reading its `text` or `metadata.etag`; one missing or denied page is an\nitem error even when the tool call itself succeeded. Do not call the removed\n`read_path` tool."
+        },
+        "new_lesson": "The response still has `results` and `metadata`.",
+        "lesson_origin": "researcher-selected verbatim repository guidance, not a recovered agent reflection"
+      },
+      "prompt": "Repair the one-page response adapter for Kinic MCP interface commit 07ac286e. Input has response and request_id. Return {ok, text, etag, request_id}; failed/missing first item must return ok=false, text=null, etag=null. Successful items return their body and etag. The outer response can succeed while the requested page fails.\nImplement adapt(value) in adapter.py, returning JSON-compatible values. Preserve request_id unchanged.",
+      "files": {
+        "adapter.py": "def adapt(value):\n    r=value[\"response\"]\n    return {\"ok\": not r.get(\"is_error\",False), \"text\": r.get(\"text\"), \"etag\": r.get(\"metadata\",{}).get(\"etag\"), \"request_id\":value[\"request_id\"]}\n"
+      },
+      "target_lesson_count": 1
+    },
+    {
+      "id": "d1-cf",
+      "family": "environment-version",
+      "history": {
+        "original": {
+          "commit": "d9556c633de63fffe580048e27ffbe1a53528cc9",
+          "path": "workers/wiki-generator/README.md",
+          "start_line": 63,
+          "blob_sha256": "c902e9103fd80b83145d2f3e886d7186ebdb492edc3a1d9a6b31a4a581628142",
+          "text": "pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote"
+        },
+        "lesson": "pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote",
+        "latest": {
+          "commit": "366f95b737ff9d4abd98e1288d73859336f3474f",
+          "path": "docs/CLOUDFLARE_CLI.md",
+          "start_line": 41,
+          "blob_sha256": "73e3a424610be1a01d070c7a6e162fe1f6d02607fae7c70a6801d6d3c0a84d83",
+          "text": "D1 migration commands require a database UUID, rather than a binding or database name:\n\n```sh\npnpm exec cf d1 create --name <database-name>\npnpm exec cf d1 migrations list <database-id> --dir migrations\npnpm exec cf d1 migrations apply <database-id> --dir migrations\n```\n\nRecord newly created resource IDs in the corresponding cf configuration. D1 creation\nno longer rewrites configuration automatically."
+        },
+        "new_lesson": "D1 creation\nno longer rewrites configuration automatically.",
+        "lesson_origin": "researcher-selected verbatim repository guidance, not a recovered agent reflection"
+      },
+      "prompt": "Return {argv, request_id} for applying existing D1 migration files. Input contains name, database_id, migrations_dir and request_id. Do not execute deployments or contact Cloudflare. Target is Kinic after migration commit 366f95b7, using project-pinned cf 1.0.0-beta.2. Use its documented invocation.\nImplement adapt(value) in adapter.py, returning JSON-compatible values. Preserve request_id unchanged.",
+      "files": {
+        "adapter.py": "def adapt(value):\n    return {\"argv\":[\"pnpm\",\"exec\",\"wrangler\",\"d1\",\"migrations\",\"apply\",value[\"name\"],\"--remote\"], \"request_id\":value[\"request_id\"]}\n"
+      },
+      "target_lesson_count": 1
+    },
+    {
+      "id": "d1-legacy",
+      "family": "environment-version",
+      "history": {
+        "original": {
+          "commit": "d9556c633de63fffe580048e27ffbe1a53528cc9",
+          "path": "workers/wiki-generator/README.md",
+          "start_line": 63,
+          "blob_sha256": "c902e9103fd80b83145d2f3e886d7186ebdb492edc3a1d9a6b31a4a581628142",
+          "text": "pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote"
+        },
+        "lesson": "pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote",
+        "latest": {
+          "commit": "366f95b737ff9d4abd98e1288d73859336f3474f",
+          "path": "docs/CLOUDFLARE_CLI.md",
+          "start_line": 41,
+          "blob_sha256": "73e3a424610be1a01d070c7a6e162fe1f6d02607fae7c70a6801d6d3c0a84d83",
+          "text": "D1 migration commands require a database UUID, rather than a binding or database name:\n\n```sh\npnpm exec cf d1 create --name <database-name>\npnpm exec cf d1 migrations list <database-id> --dir migrations\npnpm exec cf d1 migrations apply <database-id> --dir migrations\n```\n\nRecord newly created resource IDs in the corresponding cf configuration. D1 creation\nno longer rewrites configuration automatically."
+        },
+        "new_lesson": "D1 creation\nno longer rewrites configuration automatically.",
+        "lesson_origin": "researcher-selected verbatim repository guidance, not a recovered agent reflection"
+      },
+      "prompt": "Return {argv, request_id} for applying existing D1 migration files. Input contains name, database_id, migrations_dir and request_id. Do not execute deployments or contact Cloudflare. Target is an archived Kinic checkout immediately BEFORE 366f95b7. It still uses Wrangler and the documented remote database-name command. Keep that historical environment working.\nImplement adapt(value) in adapter.py, returning JSON-compatible values. Preserve request_id unchanged.",
+      "files": {
+        "adapter.py": "def adapt(value):\n    return {\"argv\":[\"pnpm\",\"exec\",\"wrangler\",\"d1\",\"migrations\",\"apply\",value[\"name\"],\"--remote\"], \"request_id\":value[\"request_id\"]}\n"
+      },
+      "target_lesson_count": 1
+    },
+    {
+      "id": "grant-active",
+      "family": "conditional-applicability",
+      "history": {
+        "original": {
+          "commit": "75d27a03285a4d2f6a81958a3cc4c3ce88b16cdc",
+          "path": "docs/DB_LIFECYCLE.md",
+          "start_line": 105,
+          "blob_sha256": "1f59f926191cde56e053198f2593871dfed62dc75b7df3cb90ca62b4c4ac79e7",
+          "text": "1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `get_initial_free_database_grant_status` reports `available = true`, this consumes the caller's free grant and returns an active DB with `10_000_000_000` cycles.\n2. If the free grant is already used, owner creates a pending DB with `create_database(CreateDatabaseRequest { name })`."
+        },
+        "lesson": "1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `get_initial_free_database_grant_status` reports `available = true`, this consumes the caller's free grant and returns an active DB with `10_000_000_000` cycles.",
+        "latest": {
+          "commit": "e776f1e9a3b798bcb16a15df524c1e9298d006cf",
+          "path": "docs/DB_LIFECYCLE.md",
+          "start_line": 107,
+          "blob_sha256": "51c8956ed38a02205d49795e90d6acc4f0328d1cd4a6612179b695fd672543bd",
+          "text": "1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.\n2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes."
+        },
+        "new_lesson": "2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.",
+        "lesson_origin": "researcher-selected verbatim repository guidance, not a recovered agent reflection"
+      },
+      "prompt": "Repair Kinic database creation routing after e776f1e9. Input contains preflight_available and the actual create response fields status and initial_free_grant_applied, plus request_id. Return {action, request_id}, where action is open for an immediately usable database or fund if it needs its first purchase. Preflight can be stale by the time creation returns. Handle creation returning an active or free-grant database.\nImplement adapt(value) in adapter.py, returning JSON-compatible values. Preserve request_id unchanged.",
+      "files": {
+        "adapter.py": "def adapt(value):\n    return {\"action\":\"open\" if value[\"preflight_available\"] else \"fund\", \"request_id\":value[\"request_id\"]}\n"
+      },
+      "target_lesson_count": 1
+    },
+    {
+      "id": "grant-pending",
+      "family": "conditional-applicability",
+      "history": {
+        "original": {
+          "commit": "75d27a03285a4d2f6a81958a3cc4c3ce88b16cdc",
+          "path": "docs/DB_LIFECYCLE.md",
+          "start_line": 105,
+          "blob_sha256": "1f59f926191cde56e053198f2593871dfed62dc75b7df3cb90ca62b4c4ac79e7",
+          "text": "1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `get_initial_free_database_grant_status` reports `available = true`, this consumes the caller's free grant and returns an active DB with `10_000_000_000` cycles.\n2. If the free grant is already used, owner creates a pending DB with `create_database(CreateDatabaseRequest { name })`."
+        },
+        "lesson": "1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `get_initial_free_database_grant_status` reports `available = true`, this consumes the caller's free grant and returns an active DB with `10_000_000_000` cycles.",
+        "latest": {
+          "commit": "e776f1e9a3b798bcb16a15df524c1e9298d006cf",
+          "path": "docs/DB_LIFECYCLE.md",
+          "start_line": 107,
+          "blob_sha256": "51c8956ed38a02205d49795e90d6acc4f0328d1cd4a6612179b695fd672543bd",
+          "text": "1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.\n2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes."
+        },
+        "new_lesson": "2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.",
+        "lesson_origin": "researcher-selected verbatim repository guidance, not a recovered agent reflection"
+      },
+      "prompt": "Repair Kinic database creation routing after e776f1e9. Input contains preflight_available and the actual create response fields status and initial_free_grant_applied, plus request_id. Return {action, request_id}, where action is open for an immediately usable database or fund if it needs its first purchase. Preflight can be stale by the time creation returns. Handle creation returning pending without applying a free grant.\nImplement adapt(value) in adapter.py, returning JSON-compatible values. Preserve request_id unchanged.",
+      "files": {
+        "adapter.py": "def adapt(value):\n    return {\"action\":\"open\" if value[\"preflight_available\"] else \"fund\", \"request_id\":value[\"request_id\"]}\n"
+      },
+      "target_lesson_count": 1
+    }
+  ],
+  "planned_calls": 54,
+  "preparation_model_calls": 0,
+  "limitations": [
+    "Six researcher-authored small coding reconstructions from three real repository changes; not naturally recovered agent episodes.",
+    "Historical lessons are verbatim documentation excerpts selected before inference, not historical model-generated reflections.",
+    "Two tasks within each family share a historical change; six tasks are not six independent families.",
+    "Two decision trials reuse one revision per task; revision-generation variance is not estimated.",
+    "Current and revision share the exact new lesson; source summaries and lengths are not token matched.",
+    "Behavioral factual assertions are checked automatically; free-form prose claims require separate human adjudication.",
+    "Provider cost is unknown unless reported. No knowledge promotion or causal claim of general gain."
+  ]
+}

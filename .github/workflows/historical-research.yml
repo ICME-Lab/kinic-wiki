@@ -1,0 +1,30 @@
+name: Historical research checks
+
+on:
+  pull_request:
+    paths:
+      - evaluation/historical-research/**
+      - .github/workflows/historical-research.yml
+  push:
+    branches: [main]
+    paths:
+      - evaluation/historical-research/**
+      - .github/workflows/historical-research.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-and-isolation:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check frozen provenance, budgets and actual filesystem isolation
+        run: python3 -m unittest discover -s evaluation/historical-research -v

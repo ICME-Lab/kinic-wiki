@@ -1,0 +1,199 @@
+{
+  "started": 1793593234.7125728,
+  "deadline": 1793600434.7125728,
+  "max_calls": 60,
+  "calls": [
+    {
+      "id": "revision-mcp-single",
+      "reserved_at": 1793593234.915924,
+      "status": "failed",
+      "returncode": 1,
+      "elapsed_seconds": 0.023841958958655596,
+      "usage": null,
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-corrected-revision-mcp-single",
+      "reserved_at": 1793593346.783165,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 13.226309083402157,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12288,
+        "output_tokens": 246,
+        "input_tokens": 14708,
+        "reasoning_output_tokens": 126
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-corrected-mcp-single-0-none",
+      "reserved_at": 1793593360.011401,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 46.11150566581637,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 134912,
+        "output_tokens": 1266,
+        "input_tokens": 155486,
+        "reasoning_output_tokens": 459
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-corrected-mcp-single-0-raw",
+      "reserved_at": 1793593406.1573582,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 48.33086858317256,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 142720,
+        "output_tokens": 1434,
+        "input_tokens": 159748,
+        "reasoning_output_tokens": 476
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-corrected-mcp-single-0-current",
+      "reserved_at": 1793593454.517418,
+      "status": "launch_failed",
+      "returncode": null,
+      "elapsed_seconds": 36.22498345794156,
+      "usage": null,
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-revision-mcp-single",
+      "reserved_at": 1793593552.3432589,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 11.244883499573916,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 240,
+        "cached_input_tokens": 12288,
+        "input_tokens": 14690,
+        "reasoning_output_tokens": 125
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-0-none",
+      "reserved_at": 1793593563.59111,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 33.38839358277619,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1047,
+        "cached_input_tokens": 100352,
+        "input_tokens": 118184,
+        "reasoning_output_tokens": 119
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-0-raw",
+      "reserved_at": 1793593597.003892,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 27.702573500107974,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 791,
+        "cached_input_tokens": 88064,
+        "input_tokens": 92150,
+        "reasoning_output_tokens": 33
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-0-current",
+      "reserved_at": 1793593624.731869,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 26.46811345918104,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 832,
+        "cached_input_tokens": 99072,
+        "input_tokens": 119019,
+        "reasoning_output_tokens": 71
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-0-revision",
+      "reserved_at": 1793593651.223885,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 32.72202074993402,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 962,
+        "cached_input_tokens": 105472,
+        "input_tokens": 114995,
+        "reasoning_output_tokens": 80
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-1-revision",
+      "reserved_at": 1793593683.97189,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 57.156717041973025,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1313,
+        "cached_input_tokens": 310784,
+        "input_tokens": 342668,
+        "reasoning_output_tokens": 199
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-1-current",
+      "reserved_at": 1793593741.172607,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 27.416633957996964,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 862,
+        "cached_input_tokens": 100480,
+        "input_tokens": 117763,
+        "reasoning_output_tokens": 58
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-1-raw",
+      "reserved_at": 1793593768.621522,
+      "status": "completed",
+      "returncode": 0,
+      "elapsed_seconds": 34.7414119169116,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1023,
+        "cached_input_tokens": 103040,
+        "input_tokens": 108203,
+        "reasoning_output_tokens": 114
+      },
+      "cost_usd": null
+    },
+    {
+      "id": "2026-11-02-contained-mcp-single-1-none",
+      "reserved_at": 1793593803.392979,
+      "status": "launch_failed",
+      "returncode": null,
+      "elapsed_seconds": 23.779825292062014,
+      "usage": null,
+      "cost_usd": null
+    }
+  ]
+}

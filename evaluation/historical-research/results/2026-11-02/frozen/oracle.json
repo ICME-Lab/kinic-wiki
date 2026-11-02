@@ -1,0 +1,265 @@
+{
+  "mcp-single": [
+    {
+      "input": {
+        "database_id": "db_one",
+        "path": "/Knowledge/guide.md",
+        "request_id": "a"
+      },
+      "expected": {
+        "tool": "read_paths",
+        "arguments": {
+          "database_id": "db_one",
+          "paths": [
+            "/Knowledge/guide.md"
+          ]
+        },
+        "request_id": "a"
+      }
+    },
+    {
+      "input": {
+        "database_id": "db_two",
+        "path": "/Notes/a b.md",
+        "request_id": "b"
+      },
+      "expected": {
+        "tool": "read_paths",
+        "arguments": {
+          "database_id": "db_two",
+          "paths": [
+            "/Notes/a b.md"
+          ]
+        },
+        "request_id": "b"
+      }
+    }
+  ],
+  "mcp-result": [
+    {
+      "input": {
+        "response": {
+          "results": [
+            {
+              "is_error": false,
+              "text": "body",
+              "metadata": {
+                "etag": "e"
+              }
+            }
+          ],
+          "metadata": {}
+        },
+        "request_id": "0"
+      },
+      "expected": {
+        "ok": true,
+        "text": "body",
+        "etag": "e",
+        "request_id": "0"
+      }
+    },
+    {
+      "input": {
+        "response": {
+          "results": [
+            {
+              "is_error": true,
+              "text": "denied",
+              "metadata": {}
+            }
+          ],
+          "metadata": {}
+        },
+        "request_id": "1"
+      },
+      "expected": {
+        "ok": false,
+        "text": null,
+        "etag": null,
+        "request_id": "1"
+      }
+    },
+    {
+      "input": {
+        "response": {
+          "results": [],
+          "metadata": {}
+        },
+        "request_id": "2"
+      },
+      "expected": {
+        "ok": false,
+        "text": null,
+        "etag": null,
+        "request_id": "2"
+      }
+    }
+  ],
+  "d1-cf": [
+    {
+      "input": {
+        "name": "kinic-wiki-generator",
+        "database_id": "11111111-1111-4111-8111-111111111111",
+        "migrations_dir": "migrations",
+        "request_id": "0"
+      },
+      "expected": {
+        "argv": [
+          "pnpm",
+          "exec",
+          "cf",
+          "d1",
+          "migrations",
+          "apply",
+          "11111111-1111-4111-8111-111111111111",
+          "--dir",
+          "migrations"
+        ],
+        "request_id": "0"
+      }
+    },
+    {
+      "input": {
+        "name": "kinic-wiki-generator",
+        "database_id": "22222222-2222-4222-8222-222222222222",
+        "migrations_dir": "db-migrations",
+        "request_id": "1"
+      },
+      "expected": {
+        "argv": [
+          "pnpm",
+          "exec",
+          "cf",
+          "d1",
+          "migrations",
+          "apply",
+          "22222222-2222-4222-8222-222222222222",
+          "--dir",
+          "db-migrations"
+        ],
+        "request_id": "1"
+      }
+    }
+  ],
+  "d1-legacy": [
+    {
+      "input": {
+        "name": "kinic-wiki-generator",
+        "database_id": "unused-uuid",
+        "migrations_dir": "migrations",
+        "request_id": "0"
+      },
+      "expected": {
+        "argv": [
+          "pnpm",
+          "exec",
+          "wrangler",
+          "d1",
+          "migrations",
+          "apply",
+          "kinic-wiki-generator",
+          "--remote"
+        ],
+        "request_id": "0"
+      }
+    },
+    {
+      "input": {
+        "name": "kinic-wiki-generator-staging",
+        "database_id": "unused-uuid",
+        "migrations_dir": "migrations",
+        "request_id": "1"
+      },
+      "expected": {
+        "argv": [
+          "pnpm",
+          "exec",
+          "wrangler",
+          "d1",
+          "migrations",
+          "apply",
+          "kinic-wiki-generator-staging",
+          "--remote"
+        ],
+        "request_id": "1"
+      }
+    }
+  ],
+  "grant-active": [
+    {
+      "input": {
+        "preflight_available": false,
+        "status": "active",
+        "initial_free_grant_applied": false,
+        "request_id": "0"
+      },
+      "expected": {
+        "action": "open",
+        "request_id": "0"
+      }
+    },
+    {
+      "input": {
+        "preflight_available": false,
+        "status": "pending",
+        "initial_free_grant_applied": true,
+        "request_id": "1"
+      },
+      "expected": {
+        "action": "open",
+        "request_id": "1"
+      }
+    },
+    {
+      "input": {
+        "preflight_available": true,
+        "status": "active",
+        "initial_free_grant_applied": true,
+        "request_id": "2"
+      },
+      "expected": {
+        "action": "open",
+        "request_id": "2"
+      }
+    }
+  ],
+  "grant-pending": [
+    {
+      "input": {
+        "preflight_available": true,
+        "status": "pending",
+        "initial_free_grant_applied": false,
+        "request_id": "0"
+      },
+      "expected": {
+        "action": "fund",
+        "request_id": "0"
+      }
+    },
+    {
+      "input": {
+        "preflight_available": false,
+        "status": "pending",
+        "initial_free_grant_applied": false,
+        "request_id": "1"
+      },
+      "expected": {
+        "action": "fund",
+        "request_id": "1"
+      }
+    },
+    {
+      "input": {
+        "preflight_available": true,
+        "status": "active",
+        "initial_free_grant_applied": false,
+        "request_id": "2"
+      },
+      "expected": {
+        "action": "open",
+        "request_id": "2"
+      }
+    }
+  ]
+}
