@@ -15,7 +15,7 @@ use vfs_cli_app::context_pack::{
     ContextPackInspectOptions, ContextPackVerifyOptions, run_context_pack_inspect,
     run_context_pack_verify,
 };
-use vfs_cli_app::identity::load_default_identity;
+use vfs_cli_app::identity::load_scoped_identity;
 use vfs_cli_app::identity_mode::{
     ClientIdentityMode, anonymous_can_read_database, identity_is_database_member,
     resolve_client_identity_mode,
@@ -79,7 +79,7 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     if let Command::Agent { command } = &cli.command {
         match command {
             vfs_cli_app::learning::cli::AgentCommand::Setup(args) => {
-                return vfs_cli_app::agent_setup::run(args);
+                return vfs_cli_app::agent_setup::run_connected(args, &cli.connection).await;
             }
             vfs_cli_app::learning::cli::AgentCommand::Status(args) => {
                 return vfs_cli_app::agent_status::run(args, &cli.connection);
@@ -217,6 +217,37 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         cli.connection.canister_id.clone(),
         database_id_arg,
     )?;
+    let scope_cwd = match &cli.command {
+        Command::Learn {
+            command:
+                vfs_cli_app::learning::cli::LearnCommand::Setup { project_root, .. }
+                | vfs_cli_app::learning::cli::LearnCommand::Status { project_root, .. }
+                | vfs_cli_app::learning::cli::LearnCommand::Enable { project_root, .. }
+                | vfs_cli_app::learning::cli::LearnCommand::Disable { project_root, .. }
+                | vfs_cli_app::learning::cli::LearnCommand::Drain { project_root, .. },
+        } => project_root.clone(),
+        _ => std::env::current_dir()?,
+    };
+    let scope_root = vfs_cli_app::identity_policy::project_root(&scope_cwd)?;
+    let grant = if let Some(home) = std::env::var_os("HOME") {
+        vfs_cli_app::identity_policy::lookup(std::path::Path::new(&home), &scope_root, &connection)?
+    } else {
+        None
+    };
+    // A persisted grant is a binding, including on explicitly anonymous reads.
+    // Validate it before any network access; never silently fall back on mismatch.
+    let mut identity_client = if grant.is_some() {
+        Some(
+            new_identity_client(
+                &connection,
+                cli.connection.allow_non_ii_identity,
+                grant.as_ref(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let mut hook_spool = if let (
         Some(request),
         Command::Agent {
@@ -263,14 +294,24 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
     } else {
         None
     };
-    let mut identity_client = None;
     let identity_membership = if anonymous_probe == Some(true) {
         let database_id = connection.database_id.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
                 "database id is required for identity membership check; pass --database-id or link a workspace database"
             )
         })?;
-        match new_identity_client(&connection, cli.connection.allow_non_ii_identity).await {
+        let selected = match identity_client.take() {
+            Some(client) => Ok(client),
+            None => {
+                new_identity_client(
+                    &connection,
+                    cli.connection.allow_non_ii_identity,
+                    grant.as_ref(),
+                )
+                .await
+            }
+        };
+        match selected {
             Ok(client) => match identity_is_database_member(&client, database_id).await {
                 Ok(is_member) => {
                     if is_member {
@@ -307,8 +348,12 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         }
         ClientIdentityMode::Identity => match identity_client {
             Some(client) => client,
-            None => match new_identity_client(&connection, cli.connection.allow_non_ii_identity)
-                .await
+            None => match new_identity_client(
+                &connection,
+                cli.connection.allow_non_ii_identity,
+                grant.as_ref(),
+            )
+            .await
             {
                 Ok(client) => client,
                 Err(error) => {
@@ -388,8 +433,10 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
 async fn new_identity_client(
     connection: &ResolvedConnection,
     allow_non_ii_identity: bool,
+    grant: Option<&vfs_cli_app::identity_policy::Grant>,
 ) -> Result<CanisterVfsClient> {
-    let identity = load_default_identity(&connection.canister_id, allow_non_ii_identity).await?;
+    let identity =
+        load_scoped_identity(&connection.canister_id, allow_non_ii_identity, grant).await?;
     CanisterVfsClient::new_with_boxed_identity(
         &connection.replica_host,
         &connection.canister_id,

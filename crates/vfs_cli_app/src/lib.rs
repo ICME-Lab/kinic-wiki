@@ -33,3 +33,5 @@ pub mod agent_doctor;
 pub mod agent_setup;
 
 pub mod agent_status;
+
+pub mod identity_policy;

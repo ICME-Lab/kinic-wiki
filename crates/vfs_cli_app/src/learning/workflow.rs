@@ -1144,6 +1144,7 @@ pub fn run_dsh_setup(command: DshCommand) -> Result<()> {
         dry_run,
         json,
         cwd: None,
+        ..Default::default()
     })
 }
 

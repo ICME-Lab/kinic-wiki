@@ -72,7 +72,20 @@ pub fn path_candidates(name: &Path) -> Vec<PathBuf> {
     }
     result
 }
-fn marketplace(home: &Path, files: &mut Vec<FilePlan>) -> Result<()> {
+fn merge_marketplace_metadata(target: &mut Value, managed: &Value) {
+    if let (Some(target), Some(managed)) = (target.as_object_mut(), managed.as_object()) {
+        for (key, value) in managed {
+            if let Some(existing) = target.get_mut(key) {
+                merge_marketplace_metadata(existing, value);
+            } else {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        *target = managed.clone();
+    }
+}
+fn marketplace(home: &Path, plugin_dir: &Path, files: &mut Vec<FilePlan>) -> Result<String> {
     let path = home.join(".agents/plugins/marketplace.json");
     let mut value = if path.exists() {
         serde_json::from_slice::<Value>(&fs::read(&path)?)
@@ -80,6 +93,24 @@ fn marketplace(home: &Path, files: &mut Vec<FilePlan>) -> Result<()> {
     } else {
         json!({"name":"personal-plugins","interface":{"displayName":"Personal Plugins"},"plugins":[]})
     };
+    let name = value["name"]
+        .as_str()
+        .context("marketplace name is required")?
+        .to_owned();
+    ensure!(
+        !name.is_empty()
+            && name != "."
+            && name != ".."
+            && name.len() <= 128
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
+        "marketplace name must be a safe plugin selector component"
+    );
+    let source_path = plugin_dir
+        .strip_prefix(home)
+        .map(|relative| format!("./{}", relative.to_string_lossy()))
+        .unwrap_or_else(|_| plugin_dir.to_string_lossy().into_owned());
     let object = value
         .as_object_mut()
         .context("marketplace must be an object")?;
@@ -88,28 +119,28 @@ fn marketplace(home: &Path, files: &mut Vec<FilePlan>) -> Result<()> {
         .or_insert(json!([]))
         .as_array_mut()
         .context("marketplace plugins must be an array")?;
-    let entry = json!({"name":"kinic-skill-recorder","display_name":"Kinic Skill Recorder","description":"Record Kinic Skill Registry run evidence from Codex.","source":{"source":"local","path":"./.codex/plugins/kinic-skill-recorder"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"});
+    let entry = json!({"name":"kinic-skill-recorder","display_name":"Kinic Skill Recorder","description":"Record Kinic Skill Registry run evidence from Codex.","source":{"source":"local","path":source_path},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"});
     if let Some(existing) = plugins
         .iter_mut()
         .find(|p| p["name"] == "kinic-skill-recorder")
     {
         // Preserve unknown metadata on our own entry as well as unrelated plugins.
-        let existing = existing
-            .as_object_mut()
-            .context("invalid marketplace entry")?;
-        for (key, value) in entry.as_object().unwrap() {
-            existing.insert(key.clone(), value.clone());
-        }
+        ensure!(existing.is_object(), "invalid marketplace entry");
+        merge_marketplace_metadata(existing, &entry);
     } else {
         plugins.push(entry);
     }
-    plan(files, path, serde_json::to_vec_pretty(&value)?, false)
+    plan(files, path, serde_json::to_vec_pretty(&value)?, false)?;
+    Ok(name)
 }
 pub fn run(args: &SetupArgs) -> Result<()> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is required")?;
     let value = prepare(args, &std::env::current_dir()?, &home)?;
+    emit(args, &value)
+}
+fn emit(args: &SetupArgs, value: &Value) -> Result<()> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
@@ -129,6 +160,11 @@ pub fn run(args: &SetupArgs) -> Result<()> {
         }
         for note in value["notes"].as_array().unwrap() {
             println!("{}", note.as_str().unwrap());
+        }
+        for stage in ["identity_authorization", "plugin_installation"] {
+            if !value[stage].is_null() {
+                println!("{}: {}", stage, value[stage]["status"]);
+            }
         }
         println!("Next: {}", value["next"].as_str().unwrap());
     }
@@ -212,8 +248,17 @@ pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
             )?;
         }
     }
+    let mut marketplace_name = None;
     let plugin_dir = if args.engine == "codex" {
-        let dir = home.join(".codex/plugins/kinic-skill-recorder");
+        let codex_home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".codex"));
+        let codex_home = if codex_home.is_absolute() {
+            codex_home
+        } else {
+            cwd.join(codex_home)
+        };
+        let dir = codex_home.join("plugins/kinic-skill-recorder");
         for payload in [CODEX_PLUGIN_FILES, RUNTIME_FILES] {
             for file in payload {
                 plan(
@@ -230,7 +275,7 @@ pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
             b"kinic-vfs-cli\n".to_vec(),
             false,
         )?;
-        marketplace(home, &mut files)?;
+        marketplace_name = Some(marketplace(home, &dir, &mut files)?);
         dir
     } else {
         let dir = args
@@ -300,6 +345,107 @@ pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
         }
     }
     Ok(
-        json!({"status":status,"engine":args.engine,"plugin_directory":plugin_dir,"executable":executable,"executable_candidates":candidates,"executable_settings_path":target,"changes":changes,"configuration_changes":{"executable":{"before":previous_executable,"after":executable,"source":target},"new_learning_budget_tokens":if new_learning{Some(4096)}else{None}},"activation":"unknown","observed_operation":"unknown","notes":["Existing replacements require --apply; --dry-run writes nothing.",if args.engine=="codex" {"Plugin placement and marketplace registration do not establish activation. Review installation, hook enablement and trust in Codex, then restart if required."}else{"Install the prepared package into the selected DSH profile and load its overlay. No active profile was modified."}],"next_argv":["kinic-vfs-cli","agent","doctor","--engine",args.engine,"--cwd",config.root],"next":format!("kinic-vfs-cli agent doctor --engine {} --cwd '{}'",args.engine,config.root.to_string_lossy().replace('\'', "'\"'\"'"))}),
+        json!({"status":status,"engine":args.engine,"plugin_directory":plugin_dir,"marketplace_name":marketplace_name,"executable":executable,"executable_candidates":candidates,"executable_settings_path":target,"changes":changes,"configuration_changes":{"executable":{"before":previous_executable,"after":executable,"source":target},"new_learning_budget_tokens":if new_learning{Some(4096)}else{None}},"activation":"unknown","observed_operation":"unknown","notes":["Existing replacements require --apply; --dry-run writes nothing.",if args.engine=="codex" {"Plugin placement and marketplace registration do not establish activation. Review installation, hook enablement and trust in Codex, then restart if required."}else{"Install the prepared package into the selected DSH profile and load its overlay. No active profile was modified."}],"next_argv":["kinic-vfs-cli","agent","doctor","--engine",args.engine,"--cwd",config.root],"next":format!("kinic-vfs-cli agent doctor --engine {} --cwd '{}'",args.engine,config.root.to_string_lossy().replace('\'', "'\"'\"'"))}),
+    )
+}
+
+/// Explicit privileged setup stages are separate from non-executing file preparation.
+pub async fn run_connected(
+    args: &SetupArgs,
+    connection: &vfs_cli::cli::ConnectionArgs,
+) -> Result<()> {
+    ensure!(
+        !args.install_plugin || args.engine == "codex",
+        "plugin installation supports Codex only"
+    );
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is required")?;
+    let cwd = std::env::current_dir()?;
+    let mut value = prepare(args, &cwd, &home)?;
+    let applying = args.apply && !args.dry_run && value["status"] != "changes_pending";
+    if args.authorize_keyring {
+        value["identity_authorization"] = json!({"status":if args.dry_run {"planned"} else {"apply_required"},"next":"agent setup --authorize-keyring --apply"});
+        if applying {
+            let c = vfs_cli::connection::resolve_connection(
+                connection.local,
+                connection.replica_host.clone(),
+                connection.canister_id.clone(),
+                connection.database_id.clone(),
+            )?;
+            let root = crate::identity_policy::project_root(&cwd)?;
+            let grant=crate::identity::keyring_grant(&root,&c).await.map_err(|_| anyhow::anyhow!("cannot authorize selected keyring identity; check icp identity default and credential access"))?;
+            crate::identity_policy::save(&home, &grant)?;
+            value["identity_authorization"] = json!({"status":"authorized","binding":grant});
+        }
+    }
+    if args.install_plugin {
+        value["plugin_installation"] =
+            json!({"status":if args.dry_run {"planned"} else {"apply_required"}});
+        if applying {
+            let executable = value["executable"]
+                .as_str()
+                .context("Codex executable missing")?;
+            let marketplace = value["marketplace_name"]
+                .as_str()
+                .context("Codex marketplace name missing")?;
+            value["plugin_installation"] =
+                install_plugin(Path::new(executable), marketplace).await?;
+        }
+    }
+    value["next"] = json!(
+        "Check /hooks in Codex, then run kinic-vfs-cli agent doctor; automatic learning requires learn setup."
+    );
+    emit(args, &value)
+}
+async fn codex_json(executable: &Path, args: &[&str]) -> Result<Value> {
+    let mut command = tokio::process::Command::new(executable);
+    command.args(args).kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("Codex plugin command timed out"))?
+        .map_err(|_| anyhow::anyhow!("Codex plugin command could not start"))?;
+    ensure!(
+        output.status.success(),
+        "Codex plugin command failed; inspect Codex plugin settings"
+    );
+    ensure!(
+        output.stdout.len() <= 4 * 1024 * 1024,
+        "Codex plugin output exceeded limit"
+    );
+    serde_json::from_slice(&output.stdout)
+        .map_err(|_| anyhow::anyhow!("Codex plugin command returned invalid JSON"))
+}
+fn matching_plugin(value: &Value, plugin_id: &str, expected: &str) -> bool {
+    value["installed"].as_array().is_some_and(|rows| {
+        rows.iter().any(|row| {
+            row["pluginId"] == plugin_id
+                && row["installed"] == true
+                && row["enabled"] == true
+                && row["version"] == expected
+        })
+    })
+}
+async fn install_plugin(executable: &Path, marketplace: &str) -> Result<Value> {
+    let manifest: Value = serde_json::from_str(include_str!(
+        "../../../plugins/codex/.codex-plugin/plugin.json"
+    ))?;
+    let version = manifest["version"]
+        .as_str()
+        .context("plugin version missing")?;
+    let plugin_id = format!("kinic-skill-recorder@{marketplace}");
+    let list_args = ["plugin", "list", "--marketplace", marketplace, "--json"];
+    let before = codex_json(executable, &list_args).await?;
+    let changed = !matching_plugin(&before, &plugin_id, version);
+    if changed {
+        codex_json(executable, &["plugin", "add", &plugin_id, "--json"]).await?;
+        let after = codex_json(executable, &list_args).await?;
+        ensure!(
+            matching_plugin(&after, &plugin_id, version),
+            "Codex did not confirm the expected plugin version and enablement"
+        );
+    }
+    Ok(
+        json!({"status":"installed_enabled","plugin_id":plugin_id,"version":version,"changed":changed,"hook_trust":"unknown","observed_operation":"unknown","next":"Review /hooks in Codex and restart if required"}),
     )
 }
