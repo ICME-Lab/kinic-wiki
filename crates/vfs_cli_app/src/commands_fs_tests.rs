@@ -25,6 +25,7 @@ pub(crate) struct MockClient {
     pub(crate) lists: std::sync::Mutex<Vec<ListNodesRequest>>,
     pub(crate) child_lists: std::sync::Mutex<Vec<vfs_types::ListChildrenRequest>>,
     pub(crate) writes: std::sync::Mutex<Vec<WriteNodeRequest>>,
+    pub(crate) batch_writes: std::sync::atomic::AtomicUsize,
     pub(crate) appends: std::sync::Mutex<Vec<AppendNodeRequest>>,
     pub(crate) edits: std::sync::Mutex<Vec<EditNodeRequest>>,
     pub(crate) deletes: std::sync::Mutex<Vec<DeleteNodeRequest>>,
@@ -165,6 +166,29 @@ impl VfsApi for MockClient {
                 etag: "etag-write".to_string(),
             },
         })
+    }
+
+    async fn write_nodes(
+        &self,
+        request: vfs_types::WriteNodesRequest,
+    ) -> Result<Vec<WriteNodeResult>> {
+        self.batch_writes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut results = Vec::new();
+        for item in request.nodes {
+            results.push(
+                self.write_node(WriteNodeRequest {
+                    database_id: request.database_id.clone(),
+                    path: item.path,
+                    kind: item.kind,
+                    content: item.content,
+                    metadata_json: item.metadata_json,
+                    expected_etag: item.expected_etag,
+                })
+                .await?,
+            );
+        }
+        Ok(results)
     }
 
     async fn append_node(&self, request: AppendNodeRequest) -> Result<WriteNodeResult> {

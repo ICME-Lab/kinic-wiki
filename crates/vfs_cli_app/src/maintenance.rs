@@ -4,7 +4,10 @@
 use anyhow::{Result, anyhow, bail};
 use std::collections::BTreeSet;
 use vfs_client::VfsApi;
-use vfs_types::{ListNodesRequest, Node, NodeEntry, NodeEntryKind, NodeKind, WriteNodeRequest};
+use vfs_types::{
+    ListNodesRequest, Node, NodeEntry, NodeEntryKind, NodeKind, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
+};
 use wiki_domain::{
     WIKI_CONCEPTS_PREFIX, WIKI_ENTITIES_PREFIX, WIKI_INDEX_PATH, WIKI_ROOT_PATH,
     WIKI_SOURCES_PREFIX,
@@ -67,7 +70,11 @@ pub async fn rebuild_scope_index(
 ) -> Result<()> {
     let scope_name = normalize_scope_name(scope)?;
     let ancestors = scope_ancestors(&scope_name);
+    if ancestors.len() + 1 > 100 {
+        bail!("scope index rebuild exceeds the 100 node batch limit");
+    }
     let mut ensured_index_paths = Vec::new();
+    let mut pending = Vec::new();
     for current_scope in &ancestors {
         let scope_prefix = format!("{WIKI_ROOT_PATH}/{current_scope}");
         let scope_index_path = format!("{scope_prefix}/index.md");
@@ -81,14 +88,14 @@ pub async fn rebuild_scope_index(
             .await?;
         let entries = with_ensured_index_entries(entries, &ensured_index_paths, &scope_prefix);
         let scope_index = render_scope_index(current_scope, &scope_prefix, &entries)?;
-        upsert_node(
-            client,
-            database_id,
-            &scope_index_path,
-            NodeKind::File,
-            &scope_index,
-        )
-        .await?;
+        let current = client.read_node(database_id, &scope_index_path).await?;
+        pending.push(WriteNodeItem {
+            path: scope_index_path.clone(),
+            kind: NodeKind::File,
+            content: scope_index,
+            metadata_json: "{}".into(),
+            expected_etag: current.map(|n| n.etag),
+        });
         ensured_index_paths.push(scope_index_path);
     }
 
@@ -98,29 +105,35 @@ pub async fn rebuild_scope_index(
     {
         let scope_prefix = format!("{WIKI_ROOT_PATH}/{root_scope}");
         let scope_index_path = format!("{scope_prefix}/index.md");
-        let scope_index = client
-            .read_node(database_id, &scope_index_path)
-            .await?
-            .map(|node| node.content)
-            .unwrap_or_else(|| String::from("# Index\n"));
+        let scope_index = &pending
+            .iter()
+            .find(|node| node.path == scope_index_path)
+            .expect("root scope index is pending")
+            .content;
         let summary = first_summary_line(&scope_index);
-        let current_root = client
-            .read_node(database_id, WIKI_INDEX_PATH)
-            .await?
-            .map(|node| node.content)
+        let current_root_node = client.read_node(database_id, WIKI_INDEX_PATH).await?;
+        let current_root = current_root_node
+            .as_ref()
+            .map(|node| node.content.clone())
             .unwrap_or_else(|| String::from("# Index\n"));
         let entry = format!("- [{root_scope}]({scope_index_path}) - {summary}");
         let root_index =
             upsert_list_entry(&current_root, ROOT_SCOPE_SECTION, &entry, &scope_index_path);
-        upsert_node(
-            client,
-            database_id,
-            WIKI_INDEX_PATH,
-            NodeKind::File,
-            &root_index,
-        )
-        .await?;
+        pending.push(WriteNodeItem {
+            path: WIKI_INDEX_PATH.into(),
+            kind: NodeKind::File,
+            content: root_index,
+            metadata_json: "{}".into(),
+            expected_etag: current_root_node.map(|n| n.etag),
+        });
     }
+
+    client
+        .write_nodes(WriteNodesRequest {
+            database_id: database_id.into(),
+            nodes: pending,
+        })
+        .await?;
 
     Ok(())
 }
