@@ -14,7 +14,7 @@ const billing = `record {
  billing_authority_id = "${controller}";
  kinic_ledger_canister_id = "73mez-iiaaa-aaaaq-aaasq-cai";
  enabled = true;
- threshold_cycles = 2_000_000_000_000 : nat;
+ threshold_cycles = 5_000_000_000_000 : nat;
  launcher_principal = "xfug4-5qaaa-aaaak-afowa-cai";
  cycles_per_kinic = 234_500_000_000 : nat64;
  min_update_cycles = 1_000_000 : nat64;
@@ -64,6 +64,7 @@ if (command === 'git') {
   else if (args.slice(0, 7).join(' ') === 'deploy wiki -e mainnet-sev --mode upgrade --args-file' && args.length === 8) {
     const payload = readFileSync(args[7], 'utf8');
     if (!payload.includes('iap_authority_id = opt "hcums-tc6dw-saet6-tkznz-mkldy-lwq47-2pehv-uoq3u-6a22c-mqfsh-5qe"')) throw new Error('wrong authority');
+    if (!payload.includes('threshold_cycles = 5_000_000_000_000 : nat')) throw new Error('wrong top-up threshold');
     const logs = readdirSync('.local/mainnet-snapshots');
     if (logs.length !== 1 || !readFileSync('.local/mainnet-snapshots/' + logs[0], 'utf8').includes('snapshot_id=test-snapshot')) throw new Error('snapshot not recorded before deploy');
     event('deploy');

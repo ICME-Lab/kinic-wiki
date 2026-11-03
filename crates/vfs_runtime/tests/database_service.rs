@@ -33,6 +33,26 @@ fn service() -> VfsService {
     service_with_root().0
 }
 
+#[test]
+fn fresh_index_defaults_to_five_trillion_top_up_threshold() {
+    let dir = tempdir().expect("tempdir should create");
+    let service = VfsService::new(
+        dir.path().join("index.sqlite3"),
+        dir.path().join("databases"),
+    );
+    service
+        .run_index_migrations()
+        .expect("migrations should run");
+    assert_eq!(
+        service
+            .cycles_billing_config()
+            .expect("config should load")
+            .top_up
+            .threshold_cycles,
+        5_000_000_000_000
+    );
+}
+
 fn service_with_root() -> (VfsService, PathBuf) {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
