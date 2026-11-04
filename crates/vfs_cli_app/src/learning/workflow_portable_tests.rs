@@ -1968,3 +1968,48 @@ async fn compact_inbox_does_not_retain_dropped_tool_bodies() {
     assert!(!body.contains("large-tool-output"));
     assert!(body.len() < 16 * 1024);
 }
+
+#[tokio::test]
+async fn paused_background_delivery_keeps_pending_events_but_manual_flush_works() {
+    let (_dir, client, state, a, _b) = fixture().await;
+    let c = connection();
+    let out = open_outbox(&client, &c, &state).unwrap();
+    let e = event("paused-delivery-run", "hook", json!({"test":"local-only"}));
+    out.enqueue(&e).unwrap();
+    let scope = hash(
+        &serde_json::to_string(&(
+            endpoint(&c),
+            c.database_id.as_deref().unwrap(),
+            client.caller_principal().unwrap(),
+        ))
+        .unwrap(),
+    );
+    let marker = state_root(&state)
+        .unwrap()
+        .join(format!("background-delivery-paused-{scope}"));
+    std::fs::write(&marker, "operator paused").unwrap();
+    let reply = deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert_eq!(reply["delivery_paused"], true);
+    assert_eq!(out.pending_count().unwrap(), 1);
+    assert!(
+        client
+            .read_node("db", &evidence_path(&e))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let reply = deliver(&client, &c, &state, &a, None, None).await.unwrap();
+    assert_eq!(reply["sent"], 1);
+    assert_eq!(out.pending_count().unwrap(), 0);
+    assert!(marker.exists());
+    let next = event("after-pause", "hook", json!({"test":"resumed"}));
+    out.enqueue(&next).unwrap();
+    std::fs::remove_file(&marker).unwrap();
+    let reply = deliver(&client, &c, &state, &a, Some("codex"), None)
+        .await
+        .unwrap();
+    assert_eq!(reply["sent"], 1);
+    assert_eq!(out.pending_count().unwrap(), 0);
+}

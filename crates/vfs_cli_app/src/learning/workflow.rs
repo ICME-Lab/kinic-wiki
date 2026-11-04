@@ -1572,6 +1572,9 @@ pub async fn deliver(
     config: Option<&Path>,
 ) -> Result<Value> {
     let outbox = open_outbox(client, c, state)?;
+    if engine.is_some() && outbox.background_delivery_paused()? {
+        return Ok(json!({"sent":0,"delivery_paused":true,"pending_sync":true}));
+    }
     // Retain this project's wakeup even if another project or a synchronous
     // sender currently owns delivery. The wait occurs only in the finite child.
     let lease = if engine.is_some() {

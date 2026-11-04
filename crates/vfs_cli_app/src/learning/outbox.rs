@@ -54,6 +54,17 @@ impl Outbox {
         outbox.refresh_snapshot();
         Ok(outbox)
     }
+    /// Operator marker scoped to this destination/principal; manual operations remain explicit.
+    pub(super) fn background_delivery_paused(&self) -> Result<bool> {
+        let marker = self
+            .path
+            .with_file_name(format!("background-delivery-paused-{}", self.scope));
+        match std::fs::symlink_metadata(marker) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
     pub fn enqueue(&self, event: &Event) -> Result<()> {
         if event.id.is_empty() || event.run_id.is_empty() || event.kind.is_empty() {
             bail!("event requires id, run_id and kind");
