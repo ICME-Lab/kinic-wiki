@@ -8,6 +8,22 @@ on:
   workflow_dispatch:
 
 jobs:
+  cli-release-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Check offline release invariants
+        run: python3 -B -m unittest scripts.test_cli_release scripts.test_cli_upgrade
+      - name: Test npm installer
+        run: npm --prefix npm/kinic-vfs-cli test
+
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -499,6 +515,9 @@ jobs:
             name: macos-arm64
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:
