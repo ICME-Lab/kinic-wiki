@@ -380,6 +380,16 @@ async fn remote(data: &mut Data, client: &impl VfsApi, db: &str, project: &str) 
     }
     Ok(())
 }
+// A directory reference protects its children; a child path or longer directory name does not.
+fn directory_reference(body: &str, directory: &str) -> bool {
+    body.match_indices(directory).any(|(start, _)| {
+        let tail = &body[start + directory.len()..];
+        let tail = tail.strip_prefix('/').unwrap_or(tail);
+        tail.chars().next().is_none_or(|c| {
+            c.is_whitespace() || matches!(c, '\"' | '\'' | ')' | ']' | '}' | '>' | '#' | '?')
+        })
+    })
+}
 fn protect(data: &mut Data) {
     let mut canonical = BTreeMap::new();
     let structural_sources: BTreeMap<_, _> = data
@@ -460,6 +470,10 @@ fn protect(data: &mut Data) {
             i.eligible_reason = None;
             continue;
         }
+        let run_directory = i
+            .run_id
+            .as_ref()
+            .map(|run| format!("/Sources/learning-runs/{}", hash(run)));
         let needles: Vec<&str> = [
             i.key.strip_prefix("remote:"),
             i.event_id.as_deref(),
@@ -495,7 +509,10 @@ fn protect(data: &mut Data) {
                 } else {
                     body.contains(s)
                 }
-            }) {
+            }) || run_directory
+                .as_ref()
+                .is_some_and(|directory| directory_reference(body, directory))
+            {
                 i.protected_by.push(key.clone());
                 break; // A protected target cannot be deleted; further reasons are not needed.
             }
@@ -504,7 +521,11 @@ fn protect(data: &mut Data) {
             if !i.protected_by.is_empty() {
                 break;
             }
-            if needles.iter().any(|s| body.contains(s)) {
+            if needles.iter().any(|s| body.contains(s))
+                || run_directory
+                    .as_ref()
+                    .is_some_and(|directory| directory_reference(body, directory))
+            {
                 i.protected_by.push(format!("job:{n}"));
                 break;
             }
@@ -620,29 +641,33 @@ fn write_new_verified(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 pub fn print_summary(value: &Value) {
+    println!("{}", human_summary(value));
+}
+fn human_summary(value: &Value) -> String {
     let r = &value["inventory"];
-    println!(
+    let mut lines = vec![format!(
         "Complete: {}\nEligible: {}\nExcluded: {}",
         r["complete"], value["eligible_count"], value["excluded_records"]
-    );
+    )];
     if let Some(groups) = value["categories"].as_object() {
         for (k, v) in groups {
-            println!("{k}: {} records / {} content bytes", v[0], v[1]);
+            lines.push(format!("{k}: {} records / {} content bytes", v[0], v[1]));
         }
     }
-    for key in [
-        "issues",
-        "preview",
-        "preview_sha256",
-        "applied",
-        "limitations",
-    ] {
+    if !r["issues"].is_null() {
+        lines.push(format!("issues: {}", r["issues"]));
+    }
+    for key in ["preview", "preview_sha256", "applied", "limitations"] {
         if !value[key].is_null() {
-            println!("{key}: {}", value[key]);
+            lines.push(format!("{key}: {}", value[key]));
         }
     }
-    println!("History, indexes and physical reclaim remain unknown unless separately measured.");
+    lines.push(
+        "History, indexes and physical reclaim remain unknown unless separately measured.".into(),
+    );
+    lines.join("\n")
 }
+
 pub fn local_inventory(c: &ResolvedConnection, cwd: &Path, state: &StateArgs) -> Result<Value> {
     let path = discover_config(cwd)?.context("portable learning project required")?;
     let project = load_project(&path)?;
@@ -1409,6 +1434,54 @@ mod tests {
                 .is_some()
         );
         assert_eq!(*client.delete_batches.lock().unwrap(), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn run_directory_references_protect_children_without_matching_siblings() {
+        for suffix in ["", "/", "-other", "/other.json"] {
+            let (_dir, client, c, p, root) = fixture();
+            let mut e = test_event("directory-child");
+            e.payload.as_object_mut().unwrap().remove("test_fixture");
+            e.payload["capture"]["event"] = json!("PostToolUse");
+            remote_event(&client, &e).await;
+            let path = evidence_path(&e);
+            let folder = path.rsplit_once('/').unwrap().0;
+            write_immutable(
+                &client,
+                "db",
+                "/Knowledge/case.md",
+                &format!("[run]({folder}{suffix})"),
+            )
+            .await
+            .unwrap();
+            let data = collect_with_policy(&client, &c, &p, &root, false, true).await;
+            let item = data
+                .report
+                .items
+                .iter()
+                .find(|i| i.event_id.as_deref() == Some("directory-child"))
+                .unwrap();
+            assert_eq!(
+                item.eligible_reason.is_none(),
+                suffix.is_empty() || suffix == "/",
+                "{suffix}"
+            );
+        }
+    }
+
+    #[test]
+    fn human_output_explains_incomplete_inventory() {
+        let (_dir, _client, c, p, _root) = fixture();
+        let mut data = empty_data(&c, &p);
+        data.report.complete = false;
+        data.report.issues = vec![
+            "local_inspection_incomplete".into(),
+            "remote_inspection_incomplete".into(),
+        ];
+        let text = human_summary(&summary(&data.report));
+        assert!(text.contains("Complete: false"));
+        assert!(text.contains("local_inspection_incomplete"));
+        assert!(text.contains("remote_inspection_incomplete"));
     }
 
     #[tokio::test]
