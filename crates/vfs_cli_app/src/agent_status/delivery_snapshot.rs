@@ -22,6 +22,8 @@ struct Projection {
 }
 #[derive(Serialize, Deserialize)]
 struct Record {
+    #[serde(default)]
+    excluded_records: Option<u64>,
     pending_records: Option<u64>,
     acknowledged_records: Option<u64>,
     unattributed_records: u64,

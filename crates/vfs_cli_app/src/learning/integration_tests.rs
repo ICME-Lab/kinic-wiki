@@ -9,6 +9,7 @@ use vfs_types::*;
 
 pub(crate) struct StoreClient {
     pub(crate) store: FsStore,
+    pub(crate) after_delete: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub(crate) deny: AtomicBool,
     fail_after_write: AtomicBool,
     pub(crate) fail_after_publication: AtomicBool,
@@ -24,6 +25,7 @@ impl StoreClient {
         store.run_fs_migrations().unwrap();
         Self {
             store,
+            after_delete: std::sync::Mutex::new(None),
             deny: AtomicBool::new(false),
             fail_after_write: AtomicBool::new(false),
             fail_after_publication: AtomicBool::new(false),
@@ -161,7 +163,14 @@ impl VfsApi for StoreClient {
         self.store.edit_node(r, 10).map_err(|e| anyhow!("{e:?}"))
     }
     async fn delete_node(&self, r: DeleteNodeRequest) -> Result<DeleteNodeResult> {
-        self.store.delete_node(r, 10).map_err(|e| anyhow!("{e:?}"))
+        let result = self
+            .store
+            .delete_node(r, 10)
+            .map_err(|e| anyhow!("{e:?}"))?;
+        if let Some(callback) = self.after_delete.lock().unwrap().take() {
+            callback();
+        }
+        Ok(result)
     }
     async fn move_node(&self, r: MoveNodeRequest) -> Result<MoveNodeResult> {
         self.store.move_node(r, 10).map_err(|e| anyhow!("{e:?}"))

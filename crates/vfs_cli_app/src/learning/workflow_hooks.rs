@@ -97,6 +97,48 @@ fn evidence(request: &Value) -> Value {
     // above unchanged, so replay never recaptures or rewrites old evidence.
     let terminal = !["recall", "UserPromptSubmit", "SessionStart"].contains(&kind)
         && (kind == "Stop" || request["terminal"] == true);
+    if !terminal {
+        // Hash redacted values, never persist raw tool input/output or arbitrary fields.
+        redact(&mut capture);
+        let mut small = serde_json::Map::new();
+        let mut omitted = Vec::new();
+        for key in [
+            "event",
+            "hook_event_name",
+            "engine",
+            "session_id",
+            "turn_id",
+            "run_id",
+            "tool_use_id",
+            "tool_name",
+            "timestamp",
+            "terminal",
+            "missing_recall",
+        ] {
+            if let Some(value) = capture.get(key) {
+                if value.to_string().len() <= 512 {
+                    small.insert(key.into(), value.clone());
+                } else {
+                    small.insert(format!("{key}_sha256"), json!(hash(&value.to_string())));
+                    omitted.push(key);
+                }
+            }
+        }
+        for key in ["tool_input", "tool_response", "payload"] {
+            if let Some(value) = capture.get(key) {
+                let body = value.to_string();
+                let mut summary = json!({"sha256":hash(&body),"bytes":body.len()});
+                if let Some(code) = value.get("exit_code").and_then(Value::as_i64) {
+                    summary["exit_code"] = json!(code);
+                }
+                if let Some(error) = value.get("is_error").and_then(Value::as_bool) {
+                    summary["is_error"] = json!(error);
+                }
+                small.insert(format!("{key}_summary"), summary);
+            }
+        }
+        return json!({"schema_version":2,"capture":small,"omitted_fields":omitted,"body_policy":"metadata_and_hashes_only","complete":false,"adoption":"unknown"});
+    }
     if let Some(path) = request["transcript_path"].as_str().filter(|_| terminal) {
         let result = (|| -> Result<Value> {
             use std::io::{Seek, SeekFrom};
@@ -132,7 +174,7 @@ fn evidence(request: &Value) -> Value {
         };
     }
     redact(&mut capture);
-    json!({"capture":capture,"complete":false,"adoption":"unknown"})
+    json!({"schema_version":2,"capture":capture,"complete":false,"adoption":"unknown"})
 }
 pub async fn handle(
     client: &impl VfsApi,
@@ -231,8 +273,19 @@ pub async fn handle(
     payload["engine"] = json!(engine);
     payload["project_id"] = json!(project.as_ref().map(|p| &p.project_id));
     let outbox = open_outbox(client, c, state)?;
-    outbox.enqueue(&event(&id, "hook", payload))?;
     let terminal = kind == "Stop" || request["terminal"] == true;
+    let versioned = payload["schema_version"] == 2;
+    let mut record = event(&id, "hook", payload);
+    if terminal && versioned {
+        record.id = hash(&format!("{id}:hook:terminal-v2"));
+    }
+    if !terminal && versioned {
+        ensure!(
+            serde_json::to_vec(&record)?.len() <= 16 * 1024,
+            "hook identifiers exceed compact event budget"
+        );
+    }
+    outbox.enqueue(&record)?;
     if terminal && let Some(p) = job_project {
         job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
     }
@@ -283,6 +336,16 @@ pub fn spool(
     request["__kinic_principal"] = json!(project.as_ref().and_then(|p| p.principal.clone()));
     // Freeze evidence before remote identity/transport can fail and the log can grow.
     request["__kinic_evidence"] = evidence(&request);
+    // Replay consumes the frozen snapshot; retaining original bodies doubles local intake.
+    for key in [
+        "tool_input",
+        "tool_response",
+        "payload",
+        "last_assistant_message",
+        "transcript_path",
+    ] {
+        request.as_object_mut().unwrap().remove(key);
+    }
     redact(&mut request);
     let root = inbox_root(c, state, engine, explicit.as_deref(), &cwd)?;
     request["__kinic_owner_pid"] = json!(std::process::id());
@@ -592,13 +655,9 @@ mod terminal_capture_tests {
                 &json!({"event":"PostToolUse","session_id":"session","turn_id":"turn","transcript_path":log,"tool_name":"shell","tool_use_id":call,"tool_input":{"command":call},"tool_response":format!("result-{call}; api_key=private-tool-secret")}),
             );
             assert_eq!(value["capture"]["tool_use_id"], call);
-            assert_eq!(value["capture"]["tool_input"]["command"], call);
-            assert!(
-                value["capture"]["tool_response"]
-                    .as_str()
-                    .unwrap()
-                    .contains(&format!("result-{call}"))
-            );
+            assert!(value["capture"].get("tool_input").is_none());
+            assert!(value["capture"].get("tool_response").is_none());
+            assert!(value["capture"]["tool_input_summary"]["sha256"].is_string());
             assert!(!value.to_string().contains("private-tool-secret"));
             assert!(value["capture"].get("session_evidence").is_none());
             assert!(!value.to_string().contains("current-task-transcript"));
@@ -677,5 +736,63 @@ mod terminal_capture_tests {
             );
             assert!(value["capture"].get("session_evidence").is_none(), "{kind}");
         }
+    }
+}
+
+#[cfg(test)]
+mod compact_capture_tests {
+    use super::*;
+    #[test]
+    fn interim_captures_drop_bodies_and_bound_untrusted_identifiers() {
+        for engine in ["codex", "dsh"] {
+            let request = json!({"engine":engine,"event":"PostToolUse","session_id":"s","turn_id":"t","tool_use_id":"x".repeat(20000),"tool_name":"shell","tool_input":{"command":"private-body".repeat(20000)},"tool_response":{"output":"output-body".repeat(20000),"exit_code":1},"transcript_path":"/absent/file"});
+            let value = evidence(&request);
+            assert!(value.to_string().len() <= 16 * 1024);
+            assert!(!value.to_string().contains("private-body"));
+            assert!(!value.to_string().contains("output-body"));
+            assert_eq!(value["schema_version"], 2);
+            assert_eq!(value["capture"]["tool_response_summary"]["exit_code"], 1);
+            assert!(value["capture"]["tool_input_summary"]["sha256"].is_string());
+            assert!(value["capture"].get("session_evidence").is_none());
+        }
+    }
+    #[test]
+    fn twenty_tool_turn_keeps_one_terminal_snapshot_and_reduces_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("turn.jsonl");
+        let body = "observed-result".repeat(10000);
+        std::fs::write(
+            &log,
+            format!(
+                "{}\n{}\n",
+                json!({"type":"user","message":"task"}),
+                json!({"type":"assistant","message":body})
+            ),
+        )
+        .unwrap();
+        let mut new_bytes = 0;
+        let mut old_bytes = 0;
+        for i in 0..20 {
+            let request = json!({"event":"PostToolUse","tool_use_id":i.to_string(),"tool_response":body,"transcript_path":log});
+            old_bytes += request.to_string().len();
+            let capture = evidence(&request);
+            new_bytes += capture.to_string().len();
+            assert!(capture["capture"].get("session_evidence").is_none());
+        }
+        let end = evidence(&json!({"event":"Stop","transcript_path":log}));
+        assert_eq!(
+            end["capture"]["session_evidence"]["records"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        new_bytes += end.to_string().len();
+        old_bytes += end.to_string().len();
+        assert!(
+            new_bytes < old_bytes / 5,
+            "new={new_bytes}, old={old_bytes}"
+        );
+        eprintln!("20-tool bytes: previous={old_bytes}, compact={new_bytes}");
     }
 }

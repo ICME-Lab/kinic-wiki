@@ -204,3 +204,26 @@ fn legacy_records_keep_fingerprint_without_project_identity() {
     assert_eq!(serde_json::to_string(&receipt).unwrap(), old);
     assert!(receipt.scope_guards.is_empty());
 }
+
+#[test]
+fn excluded_outbox_records_are_not_pending_or_acknowledged() {
+    let root = tempfile::tempdir().unwrap();
+    let outbox = Outbox::open(root.path(), "c", "d", "p").unwrap();
+    let e = Event {
+        id: "excluded".into(),
+        run_id: "run".into(),
+        kind: "hook".into(),
+        payload: serde_json::json!({}),
+    };
+    outbox.enqueue(&e).unwrap();
+    let conn = rusqlite::Connection::open(root.path().join("learning-outbox.sqlite3")).unwrap();
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_exclusions(scope TEXT NOT NULL,id TEXT NOT NULL,body_hash TEXT NOT NULL,manifest_hash TEXT NOT NULL,PRIMARY KEY(scope,id)); INSERT INTO learning_exclusions SELECT scope,id,'hash','manifest' FROM learning_outbox;").unwrap();
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+    assert!(outbox.pending().unwrap().is_empty());
+    assert_eq!(
+        conn.query_row("SELECT acknowledged FROM learning_outbox", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}

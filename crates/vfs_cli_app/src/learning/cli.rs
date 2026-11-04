@@ -126,6 +126,17 @@ pub enum AgentCommand {
 }
 #[derive(Subcommand, Debug, Clone)]
 pub enum LearnCommand {
+    /// Inspect evidence storage or apply an explicitly reviewed cleanup manifest.
+    Storage {
+        #[arg(long, default_value = ".", global = true)]
+        project_root: PathBuf,
+        #[arg(long, global = true)]
+        state_dir: Option<PathBuf>,
+        #[arg(long, global = true)]
+        json: bool,
+        #[command(subcommand)]
+        command: StorageCommand,
+    },
     /// Preview or apply a local job pause/resume; never starts a model.
     Jobs {
         #[arg(long, default_value = ".", global = true)]
@@ -485,4 +496,68 @@ impl AgentCommand {
             Self::Doctor(_) => {}
         }
     }
+}
+
+#[cfg(test)]
+mod storage_cli_tests {
+    use crate::cli::Cli;
+    use clap::Parser;
+    #[test]
+    fn inventory_and_reviewed_cleanup_are_separate_commands() {
+        for args in [
+            vec![
+                "kinic",
+                "learn",
+                "storage",
+                "inventory",
+                "--local-only",
+                "--json",
+            ],
+            vec![
+                "kinic",
+                "learn",
+                "storage",
+                "preview",
+                "--output",
+                "preview.json",
+                "--json",
+            ],
+            vec![
+                "kinic",
+                "learn",
+                "storage",
+                "apply",
+                "--preview",
+                "preview.json",
+                "--backup-dir",
+                "backup",
+                "--confirm",
+                "digest",
+                "--json",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok());
+        }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum StorageCommand {
+    Inventory {
+        #[arg(long)]
+        local_only: bool,
+    },
+    Preview {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Apply {
+        #[arg(long)]
+        preview: PathBuf,
+        #[arg(long)]
+        backup_dir: PathBuf,
+        /// SHA-256 of the exact reviewed preview file.
+        #[arg(long)]
+        confirm: String,
+    },
 }

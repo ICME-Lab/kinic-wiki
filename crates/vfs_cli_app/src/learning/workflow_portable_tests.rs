@@ -1922,3 +1922,49 @@ print(json.dumps({'type':'turn.completed'}))
         before.etag
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn terminal_evidence_reuses_identity_and_rejects_changed_retry_content() {
+    let (_dir, client, state, a, _b) = fixture().await;
+    let request = json!({"event":"Stop","session_id":"terminal-test","turn_id":"turn","cwd":a,"last_assistant_message":"first"});
+    hooks::handle(
+        &client,
+        &connection(),
+        "codex",
+        None,
+        &state,
+        request.clone(),
+    )
+    .await
+    .unwrap();
+    hooks::handle(
+        &client,
+        &connection(),
+        "codex",
+        None,
+        &state,
+        request.clone(),
+    )
+    .await
+    .unwrap();
+    let mut changed = request;
+    changed["last_assistant_message"] = json!("changed");
+    assert!(
+        hooks::handle(&client, &connection(), "codex", None, &state, changed)
+            .await
+            .is_err()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn compact_inbox_does_not_retain_dropped_tool_bodies() {
+    let (_dir, _client, state, a, _b) = fixture().await;
+    let request = json!({"event":"PostToolUse","session_id":"compact-spool","turn_id":"turn","cwd":a,"tool_input":{"command":"large-tool-body".repeat(10000)},"tool_response":"large-tool-output".repeat(10000)});
+    let file = hooks::spool(&connection(), &state, "codex", None, &request).unwrap();
+    let body = std::fs::read_to_string(file).unwrap();
+    assert!(!body.contains("large-tool-body"));
+    assert!(!body.contains("large-tool-output"));
+    assert!(body.len() < 16 * 1024);
+}

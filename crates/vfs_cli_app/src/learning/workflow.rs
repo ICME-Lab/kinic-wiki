@@ -5,6 +5,8 @@ use super::{cli::*, *};
 mod hooks;
 #[path = "workflow_jobs.rs"]
 mod job_driver;
+#[path = "storage.rs"]
+pub mod storage;
 use crate::learning_evaluation::{
     self as evaluation, Comparison, EvaluationMode, EvaluationReport, PreparedContext,
     PreparedContexts, SuiteManifest, TaskSplit,
@@ -517,8 +519,14 @@ pub async fn run_learn(
     c: &ResolvedConnection,
     command: LearnCommand,
 ) -> Result<()> {
+    let human = matches!(&command, LearnCommand::Storage { json: false, .. });
     let value = learn_value(client, c, command, &std::env::current_dir()?).await?;
-    print(&value)
+    if human {
+        storage::print_summary(&value);
+        Ok(())
+    } else {
+        print(&value)
+    }
 }
 async fn learn_value(
     client: &impl VfsApi,
@@ -570,6 +578,21 @@ async fn learn_value_at(
     }
     let db = c.database_id.as_deref().context("database required")?;
     match command {
+        LearnCommand::Storage {
+            project_root,
+            state_dir,
+            json,
+            command,
+        } => {
+            storage::run(
+                client,
+                c,
+                &project_root,
+                &StateArgs { state_dir, json },
+                command,
+            )
+            .await
+        }
         LearnCommand::Jobs {
             project_root,
             state_dir,

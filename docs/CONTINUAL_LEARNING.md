@@ -289,3 +289,62 @@ No prompts, paths, CLI arguments, or captured stderr are included. Empty success
 searches do not emit a timeout diagnostic. This diagnostic is in the hook host's
 stderr, not persisted in `agent status`; keep the host log when investigating.
 There is no cache or resident worker. Ten seconds is not a recall latency guarantee.
+
+### Compact evidence and reviewed storage cleanup
+
+New hook evidence carries `schema_version: 2`. Intermediate Codex/DSH events
+retain bounded identifiers, result codes and hashes of redacted tool payloads,
+not tool bodies or transcript snapshots. New intermediate outbox events are
+limited to 16 KiB. Only terminal events capture the current turn (up to the
+existing 1 MiB transcript read bound). Missing, truncated or interrupted evidence
+never establishes task success. Repeated terminal events reserve one v2 identity
+per run; changed content is a conflict. Already captured legacy inbox/outbox
+records retain their exact bytes and IDs.
+
+Inspect storage without flushing or starting learning:
+
+```sh
+kinic-vfs-cli learn storage inventory --local-only --project-root . --json
+kinic-vfs-cli learn storage inventory --project-root . --json
+kinic-vfs-cli learn storage preview --project-root . --output preview.json --json
+```
+
+Local inspection reads a stable private copy of SQLite and WAL files rather than
+opening the live source. The local-only command does not acquire credentials or
+make remote requests; its identity is configured, not authenticated. Remote
+inspection pages a revision-bound snapshot of the whole selected database, since
+references outside the learning prefix must also protect evidence. Reports contain
+paths, IDs, byte counts and hashes, not transcript bodies. Content bytes, local
+SQLite allocation and unknown remote history/index/file allocation are separate.
+Incomplete snapshots, malformed evidence, unresolved inbox records and unstable
+local state disable cleanup eligibility. An exact repeated transcript is a size
+signal, not permission to remove its enclosing event.
+
+Cleanup is deliberately conservative: only owned exact-body duplicates or events
+explicitly marked `payload.test_fixture: true` qualify, and references from other
+nodes, outbox records or jobs protect them. Regular work is never expired by age;
+protected/approved nodes, case documents and foreign-project evidence are excluded.
+Do not add a test marker to production evidence merely to make it removable.
+
+After a human reviews the concrete preview and its SHA-256, with project writers
+quiescent and automatic learning disabled:
+
+```sh
+kinic-vfs-cli learn storage apply --project-root . --preview preview.json \
+  --backup-dir ./reviewed-evidence-backup --confirm <preview-sha256> --json
+```
+
+Apply verifies the binding and complete inventory again, creates a private backup
+with exact readback before mutation, holds the local delivery lease, and rechecks
+references before each conditional deletion/exclusion. Other remote writers are
+not locked: this is not a cross-document transaction. A changed inventory stops
+application; never regenerate approval silently. Interrupted application keeps the
+backup and requires reconciliation, not automatic retry. A fully completed apply
+can be repeated as a no-op only while its recorded final inventory still matches.
+
+Excluded local events retain their bytes and reserved IDs; they are not marked
+acknowledged and are omitted from delivery. Status exposes excluded counts. Remote
+node removal does not purge immutable revisions or promise reduced physical
+allocation/storage charges. History pruning, VACUUM and canister memory reclamation
+are separate maintenance work. These commands do not enable learning/publication,
+resume jobs, rewrite old events or bulk-flush the queue.

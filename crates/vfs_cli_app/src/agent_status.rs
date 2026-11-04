@@ -119,6 +119,7 @@ fn safe_id(value: &str) -> Option<&str> {
 struct Entry {
     event: Event,
     acknowledged: bool,
+    excluded: bool,
     sequence: i64,
 }
 fn events(path: &Path, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
@@ -129,6 +130,13 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
     // Bound original bodies before they enter Rust. Read and validate one row
     // at a time with the existing Event deserializer, preserving its malformed
     // JSON, duplicate-field, numeric and recursion checks.
+    let has_exclusions = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='learning_exclusions')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(|_| "source_unreadable")?;
     let mut stmt = conn.prepare("SELECT CASE WHEN typeof(body)='text' AND length(CAST(body AS BLOB))<=1048576 THEN body ELSE NULL END,acknowledged,rowid FROM learning_outbox NOT INDEXED WHERE scope=?1 ORDER BY rowid DESC LIMIT 4097").map_err(|_|"source_unreadable")?;
     let rows = stmt
         .query_map([scope], |r| {
@@ -157,6 +165,14 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
                 continue;
             }
         };
+        let excluded = has_exclusions
+            && conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM learning_exclusions WHERE scope=?1 AND id=?2)",
+                    rusqlite::params![scope, event.id],
+                    |r| r.get::<_, bool>(0),
+                )
+                .map_err(|_| "source_unreadable")?;
         drop(body);
         // Only ownership and receipt metadata survives this iteration. Charge
         // the aggregate memory budget for retained metadata, not task bodies.
@@ -181,6 +197,7 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
         out.push(Entry {
             event,
             acknowledged: ack == 1,
+            excluded,
             sequence,
         });
     }
@@ -234,7 +251,21 @@ fn delivery(path: &Path, scope: &str, record: &mut Value) {
 }
 fn delivery_from_connection(conn: &Connection, scope: &str, record: &mut Value) {
     record["delivery_scope"] = json!("selected destination and principal; shared across projects");
-    let age = conn.query_row("SELECT MIN(enqueued_at),COUNT(*)-COUNT(enqueued_at) FROM learning_outbox WHERE scope=?1 AND acknowledged=0", [scope], |r| Ok((r.get::<_,Option<String>>(0)?, r.get::<_,i64>(1)?)));
+    let has_exclusions = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='learning_exclusions')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(false);
+    let sql = if has_exclusions {
+        "SELECT MIN(enqueued_at),COUNT(*)-COUNT(enqueued_at) FROM learning_outbox WHERE scope=?1 AND acknowledged=0 AND NOT EXISTS (SELECT 1 FROM learning_exclusions e WHERE e.scope=learning_outbox.scope AND e.id=learning_outbox.id)"
+    } else {
+        "SELECT MIN(enqueued_at),COUNT(*)-COUNT(enqueued_at) FROM learning_outbox WHERE scope=?1 AND acknowledged=0"
+    };
+    let age = conn.query_row(sql, [scope], |r| {
+        Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?))
+    });
     if let Ok((oldest, unknown)) = age {
         record["pending_time_unknown"] = json!(unknown > 0);
         record["oldest_pending_at"] = if unknown > 0 {
@@ -350,8 +381,17 @@ fn records_from_entries(
             !owner.unresolved && owner.owners.len() == 1 && owner.owners.contains(target)
         })
         .collect();
-    let pending = entries.iter().filter(|e| !e.acknowledged).count();
-    let mut record = json!({"status":if incomplete {"partial"} else {"observed"},"code":if incomplete {"evidence_truncated_or_invalid"} else {"local_records_read"},"source":path,"storage_modified_at":modified(path),"scope":"selected destination, principal and identified project runs","pending_records":if incomplete {None} else {Some(pending)},"acknowledged_records":if incomplete {None} else {Some(entries.len()-pending)},"last_record":null,"last_send_failure":unknown("failure_not_persisted",None),"last_send_success_at":null});
+    let pending = entries
+        .iter()
+        .filter(|e| !e.acknowledged && !e.excluded)
+        .count();
+    let excluded = entries.iter().filter(|e| e.excluded).count();
+    let mut record = json!({"status":if incomplete {"partial"} else {"observed"},"code":if incomplete {"evidence_truncated_or_invalid"} else {"local_records_read"},"source":path,"storage_modified_at":modified(path),"scope":"selected destination, principal and identified project runs","pending_records":if incomplete {None} else {Some(pending)},"acknowledged_records":if incomplete {None} else {Some(entries.iter().filter(|e|e.acknowledged).count())},"last_record":null,"last_send_failure":unknown("failure_not_persisted",None),"last_send_success_at":null});
+    record["excluded_records"] = if incomplete {
+        Value::Null
+    } else {
+        json!(excluded)
+    };
     record["unattributed_records"] = json!(unattributed);
     if let Some(entry) = entries.first() {
         record["last_record"] = json!({"id":safe_id(&entry.event.id),"run_id":safe_id(&entry.event.run_id),"kind":safe_id(&entry.event.kind),"local_sequence":entry.sequence,"observed_at":null,"acknowledged":entry.acknowledged});
@@ -896,4 +936,18 @@ fn print_text(value: &Value) {
     println!(
         "Scope: current configuration/cwd; older partitions and legacy adapter queues excluded. Counts are separate stages and are not added. App activation and operation are unverified."
     );
+}
+
+#[cfg(test)]
+mod exclusion_status_tests {
+    use super::*;
+    #[test]
+    fn excluded_events_are_not_reported_as_oldest_pending_delivery() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE learning_outbox(scope TEXT,id TEXT,body TEXT,acknowledged INTEGER,enqueued_at TEXT); CREATE TABLE learning_exclusions(scope TEXT,id TEXT); INSERT INTO learning_outbox VALUES('scope','event','{}',0,'2026-10-01T00:00:00Z'); INSERT INTO learning_exclusions VALUES('scope','event');").unwrap();
+        let mut record = json!({});
+        delivery_from_connection(&conn, "scope", &mut record);
+        assert!(record["oldest_pending_at"].is_null());
+        assert_eq!(record["pending_time_unknown"], false);
+    }
 }

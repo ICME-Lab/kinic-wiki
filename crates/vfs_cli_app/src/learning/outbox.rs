@@ -44,7 +44,7 @@ impl Outbox {
         if !has_time {
             conn.execute_batch("ALTER TABLE learning_outbox ADD COLUMN enqueued_at TEXT")?;
         }
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_delivery(scope TEXT PRIMARY KEY, last_attempt_at TEXT, last_success_at TEXT, last_failure_at TEXT, last_error_code TEXT); COMMIT;")?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_exclusions(scope TEXT NOT NULL,id TEXT NOT NULL,body_hash TEXT NOT NULL,manifest_hash TEXT NOT NULL,PRIMARY KEY(scope,id)); CREATE TABLE IF NOT EXISTS learning_delivery(scope TEXT PRIMARY KEY, last_attempt_at TEXT, last_success_at TEXT, last_failure_at TEXT, last_error_code TEXT); COMMIT;")?;
         let outbox = Self {
             conn,
             scope: hash(&serde_json::to_string(&(canister, database, principal))?),
@@ -75,16 +75,26 @@ impl Outbox {
             Ok(())
         })
     }
+    /// Requires the caller to hold this outbox's delivery lease and verify a backup.
+    pub(super) fn exclude(&self, event: &Event, manifest: &str) -> Result<()> {
+        let expected = serde_json::to_string(event)?;
+        self.mutate(|conn| {
+            let (body, ack): (String, bool) = conn.query_row("SELECT body,acknowledged FROM learning_outbox WHERE scope=?1 AND id=?2", params![self.scope,event.id], |r|Ok((r.get(0)?,r.get(1)?)))?;
+            anyhow::ensure!(body == expected && !ack, "event changed or already delivered");
+            conn.execute("INSERT OR IGNORE INTO learning_exclusions(scope,id,body_hash,manifest_hash) VALUES(?1,?2,?3,?4)", params![self.scope,event.id,hash(&body),manifest])?;
+            Ok(())
+        })
+    }
     pub fn pending(&self) -> Result<Vec<Event>> {
         let mut stmt = self.conn.prepare(
-            "SELECT body FROM learning_outbox WHERE scope=?1 AND acknowledged=0 ORDER BY rowid",
+            "SELECT body FROM learning_outbox WHERE scope=?1 AND acknowledged=0 AND NOT EXISTS (SELECT 1 FROM learning_exclusions e WHERE e.scope=learning_outbox.scope AND e.id=learning_outbox.id) ORDER BY rowid",
         )?;
         let rows = stmt.query_map([&self.scope], |r| r.get::<_, String>(0))?;
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
     pub fn pending_count(&self) -> Result<usize> {
         Ok(self.conn.query_row(
-            "SELECT COUNT(*) FROM learning_outbox WHERE scope=?1 AND acknowledged=0",
+            "SELECT COUNT(*) FROM learning_outbox WHERE scope=?1 AND acknowledged=0 AND NOT EXISTS (SELECT 1 FROM learning_exclusions e WHERE e.scope=learning_outbox.scope AND e.id=learning_outbox.id)",
             [&self.scope],
             |r| r.get::<_, i64>(0),
         )? as usize)
