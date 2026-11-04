@@ -254,13 +254,23 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
     let mut state = State::new(root);
     let mut count = 0usize;
     let drive = async {
+        let mut prompt_pipe_closed = false;
         match config.engine {
             AgentEngine::Codex => {
-                stdin
+                if let Err(error) = stdin
                     .as_mut()
                     .expect("piped stdin")
                     .write_all(prompt.as_bytes())
-                    .await?;
+                    .await
+                {
+                    if error.kind() != std::io::ErrorKind::BrokenPipe {
+                        return Err(error.into());
+                    }
+                    // Startup may fail before the child reads its prompt. Keep
+                    // draining bounded output so its diagnostics and natural
+                    // exit status survive, within the original deadline.
+                    prompt_pipe_closed = true;
+                }
                 drop(stdin.take());
             }
             AgentEngine::Dsh => {
@@ -328,7 +338,9 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
         }
         if !state.pending.is_empty() {
             state.execution.exit_reason = "truncated_jsonl".into();
-        } else if !state.done {
+        } else if !state.done || (prompt_pipe_closed && state.execution.exit_reason == "completed")
+        {
+            // A terminal event cannot make a partially delivered prompt succeed.
             state.execution.exit_reason = "missing_terminal".into();
         }
         Ok(())
@@ -830,6 +842,50 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':11,'output_tok
             let (dir, cfg) = fixture(body, AgentEngine::Codex);
             let run = execute(&cfg, dir.path(), "x").await.unwrap();
             assert!(!run.complete);
+            assert_eq!(run.exit_reason, expected, "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_exit_before_reading_prompt_retains_safe_diagnostics() {
+        let (dir, cfg) = fixture(
+            "sys.stderr.write('Error: failed to initialize in-process app-server client: SECRET_TOKEN');sys.exit(7)",
+            AgentEngine::Codex,
+        );
+        let run = execute(&cfg, dir.path(), &"x".repeat(4 * 1024 * 1024))
+            .await
+            .unwrap();
+        assert!(!run.complete);
+        assert_eq!(run.exit_reason, "process_exit:7");
+        let summary = run.failure_summary(&AgentEngine::Codex);
+        assert!(summary.contains("Codex initialization failed"));
+        assert!(!summary.contains("SECRET_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn closed_prompt_pipe_keeps_limits_and_never_reports_success() {
+        for (body, expected) in [
+            ("pass", "missing_terminal"),
+            (
+                "print(json.dumps({'type':'turn.completed'}))",
+                "missing_terminal",
+            ),
+            ("print('{bad');sys.exit(7)", "malformed_jsonl"),
+            ("sys.stdout.write('{');sys.exit(7)", "truncated_jsonl"),
+            (
+                "import signal;os.kill(os.getpid(),signal.SIGTERM)",
+                "process_signal:15",
+            ),
+            ("sys.stderr.write('x'*16384)", "output_limit"),
+            ("time.sleep(20)", "timeout"),
+        ] {
+            let (dir, mut cfg) = fixture(&format!("os.close(0);{body}"), AgentEngine::Codex);
+            cfg.timeout_seconds = 1;
+            cfg.max_output_bytes = 4096;
+            let run = execute(&cfg, dir.path(), &"x".repeat(4 * 1024 * 1024))
+                .await
+                .unwrap();
+            assert!(!run.complete, "{body}");
             assert_eq!(run.exit_reason, expected, "{body}");
         }
     }
