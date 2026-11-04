@@ -407,6 +407,9 @@ fn jobs(path: &Path, config_path: Option<&Path>) -> Value {
                     .filter(|reason| {
                         [
                             "operator_paused",
+                            "job_failed",
+                            "previous_failure",
+                            "interrupted_attempt",
                             "evidence_missing",
                             "binding_or_evidence_changed",
                             "configuration_changed",
@@ -433,7 +436,7 @@ fn jobs(path: &Path, config_path: Option<&Path>) -> Value {
                     "Read the saved candidate; existing knowledge has not been automatically changed by candidate storage."
                 }
                 "retry" => {
-                    "Wait until next_attempt_at_ms; the next normal event can retry within the attempt budget."
+                    "Inspect the retained error and preview learn jobs resume --run-id <run-id> before applying."
                 }
                 "pending" => {
                     "Use learn drain --run-id <run-id> for bounded processing after checking delivery."

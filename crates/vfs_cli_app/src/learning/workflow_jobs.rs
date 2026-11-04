@@ -263,12 +263,42 @@ pub async fn drain_selected(
         }
         first_pass = false;
         let outbox = open_outbox(client, c, state)?;
-        outbox
-            .flush_exclusive(client, c.database_id.as_deref().unwrap())
-            .await?;
+        let selected = if selection.run_id.is_some() || selection.max_jobs.is_some() {
+            Some(
+                q.list()?
+                    .into_iter()
+                    .filter(|job| selection.includes(job))
+                    .filter(|job| {
+                        selection.max_jobs.is_none()
+                            || !(job.state == "candidate"
+                                && job.candidate_path.is_some()
+                                && project.validation_suite.is_none())
+                    })
+                    .take(selection.max_jobs.unwrap_or(u32::MAX) as usize)
+                    .map(|job| job.run_id)
+                    .collect::<std::collections::BTreeSet<_>>(),
+            )
+        } else {
+            None
+        };
+        if let Some(runs) = &selected {
+            outbox
+                .flush_runs(client, c.database_id.as_deref().unwrap(), runs)
+                .await?;
+        } else {
+            outbox
+                .flush_exclusive(client, c.database_id.as_deref().unwrap())
+                .await?;
+        }
+        let selected_job = |job: &LearningJob| {
+            selection.includes(job)
+                && selected
+                    .as_ref()
+                    .is_none_or(|runs| runs.contains(&job.run_id))
+        };
         if q.list()?
             .iter()
-            .any(|j| selection.includes(j) && outbox.pending_run(&j.run_id).unwrap_or(true))
+            .any(|j| selected_job(j) && outbox.pending_run(&j.run_id).unwrap_or(true))
         {
             #[cfg(test)]
             if let Some(after_pending) = TEST_DELIVERY_PENDING.with(|hook| hook.borrow_mut().take())
@@ -281,7 +311,7 @@ pub async fn drain_selected(
             drop(lease);
             if q.list()?
                 .iter()
-                .any(|j| selection.includes(j) && outbox.pending_run(&j.run_id).unwrap_or(true))
+                .any(|j| selected_job(j) && outbox.pending_run(&j.run_id).unwrap_or(true))
             {
                 return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
             }
@@ -294,7 +324,7 @@ pub async fn drain_selected(
         let (wake_generation, jobs) = q.wakeup_and_jobs()?;
         let mut delivery_blocked = false;
         for mut job in jobs {
-            if attempted.contains(&job.run_id) || !selection.includes(&job) {
+            if attempted.contains(&job.run_id) || !selected_job(&job) {
                 continue;
             }
             if selection.max_jobs.is_some_and(|max| started >= max) {
@@ -335,6 +365,14 @@ pub async fn drain_selected(
             }
             if !job.begin_attempt(chrono::Utc::now().timestamp_millis()) {
                 q.save(&job)?;
+                if job.state == "paused"
+                    && (selection.run_id.is_some() || selection.max_jobs.is_some())
+                {
+                    anyhow::bail!(
+                        "learning job {} requires inspection before resuming",
+                        job.run_id
+                    );
+                }
                 continue;
             }
             started += 1;
@@ -344,6 +382,11 @@ pub async fn drain_selected(
             if let Err(e) = outcome {
                 job.fail_error(&e, chrono::Utc::now().timestamp_millis());
                 q.save(&job)?;
+                if selection.run_id.is_some() || selection.max_jobs.is_some() {
+                    return Err(
+                        e.context(format!("learning job {} failed and was paused", job.run_id))
+                    );
+                }
             }
         }
         if !delivery_blocked
@@ -355,9 +398,10 @@ pub async fn drain_selected(
         }
         drop(lease);
         if delivery_blocked {
-            if q.list()?.iter().any(|job| {
-                selection.includes(job) && outbox.pending_run(&job.run_id).unwrap_or(true)
-            }) {
+            if q.list()?
+                .iter()
+                .any(|job| selected_job(job) && outbox.pending_run(&job.run_id).unwrap_or(true))
+            {
                 return Ok(json!({"busy":true,"reason":"delivery_pending","jobs":q.list()?}));
             }
             continue;

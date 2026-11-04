@@ -157,6 +157,29 @@ impl Outbox {
             }
         }
     }
+    /// Flush only the selected runs while preserving the shared delivery lease.
+    pub async fn flush_runs(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: &std::collections::BTreeSet<String>,
+    ) -> Result<Option<usize>> {
+        let mut sent = 0;
+        loop {
+            let Some(lease) = self.acquire()? else {
+                return Ok((sent > 0).then_some(sent));
+            };
+            sent += self.flush_owned_selection(client, db, Some(runs)).await?;
+            drop(lease);
+            if !self
+                .pending()?
+                .iter()
+                .any(|event| runs.contains(&event.run_id))
+            {
+                return Ok(Some(sent));
+            }
+        }
+    }
     /// All callers, including synchronous record/run commands, use the same lease.
     pub async fn flush(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
         self.flush_exclusive(client, db)
@@ -168,7 +191,12 @@ impl Outbox {
     }
     pub async fn ensure_run_sent(&self, client: &impl VfsApi, db: &str, run: &str) -> Result<()> {
         if self.pending_run(run)? {
-            self.flush_exclusive(client, db).await?;
+            self.flush_runs(
+                client,
+                db,
+                &std::collections::BTreeSet::from([run.to_string()]),
+            )
+            .await?;
         }
         anyhow::ensure!(
             !self.pending_run(run)?,
@@ -183,14 +211,26 @@ impl Outbox {
         })
     }
     pub(super) async fn flush_owned(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
-        if self.pending_count()? == 0 {
+        self.flush_owned_selection(client, db, None).await
+    }
+    async fn flush_owned_selection(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<usize> {
+        if !self
+            .pending()?
+            .iter()
+            .any(|event| runs.is_none_or(|runs| runs.contains(&event.run_id)))
+        {
             return Ok(0);
         }
         self.mutate(|conn| {
             conn.execute("INSERT INTO learning_delivery(scope,last_attempt_at) VALUES(?1,?2) ON CONFLICT(scope) DO UPDATE SET last_attempt_at=excluded.last_attempt_at", params![self.scope,chrono::Utc::now().to_rfc3339()])?;
             Ok(())
         })?;
-        let result = self.send_pending(client, db).await;
+        let result = self.send_pending(client, db, runs).await;
         match &result {
             Ok(_) => {
                 self.mutate(|conn| {
@@ -207,10 +247,20 @@ impl Outbox {
         }
         result
     }
-    async fn send_pending(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
+    async fn send_pending(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<usize> {
         client.check_database_write_cycles(db).await?;
         let mut sent = 0;
-        for batch in batches(self.pending()?)? {
+        for batch in batches(
+            self.pending()?
+                .into_iter()
+                .filter(|event| runs.is_none_or(|runs| runs.contains(&event.run_id)))
+                .collect(),
+        )? {
             let items = batch_items(&batch);
             if client
                 .write_nodes(WriteNodesRequest {

@@ -77,8 +77,7 @@ hooks are unsupported, use `agent run` with the project configuration.
 A prompt recalls knowledge through the CLI and retains the exact context receipt.
 Tool and terminal events become evidence; terminal events enqueue learning work.
 A finite independent CLI process drains the queue. No permanent worker is
-installed, and hooks do not wait for model evaluation. Pending work is retried on
-the next prompt or explicitly:
+installed, and hooks do not wait for model evaluation. New pending work can start on the next prompt or explicitly:
 
 ```sh
 kinic-vfs-cli learn drain --project-root . --json
@@ -95,11 +94,9 @@ configuration filenames.
 
 The queue is durable and serialized per identity/database/project. Each drain
 attempts a failed job at most once; new arrivals receive a handoff/recheck.
-Automatic attempts are limited to three, including the initial attempt, with at
-least five minutes after the first failure and thirty minutes after the second.
-The next normal event retries eligible jobs; there is no timer. Missing evidence,
-changed bindings/configuration, exhausted attempts, and old retry records without
-an attempt count are paused for inspection. An ambiguous publication remains
+A failed or interrupted job is paused with its error retained. Normal events do
+not automatically retry it. Inspect the failure and explicitly resume the job
+before another attempt. Existing retry records are also paused for inspection. An ambiguous publication remains
 `publishing` and requires reconciliation. A saved candidate without a validation
 suite, or a `held` no-change proposal, does not rerun its model.
 
@@ -114,7 +111,9 @@ kinic-vfs-cli learn jobs resume --project-root . --run-id <run-id> --json
 kinic-vfs-cli learn jobs resume --project-root . --run-id <run-id> --apply --json
 ```
 
-`--run-id` and `--max-jobs` cannot be combined. Job controls default to a dry run;
+`--run-id` and `--max-jobs` cannot be combined. A selected drain sends evidence
+only for the selected runs; other runs remain queued. A selected drain reports a
+failed job as an error after recording its paused state. Job controls default to a dry run;
 `--apply` persists the change under the existing worker lease. Resume retains the
 pause reason and prior state, resets the explicit recovery allowance, and starts
 no model. Inspect evidence and configuration first; it cannot force an ambiguous
@@ -122,8 +121,7 @@ publication to resume. If the recorded configuration fingerprint differs,
 preview and apply both refuse resume: restore the original learning configuration
 and validation suite or reconcile the retained evidence separately. Resume does
 not silently rebind old candidates to a different runner or suite.
-Drain still respects the project's disabled setting and
-the retry delay. For a manual recovery batch, select at most three runs and
+Drain still respects the project's disabled setting. For a manual recovery batch, select at most three runs and
 attempt each once, then inspect failures before continuing.
 
 `agent status` uses an atomic, scoped delivery snapshot when SQLite is active.

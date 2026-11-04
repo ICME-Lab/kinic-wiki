@@ -1537,16 +1537,14 @@ async fn stop_during_wakeup_snapshot_does_not_retry_same_failure_twice() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn selected_drain_and_job_controls_do_not_process_other_runs() {
+async fn manual_drain_reports_job_failure_as_error() {
     let (_dir, client, state, a, _) = fixture().await;
     let c = connection();
     let config = a.join(CONFIG_FILE).canonicalize().unwrap();
     let project = load_project(&config).unwrap();
     let q = job_driver::queue(&client, &c, &state, &project).unwrap();
-    for run in ["first", "second", "third"] {
-        q.enqueue(run, &a, &config).unwrap();
-    }
-    let value = job_driver::drain_selected(
+    q.enqueue("missing-evidence", &a, &config).unwrap();
+    let error = job_driver::drain_selected(
         &client,
         &c,
         &a,
@@ -1554,16 +1552,74 @@ async fn selected_drain_and_job_controls_do_not_process_other_runs() {
         None,
         false,
         &job_driver::DrainSelection {
-            run_id: Some("second".into()),
+            run_id: Some("missing-evidence".into()),
             max_jobs: None,
         },
     )
     .await
-    .unwrap();
-    assert_eq!(value["jobs"][0]["state"], "pending");
-    assert_eq!(value["jobs"][1]["state"], "paused");
-    assert_eq!(value["jobs"][1]["pause"]["reason"], "evidence_missing");
-    assert_eq!(value["jobs"][2]["state"], "pending");
+    .unwrap_err();
+    assert!(error.to_string().contains("missing-evidence"));
+    assert_eq!(q.list().unwrap()[0].state, "paused");
+    assert!(q.list().unwrap()[0].error.is_some());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_drain_does_not_deliver_other_runs() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("selected", &a, &config).unwrap();
+    q.enqueue("other", &a, &config).unwrap();
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    for run in ["selected", "other"] {
+        outbox
+            .enqueue(&Event {
+                id: format!("event-{run}"),
+                run_id: run.into(),
+                kind: "hook".into(),
+                payload: json!({}),
+            })
+            .unwrap();
+    }
+    job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: Some("selected".into()),
+            max_jobs: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(!outbox.pending_run("selected").unwrap());
+    assert!(
+        outbox.pending_run("other").unwrap(),
+        "unselected run must remain pending"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn max_jobs_skips_retained_candidates_without_validation() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    assert!(project.validation_suite.is_none());
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("candidate", &a, &config).unwrap();
+    q.enqueue("pending", &a, &config).unwrap();
+    let mut retained = q.list().unwrap().remove(0);
+    retained.state = "candidate".into();
+    retained.candidate_path = Some("candidate.json".into());
+    q.save(&retained).unwrap();
     job_driver::drain_selected(
         &client,
         &c,
@@ -1577,7 +1633,101 @@ async fn selected_drain_and_job_controls_do_not_process_other_runs() {
         },
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert_eq!(
+        q.list().unwrap()[1].state,
+        "paused",
+        "pending job should be processed"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn max_jobs_drain_does_not_block_on_unselected_delivery() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    for run in ["first", "second"] {
+        q.enqueue(run, &a, &config).unwrap();
+    }
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    for run in ["first", "second"] {
+        outbox
+            .enqueue(&Event {
+                id: format!("event-{run}"),
+                run_id: run.into(),
+                kind: "hook".into(),
+                payload: json!({}),
+            })
+            .unwrap();
+    }
+    let error = job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: None,
+            max_jobs: Some(1),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("first"));
+    assert!(!outbox.pending_run("first").unwrap());
+    assert!(outbox.pending_run("second").unwrap());
+    assert_eq!(q.list().unwrap()[1].state, "pending");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_drain_and_job_controls_do_not_process_other_runs() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    for run in ["first", "second", "third"] {
+        q.enqueue(run, &a, &config).unwrap();
+    }
+    let error = job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: Some("second".into()),
+            max_jobs: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("second"));
+    let jobs = q.list().unwrap();
+    assert_eq!(jobs[0].state, "pending");
+    assert_eq!(jobs[1].state, "paused");
+    assert_eq!(jobs[1].pause.as_ref().unwrap().reason, "evidence_missing");
+    assert_eq!(jobs[2].state, "pending");
+    job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: None,
+            max_jobs: Some(1),
+        },
+    )
+    .await
+    .unwrap_err();
     assert_eq!(q.list().unwrap()[2].state, "pending");
     let control = |apply| {
         JobCommand::Resume(JobControlArgs {

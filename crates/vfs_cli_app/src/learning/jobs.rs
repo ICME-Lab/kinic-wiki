@@ -41,30 +41,26 @@ impl LearningJob {
             self.state = "paused".into();
         }
     }
-    /// Reserve before execution so a crash cannot reset the automatic budget.
-    pub fn begin_attempt(&mut self, now: i64) -> bool {
+    /// Reserve before execution so an interrupted attempt requires manual recovery.
+    pub fn begin_attempt(&mut self, _now: i64) -> bool {
         if ["paused", "held", "published", "publishing"].contains(&self.state.as_str()) {
             return false;
         }
-        if self.state == "retry" && self.retry_policy.is_none() {
-            self.pause("legacy_attempt_count_unknown");
+        if self.state == "retry" {
+            self.pause("previous_failure");
             return false;
         }
         let retry = self.retry_policy.get_or_insert_with(RetryPolicy::default);
-        if retry.attempts >= 3 {
-            self.pause("attempt_limit_reached");
+        if retry.attempts > 0 {
+            if self.error.is_none() {
+                self.error =
+                    Some("previous attempt was interrupted; inspect before resuming".into());
+            }
+            self.pause("interrupted_attempt");
             return false;
         }
-        if retry.next_attempt_at_ms.is_some_and(|due| now < due) {
-            return false;
-        }
-        retry.attempts += 1;
-        // Also protect interrupted processes before an error can be saved.
-        retry.next_attempt_at_ms = Some(now.saturating_add(if retry.attempts == 1 {
-            300_000
-        } else {
-            1_800_000
-        }));
+        retry.attempts = 1;
+        retry.next_attempt_at_ms = None;
         true
     }
     pub fn fail_error(&mut self, error: &anyhow::Error, now: i64) {
@@ -72,33 +68,17 @@ impl LearningJob {
             .chain()
             .find_map(|cause| permanent_failure_reason(&cause.to_string()));
         self.fail_attempt(&error.to_string(), now);
-        if self.state == "retry"
-            && let Some(reason) = reason
-        {
-            self.pause(reason);
+        if let (Some(reason), Some(pause)) = (reason, self.pause.as_mut()) {
+            pause.reason = reason.into();
         }
     }
-    pub fn fail_attempt(&mut self, error: &str, now: i64) {
+    pub fn fail_attempt(&mut self, error: &str, _now: i64) {
         self.error = Some(error.into());
         if self.state == "publishing" {
             return;
         }
-        self.state = "retry".into();
-        let reason = permanent_failure_reason(error).or_else(|| {
-            self.retry_policy
-                .as_ref()
-                .filter(|r| r.attempts >= 3)
-                .map(|_| "attempt_limit_reached")
-        });
-        if let Some(reason) = reason {
-            self.pause(reason);
-        } else if let Some(retry) = &mut self.retry_policy {
-            retry.next_attempt_at_ms = Some(now.saturating_add(if retry.attempts == 1 {
-                300_000
-            } else {
-                1_800_000
-            }));
-        }
+        let reason = permanent_failure_reason(error).unwrap_or("job_failed");
+        self.pause(reason);
     }
 }
 fn permanent_failure_reason(error: &str) -> Option<&'static str> {
@@ -392,19 +372,23 @@ mod tests {
         serde_json::from_value(serde_json::json!({"run_id":"r","cwd":"/repo","config_path":"/repo/config","state":"pending","candidate_path":null,"evaluation_path":null,"error":null})).unwrap()
     }
     #[test]
-    fn retry_budget_is_persisted_and_due_only_after_minimum_delay() {
+    fn failed_job_stays_paused_until_explicit_resume() {
         let mut j = job();
         assert!(j.begin_attempt(1000));
         j.fail_attempt("temporary transport failure", 1000);
-        assert!(!j.begin_attempt(1000 + 299999));
-        let mut j: LearningJob = serde_json::from_str(&serde_json::to_string(&j).unwrap()).unwrap();
-        assert!(j.begin_attempt(301000));
-        j.fail_attempt("temporary transport failure", 301000);
-        assert!(!j.begin_attempt(2100999));
-        assert!(j.begin_attempt(2101000));
-        j.fail_attempt("temporary transport failure", 2101000);
         assert_eq!(j.state, "paused");
+        assert_eq!(j.error.as_deref(), Some("temporary transport failure"));
         assert!(!j.begin_attempt(i64::MAX));
+    }
+    #[test]
+    fn interrupted_attempt_never_restarts_automatically() {
+        let mut j = job();
+        assert!(j.begin_attempt(1000));
+        let mut restored: LearningJob =
+            serde_json::from_str(&serde_json::to_string(&j).unwrap()).unwrap();
+        assert!(!restored.begin_attempt(i64::MAX));
+        assert_eq!(restored.state, "paused");
+        assert!(restored.error.as_deref().unwrap().contains("interrupted"));
     }
     #[test]
     fn uncounted_retry_and_missing_evidence_are_paused_without_attempt() {
