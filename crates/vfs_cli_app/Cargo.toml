@@ -15,6 +15,7 @@ exclude = ["src/bin/**"]
 name = "vfs_cli_app"
 
 [dependencies]
+tempfile = "3.23.0"
 toml = "0.9.8"
 toml_edit = "0.23"
 anyhow = "1.0.100"
@@ -44,4 +45,3 @@ vfs-store = { path = "../vfs_store" }
 
 [dev-dependencies]
 proptest = "1.11.0"
-tempfile = "3.23.0"

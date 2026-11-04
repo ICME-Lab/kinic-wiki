@@ -207,10 +207,36 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         cli.connection.canister_id.clone(),
         database_id_arg,
     )?;
+    if let Command::Learn {
+        command:
+            vfs_cli_app::learning::cli::LearnCommand::Storage {
+                project_root,
+                state_dir,
+                json,
+                command: vfs_cli_app::learning::cli::StorageCommand::Inventory { local_only: true },
+            },
+    } = &cli.command
+    {
+        let value = vfs_cli_app::learning::workflow::storage::local_inventory(
+            &connection,
+            project_root,
+            &vfs_cli_app::learning::cli::StateArgs {
+                state_dir: state_dir.clone(),
+                json: *json,
+            },
+        )?;
+        if *json {
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else {
+            vfs_cli_app::learning::workflow::storage::print_summary(&value);
+        }
+        return Ok(());
+    }
     let scope_cwd = match &cli.command {
         Command::Learn {
             command:
-                vfs_cli_app::learning::cli::LearnCommand::Setup { project_root, .. }
+                vfs_cli_app::learning::cli::LearnCommand::Storage { project_root, .. }
+                | vfs_cli_app::learning::cli::LearnCommand::Setup { project_root, .. }
                 | vfs_cli_app::learning::cli::LearnCommand::Jobs { project_root, .. }
                 | vfs_cli_app::learning::cli::LearnCommand::Status { project_root, .. }
                 | vfs_cli_app::learning::cli::LearnCommand::Enable { project_root, .. }
