@@ -683,7 +683,11 @@ async fn learn_value_at(
                 serde_json::to_string(&json!({"nodes":baseline,"original_evidence":source_nodes}))?
             );
             let generated = learning_runner::execute(&config, cwd, &prompt).await?;
-            ensure!(generated.complete, "revision agent did not finish");
+            ensure!(
+                generated.complete,
+                "revision agent did not finish: {}",
+                generated.failure_summary(&config.engine)
+            );
             let value: Value = serde_json::from_str(generated.output.trim())
                 .context("revision agent must return JSON")?;
             let candidate = RevisionCandidate {
