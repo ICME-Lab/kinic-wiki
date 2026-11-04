@@ -7,14 +7,43 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, for example v2.0.0"
+        description: "Existing immutable release tag, for example v2.0.5"
         required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-cli-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
 
 jobs:
+  source:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: source
+        name: Resolve and verify immutable release source
+        env:
+          EXPECTED_COMMIT: ${{ github.event_name == 'push' && github.sha || '' }}
+        run: |
+          commit="$(python3 scripts/cli_release.py source --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$EXPECTED_COMMIT")"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: source
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -26,6 +55,16 @@ jobs:
             platform: macos-arm64
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify build source
+        env:
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: python3 scripts/cli_release.py source --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$RELEASE_COMMIT"
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:
@@ -35,50 +74,40 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install stable Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Use stable Rust
-        run: rustup default stable
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --profile minimal
       - name: Build CLI
         run: cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release --locked
       - name: Package CLI
-        env:
-          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
-        run: |
-          package_version="$(bash scripts/kinic_vfs_cli_release_version.sh)"
-          if [ "$RELEASE_VERSION" != "$package_version" ]; then
-            echo "release version $RELEASE_VERSION does not match package version $package_version" >&2
-            exit 1
-          fi
-          bash scripts/package_kinic_vfs_cli.sh "$package_version" "${{ matrix.platform }}" target/release/kinic-vfs-cli dist
+        run: bash scripts/package_kinic_vfs_cli.sh "$RELEASE_TAG" "${{ matrix.platform }}" target/release/kinic-vfs-cli dist
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: kinic-vfs-cli-${{ matrix.platform }}
           path: dist/*
+          if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [source, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: kinic-vfs-cli-*
           path: release-assets
           merge-multiple: true
-      - name: Create or update GitHub Release
+      - name: Publish verified assets without overwriting existing bytes
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
-        run: |
-          package_version="$(bash scripts/kinic_vfs_cli_release_version.sh)"
-          if [ "$RELEASE_VERSION" != "$package_version" ]; then
-            echo "release version $RELEASE_VERSION does not match package version $package_version" >&2
-            exit 1
-          fi
-          if gh release view "$package_version" >/dev/null 2>&1; then
-            gh release upload "$package_version" release-assets/* --clobber
-          else
-            gh release create "$package_version" release-assets/* --title "$package_version" --generate-notes
-          fi
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: python3 scripts/cli_release.py publish --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$RELEASE_COMMIT" --assets release-assets

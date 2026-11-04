@@ -41,34 +41,94 @@ The isolated staging rollout is narrower because the Skill Registry, Wiki Genera
 
 ## npm
 
-Install:
+Install the released CLI on macOS arm64 or Linux x64 (Node.js 18 or newer):
 
 ```bash
-npm install -g kinic-vfs-cli
+npm install -g kinic-vfs-cli@2.0.5
+kinic-vfs-cli --version
 kinic-vfs-cli --help
 ```
 
-The npm package supports:
+`--version` must report `kinic-vfs-cli 2.0.5`. The npm installer downloads the
+matching GitHub Release archive and validates its SHA-256 checksum. The recorder
+plugin remains at **0.2.2**; this CLI release does not publish a plugin, crates.io
+packages, or a canister upgrade.
 
-- macOS arm64
-- Linux x64
+### Update from 2.0.4 and compatible recovery
 
-Publish after the matching GitHub Release assets exist:
+Before replacing a 2.0.4 installation, stop the host sessions/hooks that can start
+learning or delivery work. For each affected project, disable learning and wait
+for its existing learning/delivery processes to exit:
 
 ```bash
+kinic-vfs-cli learn disable --project-root /path/to/project --json
+kinic-vfs-cli learn status --project-root /path/to/project --json
+```
+
+Record the CLI version, selected identity, database target, project configuration,
+and the state/SQLite paths used by that project. Take a consistent SQLite backup
+with its transaction state and save the matching project configuration while
+writers remain stopped. A copy of a live `.sqlite` file alone is not a valid
+backup. Keep this pre-update 2.0.4 backup and binary/package available until the
+new version has been accepted.
+
+Use the same pinned npm install command above to update to 2.0.5. Inspect
+`learn status --project-root /path/to/project --json` and `agent status --cwd /path/to/project --json`,
+confirm the expected target/identity and queue state, and review paused or
+ambiguous jobs before starting host sessions. Enable learning only after those
+checks with `learn enable --project-root /path/to/project --json`.
+See [portable learning recovery](PORTABLE_LEARNING.md) for bounded job controls.
+
+To stop or recover, disable learning again and stop all relevant writers. Preserve
+the failing state for inspection. Restore a **matching CLI version, consistent
+state backup, and project configuration** together while learning stays disabled.
+An older CLI must not open newly written 2.0.5 state: 2.0.4 does not understand
+paused learning jobs. Returning to 2.0.4 requires the pre-update 2.0.4 backup,
+not just `npm install -g kinic-vfs-cli@2.0.4`. Inspect identity, target and pending
+jobs before re-enabling; do not edit queue rows or replay ambiguous publications
+manually.
+
+### Publish npm after GitHub Release
+
+Run local checks before tagging (Python 3.11+ is required for release scripts):
+
+```bash
+python3 -B -m unittest scripts.test_cli_release scripts.test_cli_upgrade
+bash scripts/kinic_vfs_cli_release_version.sh
 npm --prefix npm/kinic-vfs-cli test
 cd npm/kinic-vfs-cli
 npm pack --dry-run
 ```
 
-Then run the `Publish npm CLI` workflow from the exact release tag `v${package.version}`. Without an explicit `release_tag`, it refuses branch runs. It checks Cargo/npm version alignment, release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
-Alternatively, run the current workflow from `main` with `release_tag=v${package.version}`
-to publish an existing immutable release with updated workflow checks. It checks out
-that tag and requires the checked-out commit to match the tag and the Cargo/npm
-versions. The setup smoke validates the current non-writing `--dry-run` contract;
-it does not treat plugin preparation as confirmed activation.
-Configure GitHub Environment approval for the publish workflow when release approval must be explicit.
-Use an npm automation token scoped to this package; keep 2FA/provenance policy in the npm organization settings.
+After the GitHub Release is published, run `Publish npm CLI` using its exact tag
+`v2.0.5`, or dispatch from the current workflow with `release_tag=v2.0.5`.
+The workflow checks out `refs/tags/v2.0.5`; branch runs without a release tag fail.
+It requires aligned Cargo, npm and Cargo.lock versions, matching local/remote tag
+and checkout commits, and the release's `target_commitish` to be that exact SHA.
+A branch name in old release metadata is not accepted as evidence of the artifact
+source; do not change old tags or release metadata to bypass that check.
+
+Both platform archives and checksum files are downloaded and their actual hashes
+verified, including macOS assets when npm publishing runs on Linux. The workflow
+runs package tests and packs one tarball. It checks a fresh install in an
+isolated prefix, asserts its binary version and verifies the non-writing setup
+dry-run contract. A separate prefix installs the public `kinic-vfs-cli@2.0.4`
+package, verifies that version, and reads a synthetic 2.0.4 project configuration
+and SQLite retry job. It then upgrades that same prefix using the same packed
+tarball, asserts the new version, and requires `agent status` to read the existing
+configuration and job without changing either file's bytes. Legacy retry attempts
+must remain unknown. This is local state compatibility acceptance, not remote
+learning acceptance. Diagnostics use isolated home/config directories, disabled
+learning, no credentials or models, and a loopback target. npm downloads are
+bounded by timeouts and the workflow stops on any failed acceptance check.
+Immediately before `npm publish`, it repeats the tag/commit and both-platform
+checksum checks. A checksum mismatch, missing asset or draft release stops npm
+publication. `NPM_TOKEN` is used only by the publish step. Setup dry-run does not
+claim plugin activation or live learning acceptance.
+
+Configure GitHub Environment approval for the publish workflow when release
+approval must be explicit. Use an npm automation token scoped to this package;
+keep 2FA/provenance policy in the npm organization settings.
 
 ## Local Build
 
@@ -85,31 +145,49 @@ target/release/kinic-vfs-cli database current
 
 ## GitHub Release
 
-Tag a release with a `v*` version:
+Verify that the next version is unused in GitHub tags, GitHub Releases and npm.
+Align `crates/vfs_cli_app/Cargo.toml`, its `Cargo.lock` entry, and
+`npm/kinic-vfs-cli/package.json` before creating the tag on the reviewed release
+commit. Create and push the tag only as part of the approved release operation:
 
 ```bash
-git tag v2.0.3
-git push origin v2.0.3
+git tag v2.0.5 <reviewed-release-commit>
+git push origin v2.0.5
 ```
 
-The `Release CLI` workflow builds and uploads:
+Never move or recreate a published tag. `Release CLI` can also be dispatched with
+`version=v2.0.5`; it checks out that existing tag, not the branch selected in the
+workflow UI. A source job verifies the tag/version and pins one commit for both
+builds and the publish job. Remote tag movement causes verification to fail.
 
-- `kinic-vfs-cli-v2.0.3-linux-x86_64.tar.gz`
-- `kinic-vfs-cli-v2.0.3-linux-x86_64.sha256`
-- `kinic-vfs-cli-v2.0.3-macos-arm64.tar.gz`
-- `kinic-vfs-cli-v2.0.3-macos-arm64.sha256`
+The workflow builds these four assets:
 
-Each tarball contains only:
+- `kinic-vfs-cli-v2.0.5-linux-x86_64.tar.gz`
+- `kinic-vfs-cli-v2.0.5-linux-x86_64.sha256`
+- `kinic-vfs-cli-v2.0.5-macos-arm64.tar.gz`
+- `kinic-vfs-cli-v2.0.5-macos-arm64.sha256`
 
-- `kinic-vfs-cli`
-- `README.md`
-- `LICENSE`
+Each archive contains `kinic-vfs-cli`, `README.md`, and `LICENSE`. Packaging
+checks the binary version and normalizes archive metadata. A new release starts
+as a draft with the exact source SHA and an already-existing tag; it is published
+only after all four assets pass verification. The workflow never creates a tag
+or overwrites an asset.
 
-Verify after download:
+For a partial upload, rerun the failed publish job using the original build
+artifacts. It downloads **every existing expected asset**, including checksum
+files, and compares its bytes with the original build output before uploading
+anything missing. Matching complete releases are a no-op. A source SHA mismatch,
+unknown asset, or differing bytes stops the operation without replacing assets.
+A complete rebuild is not assumed to reproduce identical binary bytes even
+though archive metadata is deterministic. If original artifacts are unavailable
+or a published asset is wrong, stop and prepare a new unused patch release;
+do not delete assets, retag, or use `--clobber` to make a retry pass.
+
+Verify downloaded artifacts locally:
 
 ```bash
-shasum -a 256 -c kinic-vfs-cli-v2.0.3-macos-arm64.sha256
-tar -xzf kinic-vfs-cli-v2.0.3-macos-arm64.tar.gz
+shasum -a 256 -c kinic-vfs-cli-v2.0.5-macos-arm64.sha256
+tar -xzf kinic-vfs-cli-v2.0.5-macos-arm64.tar.gz
 ./kinic-vfs-cli --help
 ./kinic-vfs-cli --version
 ```

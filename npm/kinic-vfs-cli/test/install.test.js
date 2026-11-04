@@ -41,13 +41,13 @@ test("release version script checks Cargo and npm parity", () => {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), "v2.0.4");
+  assert.equal(result.stdout.trim(), "v2.0.5");
 });
 
 test("npm publish guard only allows the matching tag", () => {
   assert.notEqual(runPublishGuard({ GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "feature" }).status, 0);
   assert.notEqual(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.1.1" }).status, 0);
-  assert.equal(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v2.0.4" }).status, 0);
+  assert.equal(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v2.0.5" }).status, 0);
 });
 
 test("parses sha256 checksum text", () => {
