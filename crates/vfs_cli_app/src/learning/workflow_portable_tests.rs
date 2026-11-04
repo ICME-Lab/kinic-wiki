@@ -92,6 +92,80 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
 
 #[cfg(unix)]
 #[tokio::test]
+async fn revision_startup_failure_reports_safe_reason_and_stays_paused() {
+    for (stderr, initialization) in [
+        (
+            "Error: failed to initialize in-process app-server client: SECRET_TOKEN",
+            true,
+        ),
+        ("Operation not permitted: SECRET_TOKEN", false),
+    ] {
+        let (dir, client, state, root, _) = fixture().await;
+        std::fs::write(dir.path().join("model-peer.py"), format!(
+            "#!/usr/bin/env python3\nimport sys\nsys.stdin.read()\nwith open('starts', 'a') as f: f.write('1')\nsys.stderr.write({stderr:?})\nsys.exit(1)\n"
+        )).unwrap();
+        let c = connection();
+        let receipt = hooks::handle(
+            &client,
+            &c,
+            "codex",
+            None,
+            &state,
+            json!({
+                "cwd":root,"session_id":"diagnostic","turn_id":"one",
+                "event":"UserPromptSubmit","prompt":"portable build"
+            }),
+        )
+        .await
+        .unwrap();
+        hooks::handle(
+            &client,
+            &c,
+            "codex",
+            None,
+            &state,
+            json!({
+                "cwd":root,"session_id":"diagnostic","turn_id":"one",
+                "event":"Stop","tool_results":[{"exit_code":0,"output":"test passed"}]
+            }),
+        )
+        .await
+        .unwrap();
+        let error = job_driver::drain_selected(
+            &client,
+            &c,
+            &root,
+            &state,
+            None,
+            false,
+            &job_driver::DrainSelection {
+                run_id: Some(receipt["run_id"].as_str().unwrap().into()),
+                max_jobs: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        let project = load_project(&root.join(CONFIG_FILE)).unwrap();
+        let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+        let job = q.list().unwrap().remove(0);
+        assert_eq!(job.state, "paused");
+        for message in [format!("{error:#}"), job.error.unwrap()] {
+            assert!(message.contains("process_exit:1"), "{message}");
+            assert_eq!(
+                message.contains("Codex initialization failed"),
+                initialization,
+                "{message}"
+            );
+            assert!(!message.contains("SECRET_TOKEN"), "{message}");
+            assert!(!message.contains("installation_id"), "{message}");
+        }
+        let _ = job_driver::drain(&client, &c, &root, &state).await;
+        assert_eq!(std::fs::read_to_string(root.join("starts")).unwrap(), "1");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn portable_hooks_and_finite_jobs_keep_unrelated_projects_separate() {
     let (_dir, client, state, a, b) = fixture().await;
     let c = connection();
