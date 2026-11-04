@@ -82,7 +82,7 @@ for expected in \
   "billing_authority_id = \"${CONTROLLER_ID}\"" \
   "kinic_ledger_canister_id = \"${LEDGER_ID}\"" \
   "enabled = true" \
-  "threshold_cycles = 2_000_000_000_000 : nat" \
+  "threshold_cycles = 5_000_000_000_000 : nat" \
   "launcher_principal = \"xfug4-5qaaa-aaaak-afowa-cai\"" \
   "cycles_per_kinic = 234_500_000_000 : nat64" \
   "min_update_cycles = 1_000_000 : nat64"
@@ -106,7 +106,7 @@ cat >"${args_file}" <<EOF
   top_up = record {
     enabled = true;
     launcher_principal = "xfug4-5qaaa-aaaak-afowa-cai";
-    threshold_cycles = 2_000_000_000_000 : nat;
+    threshold_cycles = 5_000_000_000_000 : nat;
   };
   cycles_per_kinic = 234_500_000_000 : nat64;
   min_update_cycles = 1_000_000 : nat64;
