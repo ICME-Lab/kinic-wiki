@@ -1,6 +1,49 @@
 //! Additive CLI commands; all remote operations share the existing connection and identity.
 use clap::{Args, Subcommand};
 use std::path::PathBuf;
+#[cfg(test)]
+mod operational_cli_tests {
+    use crate::cli::Cli;
+    use clap::Parser;
+    #[test]
+    fn bounded_recovery_arguments() {
+        assert!(Cli::try_parse_from(["kinic", "learn", "drain", "--run-id", "r"]).is_ok());
+        assert!(Cli::try_parse_from(["kinic", "learn", "drain", "--max-jobs", "3"]).is_ok());
+        assert!(Cli::try_parse_from(["kinic", "learn", "drain", "--max-jobs", "0"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "kinic",
+                "learn",
+                "drain",
+                "--run-id",
+                "r",
+                "--max-jobs",
+                "3"
+            ])
+            .is_err()
+        );
+        for action in ["pause", "resume"] {
+            assert!(
+                Cli::try_parse_from([
+                    "kinic",
+                    "learn",
+                    "jobs",
+                    action,
+                    "--run-id",
+                    "r",
+                    "--project-root",
+                    ".",
+                    "--json"
+                ])
+                .is_ok()
+            );
+            assert!(
+                Cli::try_parse_from(["kinic", "learn", "jobs", action, "--run-id", "r", "--apply"])
+                    .is_ok()
+            );
+        }
+    }
+}
 #[derive(Args, Debug, Clone)]
 pub struct StateArgs {
     #[arg(long)]
@@ -83,6 +126,17 @@ pub enum AgentCommand {
 }
 #[derive(Subcommand, Debug, Clone)]
 pub enum LearnCommand {
+    /// Preview or apply a local job pause/resume; never starts a model.
+    Jobs {
+        #[arg(long, default_value = ".", global = true)]
+        project_root: PathBuf,
+        #[arg(long, global = true)]
+        state_dir: Option<PathBuf>,
+        #[arg(long, global = true)]
+        json: bool,
+        #[command(subcommand)]
+        command: JobCommand,
+    },
     Setup {
         #[arg(long, default_value = ".")]
         project_root: PathBuf,
@@ -120,6 +174,10 @@ pub enum LearnCommand {
         recall_config: Option<PathBuf>,
         #[arg(long, hide = true)]
         require_wakeup: bool,
+        #[arg(long, conflicts_with = "max_jobs")]
+        run_id: Option<String>,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_jobs: Option<u32>,
         #[command(flatten)]
         state: StateArgs,
     },
@@ -163,6 +221,21 @@ pub enum LearnCommand {
         #[command(flatten)]
         state: StateArgs,
     },
+}
+#[derive(Subcommand, Debug, Clone)]
+pub enum JobCommand {
+    Pause(JobControlArgs),
+    Resume(JobControlArgs),
+}
+#[derive(Args, Debug, Clone)]
+pub struct JobControlArgs {
+    #[arg(long)]
+    pub run_id: String,
+    /// Persist the previewed change; omitted means dry-run.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub apply: bool,
+    #[arg(long)]
+    pub dry_run: bool,
 }
 #[derive(Subcommand, Debug, Clone)]
 pub enum EvalCommand {

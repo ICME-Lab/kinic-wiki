@@ -211,6 +211,7 @@ async fn execute_cli(mut cli: Cli) -> Result<()> {
         Command::Learn {
             command:
                 vfs_cli_app::learning::cli::LearnCommand::Setup { project_root, .. }
+                | vfs_cli_app::learning::cli::LearnCommand::Jobs { project_root, .. }
                 | vfs_cli_app::learning::cli::LearnCommand::Status { project_root, .. }
                 | vfs_cli_app::learning::cli::LearnCommand::Enable { project_root, .. }
                 | vfs_cli_app::learning::cli::LearnCommand::Disable { project_root, .. }

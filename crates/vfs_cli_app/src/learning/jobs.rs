@@ -16,6 +16,111 @@ pub struct LearningJob {
     pub error: Option<String>,
     #[serde(default)]
     pub config_hash: Option<String>,
+    #[serde(default)]
+    pub retry_policy: Option<RetryPolicy>,
+    #[serde(default)]
+    pub pause: Option<JobPause>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RetryPolicy {
+    pub attempts: u32,
+    pub next_attempt_at_ms: Option<i64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JobPause {
+    pub previous_state: String,
+    pub reason: String,
+}
+impl LearningJob {
+    pub fn pause(&mut self, reason: &str) {
+        if self.state != "paused" {
+            self.pause = Some(JobPause {
+                previous_state: self.state.clone(),
+                reason: reason.into(),
+            });
+            self.state = "paused".into();
+        }
+    }
+    /// Reserve before execution so an interrupted attempt requires manual recovery.
+    pub fn begin_attempt(&mut self, _now: i64) -> bool {
+        if ["paused", "held", "published", "publishing"].contains(&self.state.as_str()) {
+            return false;
+        }
+        if self.state == "retry" {
+            self.pause("previous_failure");
+            return false;
+        }
+        let retry = self.retry_policy.get_or_insert_with(RetryPolicy::default);
+        if retry.attempts > 0 {
+            if self.error.is_none() {
+                self.error =
+                    Some("previous attempt was interrupted; inspect before resuming".into());
+            }
+            self.pause("interrupted_attempt");
+            return false;
+        }
+        retry.attempts = 1;
+        retry.next_attempt_at_ms = None;
+        true
+    }
+    pub fn fail_error(&mut self, error: &anyhow::Error, now: i64) {
+        let reason = error
+            .chain()
+            .find_map(|cause| permanent_failure_reason(&cause.to_string()));
+        self.fail_attempt(&error.to_string(), now);
+        if let (Some(reason), Some(pause)) = (reason, self.pause.as_mut()) {
+            pause.reason = reason.into();
+        }
+    }
+    pub fn fail_attempt(&mut self, error: &str, _now: i64) {
+        self.error = Some(error.into());
+        if self.state == "publishing" {
+            return;
+        }
+        let reason = permanent_failure_reason(error).unwrap_or("job_failed");
+        self.pause(reason);
+    }
+}
+fn permanent_failure_reason(error: &str) -> Option<&'static str> {
+    let message = error.to_lowercase();
+    if [
+        "no recorded context",
+        "no context receipt",
+        "no outcome evidence",
+        "artifact missing",
+        "source missing",
+        "dependent node missing",
+        "evidence revision missing",
+    ]
+    .iter()
+    .any(|s| message.contains(s))
+    {
+        Some("evidence_missing")
+    } else if [
+        "identity",
+        "principal",
+        "another project",
+        "mismatch",
+        "configuration changed",
+        "config changed",
+        "conflict",
+        "evidence changed",
+        "target changed",
+        "target missing",
+        "retrieval scope changed",
+        "anonymous caller not allowed",
+        "unauthorized",
+        "not authorized",
+        "permission denied",
+        "access denied",
+    ]
+    .iter()
+    .any(|s| message.contains(s))
+    {
+        Some("binding_or_evidence_changed")
+    } else {
+        None
+    }
 }
 #[cfg(test)]
 thread_local! {
@@ -25,6 +130,83 @@ pub struct JobQueue {
     conn: Connection,
 }
 impl JobQueue {
+    fn path(root: &Path, binding: &str, project: &str) -> Result<PathBuf> {
+        Ok(root.join(format!(
+            "jobs-{}.sqlite",
+            hash(&serde_json::to_string(&(binding, project))?)
+        )))
+    }
+    pub fn open_existing(root: &Path, binding: &str, project: &str) -> Result<Self> {
+        let conn = Connection::open_with_flags(
+            Self::path(root, binding, project)?,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
+        Ok(Self { conn })
+    }
+    pub fn control(
+        &self,
+        run: &str,
+        config: &Path,
+        pause: bool,
+        apply: bool,
+        current_hash: &str,
+    ) -> Result<LearningJob> {
+        let _lease =
+            if apply {
+                Some(self.acquire()?.ok_or_else(|| {
+                    anyhow::anyhow!("learning worker is busy; retry after it exits")
+                })?)
+            } else {
+                None
+            };
+        let mut job = self
+            .list()?
+            .into_iter()
+            .find(|j| j.run_id == run)
+            .ok_or_else(|| anyhow::anyhow!("job not found in selected project"))?;
+        ensure!(job.config_path == config, "job configuration mismatch");
+        ensure!(
+            job.state != "publishing",
+            "ambiguous publication requires reconciliation"
+        );
+        if pause {
+            ensure!(
+                !["published", "held"].contains(&job.state.as_str()),
+                "completed or held proposal cannot be paused"
+            );
+            job.pause("operator_paused");
+        } else {
+            ensure!(job.state == "paused", "only paused jobs can be resumed");
+            ensure!(
+                job.config_hash
+                    .as_deref()
+                    .is_none_or(|hash| hash == current_hash),
+                "restore the original learning configuration and validation suite before resuming; retained evidence requires reconciliation"
+            );
+            let paused = job
+                .pause
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("paused job has no prior state"))?;
+            ensure!(
+                !["publishing", "published", "held", "paused"]
+                    .contains(&paused.previous_state.as_str()),
+                "invalid prior job state"
+            );
+            job.state = if paused.previous_state == "retry" {
+                "pending".into()
+            } else {
+                paused.previous_state
+            };
+            job.retry_policy = Some(RetryPolicy::default());
+            job.error = None;
+        }
+        if apply {
+            self.save(&job)?;
+        }
+        Ok(job)
+    }
     pub fn open(root: &Path, binding: &str, project: &str) -> Result<Self> {
         std::fs::create_dir_all(root)?;
         #[cfg(unix)]
@@ -57,6 +239,8 @@ impl JobQueue {
             evaluation_path: None,
             error: None,
             config_hash: None,
+            retry_policy: Some(RetryPolicy::default()),
+            pause: None,
         };
         self.conn.execute(
             "INSERT OR IGNORE INTO jobs(run,body) VALUES(?1,?2)",
@@ -184,6 +368,96 @@ pub(super) fn process_alive(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn job() -> LearningJob {
+        serde_json::from_value(serde_json::json!({"run_id":"r","cwd":"/repo","config_path":"/repo/config","state":"pending","candidate_path":null,"evaluation_path":null,"error":null})).unwrap()
+    }
+    #[test]
+    fn failed_job_stays_paused_until_explicit_resume() {
+        let mut j = job();
+        assert!(j.begin_attempt(1000));
+        j.fail_attempt("temporary transport failure", 1000);
+        assert_eq!(j.state, "paused");
+        assert_eq!(j.error.as_deref(), Some("temporary transport failure"));
+        assert!(!j.begin_attempt(i64::MAX));
+    }
+    #[test]
+    fn interrupted_attempt_never_restarts_automatically() {
+        let mut j = job();
+        assert!(j.begin_attempt(1000));
+        let mut restored: LearningJob =
+            serde_json::from_str(&serde_json::to_string(&j).unwrap()).unwrap();
+        assert!(!restored.begin_attempt(i64::MAX));
+        assert_eq!(restored.state, "paused");
+        assert!(restored.error.as_deref().unwrap().contains("interrupted"));
+    }
+    #[test]
+    fn uncounted_retry_and_missing_evidence_are_paused_without_attempt() {
+        let mut j = job();
+        j.state = "retry".into();
+        assert!(!j.begin_attempt(1000));
+        assert_eq!(j.state, "paused");
+        let mut j = job();
+        assert!(j.begin_attempt(1000));
+        j.fail_attempt("run has no context receipt", 1000);
+        assert_eq!(j.state, "paused");
+        for error in [
+            "target missing before publication",
+            "dependent node missing",
+            "evidence revision missing",
+        ] {
+            let mut j = job();
+            assert!(j.begin_attempt(1000));
+            j.state = "evaluated".into();
+            j.fail_attempt(error, 1000);
+            assert_eq!(j.state, "paused", "{error}");
+        }
+    }
+    #[test]
+    fn job_control_preview_preserves_queue_and_apply_respects_owner_and_binding() {
+        let t = tempfile::tempdir().unwrap();
+        let q = JobQueue::open(t.path(), "b", "p").unwrap();
+        q.enqueue("r", Path::new("/repo"), Path::new("/repo/config"))
+            .unwrap();
+        let preview = q
+            .control("r", Path::new("/repo/config"), true, false, "hash")
+            .unwrap();
+        assert_eq!(preview.state, "paused");
+        assert_eq!(q.list().unwrap()[0].state, "pending");
+        assert!(
+            q.control("r", Path::new("/other"), true, true, "hash")
+                .is_err()
+        );
+        let lease = q.acquire().unwrap().unwrap();
+        assert!(
+            q.control("r", Path::new("/repo/config"), true, true, "hash")
+                .is_err()
+        );
+        drop(lease);
+        q.control("r", Path::new("/repo/config"), true, true, "hash")
+            .unwrap();
+        assert_eq!(q.list().unwrap()[0].state, "paused");
+        q.control("r", Path::new("/repo/config"), false, true, "hash")
+            .unwrap();
+        assert_eq!(q.list().unwrap()[0].state, "pending");
+        assert_eq!(q.pending_wakeup().unwrap(), None);
+        let mut j = q.list().unwrap().remove(0);
+        j.state = "publishing".into();
+        q.save(&j).unwrap();
+        assert!(
+            q.control("r", Path::new("/repo/config"), true, true, "hash")
+                .is_err()
+        );
+    }
+    #[test]
+    fn contextual_authorization_failure_requires_inspection() {
+        let mut j = job();
+        assert!(j.begin_attempt(1000));
+        let error =
+            anyhow::anyhow!("anonymous caller not allowed").context("query failed for read_node");
+        j.fail_error(&error, 1000);
+        assert_eq!(j.state, "paused");
+        assert_eq!(j.pause.unwrap().reason, "binding_or_evidence_changed");
+    }
     #[test]
     fn newer_wakeup_is_not_cleared_by_an_older_acknowledgement() {
         let temp = tempfile::tempdir().unwrap();

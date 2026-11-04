@@ -91,10 +91,13 @@ fn evidence(request: &Value) -> Value {
         .as_str()
         .or(request["hook_event_name"].as_str())
         .unwrap_or("record");
-    if let Some(path) = request["transcript_path"]
-        .as_str()
-        .filter(|_| !["recall", "UserPromptSubmit", "SessionStart"].contains(&kind))
-    {
+    // Tool hooks retain their own redacted input/output. Freeze the whole
+    // current-turn transcript only at the terminal hook, using the same
+    // terminal rule as durable job enqueueing below. Queued snapshots return
+    // above unchanged, so replay never recaptures or rewrites old evidence.
+    let terminal = !["recall", "UserPromptSubmit", "SessionStart"].contains(&kind)
+        && (kind == "Stop" || request["terminal"] == true);
+    if let Some(path) = request["transcript_path"].as_str().filter(|_| terminal) {
         let result = (|| -> Result<Value> {
             use std::io::{Seek, SeekFrom};
             let mut file = std::fs::File::open(path)?;
@@ -563,5 +566,116 @@ mod capture_tests {
         let text = std::fs::read_to_string(saved).unwrap();
         assert!(!text.contains("not-in-process-env-secret"));
         assert!(!text.contains("private-cookie-value"));
+    }
+}
+
+#[cfg(test)]
+mod terminal_capture_tests {
+    use super::*;
+
+    #[test]
+    fn multiple_tool_events_keep_tool_evidence_and_capture_transcript_only_at_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("turn.jsonl");
+        std::fs::write(
+            &log,
+            format!(
+                "{}\n{}\n",
+                json!({"payload":{"type":"user_message","message":"current-task-transcript"}}),
+                json!({"payload":{"role":"assistant","content":"terminal-transcript-content"}})
+            ),
+        )
+        .unwrap();
+        let mut captured = Vec::new();
+        for call in ["read-file", "edit-file", "run-test"] {
+            let value = evidence(
+                &json!({"event":"PostToolUse","session_id":"session","turn_id":"turn","transcript_path":log,"tool_name":"shell","tool_use_id":call,"tool_input":{"command":call},"tool_response":format!("result-{call}; api_key=private-tool-secret")}),
+            );
+            assert_eq!(value["capture"]["tool_use_id"], call);
+            assert_eq!(value["capture"]["tool_input"]["command"], call);
+            assert!(
+                value["capture"]["tool_response"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("result-{call}"))
+            );
+            assert!(!value.to_string().contains("private-tool-secret"));
+            assert!(value["capture"].get("session_evidence").is_none());
+            assert!(!value.to_string().contains("current-task-transcript"));
+            assert_eq!(value["complete"], false);
+            assert_eq!(value["adoption"], "unknown");
+            captured.push(value);
+        }
+        captured.push(evidence(
+            &json!({"event":"Stop","session_id":"session","turn_id":"turn","transcript_path":log}),
+        ));
+        assert_eq!(
+            captured
+                .iter()
+                .filter(|v| v["capture"]["session_evidence"]["records"].is_array())
+                .count(),
+            1
+        );
+        let terminal = captured.last().unwrap();
+        assert_eq!(
+            terminal["capture"]["session_evidence"]["records"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(terminal.to_string().contains("terminal-transcript-content"));
+        assert_eq!(
+            terminal["capture"]["session_evidence"]["missing_turn_boundary"],
+            false
+        );
+        assert_eq!(terminal["complete"], false);
+    }
+
+    #[test]
+    fn terminal_flag_and_stop_alias_capture_without_inventing_a_turn_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("no-boundary.jsonl");
+        std::fs::write(
+            &log,
+            json!({"payload":{"role":"assistant","content":"unattributed-log-content"}})
+                .to_string(),
+        )
+        .unwrap();
+        for mut request in [
+            json!({"event":"PostToolUse","terminal":true}),
+            json!({"hook_event_name":"Stop"}),
+        ] {
+            request["transcript_path"] = json!(log);
+            let capture = evidence(&request);
+            assert_eq!(
+                capture["capture"]["session_evidence"]["missing_turn_boundary"],
+                true
+            );
+            assert_eq!(capture["capture"]["session_evidence"]["records"], json!([]));
+            assert!(!capture.to_string().contains("unattributed-log-content"));
+            assert_eq!(capture["complete"], false);
+        }
+        let capture = evidence(
+            &json!({"event":"PostToolUse","terminal":false,"transcript_path":dir.path().join("absent.jsonl"),"missing_recall":true}),
+        );
+        assert!(capture["capture"].get("session_evidence").is_none());
+        assert_eq!(capture["capture"]["missing_recall"], true);
+    }
+
+    #[test]
+    fn queued_nonterminal_transcript_evidence_remains_immutable() {
+        let snapshot = json!({"capture":{"event":"PostToolUse","session_evidence":{"records":[{"message":"previously-captured-content"}],"complete":false}},"complete":false,"adoption":"unknown"});
+        let request = json!({"event":"PostToolUse","transcript_path":"/absent/log","__kinic_evidence":snapshot});
+        assert_eq!(evidence(&request), snapshot);
+    }
+    #[test]
+    fn prompt_events_never_capture_previous_transcript_even_with_terminal_flag() {
+        for kind in ["recall", "UserPromptSubmit", "SessionStart"] {
+            let value = evidence(
+                &json!({"event":kind,"terminal":true,"transcript_path":"/absent/previous-transcript"}),
+            );
+            assert!(value["capture"].get("session_evidence").is_none(), "{kind}");
+        }
     }
 }

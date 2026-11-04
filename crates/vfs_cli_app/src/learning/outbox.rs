@@ -1,14 +1,20 @@
 //! Transactional, identity-partitioned outbox. Acknowledged IDs remain reserved.
 use super::model::*;
+use crate::agent_status::delivery_snapshot;
 use anyhow::{Result, bail};
 use rusqlite::{Connection, params};
-use std::path::Path;
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 use vfs_client::VfsApi;
 use vfs_types::{MkdirNodeRequest, NodeKind, WriteNodeItem, WriteNodeRequest, WriteNodesRequest};
 
 pub struct Outbox {
     conn: Connection,
     scope: String,
+    path: PathBuf,
+    identity: (String, String, String),
 }
 impl Outbox {
     pub fn open(root: &Path, canister: &str, database: &str, principal: &str) -> Result<Self> {
@@ -39,29 +45,35 @@ impl Outbox {
             conn.execute_batch("ALTER TABLE learning_outbox ADD COLUMN enqueued_at TEXT")?;
         }
         conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_delivery(scope TEXT PRIMARY KEY, last_attempt_at TEXT, last_success_at TEXT, last_failure_at TEXT, last_error_code TEXT); COMMIT;")?;
-        Ok(Self {
+        let outbox = Self {
             conn,
             scope: hash(&serde_json::to_string(&(canister, database, principal))?),
-        })
+            path,
+            identity: (canister.into(), database.into(), principal.into()),
+        };
+        outbox.refresh_snapshot();
+        Ok(outbox)
     }
     pub fn enqueue(&self, event: &Event) -> Result<()> {
         if event.id.is_empty() || event.run_id.is_empty() || event.kind.is_empty() {
             bail!("event requires id, run_id and kind");
         }
         let body = serde_json::to_string(event)?;
-        self.conn.execute(
+        self.mutate(|conn| {
+            conn.execute(
             "INSERT OR IGNORE INTO learning_outbox(scope,id,body,enqueued_at) VALUES(?1,?2,?3,?4)",
             params![self.scope, event.id, body, chrono::Utc::now().to_rfc3339()],
         )?;
-        let stored: String = self.conn.query_row(
-            "SELECT body FROM learning_outbox WHERE scope=?1 AND id=?2",
-            params![self.scope, event.id],
-            |row| row.get(0),
-        )?;
-        if stored != body {
-            bail!("event id reused with different content");
-        }
-        Ok(())
+            let stored: String = conn.query_row(
+                "SELECT body FROM learning_outbox WHERE scope=?1 AND id=?2",
+                params![self.scope, event.id],
+                |row| row.get(0),
+            )?;
+            if stored != body {
+                bail!("event id reused with different content");
+            }
+            Ok(())
+        })
     }
     pub fn pending(&self) -> Result<Vec<Event>> {
         let mut stmt = self.conn.prepare(
@@ -106,6 +118,7 @@ impl Outbox {
                 return Err(e.into());
             }
         }
+        self.refresh_snapshot();
         Ok(Some(FlushLease { outbox: self }))
     }
     /// Only detached hook delivery waits; foreground commands remain fail-fast.
@@ -144,6 +157,29 @@ impl Outbox {
             }
         }
     }
+    /// Flush only the selected runs while preserving the shared delivery lease.
+    pub async fn flush_runs(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: &std::collections::BTreeSet<String>,
+    ) -> Result<Option<usize>> {
+        let mut sent = 0;
+        loop {
+            let Some(lease) = self.acquire()? else {
+                return Ok((sent > 0).then_some(sent));
+            };
+            sent += self.flush_owned_selection(client, db, Some(runs)).await?;
+            drop(lease);
+            if !self
+                .pending()?
+                .iter()
+                .any(|event| runs.contains(&event.run_id))
+            {
+                return Ok(Some(sent));
+            }
+        }
+    }
     /// All callers, including synchronous record/run commands, use the same lease.
     pub async fn flush(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
         self.flush_exclusive(client, db)
@@ -155,7 +191,12 @@ impl Outbox {
     }
     pub async fn ensure_run_sent(&self, client: &impl VfsApi, db: &str, run: &str) -> Result<()> {
         if self.pending_run(run)? {
-            self.flush_exclusive(client, db).await?;
+            self.flush_runs(
+                client,
+                db,
+                &std::collections::BTreeSet::from([run.to_string()]),
+            )
+            .await?;
         }
         anyhow::ensure!(
             !self.pending_run(run)?,
@@ -164,32 +205,62 @@ impl Outbox {
         Ok(())
     }
     pub(super) fn failure(&self, code: &str) -> Result<()> {
-        self.conn.execute("INSERT INTO learning_delivery(scope,last_failure_at,last_error_code) VALUES(?1,?2,?3) ON CONFLICT(scope) DO UPDATE SET last_failure_at=excluded.last_failure_at,last_error_code=excluded.last_error_code", params![self.scope,chrono::Utc::now().to_rfc3339(),code])?;
-        Ok(())
+        self.mutate(|conn| {
+            conn.execute("INSERT INTO learning_delivery(scope,last_failure_at,last_error_code) VALUES(?1,?2,?3) ON CONFLICT(scope) DO UPDATE SET last_failure_at=excluded.last_failure_at,last_error_code=excluded.last_error_code", params![self.scope,chrono::Utc::now().to_rfc3339(),code])?;
+            Ok(())
+        })
     }
     pub(super) async fn flush_owned(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
-        if self.pending_count()? == 0 {
+        self.flush_owned_selection(client, db, None).await
+    }
+    async fn flush_owned_selection(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<usize> {
+        if !self
+            .pending()?
+            .iter()
+            .any(|event| runs.is_none_or(|runs| runs.contains(&event.run_id)))
+        {
             return Ok(0);
         }
-        self.conn.execute("INSERT INTO learning_delivery(scope,last_attempt_at) VALUES(?1,?2) ON CONFLICT(scope) DO UPDATE SET last_attempt_at=excluded.last_attempt_at", params![self.scope,chrono::Utc::now().to_rfc3339()])?;
-        let result = self.send_pending(client, db).await;
+        self.mutate(|conn| {
+            conn.execute("INSERT INTO learning_delivery(scope,last_attempt_at) VALUES(?1,?2) ON CONFLICT(scope) DO UPDATE SET last_attempt_at=excluded.last_attempt_at", params![self.scope,chrono::Utc::now().to_rfc3339()])?;
+            Ok(())
+        })?;
+        let result = self.send_pending(client, db, runs).await;
         match &result {
             Ok(_) => {
-                self.conn.execute(
-                    "UPDATE learning_delivery SET last_success_at=?2 WHERE scope=?1",
-                    params![self.scope, chrono::Utc::now().to_rfc3339()],
-                )?;
+                self.mutate(|conn| {
+                    conn.execute(
+                        "UPDATE learning_delivery SET last_success_at=?2 WHERE scope=?1",
+                        params![self.scope, chrono::Utc::now().to_rfc3339()],
+                    )?;
+                    Ok(())
+                })?;
             }
-            Err(_) => {
-                self.failure("delivery_failed")?;
+            Err(error) => {
+                self.failure(delivery_failure_code(error, db))?;
             }
         }
         result
     }
-    async fn send_pending(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
+    async fn send_pending(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<usize> {
         client.check_database_write_cycles(db).await?;
         let mut sent = 0;
-        for batch in batches(self.pending()?)? {
+        for batch in batches(
+            self.pending()?
+                .into_iter()
+                .filter(|event| runs.is_none_or(|runs| runs.contains(&event.run_id)))
+                .collect(),
+        )? {
             let items = batch_items(&batch);
             if client
                 .write_nodes(WriteNodesRequest {
@@ -217,15 +288,95 @@ impl Outbox {
         Ok(sent)
     }
     fn acknowledge(&self, events: &[Event]) -> Result<()> {
+        self.mutate(|conn| {
+            for event in events {
+                conn.execute(
+                    "UPDATE learning_outbox SET acknowledged=1 WHERE scope=?1 AND id=?2",
+                    params![self.scope, event.id],
+                )?;
+            }
+            Ok(())
+        })
+    }
+    /// Invalidate before a committed change. Snapshot failures never change the
+    /// result of a successful outbox operation.
+    fn mutate<T>(&self, action: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let tx = self.conn.unchecked_transaction()?;
-        for event in events {
-            tx.execute(
-                "UPDATE learning_outbox SET acknowledged=1 WHERE scope=?1 AND id=?2",
-                params![self.scope, event.id],
-            )?;
-        }
+        // Upgrade to a writer before invalidating the shared summary.
+        tx.execute(
+            "UPDATE learning_outbox SET acknowledged=acknowledged WHERE 0",
+            [],
+        )?;
+        let _ = std::fs::remove_file(delivery_snapshot::path(&self.path, &self.scope));
+        let value = action(&tx)?;
         tx.commit()?;
-        Ok(())
+        self.refresh_snapshot();
+        Ok(value)
+    }
+    fn refresh_snapshot(&self) {
+        // Re-read after acquiring the database's writer lock. A delayed writer
+        // therefore publishes the newest committed state, never an older copy.
+        let Ok(tx) = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        ) else {
+            return;
+        };
+        if self.write_snapshot().is_err() {
+            // Keep invalidation under the same lock, so an older failed writer
+            // cannot remove a newer writer's successfully published summary.
+            let _ = std::fs::remove_file(delivery_snapshot::path(&self.path, &self.scope));
+        }
+        drop(tx);
+    }
+    fn write_snapshot(&self) -> Result<()> {
+        let path = delivery_snapshot::path(&self.path, &self.scope);
+        let bytes = delivery_snapshot::build(&self.conn, &self.path, &self.scope, &self.identity)?;
+        let temp = path.with_extension(format!(
+            "{}.{}.tmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let result = (|| -> Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            std::fs::rename(&temp, &path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+        result
+    }
+}
+fn delivery_failure_code(error: &anyhow::Error, db: &str) -> &'static str {
+    if error.chain().any(|cause| {
+        matches!(cause.downcast_ref::<ic_agent::AgentError>(),
+            Some(ic_agent::AgentError::CertifiedReject { reject, .. }
+                | ic_agent::AgentError::UncertifiedReject { reject, .. })
+                if reject.error_code.as_deref() == Some("IC0207"))
+    }) {
+        return "canister_cycles_frozen";
+    }
+    let suspended = format!("database cycles are suspended: {db}");
+    let sqlite_suspended = format!("sqlite error 1: {suspended}");
+    if error.chain().any(|cause| {
+        let message = cause.to_string();
+        message == suspended || message == sqlite_suspended
+    }) {
+        "cycles_suspended"
+    } else {
+        "delivery_failed"
     }
 }
 pub(super) struct FlushLease<'a> {
@@ -233,10 +384,13 @@ pub(super) struct FlushLease<'a> {
 }
 impl Drop for FlushLease<'_> {
     fn drop(&mut self) {
-        let _ = self.outbox.conn.execute(
-            "DELETE FROM learning_outbox_owner WHERE scope=?1 AND pid=?2",
-            params![self.outbox.scope, std::process::id()],
-        );
+        let _ = self.outbox.mutate(|conn| {
+            conn.execute(
+                "DELETE FROM learning_outbox_owner WHERE scope=?1 AND pid=?2",
+                params![self.outbox.scope, std::process::id()],
+            )?;
+            Ok(())
+        });
     }
 }
 pub fn evidence_path(event: &Event) -> String {
@@ -538,5 +692,178 @@ mod process_tests {
         child.wait().unwrap();
         assert!(ready && busy);
         assert!(outbox.acquire().unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use serde_json::{Value, json};
+    fn sample(id: &str) -> Event {
+        Event {
+            id: id.into(),
+            run_id: id.into(),
+            kind: "run".into(),
+            payload: json!({"project_id":"project-a","private":"private event body"}),
+        }
+    }
+    fn snapshot(outbox: &Outbox) -> Value {
+        serde_json::from_slice(
+            &std::fs::read(delivery_snapshot::path(&outbox.path, &outbox.scope)).unwrap(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn snapshot_concurrent_writers_and_delayed_refresh_keep_newest_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Outbox::open(dir.path(), "endpoint:canister", "db", "principal").unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let threads: Vec<_> = (0..4)
+            .map(|i| {
+                let barrier = barrier.clone();
+                let root = dir.path().to_path_buf();
+                std::thread::spawn(move || {
+                    let outbox =
+                        Outbox::open(&root, "endpoint:canister", "db", "principal").unwrap();
+                    barrier.wait();
+                    for j in 0..5 {
+                        outbox.enqueue(&sample(&format!("event-{i}-{j}"))).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        // The oldest open writer refreshes last; it must collect current state.
+        first.refresh_snapshot();
+        assert_eq!(first.pending_count().unwrap(), 20);
+        let value = snapshot(&first);
+        assert_eq!(
+            value["partitions"]
+                .as_object()
+                .unwrap()
+                .values()
+                .next()
+                .unwrap()["record"]["pending_records"],
+            20
+        );
+        assert!(!value.to_string().contains("private event body"));
+    }
+    #[test]
+    fn snapshot_failure_does_not_fail_enqueue_or_preserve_old_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let outbox = Outbox::open(dir.path(), "endpoint:canister", "db", "principal").unwrap();
+        outbox.enqueue(&sample("one")).unwrap();
+        let path = delivery_snapshot::path(&outbox.path, &outbox.scope);
+        std::fs::remove_file(&path).unwrap();
+        // An unusable destination forces atomic publication to fail.
+        std::fs::create_dir(&path).unwrap();
+        outbox.enqueue(&sample("two")).unwrap();
+        assert_eq!(outbox.pending_count().unwrap(), 2);
+        assert!(path.is_dir());
+        assert!(
+            !dir.path().read_dir().unwrap().any(|e| e
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|e| e == "tmp"))
+        );
+        std::fs::remove_dir(&path).unwrap();
+        outbox.refresh_snapshot();
+        assert_eq!(
+            snapshot(&outbox)["partitions"]
+                .as_object()
+                .unwrap()
+                .values()
+                .next()
+                .unwrap()["record"]["pending_records"],
+            2
+        );
+    }
+    #[test]
+    fn delivery_failure_classifies_only_the_known_database_suspension() {
+        for (message, expected) in [
+            ("database cycles are suspended: db", "cycles_suspended"),
+            (
+                "sqlite error 1: database cycles are suspended: db",
+                "cycles_suspended",
+            ),
+            (
+                "sqlite error 1: database cycles are suspended: another-db",
+                "delivery_failed",
+            ),
+            (
+                "database cycles are suspended: another-db",
+                "delivery_failed",
+            ),
+            (
+                "network failed mentioning cycles or identity",
+                "delivery_failed",
+            ),
+            ("identity not found", "delivery_failed"),
+        ] {
+            let error = anyhow::anyhow!(message).context("delivery request failed");
+            assert_eq!(delivery_failure_code(&error, "db"), expected);
+        }
+    }
+    #[test]
+    fn delivery_failure_distinguishes_replica_frozen_code_from_database_suspension() {
+        use ic_agent::{
+            AgentError,
+            agent::{RejectCode, RejectResponse},
+        };
+        for (code, expected) in [
+            (Some("IC0207"), "canister_cycles_frozen"),
+            (Some("IC0503"), "delivery_failed"),
+            (None, "delivery_failed"),
+        ] {
+            for certified in [true, false] {
+                let reject = RejectResponse {
+                    reject_code: RejectCode::SysTransient,
+                    reject_message: "Canister aaaaa-aa is unable to process query calls because it's frozen. private diagnostic details".into(),
+                    error_code: code.map(str::to_owned),
+                };
+                let cause = if certified {
+                    AgentError::CertifiedReject {
+                        reject,
+                        operation: None,
+                    }
+                } else {
+                    AgentError::UncertifiedReject {
+                        reject,
+                        operation: None,
+                    }
+                };
+                let error = anyhow::Error::new(cause)
+                    .context("query failed for check_database_write_cycles");
+                assert_eq!(delivery_failure_code(&error, "db"), expected);
+            }
+        }
+        // A model/transport string mentioning the same code is not a typed replica rejection.
+        assert_eq!(
+            delivery_failure_code(&anyhow::anyhow!("IC0207 frozen"), "db"),
+            "delivery_failed"
+        );
+    }
+    #[test]
+    fn snapshot_preserves_failure_type_without_serializing_raw_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let outbox = Outbox::open(dir.path(), "endpoint:canister", "db", "principal").unwrap();
+        outbox.failure("identity_unavailable").unwrap();
+        assert_eq!(
+            snapshot(&outbox)["delivery"]["last_send_failure"]["code"],
+            "identity_unavailable"
+        );
+        outbox.failure("canister_cycles_frozen").unwrap();
+        assert_eq!(
+            snapshot(&outbox)["delivery"]["last_send_failure"]["code"],
+            "canister_cycles_frozen"
+        );
+        outbox.failure("cycles_suspended").unwrap();
+        assert_eq!(
+            snapshot(&outbox)["delivery"]["last_send_failure"]["code"],
+            "cycles_suspended"
+        );
     }
 }

@@ -92,6 +92,80 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
 
 #[cfg(unix)]
 #[tokio::test]
+async fn revision_startup_failure_reports_safe_reason_and_stays_paused() {
+    for (stderr, initialization) in [
+        (
+            "Error: failed to initialize in-process app-server client: SECRET_TOKEN",
+            true,
+        ),
+        ("Operation not permitted: SECRET_TOKEN", false),
+    ] {
+        let (dir, client, state, root, _) = fixture().await;
+        std::fs::write(dir.path().join("model-peer.py"), format!(
+            "#!/usr/bin/env python3\nimport sys\nsys.stdin.read()\nwith open('starts', 'a') as f: f.write('1')\nsys.stderr.write({stderr:?})\nsys.exit(1)\n"
+        )).unwrap();
+        let c = connection();
+        let receipt = hooks::handle(
+            &client,
+            &c,
+            "codex",
+            None,
+            &state,
+            json!({
+                "cwd":root,"session_id":"diagnostic","turn_id":"one",
+                "event":"UserPromptSubmit","prompt":"portable build"
+            }),
+        )
+        .await
+        .unwrap();
+        hooks::handle(
+            &client,
+            &c,
+            "codex",
+            None,
+            &state,
+            json!({
+                "cwd":root,"session_id":"diagnostic","turn_id":"one",
+                "event":"Stop","tool_results":[{"exit_code":0,"output":"test passed"}]
+            }),
+        )
+        .await
+        .unwrap();
+        let error = job_driver::drain_selected(
+            &client,
+            &c,
+            &root,
+            &state,
+            None,
+            false,
+            &job_driver::DrainSelection {
+                run_id: Some(receipt["run_id"].as_str().unwrap().into()),
+                max_jobs: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        let project = load_project(&root.join(CONFIG_FILE)).unwrap();
+        let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+        let job = q.list().unwrap().remove(0);
+        assert_eq!(job.state, "paused");
+        for message in [format!("{error:#}"), job.error.unwrap()] {
+            assert!(message.contains("process_exit:1"), "{message}");
+            assert_eq!(
+                message.contains("Codex initialization failed"),
+                initialization,
+                "{message}"
+            );
+            assert!(!message.contains("SECRET_TOKEN"), "{message}");
+            assert!(!message.contains("installation_id"), "{message}");
+        }
+        let _ = job_driver::drain(&client, &c, &root, &state).await;
+        assert_eq!(std::fs::read_to_string(root.join("starts")).unwrap(), "1");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn portable_hooks_and_finite_jobs_keep_unrelated_projects_separate() {
     let (_dir, client, state, a, b) = fixture().await;
     let c = connection();
@@ -696,6 +770,8 @@ async fn review_fix_external_config_flows_from_hook_to_job_processing() {
         &client,
         &c,
         LearnCommand::Drain {
+            run_id: None,
+            max_jobs: None,
             require_wakeup: false,
             project_root: a.clone(),
             recall_config: Some(external.clone()),
@@ -761,6 +837,8 @@ async fn status_and_drain_use_target_project_state_outside_project() {
         &client,
         &c,
         LearnCommand::Drain {
+            run_id: None,
+            max_jobs: None,
             require_wakeup: false,
             project_root: b.clone(),
             state,
@@ -1446,7 +1524,8 @@ async fn stop_arriving_after_delivery_check_keeps_wakeup_until_evidence_sent() {
     job_driver::drain(&client, &c, &a, &state).await.unwrap();
     assert_eq!(q.pending_wakeup().unwrap(), None);
     let job = q.list().unwrap().remove(0);
-    assert_eq!(job.state, "retry"); // The fixture has no preceding recall/run event.
+    assert_eq!(job.state, "paused"); // Missing recall/run evidence requires inspection, not automatic retries.
+    assert_eq!(job.pause.as_ref().unwrap().reason, "evidence_missing");
     assert!(!job.error.unwrap_or_default().contains("delivery_pending"));
 }
 
@@ -1519,6 +1598,272 @@ async fn stop_during_wakeup_snapshot_does_not_retry_same_failure_twice() {
         std::fs::read_to_string(count).unwrap(),
         "x",
         "one stop retried the model twice"
+    );
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.request_wakeup().unwrap();
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("calls")).unwrap(),
+        "x",
+        "a new event bypassed retry backoff"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn manual_drain_reports_job_failure_as_error() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("missing-evidence", &a, &config).unwrap();
+    let error = job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: Some("missing-evidence".into()),
+            max_jobs: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("missing-evidence"));
+    assert_eq!(q.list().unwrap()[0].state, "paused");
+    assert!(q.list().unwrap()[0].error.is_some());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_drain_does_not_deliver_other_runs() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("selected", &a, &config).unwrap();
+    q.enqueue("other", &a, &config).unwrap();
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    for run in ["selected", "other"] {
+        outbox
+            .enqueue(&Event {
+                id: format!("event-{run}"),
+                run_id: run.into(),
+                kind: "hook".into(),
+                payload: json!({}),
+            })
+            .unwrap();
+    }
+    job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: Some("selected".into()),
+            max_jobs: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(!outbox.pending_run("selected").unwrap());
+    assert!(
+        outbox.pending_run("other").unwrap(),
+        "unselected run must remain pending"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn max_jobs_skips_retained_candidates_without_validation() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    assert!(project.validation_suite.is_none());
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("candidate", &a, &config).unwrap();
+    q.enqueue("pending", &a, &config).unwrap();
+    let mut retained = q.list().unwrap().remove(0);
+    retained.state = "candidate".into();
+    retained.candidate_path = Some("candidate.json".into());
+    q.save(&retained).unwrap();
+    job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: None,
+            max_jobs: Some(1),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        q.list().unwrap()[1].state,
+        "paused",
+        "pending job should be processed"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn max_jobs_drain_does_not_block_on_unselected_delivery() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    for run in ["first", "second"] {
+        q.enqueue(run, &a, &config).unwrap();
+    }
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    for run in ["first", "second"] {
+        outbox
+            .enqueue(&Event {
+                id: format!("event-{run}"),
+                run_id: run.into(),
+                kind: "hook".into(),
+                payload: json!({}),
+            })
+            .unwrap();
+    }
+    let error = job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: None,
+            max_jobs: Some(1),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("first"));
+    assert!(!outbox.pending_run("first").unwrap());
+    assert!(outbox.pending_run("second").unwrap());
+    assert_eq!(q.list().unwrap()[1].state, "pending");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_drain_and_job_controls_do_not_process_other_runs() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let config = a.join(CONFIG_FILE).canonicalize().unwrap();
+    let project = load_project(&config).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    for run in ["first", "second", "third"] {
+        q.enqueue(run, &a, &config).unwrap();
+    }
+    let error = job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: Some("second".into()),
+            max_jobs: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("second"));
+    let jobs = q.list().unwrap();
+    assert_eq!(jobs[0].state, "pending");
+    assert_eq!(jobs[1].state, "paused");
+    assert_eq!(jobs[1].pause.as_ref().unwrap().reason, "evidence_missing");
+    assert_eq!(jobs[2].state, "pending");
+    job_driver::drain_selected(
+        &client,
+        &c,
+        &a,
+        &state,
+        None,
+        false,
+        &job_driver::DrainSelection {
+            run_id: None,
+            max_jobs: Some(1),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(q.list().unwrap()[2].state, "pending");
+    let control = |apply| {
+        JobCommand::Resume(JobControlArgs {
+            run_id: "second".into(),
+            apply,
+            dry_run: false,
+        })
+    };
+    let preview = job_driver::control_job(&client, &c, &a, &state, &control(false)).unwrap();
+    assert_eq!(preview["dry_run"], true);
+    assert_eq!(q.list().unwrap()[1].state, "paused");
+    let applied = job_driver::control_job(&client, &c, &a, &state, &control(true)).unwrap();
+    assert_eq!(applied["model_started"], false);
+    assert_eq!(
+        q.list().unwrap()[1].retry_policy.as_ref().unwrap().attempts,
+        0
+    );
+    assert_eq!(
+        q.list().unwrap()[1].pause.as_ref().unwrap().reason,
+        "evidence_missing"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resume_rejects_changed_configuration_before_claiming_recovery() {
+    let (_dir, client, state, a, _) = fixture().await;
+    let c = connection();
+    let path = a.join(CONFIG_FILE);
+    let original = std::fs::read(&path).unwrap();
+    let project = load_project(&path).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    q.enqueue("config-run", &a, &path.canonicalize().unwrap())
+        .unwrap();
+    job_driver::drain(&client, &c, &a, &state).await.unwrap();
+    let mut changed: Value = serde_json::from_slice(&original).unwrap();
+    changed["runner"]["timeout_seconds"] = json!(123);
+    std::fs::write(&path, changed.to_string()).unwrap();
+    for apply in [false, true] {
+        let command = JobCommand::Resume(JobControlArgs {
+            run_id: "config-run".into(),
+            apply,
+            dry_run: false,
+        });
+        let error = job_driver::control_job(&client, &c, &a, &state, &command).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("restore the original learning configuration"),
+            "{error}"
+        );
+        assert_eq!(q.list().unwrap()[0].state, "paused");
+    }
+    std::fs::write(&path, original).unwrap();
+    let command = JobCommand::Resume(JobControlArgs {
+        run_id: "config-run".into(),
+        apply: true,
+        dry_run: false,
+    });
+    assert_eq!(
+        job_driver::control_job(&client, &c, &a, &state, &command).unwrap()["applied"],
+        true
     );
 }
 

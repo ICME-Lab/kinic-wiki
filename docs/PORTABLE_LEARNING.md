@@ -77,8 +77,7 @@ hooks are unsupported, use `agent run` with the project configuration.
 A prompt recalls knowledge through the CLI and retains the exact context receipt.
 Tool and terminal events become evidence; terminal events enqueue learning work.
 A finite independent CLI process drains the queue. No permanent worker is
-installed, and hooks do not wait for model evaluation. Pending work is retried on
-the next prompt or explicitly:
+installed, and hooks do not wait for model evaluation. New pending work can start on the next prompt or explicitly:
 
 ```sh
 kinic-vfs-cli learn drain --project-root . --json
@@ -95,7 +94,50 @@ configuration filenames.
 
 The queue is durable and serialized per identity/database/project. Each drain
 attempts a failed job at most once; new arrivals receive a handoff/recheck.
-Configuration and validation-manifest changes invalidate pending evaluation.
+A failed or interrupted job is paused with its error retained. Normal events do
+not automatically retry it. Inspect the failure and explicitly resume the job
+before another attempt. Existing retry records are also paused for inspection. An ambiguous publication remains
+`publishing` and requires reconciliation. A saved candidate without a validation
+suite, or a `held` no-change proposal, does not rerun its model.
+
+Bounded recovery and local job controls are available:
+
+```sh
+kinic-vfs-cli learn drain --project-root . --run-id <run-id> --json
+kinic-vfs-cli learn drain --project-root . --max-jobs 3 --json
+kinic-vfs-cli learn jobs pause --project-root . --run-id <run-id> --json
+kinic-vfs-cli learn jobs pause --project-root . --run-id <run-id> --apply --json
+kinic-vfs-cli learn jobs resume --project-root . --run-id <run-id> --json
+kinic-vfs-cli learn jobs resume --project-root . --run-id <run-id> --apply --json
+```
+
+`--run-id` and `--max-jobs` cannot be combined. A selected drain sends evidence
+only for the selected runs; other runs remain queued. A selected drain reports a
+failed job as an error after recording its paused state. Job controls default to a dry run;
+`--apply` persists the change under the existing worker lease. Resume retains the
+pause reason and prior state, resets the explicit recovery allowance, and starts
+no model. Inspect evidence and configuration first; it cannot force an ambiguous
+publication to resume. If the recorded configuration fingerprint differs,
+preview and apply both refuse resume: restore the original learning configuration
+and validation suite or reconcile the retained evidence separately. Resume does
+not silently rebind old candidates to a different runner or suite.
+Drain still respects the project's disabled setting. For a manual recovery batch, select at most three runs and
+attempt each once, then inspect failures before continuing.
+
+`agent status` uses an atomic, scoped delivery snapshot when SQLite is active.
+Snapshots older than five minutes or changed by another writer are unconfirmed
+until refreshed. Counts are not evidence that context reached the app. Status
+separates a database's `cycles_suspended` condition from a canister's
+`canister_cycles_frozen` response and from identity failures; these require
+different recovery actions.
+
+Before restoring a backup, disable learning, wait for the selected delivery and
+learning processes to stop, and take a consistent SQLite backup together with
+the project configuration. Do not copy a live SQLite file without its transaction
+state or edit queue rows manually. Restore a matching CLI and state backup while
+learning remains disabled; an older CLI does not understand paused job states.
+Verify target/identity and inspect the queue before enabling again.
+
 Network failures before hook dispatch retain redacted input in a private CLI
 inbox; subsequent hooks retry observations. Effective configuration, engine and original run identity are reserved before
 network/identity setup. Completed-turn transcript evidence is captured and
@@ -127,8 +169,9 @@ shared-source invalidation, CLI help/early unconfigured skip, installed plugin
 transport and serialization/recovery boundaries. Fake model transport is not
 proof of provider access or learning quality.
 
-No production deployment or enabled profile is implied. Before release, run
-held-out repeated task-family comparisons and actual-agent integration in the
-target installation. The first implementation's live provider smoke is recorded
+No production deployment or enabled profile is implied. Before release, verify
+actual-agent integration in the target installation. Run held-out task-family
+comparisons separately; operational distribution does not establish a learning
+quality gain. The first implementation's live provider smoke is recorded
 in the existing Wiki workflow `/Knowledge/kinic-wiki/workflows/a1cf9738-5e80-40bd-88b0-6ce259d50be5/completion.md`; it does not measure this
 extension's generalization or prove a quality gain.
