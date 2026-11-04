@@ -316,8 +316,9 @@ inspection pages a revision-bound snapshot of the whole selected database, since
 references outside the learning prefix must also protect evidence. Reports contain
 paths, IDs, byte counts and hashes, not transcript bodies. Content bytes, local
 SQLite allocation and unknown remote history/index/file allocation are separate.
-Incomplete snapshots, malformed evidence, unresolved inbox records and unstable
-local state disable cleanup eligibility. An exact repeated transcript is a size
+Incomplete snapshots, malformed evidence or inbox records, and unstable
+local state disable cleanup eligibility. Frozen inbox records are inspected as
+reference sources without replaying or deleting them. An exact repeated transcript is a size
 signal, not permission to remove its enclosing event.
 
 Cleanup is deliberately conservative: only owned exact-body duplicates or events
@@ -336,7 +337,10 @@ kinic-vfs-cli learn storage apply --project-root . --preview preview.json \
 
 Apply verifies the binding and complete inventory again, creates a private backup
 with exact readback before mutation, holds the local delivery lease, and rechecks
-references before each conditional deletion/exclusion. Other remote writers are
+references before each batch of up to 100 selected records. Remote deletes use
+one atomic `mutate_nodes_batch` transaction per batch with individual etags;
+conflicts abort the batch. Errors and lost responses never trigger individual
+delete fallback or automatic retry. Local delivery exclusions remain local operations. Other remote writers are
 not locked: this is not a cross-document transaction. A changed inventory stops
 application; never regenerate approval silently. Interrupted application keeps the
 backup and requires reconciliation, not automatic retry. A fully completed apply
@@ -348,3 +352,36 @@ node removal does not purge immutable revisions or promise reduced physical
 allocation/storage charges. History pruning, VACUUM and canister memory reclamation
 are separate maintenance work. These commands do not enable learning/publication,
 resume jobs, rewrite old events or bulk-flush the queue.
+
+Storage inventory schema v2 binds the canonical effective local state directory.
+Apply rejects older unbound previews and a changed `--state-dir` or
+`KINIC_LEARNING_HOME`; generate and review a fresh preview after upgrading.
+All outbox partitions in that directory are scanned for references. Opaque foreign
+partitions are conservative reference sources only and never cleanup targets;
+their keys include the scope to avoid event-ID collisions. Unreadable partitions
+make the inspection incomplete. Other state directories and other machines are
+outside this inspection and must be reconciled before cleanup.
+A byte-identical, acknowledged local copy of the same event in the selected scope
+is treated as a delivery mirror, not a reference to the remote event. Pending
+copies, changed content, distinct events and jobs still protect it. Removing the
+remote test fixture preserves the acknowledged local ID reservation and bytes.
+
+Explicitly requested archival can be previewed with `learn storage preview
+--archive-intermediate --output preview.json --json`. This opt-in policy is pinned
+in the reviewed manifest. It adds owned remote nonterminal PostToolUse records;
+terminal evidence, local queues, protected/approved records, and other projects
+remain outside this additional class. Shared run IDs in ordinary sibling events
+are grouping metadata, not dependency edges; explicit path/event/hash references,
+external run references, jobs, pending records and foreign/protected sources still
+protect evidence. Archival removes online availability, requires verified backups
+and exact target review, and does not reclaim retained revisions or SQLite pages.
+
+Between preview and apply, unrelated new records do not invalidate approval:
+apply still scans the complete current sources and requires each reviewed target's
+version, content, ownership and computed dependency protection to match. A new
+reference or job for a target blocks it. During the actual batch operation, target or dependency changes stop further
+batches for reconciliation. Postchecks also inspect references to the archived
+preimages so a newly introduced dependency cannot disappear from inspection
+merely because its target was just removed. Unrelated arrivals are permitted.
+For protected records, `protected_by` reports a blocking example rather than
+every possible reference; candidates without blockers inspect all sources.

@@ -550,6 +550,9 @@ pub enum StorageCommand {
     Preview {
         #[arg(long)]
         output: PathBuf,
+        /// Include unreferenced remote PostToolUse evidence for reviewed archival.
+        #[arg(long)]
+        archive_intermediate: bool,
     },
     Apply {
         #[arg(long)]

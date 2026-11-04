@@ -29,6 +29,10 @@ pub struct Item {
 pub struct Inventory {
     pub version: u8,
     pub binding: (String, String, String, String),
+    #[serde(default)]
+    pub state_root: Option<PathBuf>,
+    #[serde(default)]
+    pub archive_intermediate: bool,
     pub complete: bool,
     pub issues: Vec<String>,
     pub items: Vec<Item>,
@@ -144,7 +148,23 @@ fn readonly_copy(path: &Path) -> Result<(tempfile::TempDir, Connection)> {
     conn.pragma_update(None, "query_only", true)?;
     Ok((temp, conn))
 }
+// Resolve existing ancestors without creating state during read-only inspection.
+fn canonical_state_root(root: &Path) -> Result<PathBuf> {
+    let absolute = std::path::absolute(root)?;
+    match absolute.canonicalize() {
+        Ok(path) => Ok(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let name = absolute
+                .file_name()
+                .context("unresolvable state directory")?;
+            let parent = absolute.parent().context("state directory has no parent")?;
+            Ok(canonical_state_root(parent)?.join(name))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
 fn local(data: &mut Data, root: &Path, scope: &str, project: &str) -> Result<()> {
+    data.report.state_root = Some(canonical_state_root(root)?);
     let path = root.join("learning-outbox.sqlite3");
     if path.exists() {
         let (_tmp, conn) = readonly_copy(&path)?;
@@ -156,21 +176,22 @@ fn local(data: &mut Data, root: &Path, scope: &str, project: &str) -> Result<()>
         let mut cursor = 0i64;
         let mut total = 0usize;
         loop {
-            let mut stmt=conn.prepare("SELECT rowid,id,body,acknowledged FROM learning_outbox WHERE scope=?1 AND rowid>?2 ORDER BY rowid LIMIT 100")?;
+            let mut stmt=conn.prepare("SELECT rowid,id,body,acknowledged,scope FROM learning_outbox WHERE rowid>?1 ORDER BY rowid LIMIT 100")?;
             let rows = stmt
-                .query_map(params![scope, cursor], |r| {
+                .query_map(params![cursor], |r| {
                     Ok((
                         r.get::<_, i64>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
                         r.get::<_, bool>(3)?,
+                        r.get::<_, String>(4)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             if rows.is_empty() {
                 break;
             }
-            for (seq, id, body, ack) in rows {
+            for (seq, id, body, ack, row_scope) in rows {
                 cursor = seq;
                 total += body.len();
                 ensure!(
@@ -182,19 +203,22 @@ fn local(data: &mut Data, root: &Path, scope: &str, project: &str) -> Result<()>
                 let excluded = has_exclusions
                     && conn.query_row(
                         "SELECT EXISTS(SELECT 1 FROM learning_exclusions WHERE scope=?1 AND id=?2)",
-                        params![scope, id],
+                        params![row_scope, id],
                         |r| r.get::<_, bool>(0),
                     )?;
-                let key = format!("local:{id}");
-                data.report.items.push(item(
-                    key.clone(),
-                    &body,
-                    None,
-                    Some(&e),
-                    project,
-                    ack,
-                    excluded,
-                ));
+                let selected_scope = row_scope == scope;
+                let key = if selected_scope {
+                    format!("local:{id}")
+                } else {
+                    format!("local:{row_scope}:{id}")
+                };
+                let mut entry = item(key.clone(), &body, None, Some(&e), project, ack, excluded);
+                // Opaque foreign scopes are reference sources only, never cleanup targets.
+                if !selected_scope {
+                    entry.owned = false;
+                    entry.eligible_reason = None;
+                }
+                data.report.items.push(entry);
                 data.bodies.insert(key.clone(), body);
                 data.events.insert(key, e);
             }
@@ -222,6 +246,7 @@ fn local(data: &mut Data, root: &Path, scope: &str, project: &str) -> Result<()>
         // Unprocessed inbox evidence can contain references not yet present in the outbox.
         let mut dirs = vec![root.join("hook-inbox")];
         let mut seen = 0;
+        let mut inbox_bytes = 0usize;
         while let Some(dir) = dirs.pop() {
             if !dir.exists() {
                 continue;
@@ -238,9 +263,31 @@ fn local(data: &mut Data, root: &Path, scope: &str, project: &str) -> Result<()>
                 if p.is_dir() {
                     dirs.push(p);
                 } else if p.extension().is_some_and(|e| e == "json") {
-                    anyhow::bail!(
-                        "unprocessed or quarantined inbox evidence requires reconciliation"
+                    let before = std::fs::metadata(&p)?;
+                    inbox_bytes = inbox_bytes
+                        .checked_add(usize::try_from(before.len())?)
+                        .context("inbox size overflow")?;
+                    ensure!(
+                        inbox_bytes <= MAX_BYTES && data.report.items.len() < MAX_ROWS,
+                        "inbox inventory budget exceeded"
                     );
+                    let body = std::fs::read_to_string(&p)?;
+                    let after = std::fs::metadata(&p)?;
+                    ensure!(
+                        before.len() == after.len() && before.modified()? == after.modified()?,
+                        "inbox changed during inspection"
+                    );
+                    let value: Value = serde_json::from_str(&body)?;
+                    ensure!(
+                        value["__kinic_run_id"].is_string()
+                            && value["__kinic_evidence"].is_object(),
+                        "unrecognized inbox evidence"
+                    );
+                    let key = format!("inbox:{}", p.strip_prefix(root)?.to_string_lossy());
+                    let mut entry = item(key.clone(), &body, None, None, project, false, false);
+                    entry.category = "hook_inbox".into();
+                    data.report.items.push(entry);
+                    data.bodies.insert(key, body);
                 }
             }
         }
@@ -307,6 +354,17 @@ async fn remote(data: &mut Data, client: &impl VfsApi, db: &str, project: &str) 
                 i.owned = false;
                 i.eligible_reason = None;
             }
+            if data.report.archive_intermediate
+                && i.owned
+                && e.as_ref().is_some_and(|e| {
+                    e.kind == "hook"
+                        && e.payload["capture"]["terminal"] != true
+                        && (e.payload["capture"]["event"] == "PostToolUse"
+                            || e.payload["capture"]["hook_event_name"] == "PostToolUse")
+                })
+            {
+                i.eligible_reason = Some("archive_intermediate".into());
+            }
             data.report.items.push(i);
             data.bodies
                 .insert(key.clone(), format!("{}\n{}", n.content, n.metadata_json));
@@ -324,6 +382,71 @@ async fn remote(data: &mut Data, client: &impl VfsApi, db: &str, project: &str) 
 }
 fn protect(data: &mut Data) {
     let mut canonical = BTreeMap::new();
+    let structural_sources: BTreeMap<_, _> = data
+        .report
+        .items
+        .iter()
+        .filter(|i| {
+            data.report.archive_intermediate
+                && i.owned
+                && (i.category == "learning_runs"
+                    || (i.category == "local_outbox" && i.acknowledged))
+                && matches!(i.event_kind.as_deref(), Some("hook" | "run" | "context"))
+        })
+        .filter_map(|i| {
+            let run = i.run_id.as_ref()?;
+            let node = data.nodes.get(&i.key);
+            let mut value = if let Some(e) = data.events.get(&i.key) {
+                serde_json::to_value(e).ok()?
+            } else {
+                serde_json::from_str::<Value>(&node?.content).ok()?
+            };
+            // Remove only schema-defined declarations, never arbitrary payload references.
+            value.as_object_mut()?.remove("run_id");
+            if let Some(payload) = value["payload"].as_object_mut() {
+                match i.event_kind.as_deref() {
+                    Some("run") => {
+                        payload.remove("id");
+                    }
+                    Some("context") => {
+                        payload.remove("run_id");
+                    }
+                    Some("hook") => {
+                        if let Some(capture) =
+                            payload.get_mut("capture").and_then(Value::as_object_mut)
+                        {
+                            capture.remove("__kinic_run_id");
+                            capture.remove("run_id");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some((
+                i.key.clone(),
+                (
+                    run.clone(),
+                    format!(
+                        "{}\n{}",
+                        value,
+                        node.map_or("", |n| n.metadata_json.as_str())
+                    ),
+                ),
+            ))
+        })
+        .collect();
+    let delivered_mirrors: BTreeMap<_, _> = data
+        .report
+        .items
+        .iter()
+        .filter(|i| i.key.starts_with("local:") && i.owned && i.acknowledged && !i.excluded)
+        .map(|i| {
+            (
+                i.key.clone(),
+                (i.event_id.clone(), i.run_id.clone(), i.sha256.clone()),
+            )
+        })
+        .collect();
     for i in &mut data.report.items {
         let group = (i.category.clone(), i.sha256.clone());
         if i.owned
@@ -351,13 +474,39 @@ fn protect(data: &mut Data) {
             if key == &i.key {
                 continue;
             }
-            if needles.iter().any(|s| body.contains(s)) {
+            // A delivered exact copy is not a dependency on itself. Pending copies,
+            // distinct events and foreign partitions still protect the remote node.
+            if i.key.starts_with("remote:")
+                && delivered_mirrors.get(key).is_some_and(|(id, run, sha)| {
+                    id == &i.event_id && run == &i.run_id && sha == &i.sha256
+                })
+            {
+                continue;
+            }
+            let sibling = structural_sources.get(key).filter(|(run, _)| {
+                i.eligible_reason.as_deref() == Some("archive_intermediate")
+                    && Some(run) == i.run_id.as_ref()
+            });
+            if needles.iter().any(|s| {
+                if Some(*s) == i.run_id.as_deref()
+                    && let Some((_, projected)) = sibling
+                {
+                    projected.contains(s)
+                } else {
+                    body.contains(s)
+                }
+            }) {
                 i.protected_by.push(key.clone());
+                break; // A protected target cannot be deleted; further reasons are not needed.
             }
         }
         for (n, body) in data.jobs.iter().enumerate() {
+            if !i.protected_by.is_empty() {
+                break;
+            }
             if needles.iter().any(|s| body.contains(s)) {
                 i.protected_by.push(format!("job:{n}"));
+                break;
             }
         }
         if !i.protected_by.is_empty() || !data.report.complete {
@@ -371,7 +520,9 @@ fn empty_data(c: &ResolvedConnection, project: &ProjectConfig) -> Data {
     let db = c.database_id.clone().unwrap_or_default();
     Data {
         report: Inventory {
-            version: 1,
+            version: 2,
+            state_root: None,
+            archive_intermediate: false,
             binding: (
                 endpoint(c),
                 db.clone(),
@@ -390,6 +541,7 @@ fn empty_data(c: &ResolvedConnection, project: &ProjectConfig) -> Data {
         jobs: vec![],
     }
 }
+#[cfg(test)]
 async fn collect(
     client: &impl VfsApi,
     c: &ResolvedConnection,
@@ -397,7 +549,18 @@ async fn collect(
     root: &Path,
     local_only: bool,
 ) -> Data {
+    collect_with_policy(client, c, project, root, local_only, false).await
+}
+async fn collect_with_policy(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    project: &ProjectConfig,
+    root: &Path,
+    local_only: bool,
+    archive_intermediate: bool,
+) -> Data {
     let mut data = empty_data(c, project);
+    data.report.archive_intermediate = archive_intermediate;
     let db = data.report.binding.1.clone();
     let principal = data.report.binding.2.clone();
     let scope = hash(&serde_json::to_string(&(endpoint(c), &db, &principal)).unwrap());
@@ -440,7 +603,7 @@ fn summary(report: &Inventory) -> Value {
             g.1 = i.snapshot_bytes;
         }
     }
-    json!({"inventory":report,"categories":groups,"repeated_snapshot_bytes":snapshots.values().map(|(n,b)|n.saturating_sub(1)*b).sum::<usize>(),"eligible_count":report.items.iter().filter(|i|i.eligible_reason.is_some()).count(),"excluded_records":report.items.iter().filter(|i|i.excluded).count(),"measurement":"UTF-8 content bytes; not physical allocation or cycles"})
+    json!({"inventory":report,"categories":groups,"repeated_snapshot_bytes":snapshots.values().map(|(n,b)|n.saturating_sub(1)*b).sum::<usize>(),"eligible_count":report.items.iter().filter(|i|i.eligible_reason.is_some()).count(),"excluded_records":report.items.iter().filter(|i|i.excluded).count(),"protection_detail":"protected_by gives a blocking reference, not every reference; unprotected candidates scan all sources","measurement":"UTF-8 content bytes; not physical allocation or cycles"})
 }
 fn write_new_verified(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut options = std::fs::OpenOptions::new();
@@ -519,10 +682,22 @@ pub async fn run(
     );
     let root = state_root_at(state, cwd)?;
     let local_only = matches!(command, StorageCommand::Inventory { local_only: true });
-    let data = collect(client, c, &project, &root, local_only).await;
+    let archive_intermediate = match &command {
+        StorageCommand::Preview {
+            archive_intermediate,
+            ..
+        } => *archive_intermediate,
+        StorageCommand::Apply { preview, .. } => {
+            let preview: Preview = serde_json::from_value(read_json(preview)?)?;
+            preview.inventory.archive_intermediate
+        }
+        _ => false,
+    };
+    let data =
+        collect_with_policy(client, c, &project, &root, local_only, archive_intermediate).await;
     match command {
         StorageCommand::Inventory { .. } => Ok(summary(&data.report)),
-        StorageCommand::Preview { output } => {
+        StorageCommand::Preview { output, .. } => {
             let selected: Vec<_> = data
                 .report
                 .items
@@ -537,7 +712,7 @@ pub async fn run(
                 .filter(|i| selected.contains(&i.key))
                 .map(|i| i.bytes)
                 .sum();
-            let preview=Preview{version:1,inventory:data.report.clone(),selected,current_body_bytes:bytes,limitations:vec!["No history purge or physical reclaim guarantee".into(),"Only exact duplicates or explicitly marked test fixtures; no age-based cleanup".into(),"Apply requires reviewed file digest, verified backup and quiescent project writers".into()]};
+            let preview=Preview{version:1,inventory:data.report.clone(),selected,current_body_bytes:bytes,limitations:vec!["No history purge or physical reclaim guarantee".into(),if archive_intermediate {"Includes explicitly requested archival of unreferenced intermediate tool evidence; online availability is lost".into()} else {"Only exact duplicates or explicitly marked test fixtures; no age-based cleanup".into()},"Apply requires reviewed file digest, verified backup and quiescent project writers".into()]};
             let raw = serde_json::to_vec_pretty(&preview)?;
             write_new_verified(&output, &raw)?;
             let mut value = summary(&data.report);
@@ -591,16 +766,18 @@ async fn apply(
     );
     let p: Preview = serde_json::from_slice(&raw)?;
     ensure!(
-        p.version == 1 && p.inventory.version == 1,
+        p.version == 1 && p.inventory.version == 2,
         "unsupported preview"
     );
     ensure!(
-        p.inventory.binding == data.report.binding && p.inventory.complete && data.report.complete,
+        p.inventory.binding == data.report.binding
+            && p.inventory.archive_intermediate == data.report.archive_intermediate
+            && p.inventory.complete
+            && data.report.complete
+            && p.inventory.state_root.is_some()
+            && p.inventory.state_root == data.report.state_root
+            && data.report.state_root.as_ref() == Some(&canonical_state_root(root)?),
         "binding changed or incomplete dependency inspection"
-    );
-    ensure!(
-        p.inventory.jobs_hash == data.report.jobs_hash,
-        "jobs changed since preview"
     );
     let selected: BTreeSet<_> = p.selected.iter().cloned().collect();
     ensure!(selected.len() == p.selected.len(), "duplicate cleanup key");
@@ -626,11 +803,16 @@ async fn apply(
         );
         return Ok(json!({"already_applied":true,"applied":[],"backup":backup_dir}));
     }
-    // Exact inventory comparison refuses unrelated edits/additions that could add references.
-    ensure!(
-        p.inventory.items == data.report.items,
-        "inventory changed; create and review a new preview"
-    );
+    // Recompute all dependencies, but pin the reviewed targets rather than unrelated arrivals.
+    // A new reference/job changes target protection/eligibility and must reject the preview.
+    for key in &selected {
+        let approved = p.inventory.items.iter().find(|i| &i.key == key);
+        let current = data.report.items.iter().find(|i| &i.key == key);
+        ensure!(
+            approved == current,
+            "reviewed target or its dependencies changed; review a new preview"
+        );
+    }
     if selected.is_empty() {
         return Ok(
             json!({"applied":[],"current_body_bytes_removed":0,"physical_reclaim_bytes":null}),
@@ -661,81 +843,119 @@ async fn apply(
         .acquire()?
         .context("delivery is active; cleanup not applied")?;
     let mut expected = data.report.clone();
-    let mut applied = vec![];
-    for key in &selected {
-        let fresh = collect(client, c, project, root, false).await;
+    let mut applied: Vec<String> = vec![];
+    let ordered: Vec<_> = selected.iter().cloned().collect();
+    for batch in ordered.chunks(100) {
+        let fresh = collect_with_policy(
+            client,
+            c,
+            project,
+            root,
+            false,
+            expected.archive_intermediate,
+        )
+        .await;
         ensure!(
-            fresh.report.complete && fresh.report.jobs_hash == expected.jobs_hash,
+            fresh.report.complete && fresh.report.state_root == expected.state_root,
             "dependency inspection changed"
         );
-        ensure!(
-            fresh.report.items == expected.items,
-            "references or records changed during cleanup"
-        );
-        ensure!(
-            fresh
-                .report
-                .items
-                .iter()
-                .any(|i| &i.key == key && i.eligible_reason.is_some()),
-            "cleanup target became protected"
-        );
-        if let Some(n) = data.nodes.get(key) {
-            client
-                .delete_node(DeleteNodeRequest {
-                    database_id: data.report.binding.1.clone(),
+        for key in selected.iter().filter(|k| !applied.contains(k)) {
+            ensure!(
+                fresh.report.items.iter().find(|i| &i.key == key)
+                    == expected.items.iter().find(|i| &i.key == key),
+                "reviewed target or dependencies changed during cleanup"
+            );
+        }
+        for key in batch {
+            ensure!(
+                fresh
+                    .report
+                    .items
+                    .iter()
+                    .any(|i| &i.key == key && i.eligible_reason.is_some()),
+                "cleanup target became protected"
+            );
+        }
+        let operations: Vec<_> = batch
+            .iter()
+            .filter_map(|key| data.nodes.get(key))
+            .map(|n| {
+                vfs_types::NodeMutation::Delete(vfs_types::DeleteNodeItem {
                     path: n.path.clone(),
                     expected_etag: Some(n.etag.clone()),
                     expected_folder_index_etag: None,
                 })
+            })
+            .collect();
+        if !operations.is_empty() {
+            // One atomic remote transaction; never fall back to individual deletes on error.
+            client
+                .mutate_nodes_batch(vfs_types::MutateNodesBatchRequest {
+                    database_id: data.report.binding.1.clone(),
+                    operations,
+                })
                 .await?;
-            ensure!(
-                client
-                    .read_node(&data.report.binding.1, &n.path)
-                    .await?
-                    .is_none(),
-                "delete readback failed"
-            );
-        } else {
-            outbox.exclude(data.events.get(key).context("event missing")?, confirm)?;
         }
-        applied.push(key.clone());
-        write_new_verified(&backup_dir.join(format!("{}.done", hash(key))), b"applied")?;
-        // Rebuild expected references from the exact remaining data next iteration, while requiring
-        // other content/metadata hashes unchanged. No automatic fresh-etag retry is performed.
-        let after = collect(client, c, project, root, false).await;
+        for key in batch {
+            if let Some(n) = data.nodes.get(key) {
+                ensure!(
+                    client
+                        .read_node(&data.report.binding.1, &n.path)
+                        .await?
+                        .is_none(),
+                    "delete readback failed"
+                );
+            } else {
+                outbox.exclude(data.events.get(key).context("event missing")?, confirm)?;
+            }
+            applied.push(key.clone());
+            write_new_verified(&backup_dir.join(format!("{}.done", hash(key))), b"applied")?;
+        }
+        // Recheck both remaining targets and dependencies on archived preimages.
+        // Unrelated arrivals are allowed, never a fresh-etag retry for a changed target.
+        let mut after = collect_with_policy(
+            client,
+            c,
+            project,
+            root,
+            false,
+            expected.archive_intermediate,
+        )
+        .await;
         ensure!(
-            after.report.complete && after.report.jobs_hash == expected.jobs_hash,
+            after.report.complete && after.report.state_root == expected.state_root,
             "dependency inspection changed after cleanup; reconcile backup"
         );
-        for pending in selected.iter().filter(|k| !applied.contains(k)) {
+        for key in selected.iter().filter(|k| !applied.contains(k)) {
             ensure!(
-                after
-                    .report
-                    .items
-                    .iter()
-                    .any(|i| &i.key == pending && i.eligible_reason.is_some()),
-                "remaining cleanup target became protected"
+                after.report.items.iter().find(|i| &i.key == key)
+                    == expected.items.iter().find(|i| &i.key == key),
+                "remaining target or dependencies changed; reconcile backup"
             );
         }
-        let remaining: Vec<_> = expected
-            .items
-            .iter()
-            .filter(|i| &i.key != key)
-            .map(|i| (&i.key, &i.sha256, &i.etag, &i.metadata_hash))
-            .collect();
-        let actual: Vec<_> = after
-            .report
-            .items
-            .iter()
-            .filter(|i| &i.key != key)
-            .map(|i| (&i.key, &i.sha256, &i.etag, &i.metadata_hash))
-            .collect();
+        let actual_report = after.report.clone();
+        for key in &applied {
+            let mut preimage = data
+                .report
+                .items
+                .iter()
+                .find(|i| &i.key == key)
+                .context("preimage missing")?
+                .clone();
+            preimage.protected_by.clear();
+            after.report.items.retain(|i| &i.key != key);
+            after.report.items.push(preimage);
+        }
+        protect(&mut after);
         ensure!(
-            remaining == actual,
-            "concurrent modification after cleanup; reconcile backup"
+            applied.iter().all(|key| after
+                .report
+                .items
+                .iter()
+                .any(|i| &i.key == key && i.eligible_reason.is_some())),
+            "new dependency on archived evidence; reconcile backup"
         );
-        expected = after.report;
+        expected = actual_report;
     }
     write_new_verified(
         &backup_dir.join("complete.json"),
@@ -1012,10 +1232,12 @@ mod tests {
     async fn dependency_change_during_delete_stops_remaining_cleanup_and_completion() {
         for incomplete in [false, true] {
             let (dir, client, c, p, root) = fixture();
-            let a = test_event("race-a");
-            let b = test_event("race-b");
-            remote_event(&client, &a).await;
-            remote_event(&client, &b).await;
+            let events: Vec<_> = (0..101)
+                .map(|n| test_event(&format!("race-{n:03}")))
+                .collect();
+            for e in &events {
+                remote_event(&client, e).await;
+            }
             let data = collect(&client, &c, &p, &root, false).await;
             let (file, digest) = preview_file(dir.path(), &data);
             let backup = dir.path().join("backup");
@@ -1024,7 +1246,7 @@ mod tests {
                 .items
                 .iter()
                 .filter(|i| i.eligible_reason.is_some())
-                .nth(1)
+                .nth(100)
                 .unwrap()
                 .run_id
                 .clone()
@@ -1063,19 +1285,518 @@ mod tests {
                     .is_err()
             );
             assert!(!backup.join("complete.json").exists());
-            let live = client
-                .read_node("db", &evidence_path(&a))
-                .await
-                .unwrap()
-                .is_some() as usize
-                + client
-                    .read_node("db", &evidence_path(&b))
+            let mut live = 0;
+            for e in &events {
+                live += client
+                    .read_node("db", &evidence_path(e))
                     .await
                     .unwrap()
                     .is_some() as usize;
-            assert_eq!(live, 1, "must stop after first deletion");
+            }
+            assert_eq!(live, 1, "must stop after first atomic batch");
+            assert_eq!(*client.delete_batches.lock().unwrap(), vec![100]);
         }
     }
+    #[tokio::test]
+    async fn archive_policy_retains_terminal_and_pending_evidence() {
+        let (_dir, client, c, p, root) = fixture();
+        let mut a = test_event("archive-a");
+        a.run_id = format!("{PROJECT}:archive-run");
+        a.payload.as_object_mut().unwrap().remove("test_fixture");
+        a.payload["capture"]["event"] = json!("PostToolUse");
+        let mut b = a.clone();
+        b.id = "archive-b".into();
+        let mut stop = a.clone();
+        stop.id = "archive-stop".into();
+        stop.payload["capture"]["event"] = json!("Stop");
+        for e in [&a, &b, &stop] {
+            remote_event(&client, e).await;
+        }
+        let ordinary = collect(&client, &c, &p, &root, false).await;
+        assert!(
+            ordinary
+                .report
+                .items
+                .iter()
+                .all(|i| i.eligible_reason.is_none())
+        );
+        let data = collect_with_policy(&client, &c, &p, &root, false, true).await;
+        assert_eq!(
+            data.report
+                .items
+                .iter()
+                .filter(|i| i.eligible_reason.is_some())
+                .count(),
+            2
+        );
+        let mut linked = stop.clone();
+        linked.id = "explicit-link".into();
+        linked.payload["source_run"] = json!(a.run_id);
+        remote_event(&client, &linked).await;
+        let linked_data = collect_with_policy(&client, &c, &p, &root, false, true).await;
+        assert!(
+            linked_data
+                .report
+                .items
+                .iter()
+                .all(|i| i.eligible_reason.is_none())
+        );
+        let node = client
+            .read_node("db", &evidence_path(&linked))
+            .await
+            .unwrap()
+            .unwrap();
+        client
+            .delete_node(DeleteNodeRequest {
+                database_id: "db".into(),
+                path: node.path,
+                expected_etag: Some(node.etag),
+                expected_folder_index_etag: None,
+            })
+            .await
+            .unwrap();
+        let out = Outbox::open(&root, &endpoint(&c), "db", "principal").unwrap();
+        out.enqueue(&a).unwrap();
+        let pending = collect_with_policy(&client, &c, &p, &root, false, true).await;
+        assert!(
+            pending
+                .report
+                .items
+                .iter()
+                .all(|i| i.eligible_reason.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_preview_applies_policy_and_preserves_terminal() {
+        let (dir, client, c, p, root) = fixture();
+        let mut e = test_event("ordinary-tool");
+        e.payload.as_object_mut().unwrap().remove("test_fixture");
+        e.payload["capture"]["event"] = json!("PostToolUse");
+        e.run_id = format!("{PROJECT}:ordinary-run");
+        let mut stop = e.clone();
+        stop.id = "terminal".into();
+        stop.payload["capture"]["event"] = json!("Stop");
+        for event in [&e, &stop] {
+            remote_event(&client, event).await;
+        }
+        let data = collect_with_policy(&client, &c, &p, &root, false, true).await;
+        let (file, digest) = preview_file(dir.path(), &data);
+        apply(
+            &client,
+            &c,
+            &p,
+            &root,
+            &data,
+            &file,
+            &dir.path().join("backup"),
+            &digest,
+        )
+        .await
+        .unwrap();
+        assert!(
+            client
+                .read_node("db", &evidence_path(&e))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            client
+                .read_node("db", &evidence_path(&stop))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(*client.delete_batches.lock().unwrap(), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn archive_policy_preserves_explicit_run_dependencies() {
+        let (_dir, client, c, p, root) = fixture();
+        let mut e = test_event("tool-evidence");
+        e.payload.as_object_mut().unwrap().remove("test_fixture");
+        e.payload["capture"]["event"] = json!("PostToolUse");
+        remote_event(&client, &e).await;
+        write_immutable(
+            &client,
+            "db",
+            "/Sources/learning-candidates/protected.json",
+            &json!({"source_run":e.run_id}).to_string(),
+        )
+        .await
+        .unwrap();
+        let data = collect_with_policy(&client, &c, &p, &root, false, true).await;
+        assert!(
+            data.report
+                .items
+                .iter()
+                .all(|i| i.eligible_reason.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn reviewed_targets_accept_unrelated_arrivals() {
+        let (dir, client, c, p, root) = fixture();
+        let e = test_event("reviewed");
+        remote_event(&client, &e).await;
+        let data = collect(&client, &c, &p, &root, false).await;
+        let (file, digest) = preview_file(dir.path(), &data);
+        write_immutable(&client, "db", "/Knowledge/unrelated.md", "unrelated work")
+            .await
+            .unwrap();
+        let fresh = collect(&client, &c, &p, &root, false).await;
+        let result = apply(
+            &client,
+            &c,
+            &p,
+            &root,
+            &fresh,
+            &file,
+            &dir.path().join("backup"),
+            &digest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["applied"].as_array().unwrap().len(), 1);
+        assert!(
+            client
+                .read_node("db", "/Knowledge/unrelated.md")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_allows_unrelated_enqueue_but_detects_new_reference_to_deleted_target() {
+        for referenced in [false, true] {
+            let (dir, client, c, p, root) = fixture();
+            let target = test_event("target");
+            remote_event(&client, &target).await;
+            let data = collect(&client, &c, &p, &root, false).await;
+            let (file, digest) = preview_file(dir.path(), &data);
+            let state = root.clone();
+            let destination = endpoint(&c);
+            let run = target.run_id.clone();
+            *client.after_delete.lock().unwrap() = Some(Box::new(move || {
+                let out = Outbox::open(&state, &destination, "db", "principal").unwrap();
+                let mut e = test_event("unrelated-new");
+                if referenced {
+                    e.payload["source_run"] = json!(run);
+                }
+                out.enqueue(&e).unwrap();
+            }));
+            let backup = dir.path().join("backup");
+            let result = apply(&client, &c, &p, &root, &data, &file, &backup, &digest).await;
+            assert_eq!(result.is_err(), referenced);
+            assert_eq!(backup.join("complete.json").exists(), !referenced);
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_uses_atomic_delete_batches() {
+        let (dir, client, c, p, root) = fixture();
+        for id in ["batch-a", "batch-b"] {
+            remote_event(&client, &test_event(id)).await;
+        }
+        let data = collect(&client, &c, &p, &root, false).await;
+        let (file, digest) = preview_file(dir.path(), &data);
+        let result = apply(
+            &client,
+            &c,
+            &p,
+            &root,
+            &data,
+            &file,
+            &dir.path().join("backup"),
+            &digest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["applied"].as_array().unwrap().len(), 2);
+        assert_eq!(*client.delete_batches.lock().unwrap(), vec![2]);
+    }
+
+    #[tokio::test]
+    async fn batch_conflict_rolls_back_and_response_loss_never_retries_deletes() {
+        use std::sync::atomic::Ordering;
+        for lost_response in [false, true] {
+            let (dir, client, c, p, root) = fixture();
+            for id in ["batch-a", "batch-b"] {
+                remote_event(&client, &test_event(id)).await;
+            }
+            let data = collect(&client, &c, &p, &root, false).await;
+            let (file, digest) = preview_file(dir.path(), &data);
+            client
+                .fail_after_delete_batch
+                .store(lost_response, Ordering::SeqCst);
+            client
+                .reject_second_batch_item
+                .store(!lost_response, Ordering::SeqCst);
+            let backup = dir.path().join("backup");
+            assert!(
+                apply(&client, &c, &p, &root, &data, &file, &backup, &digest)
+                    .await
+                    .is_err()
+            );
+            assert!(!backup.join("complete.json").exists());
+            for id in ["batch-a", "batch-b"] {
+                assert_eq!(
+                    client
+                        .read_node("db", &evidence_path(&test_event(id)))
+                        .await
+                        .unwrap()
+                        .is_none(),
+                    lost_response
+                );
+            }
+            let fresh = collect(&client, &c, &p, &root, false).await;
+            assert!(
+                apply(&client, &c, &p, &root, &fresh, &file, &backup, &digest)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(*client.delete_batches.lock().unwrap(), vec![2]);
+        }
+    }
+
+    #[tokio::test]
+    async fn inbox_is_inspected_without_replay_and_protects_referenced_evidence() {
+        let (_dir, client, c, p, root) = fixture();
+        let e = test_event("inbox-referenced");
+        remote_event(&client, &e).await;
+        remote_event(&client, &test_event("unrelated")).await;
+        let inbox = root.join("hook-inbox/old-partition");
+        std::fs::create_dir_all(&inbox).unwrap();
+        let file = inbox.join("pending.json");
+        let raw = json!({"__kinic_run_id":"old-run","__kinic_evidence":{"capture":{"source":evidence_path(&e)}}}).to_string();
+        std::fs::write(&file, &raw).unwrap();
+        let data = collect(&client, &c, &p, &root, false).await;
+        assert!(data.report.complete);
+        assert!(
+            data.report
+                .items
+                .iter()
+                .find(|i| i.event_id.as_deref() == Some("inbox-referenced"))
+                .unwrap()
+                .eligible_reason
+                .is_none()
+        );
+        assert!(
+            data.report
+                .items
+                .iter()
+                .find(|i| i.event_id.as_deref() == Some("unrelated"))
+                .unwrap()
+                .eligible_reason
+                .is_some()
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), raw);
+        assert!(!summary(&data.report).to_string().contains("old-run"));
+        std::fs::write(&file, "invalid json").unwrap();
+        let broken = collect(&client, &c, &p, &root, false).await;
+        assert!(!broken.report.complete);
+        assert!(
+            broken
+                .report
+                .items
+                .iter()
+                .all(|i| i.eligible_reason.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn review_other_partition_references_protect_remote_evidence() {
+        let (_dir, client, c, p, root) = fixture();
+        let e = test_event("target");
+        remote_event(&client, &e).await;
+        let other = Outbox::open(&root, &endpoint(&c), "db", "other-principal").unwrap();
+        let mut reference = test_event("reference");
+        reference.payload["source"] = json!(evidence_path(&e));
+        other.enqueue(&reference).unwrap();
+        let data = collect(&client, &c, &p, &root, false).await;
+        assert!(data.report.complete);
+        assert!(
+            data.report
+                .items
+                .iter()
+                .find(|i| i.key == format!("remote:{}", evidence_path(&e)))
+                .unwrap()
+                .eligible_reason
+                .is_none()
+        );
+        assert!(
+            data.report
+                .items
+                .iter()
+                .filter(|i| i.key.starts_with("local:"))
+                .all(|i| i.eligible_reason.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn review_changed_state_root_rejects_preview() {
+        let (dir, client, c, p, root) = fixture();
+        remote_event(&client, &test_event("target")).await;
+        let before = collect(&client, &c, &p, &root, false).await;
+        let (file, digest) = preview_file(dir.path(), &before);
+        let other = dir.path().join("other-state");
+        let after = collect(&client, &c, &p, &other, false).await;
+        assert!(
+            apply(
+                &client,
+                &c,
+                &p,
+                &other,
+                &after,
+                &file,
+                &dir.path().join("backup"),
+                &digest
+            )
+            .await
+            .is_err()
+        );
+        assert!(!dir.path().join("backup").exists());
+    }
+
+    #[tokio::test]
+    async fn review_acknowledged_exact_mirror_allows_cleanup_but_references_do_not() {
+        let (dir, client, c, p, root) = fixture();
+        let e = test_event("target");
+        let out = Outbox::open(&root, &endpoint(&c), "db", "principal").unwrap();
+        out.enqueue(&e).unwrap();
+        remote_event(&client, &e).await;
+        let pending = collect(&client, &c, &p, &root, false).await;
+        let key = format!("remote:{}", evidence_path(&e));
+        assert!(
+            pending
+                .report
+                .items
+                .iter()
+                .find(|i| i.key == key)
+                .unwrap()
+                .eligible_reason
+                .is_none()
+        );
+        out.flush(&client, "db").await.unwrap();
+        let data = collect(&client, &c, &p, &root, false).await;
+        assert!(
+            data.report
+                .items
+                .iter()
+                .find(|i| i.key == key)
+                .unwrap()
+                .eligible_reason
+                .is_some()
+        );
+        let mut reference = test_event("reference");
+        reference.payload["source"] = json!(evidence_path(&e));
+        out.enqueue(&reference).unwrap();
+        let referenced = collect(&client, &c, &p, &root, false).await;
+        assert!(
+            referenced
+                .report
+                .items
+                .iter()
+                .find(|i| i.key == key)
+                .unwrap()
+                .eligible_reason
+                .is_none()
+        );
+        // A separately acknowledged reference must still protect the target.
+        out.flush(&client, "db").await.unwrap();
+        let referenced = collect(&client, &c, &p, &root, false).await;
+        assert!(
+            referenced
+                .report
+                .items
+                .iter()
+                .find(|i| i.key == key)
+                .unwrap()
+                .eligible_reason
+                .is_none()
+        );
+        let _ = dir;
+    }
+
+    #[tokio::test]
+    async fn delivered_mirror_cleanup_keeps_acknowledged_local_reservation() {
+        let (dir, client, c, p, root) = fixture();
+        let e = test_event("delivered");
+        let out = Outbox::open(&root, &endpoint(&c), "db", "principal").unwrap();
+        out.enqueue(&e).unwrap();
+        out.flush(&client, "db").await.unwrap();
+        let data = collect(&client, &c, &p, &root, false).await;
+        let (file, digest) = preview_file(dir.path(), &data);
+        let result = apply(
+            &client,
+            &c,
+            &p,
+            &root,
+            &data,
+            &file,
+            &dir.path().join("backup"),
+            &digest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["applied"].as_array().unwrap().len(), 1);
+        assert!(
+            client
+                .read_node("db", &evidence_path(&e))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        out.enqueue(&e).unwrap();
+        assert_eq!(out.pending_count().unwrap(), 0);
+        let after = collect(&client, &c, &p, &root, false).await;
+        assert!(
+            after
+                .report
+                .items
+                .iter()
+                .any(|i| i.key == "local:delivered" && i.acknowledged && !i.excluded)
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_preview_without_state_binding_is_rejected_before_backup() {
+        let (dir, client, c, p, root) = fixture();
+        remote_event(&client, &test_event("legacy")).await;
+        let mut data = collect(&client, &c, &p, &root, false).await;
+        data.report.version = 1;
+        data.report.state_root = None;
+        let (file, digest) = preview_file(dir.path(), &data);
+        let fresh = collect(&client, &c, &p, &root, false).await;
+        assert!(
+            apply(
+                &client,
+                &c,
+                &p,
+                &root,
+                &fresh,
+                &file,
+                &dir.path().join("backup"),
+                &digest
+            )
+            .await
+            .is_err()
+        );
+        assert!(!dir.path().join("backup").exists());
+    }
+
+    #[test]
+    fn state_root_binding_survives_directory_creation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("new/nested");
+        let before = canonical_state_root(&root).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(before, canonical_state_root(&root).unwrap());
+        assert_eq!(before, canonical_state_root(&root.join(".")).unwrap());
+    }
+
     #[test]
     fn local_and_remote_mirrors_are_not_counted_as_redundant_remote_storage() {
         let (_dir, _client, c, p, _root) = fixture();

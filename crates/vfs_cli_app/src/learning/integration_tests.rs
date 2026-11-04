@@ -9,6 +9,8 @@ use vfs_types::*;
 
 pub(crate) struct StoreClient {
     pub(crate) store: FsStore,
+    pub(crate) fail_after_delete_batch: AtomicBool,
+    pub(crate) delete_batches: std::sync::Mutex<Vec<usize>>,
     pub(crate) after_delete: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub(crate) deny: AtomicBool,
     fail_after_write: AtomicBool,
@@ -25,6 +27,8 @@ impl StoreClient {
         store.run_fs_migrations().unwrap();
         Self {
             store,
+            fail_after_delete_batch: AtomicBool::new(false),
+            delete_batches: std::sync::Mutex::new(vec![]),
             after_delete: std::sync::Mutex::new(None),
             deny: AtomicBool::new(false),
             fail_after_write: AtomicBool::new(false),
@@ -161,6 +165,29 @@ impl VfsApi for StoreClient {
     }
     async fn edit_node(&self, r: EditNodeRequest) -> Result<EditNodeResult> {
         self.store.edit_node(r, 10).map_err(|e| anyhow!("{e:?}"))
+    }
+    async fn mutate_nodes_batch(
+        &self,
+        mut r: MutateNodesBatchRequest,
+    ) -> Result<Vec<NodeMutationResult>> {
+        self.delete_batches.lock().unwrap().push(r.operations.len());
+        if self.reject_second_batch_item.load(Ordering::SeqCst)
+            && r.operations.len() > 1
+            && let NodeMutation::Delete(item) = &mut r.operations[1]
+        {
+            item.expected_etag = Some("stale".into());
+        }
+        let result = self
+            .store
+            .mutate_nodes_batch(r, 10)
+            .map_err(|e| anyhow!("{e:?}"))?;
+        if let Some(callback) = self.after_delete.lock().unwrap().take() {
+            callback();
+        }
+        if self.fail_after_delete_batch.load(Ordering::SeqCst) {
+            return Err(anyhow!("injected response loss"));
+        }
+        Ok(result)
     }
     async fn delete_node(&self, r: DeleteNodeRequest) -> Result<DeleteNodeResult> {
         let result = self
