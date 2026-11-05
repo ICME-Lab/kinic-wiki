@@ -170,6 +170,10 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
             ][..],
         ),
         ("fs_nodes_fts", &["path", "title", "content"][..]),
+        (
+            "fs_search_metadata",
+            &["node_row_id", "title", "shared", "summary"][..],
+        ),
         ("fs_evidence_settings", &["id", "enabled"][..]),
         ("fs_evidence_blobs", &["run_id", "sha256", "body"][..]),
         ("fs_evidence_manifests", &["reference", "manifest_json"][..]),
@@ -319,6 +323,7 @@ fn managed_tables() -> &'static [&'static str] {
         "fs_evidence_blobs",
         "fs_evidence_manifests",
         "fs_evidence_bindings",
+        "fs_search_metadata",
     ]
 }
 

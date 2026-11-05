@@ -32,13 +32,13 @@ pub struct DeliveryReport {
 }
 pub fn classify(event: &Event, storage_v1: bool) -> DeliveryDisposition {
     let bytes = serde_json::to_vec(event).map_or(usize::MAX, |b| b.len());
-    if event.kind == "hook"
-        && event.payload["schema_version"] != 2
-        && bytes > 16 * 1024
-        && !storage_v1
-    {
+    if event.kind == "hook" && event.payload["schema_version"] != 2 && bytes > 16 * 1024 {
         let capture = event.payload.get("capture").unwrap_or(&event.payload);
-        let reason = if capture.get("session_evidence").is_some() {
+        let known = capture["session_evidence"]["records"].is_array();
+        if known && storage_v1 {
+            return DeliveryDisposition::Eligible;
+        }
+        let reason = if known {
             "legacy_evidence_requires_shared_storage"
         } else {
             "legacy_large_hook_format_unknown"
@@ -55,12 +55,25 @@ pub fn classify(event: &Event, storage_v1: bool) -> DeliveryDisposition {
 mod tests {
     use super::*;
     #[test]
+    fn capability_does_not_make_unknown_large_hook_safe() {
+        let e = Event {
+            id: "unknown".into(),
+            run_id: "r".into(),
+            kind: "hook".into(),
+            payload: serde_json::json!({"unknown":"x".repeat(20000)}),
+        };
+        assert!(matches!(
+            classify(&e, true),
+            DeliveryDisposition::Deferred { .. }
+        ));
+    }
+    #[test]
     fn delivery_policy_boundary_and_modern_stop() {
         let mut e = Event {
             id: "e".into(),
             run_id: "r".into(),
             kind: "hook".into(),
-            payload: serde_json::json!({"pad":""}),
+            payload: serde_json::json!({"pad":"","session_evidence":{"records":[]}}),
         };
         let overhead = serde_json::to_vec(&e).unwrap().len();
         e.payload["pad"] = "x".repeat(16384 - overhead).into();

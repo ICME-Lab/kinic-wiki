@@ -16,11 +16,9 @@ impl FsStore {
             if used {
                 return Err("evidence storage requires an empty rebuild destination".into());
             }
-            conn.execute(
-                "UPDATE fs_evidence_settings SET enabled=1 WHERE id=1",
-                params![],
-            )
-            .map_err(|e| e.to_string())?;
+            if enabled(conn)? { return Ok(()); }
+            conn.execute_batch("DROP TABLE fs_nodes_fts; CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(path,title,content,content='fs_search_content',content_rowid='id',tokenize='trigram case_sensitive 0'); INSERT INTO fs_nodes_fts(rowid,path,title,content) SELECT id,path,title,content FROM fs_search_content;").map_err(|e|e.to_string())?;
+            conn.execute("UPDATE fs_evidence_settings SET enabled=1 WHERE id=1",params![]).map_err(|e|e.to_string())?;
             Ok(())
         })
     }
@@ -147,4 +145,42 @@ pub(crate) fn hydrate_node(conn: &Connection, node: &mut Node) -> Result<(), Str
         return Err("evidence node etag mismatch after reconstruction".into());
     }
     Ok(())
+}
+
+pub(super) fn search_projection(conn: &Connection, node: &Node) -> Result<(bool, String), String> {
+    let shared: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM fs_evidence_bindings WHERE path=?1 AND etag=?2)",
+            params![node.path, node.etag],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !shared {
+        return Ok((false, node.content.clone()));
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&node.content).map_err(|e| e.to_string())?;
+    let capture = value["payload"].get("capture").unwrap_or(&value["payload"]);
+    let mut summary = serde_json::Map::new();
+    for key in ["run_id", "id", "kind"] {
+        if let Some(text) = value[key].as_str().filter(|s| s.len() <= 512) {
+            summary.insert(key.into(), text.into());
+        }
+    }
+    for key in [
+        "event",
+        "hook_event_name",
+        "tool_name",
+        "engine",
+        "timestamp",
+        "tool_use_id",
+    ] {
+        if let Some(text) = capture[key].as_str().filter(|s| s.len() <= 512) {
+            summary.insert(key.into(), text.into());
+        }
+    }
+    Ok((true, serde_json::Value::Object(summary).to_string()))
+}
+pub(crate) fn search_storage_enabled(conn: &Connection) -> Result<bool, String> {
+    enabled(conn)
 }

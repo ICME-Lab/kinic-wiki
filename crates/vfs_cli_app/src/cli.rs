@@ -76,6 +76,7 @@ Examples:
   kinic-vfs-cli --database-id <db> query-sql "SELECT json_object('path', path, 'head', substr(content, 1, 700)) FROM fs_nodes WHERE path LIKE '/Sources/%' LIMIT 20" --limit 20 --json
 
 Notes:
+  Raw shared learning evidence uses an internal content reference in SQL; use read-node/read-nodes for its original body. Its conversation text is not full-text indexed; paths and summary identifiers remain searchable.
   Restricted SELECT guardrail: use one SELECT, only fs_nodes or fs_links, one json_object(...) TEXT column, one explicit SQL LIMIT 1..100, and no mutation tokens. Escape literal single quotes by doubling them."#;
 
 const MEMORY_MANIFEST_AFTER_HELP: &str = r#"Purpose:

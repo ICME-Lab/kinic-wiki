@@ -397,6 +397,15 @@ impl VfsService {
         self.require_database_write_cycles_available(database_id)
     }
 
+    pub fn evidence_storage_enabled(
+        &self,
+        database_id: &str,
+        caller: &str,
+    ) -> Result<bool, String> {
+        self.with_database_store(database_id, caller, RequiredRole::Reader, |store| {
+            store.evidence_storage_enabled()
+        })
+    }
     pub fn status(&self, database_id: &str, caller: &str) -> Result<Status, String> {
         self.with_database_store(database_id, caller, RequiredRole::Reader, |store| {
             store.status()

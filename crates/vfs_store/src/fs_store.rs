@@ -2366,6 +2366,8 @@ fn sync_node_fts(
                 && stored.node.path == node.path
                 && file_search_title(&stored.node.path) == file_search_title(&node.path)
                 && stored.node.content == node.content
+                && stored.node.kind == node.kind
+                && stored.node.metadata_json == node.metadata_json
         }
         _ => false,
     };
@@ -2374,20 +2376,59 @@ fn sync_node_fts(
         return Ok(());
     }
 
+    let external = evidence::search_storage_enabled(tx)?;
     if let Some(stored) = old {
-        tx.execute(
-            "DELETE FROM fs_nodes_fts WHERE rowid = ?1",
-            params![stored.row_id],
-        )
-        .map_err(|error| error.to_string())?;
+        if external {
+            let indexed: Option<(String, bool, String)> = tx
+                .query_row(
+                    "SELECT title,shared,summary FROM fs_search_metadata WHERE node_row_id=?1",
+                    params![stored.row_id],
+                    |r| {
+                        Ok((
+                            crate::sqlite::row_get(r, 0)?,
+                            crate::sqlite::row_get(r, 1)?,
+                            crate::sqlite::row_get(r, 2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let (title, shared, summary) = indexed
+                .unwrap_or_else(|| (file_search_title(&stored.node.path), false, String::new()));
+            let content = if shared {
+                summary.as_str()
+            } else {
+                stored.node.content.as_str()
+            };
+            tx.execute("INSERT INTO fs_nodes_fts(fs_nodes_fts,rowid,path,title,content) VALUES('delete',?1,?2,?3,?4)",params![stored.row_id,stored.node.path,title,content]).map_err(|e|e.to_string())?;
+            tx.execute(
+                "DELETE FROM fs_search_metadata WHERE node_row_id=?1",
+                params![stored.row_id],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            tx.execute(
+                "DELETE FROM fs_nodes_fts WHERE rowid=?1",
+                params![stored.row_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     if let Some((row_id, node)) = new {
         let title = file_search_title(&node.path);
+        let (shared, content) = if external {
+            evidence::search_projection(tx, node)?
+        } else {
+            (false, node.content.clone())
+        };
+        if external {
+            tx.execute("INSERT INTO fs_search_metadata(node_row_id,title,shared,summary) VALUES(?1,?2,?3,?4)",params![row_id,title,shared,if shared {content.as_str()} else {""}]).map_err(|e|e.to_string())?;
+        }
         tx.execute(
-            "INSERT INTO fs_nodes_fts(rowid, path, title, content) VALUES(?1, ?2, ?3, ?4)",
-            params![row_id, node.path, title, node.content],
+            "INSERT INTO fs_nodes_fts(rowid,path,title,content) VALUES(?1,?2,?3,?4)",
+            params![row_id, node.path, title, content],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }

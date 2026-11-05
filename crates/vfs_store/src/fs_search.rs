@@ -248,9 +248,14 @@ pub(crate) fn load_content_substring_candidates(
         .map(|prefix| prefix_filter_sql_for_column("path", prefix, values.len() + 1))
         .unwrap_or_else(|| (String::new(), Vec::new()));
     values.extend(scope_values);
+    let source = if crate::fs_store::evidence::search_storage_enabled(conn)? {
+        "fs_search_content"
+    } else {
+        "fs_nodes"
+    };
     let sql = format!(
         "SELECT id, path, kind
-         FROM fs_nodes
+         FROM {source}
          WHERE {predicates}{}
          ORDER BY path ASC
          LIMIT {}",

@@ -16,3 +16,5 @@ kinic-vfs-cli agent flush --allow-legacy-evidence \
 共有保存能力のある接続先では旧記録も通常の有限予算内で送信できます。1件で指定バイト数を超えるイベントは `event_exceeds_delivery_budget` として保留されます。JSON化後の長さを使うため、会話ファイルの読み取り上限と同じ値とは限りません。
 
 自動学習・自動公開・ジョブの状態はこの配送制御では変更しません。配送成功は学習成功や性能改善を意味しません。
+
+共有保存を有効にしたDBでは、生の会話証拠はrun・ツール・時刻などの要約情報で検索します。会話全文の全文検索は行いません。通常のKnowledgeや案件文書の検索は維持します。元本文・履歴を取得するにはread-node/read-nodes/node-historyを使ってください。query-sqlのfs_nodes.contentは対象証拠について内部参照を返します。共有blob・manifest表は公開SQLから参照できません。

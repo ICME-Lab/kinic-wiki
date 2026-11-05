@@ -390,6 +390,15 @@ fn canister_health() -> CanisterHealth {
 #[query]
 fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String> {
     with_service(|service| service.status(&request.database_id, &caller_text()))?;
+    let mut capabilities = store_capabilities();
+    if with_service(|service| {
+        service.evidence_storage_enabled(&request.database_id, &caller_text())
+    })? {
+        capabilities.push(MemoryCapability {
+            name: "learning_evidence_storage_v1".into(),
+            description: "Lossless shared learning evidence with metadata-only search".into(),
+        });
+    }
     Ok(MemoryManifest {
         api_version: "kinic-stores-v1".to_string(),
         purpose: "Canister-backed memory, knowledge, skill, and session stores for agents"
@@ -413,7 +422,7 @@ fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String>
             store_root("/Skills", "skill"),
             store_root("/Sessions", "session"),
         ],
-        capabilities: store_capabilities(),
+        capabilities,
         canonical_roles: canonical_roles(),
         write_policy: "stores_read_only".to_string(),
         recommended_entrypoint: "query_context".to_string(),
