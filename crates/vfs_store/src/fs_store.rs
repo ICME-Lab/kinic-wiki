@@ -6,6 +6,7 @@
 // That prevents SQLite `snippet()` cost from scaling with all matched rows.
 // Only returned hits pay preview generation cost.
 mod context;
+pub(crate) mod evidence;
 mod marketplace;
 mod revisions;
 mod sql_json;
@@ -2052,6 +2053,7 @@ fn update_existing_node(
 }
 
 fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i64, String> {
+    let content = evidence::store_evidence(tx, node, row_id)?;
     match row_id {
         Some(row_id) => {
             tx.execute(
@@ -2067,7 +2069,7 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
                 params![
                     node.path,
                     node_kind_to_db(&node.kind),
-                    node.content,
+                    content,
                     node.created_at,
                     node.updated_at,
                     node.etag,
@@ -2084,7 +2086,7 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
             let values = vec![
                 crate::sqlite::text_value(node.path.clone()),
                 crate::sqlite::text_value(node_kind_to_db(&node.kind)),
-                crate::sqlite::text_value(node.content.clone()),
+                crate::sqlite::text_value(content.clone()),
                 crate::sqlite::integer_value(node.created_at),
                 crate::sqlite::integer_value(node.updated_at),
                 crate::sqlite::text_value(node.etag.clone()),
@@ -2105,11 +2107,12 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
 }
 
 fn save_moved_node(tx: &Transaction<'_>, row_id: i64, node: &Node) -> Result<i64, String> {
+    let content = evidence::store_evidence(tx, node, Some(row_id))?;
     let (parent_id, name) = parent_fields_for_path(tx, &node.path)?;
     let values = vec![
         crate::sqlite::text_value(node.path.clone()),
         crate::sqlite::text_value(node_kind_to_db(&node.kind)),
-        crate::sqlite::text_value(node.content.clone()),
+        crate::sqlite::text_value(content),
         crate::sqlite::integer_value(node.created_at),
         crate::sqlite::integer_value(node.updated_at),
         crate::sqlite::text_value(node.etag.clone()),

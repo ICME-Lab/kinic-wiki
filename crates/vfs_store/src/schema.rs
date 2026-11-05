@@ -9,11 +9,13 @@ use crate::sqlite::{
 const SCHEMA_VERSION_INITIAL: &str = "vfs_store:001_initial";
 const SCHEMA_VERSION_002: &str = "vfs_store:002_publication_mutation_commits";
 const SCHEMA_VERSION_003: &str = "vfs_store:003_fts_trigram";
-const SCHEMA_VERSION_CURRENT: &str = "vfs_store:004_node_revisions";
+const SCHEMA_VERSION_004: &str = "vfs_store:004_node_revisions";
+const SCHEMA_VERSION_CURRENT: &str = "vfs_store:005_evidence_storage";
 const SCHEMA_VERSIONS: &[&str] = &[
     SCHEMA_VERSION_INITIAL,
     SCHEMA_VERSION_002,
     SCHEMA_VERSION_003,
+    SCHEMA_VERSION_004,
     SCHEMA_VERSION_CURRENT,
 ];
 const FRESH_FS_SCHEMA_SQL: &str = include_str!("../migrations/fresh_fs_schema.sql");
@@ -37,6 +39,8 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
         seed_initial_store_roots(tx)?;
         tx.execute_batch(include_str!("../migrations/004_node_revisions.sql"))
             .map_err(|error| error.to_string())?;
+        tx.execute_batch(include_str!("../migrations/005_evidence_storage.sql"))
+            .map_err(|e| e.to_string())?;
         for version in SCHEMA_VERSIONS {
             record_schema_migration(tx, version)?;
         }
@@ -66,7 +70,8 @@ fn apply_pending_migrations(conn: &Transaction<'_>) -> Result<(), String> {
         let sql = match *version {
             SCHEMA_VERSION_002 => SCHEMA_MIGRATION_002,
             SCHEMA_VERSION_003 => SCHEMA_MIGRATION_003,
-            SCHEMA_VERSION_CURRENT => include_str!("../migrations/004_node_revisions.sql"),
+            SCHEMA_VERSION_004 => include_str!("../migrations/004_node_revisions.sql"),
+            SCHEMA_VERSION_CURRENT => include_str!("../migrations/005_evidence_storage.sql"),
             _ => continue,
         };
         conn.execute_batch(sql).map_err(|error| error.to_string())?;
@@ -165,6 +170,10 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
             ][..],
         ),
         ("fs_nodes_fts", &["path", "title", "content"][..]),
+        ("fs_evidence_settings", &["id", "enabled"][..]),
+        ("fs_evidence_blobs", &["run_id", "sha256", "body"][..]),
+        ("fs_evidence_manifests", &["reference", "manifest_json"][..]),
+        ("fs_evidence_bindings", &["path", "etag", "reference"][..]),
         ("fs_change_log", &["revision", "path", "change_kind"][..]),
         ("fs_path_state", &["path", "last_change_revision"][..]),
         (
@@ -306,6 +315,10 @@ fn managed_tables() -> &'static [&'static str] {
         "fs_node_identities",
         "fs_node_revisions",
         "learning_publication_commits",
+        "fs_evidence_settings",
+        "fs_evidence_blobs",
+        "fs_evidence_manifests",
+        "fs_evidence_bindings",
     ]
 }
 

@@ -664,7 +664,7 @@ fn load_selected_contents(
     } else {
         "content"
     };
-    let sql = format!("SELECT id, {column} FROM fs_nodes WHERE id IN ({placeholders})");
+    let sql = format!("SELECT id, {column}, path FROM fs_nodes WHERE id IN ({placeholders})");
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(&mut stmt, crate::sqlite::params_from_i64s(ids), |row| {
         let content = if prefix_only {
@@ -679,10 +679,30 @@ fn load_selected_contents(
         } else {
             crate::sqlite::row_get::<String>(row, 1)?
         };
-        Ok((crate::sqlite::row_get::<i64>(row, 0)?, content))
+        Ok((
+            crate::sqlite::row_get::<i64>(row, 0)?,
+            content,
+            crate::sqlite::row_get::<String>(row, 2)?,
+        ))
     })
     .map_err(|error| error.to_string())?;
-    Ok(rows.into_iter().collect())
+    let mut contents = BTreeMap::new();
+    for (id, mut content, path) in rows {
+        if content.starts_with("kinic:evidence:v1:") {
+            if let Some(node) = crate::fs_helpers::load_node(conn, &path)? {
+                content = node.content;
+            }
+            if prefix_only && content.len() > 160000 {
+                let mut end = 160000;
+                while !content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                content.truncate(end);
+            }
+        }
+        contents.insert(id, content);
+    }
+    Ok(contents)
 }
 
 fn find_fts_anchor(content: &str, plan: &SearchQueryPlan) -> Option<(usize, usize)> {
