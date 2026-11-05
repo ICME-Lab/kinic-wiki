@@ -19,3 +19,5 @@ pub use crate::fs_store::{FsStore, validate_sql_json_select};
 
 /// Parse internal Markdown/wiki edges using the same rules as persisted link indexes.
 pub use fs_links::extract_link_edges;
+
+pub use fs_store::rebuild::{RebuildBudget, RebuildCursor, RebuildPage};

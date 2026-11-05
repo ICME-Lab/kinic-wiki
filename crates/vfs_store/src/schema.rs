@@ -324,6 +324,8 @@ fn managed_tables() -> &'static [&'static str] {
         "fs_evidence_manifests",
         "fs_evidence_bindings",
         "fs_search_metadata",
+        "fs_rebuild_state",
+        "fs_rebuild_receipts",
     ]
 }
 
