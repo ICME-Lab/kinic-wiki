@@ -99,7 +99,7 @@ impl VfsService {
         op: &str,
         hash: &str,
     ) -> Result<bool, String> {
-        self.read_index(|c|c.query_row("SELECT COALESCE(last_operation,'')=?3 AND COALESCE(last_request_hash,'')=?4 FROM database_maintenance WHERE database_id=?1 AND migration_id=?2 AND is_current=1",params![s.database_id,s.migration_id,op,hash],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string()))
+        self.read_index(|c|c.query_row("SELECT COALESCE(last_operation,'')=?3 AND COALESCE(last_request_hash,'')=?4 FROM database_maintenance WHERE database_id=?1 AND migration_id=?2 AND is_current=1",params![s.database_id,s.migration_id,op,hash],|r|crate::sqlite::row_bool(r,0)).map_err(|e|e.to_string()))
     }
     fn persist_maintenance(
         &self,
@@ -141,7 +141,7 @@ impl VfsService {
             let cursor = store.rebuild_start_cursor()?;
             let source_size = store.logical_size_bytes()?;
             self.write_index(|c|{
-                let pending:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM publication_mutation_recovery_batches WHERE database_id=?1)",params![r.database_id],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string())?;
+                let pending:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM publication_mutation_recovery_batches WHERE database_id=?1)",params![r.database_id],|r|crate::sqlite::row_bool(r,0)).map_err(|e|e.to_string())?;
                 if pending{return Err("publication recovery must finish before maintenance".into());}
                 let mount=databases::allocate_mount_id(c)?;
                 databases::record_mount_history(c,&r.database_id,mount,"evidence_rebuild",now)?;
@@ -309,7 +309,8 @@ impl VfsService {
                 let file_column=if rollback{"source_file"}else{"target_file"};
                 let file:String=c.query_row(&format!("SELECT {file_column} FROM database_maintenance WHERE migration_id=?1"),params![s.migration_id],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string())?;
                 let size=if rollback{s.source_logical_bytes}else{next.target_logical_bytes};
-                let changed=c.execute("UPDATE databases SET mount_id=?2,active_mount_id=?2,db_file_name=?3,logical_size_bytes=?4 WHERE database_id=?1 AND mount_id=?5",params![s.database_id,to as i64,file,size as i64,from as i64]).map_err(|e|e.to_string())?;
+                c.execute("UPDATE databases SET mount_id=?2,active_mount_id=?2,db_file_name=?3,logical_size_bytes=?4 WHERE database_id=?1 AND mount_id=?5",params![s.database_id,to as i64,file,size as i64,from as i64]).map_err(|e|e.to_string())?;
+                let changed=c.query_row("SELECT changes()",params![],|r|crate::sqlite::row_get::<i64>(r,0)).map_err(|e|e.to_string())?;
                 if changed!=1{return Err("catalog mount changed during maintenance".into());}
             }
             persist(c,&s,&next,op,&hash)
@@ -326,7 +327,12 @@ fn persist(
 ) -> Result<(), String> {
     let old_json = serde_json::to_string(old).map_err(|e| e.to_string())?;
     let next_json = serde_json::to_string(next).map_err(|e| e.to_string())?;
-    let changed=conn.execute("UPDATE database_maintenance SET state_json=?3,last_operation=?4,last_request_hash=?5 WHERE migration_id=?1 AND is_current=1 AND state_json=?2",params![old.migration_id,old_json,next_json,op,hash]).map_err(|e|e.to_string())?;
+    conn.execute("UPDATE database_maintenance SET state_json=?3,last_operation=?4,last_request_hash=?5 WHERE migration_id=?1 AND is_current=1 AND state_json=?2",params![old.migration_id,old_json,next_json,op,hash]).map_err(|e|e.to_string())?;
+    let changed = conn
+        .query_row("SELECT changes()", params![], |r| {
+            crate::sqlite::row_get::<i64>(r, 0)
+        })
+        .map_err(|e| e.to_string())?;
     if changed != 1 {
         return Err("maintenance journal changed".into());
     }

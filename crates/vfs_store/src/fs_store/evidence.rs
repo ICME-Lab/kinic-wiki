@@ -10,7 +10,7 @@ impl FsStore {
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM fs_nodes WHERE kind<>'folder')",
                     params![],
-                    |r| crate::sqlite::row_get(r, 0),
+                    |r| crate::sqlite::row_bool(r, 0),
                 )
                 .map_err(|e| e.to_string())?;
             if used {
@@ -30,7 +30,7 @@ fn enabled(conn: &Connection) -> Result<bool, String> {
     conn.query_row(
         "SELECT enabled FROM fs_evidence_settings WHERE id=1",
         params![],
-        |r| crate::sqlite::row_get(r, 0),
+        |r| crate::sqlite::row_bool(r, 0),
     )
     .map_err(|e| e.to_string())
 }
@@ -152,7 +152,7 @@ pub(super) fn search_projection(conn: &Connection, node: &Node) -> Result<(bool,
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM fs_evidence_bindings WHERE path=?1 AND etag=?2)",
             params![node.path, node.etag],
-            |r| crate::sqlite::row_get(r, 0),
+            |r| crate::sqlite::row_bool(r, 0),
         )
         .map_err(|e| e.to_string())?;
     if !shared {

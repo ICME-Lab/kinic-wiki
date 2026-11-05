@@ -6,6 +6,42 @@ import { IDL } from "@icp-sdk/core/candid";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
+  const EvidenceRebuildControlRequest = idl.Record({
+    expected_state_hash: idl.Text,
+    database_id: idl.Text,
+    migration_id: idl.Text
+  });
+  const EvidenceRebuildRequest = idl.Record({
+    expected_source_mount: idl.Nat16,
+    database_id: idl.Text,
+    expected_schema: idl.Text
+  });
+  const EvidenceRebuildStatus = idl.Record({
+    verified: idl.Bool,
+    source_logical_bytes: idl.Nat64,
+    verification_digest: idl.Text,
+    source_schema: idl.Text,
+    step: idl.Nat64,
+    source_guard: idl.Text,
+    target_mount: idl.Nat16,
+    database_id: idl.Text,
+    target_logical_bytes: idl.Nat64,
+    retained_old_logical_bytes: idl.Nat64,
+    phase: idl.Text,
+    source_mount: idl.Nat16,
+    state_hash: idl.Text,
+    migration_id: idl.Text,
+    cursor_json: idl.Text,
+    resume_writes_allowed: idl.Bool
+  });
+  const EvidenceRebuildStepRequest = idl.Record({
+    max_rows: idl.Nat32,
+    expected_step: idl.Nat64,
+    database_id: idl.Text,
+    max_bytes: idl.Nat32,
+    migration_id: idl.Text
+  });
+  const ResultEvidenceRebuild = idl.Variant({ Ok: EvidenceRebuildStatus, Err: idl.Text });
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
@@ -582,6 +618,13 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
+    evidence_rebuild_status: idl.Func([DatabaseIdRequest], [ResultEvidenceRebuild], ["query"]),
+    evidence_rebuild_begin: idl.Func([EvidenceRebuildRequest], [ResultEvidenceRebuild], []),
+    evidence_rebuild_step: idl.Func([EvidenceRebuildStepRequest], [ResultEvidenceRebuild], []),
+    evidence_rebuild_verify: idl.Func([EvidenceRebuildStepRequest], [ResultEvidenceRebuild], []),
+    evidence_rebuild_activate: idl.Func([EvidenceRebuildControlRequest], [ResultEvidenceRebuild], []),
+    evidence_rebuild_rollback: idl.Func([EvidenceRebuildControlRequest], [ResultEvidenceRebuild], []),
+    evidence_rebuild_resume_writes: idl.Func([EvidenceRebuildControlRequest], [ResultEvidenceRebuild], []),
     get_api_doc: idl.Func([], [idl.Text], ["query"]),
     scope_revision: idl.Func([ScopeRevisionRequest], [ResultNat64], ["query"]),
     current_node_revision: idl.Func([NodeRevisionRequest], [ResultNodeRevision], ["query"]),

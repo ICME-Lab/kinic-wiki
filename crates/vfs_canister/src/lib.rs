@@ -1,5 +1,9 @@
 use vfs_types::ScopeRevisionRequest;
 use vfs_types::{
+    EvidenceRebuildControlRequest, EvidenceRebuildRequest, EvidenceRebuildStatus,
+    EvidenceRebuildStepRequest,
+};
+use vfs_types::{
     LearningPublicationRequest, LearningPublicationResult, NodeHistoryPage, NodeHistoryRequest,
     NodeRevision, NodeRevisionRequest,
 };
@@ -2718,6 +2722,51 @@ fn data_certificate() -> Option<Vec<u8>> {
     None
 }
 
+#[query]
+fn evidence_rebuild_status(r: DatabaseIdRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_status(&r.database_id))
+}
+#[update]
+fn evidence_rebuild_begin(r: EvidenceRebuildRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_unmetered_update(
+        "evidence_rebuild_begin",
+        Some(r.database_id.clone()),
+        |s, _, now| s.evidence_rebuild_begin(r, now),
+    )
+}
+#[update]
+fn evidence_rebuild_step(r: EvidenceRebuildStepRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_step(r))
+}
+#[update]
+fn evidence_rebuild_verify(r: EvidenceRebuildStepRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_verify(r))
+}
+#[update]
+fn evidence_rebuild_activate(
+    r: EvidenceRebuildControlRequest,
+) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_activate(r))
+}
+#[update]
+fn evidence_rebuild_rollback(
+    r: EvidenceRebuildControlRequest,
+) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_rollback(r))
+}
+#[update]
+fn evidence_rebuild_resume_writes(
+    r: EvidenceRebuildControlRequest,
+) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_resume_writes(r))
+}
 export_service!();
 
 pub fn candid_interface() -> String {

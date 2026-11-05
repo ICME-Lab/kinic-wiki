@@ -292,9 +292,9 @@ fn next_page(
 impl FsStore {
     pub fn rebuild_destination_prepared(&self) -> Result<bool, String> {
         self.read_conn(|c|{
-            let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='fs_rebuild_state')",params![],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string())?;
+            let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='fs_rebuild_state')",params![],|r|crate::sqlite::row_bool(r,0)).map_err(|e|e.to_string())?;
             if !exists {return Ok(false);}
-            c.query_row("SELECT EXISTS(SELECT 1 FROM fs_rebuild_state WHERE id=1)",params![],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string())
+            c.query_row("SELECT EXISTS(SELECT 1 FROM fs_rebuild_state WHERE id=1)",params![],|r|crate::sqlite::row_bool(r,0)).map_err(|e|e.to_string())
         })
     }
     pub fn rebuild_start_cursor(&self) -> Result<RebuildCursor, String> {
@@ -385,9 +385,10 @@ impl FsStore {
                 let mut values = original.clone();
                 physical_row(conn, &cursor.table, &mut values)?;
                 if cursor.table == "schema_migrations" {
-                    conn.execute(
+                    crate::sqlite::execute_values(
+                        conn,
                         "UPDATE schema_migrations SET applied_at=?2 WHERE version=?1",
-                        crate::sqlite::params_from_values(&sql_values(&values)?),
+                        &sql_values(&values)?,
                     )
                     .map_err(|e| e.to_string())?;
                 } else {
@@ -447,7 +448,7 @@ impl FsStore {
             c.query_row(
                 "SELECT copy_done FROM fs_rebuild_state WHERE id=1 AND source_guard=?1",
                 params![cursor.source_fingerprint],
-                |r| crate::sqlite::row_get::<bool>(r, 0),
+                |r| crate::sqlite::row_bool(r, 0),
             )
             .map_err(|e| e.to_string())
         })?;

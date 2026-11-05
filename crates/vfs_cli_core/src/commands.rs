@@ -3,6 +3,7 @@
 // Why: The app-facing CLI package should delegate shared VFS command behavior instead of owning it.
 mod cycles;
 mod database;
+mod database_maintenance;
 mod market;
 pub(crate) use cycles::*;
 pub use cycles::{database_cycles_url, open_browser_url, open_database_cycles_page};

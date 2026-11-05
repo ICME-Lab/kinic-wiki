@@ -33,6 +33,17 @@ fn current_and_history_preserve_identity_etag_hash() {
     };
     let ack = store.write_node(request, 10).unwrap().node;
     assert_eq!(store.read_node(&path).unwrap().unwrap().content, body);
+    let parent = path.rsplit_once('/').unwrap().0.to_owned();
+    let child = store
+        .list_children(vfs_types::ListChildrenRequest {
+            database_id: "default".into(),
+            path: parent,
+        })
+        .unwrap()
+        .into_iter()
+        .find(|n| n.path == path)
+        .unwrap();
+    assert_eq!(child.size_bytes, Some(body.len() as u64));
     let revision = store.current_node_revision(&path).unwrap().unwrap();
     assert_eq!(revision.node.etag, ack.etag);
     assert_eq!(revision.content_hash, sha(body.as_bytes()));

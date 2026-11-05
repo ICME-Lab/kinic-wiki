@@ -88,7 +88,7 @@ SELECT child.path,
        child.kind,
        child.updated_at,
        child.etag,
-       length(CAST(child.content AS BLOB)),
+       COALESCE((SELECT CAST(json_extract(m.manifest_json,'$.original_len') AS INTEGER) FROM fs_evidence_bindings b JOIN fs_evidence_manifests m ON m.reference=b.reference WHERE b.path=child.path AND b.etag=child.etag AND b.reference=child.content),length(CAST(child.content AS BLOB))),
        EXISTS (
            SELECT 1
            FROM fs_nodes descendant
@@ -104,7 +104,7 @@ SELECT child.path,
        child.kind,
        child.updated_at,
        child.etag,
-       length(CAST(child.content AS BLOB)),
+       COALESCE((SELECT CAST(json_extract(m.manifest_json,'$.original_len') AS INTEGER) FROM fs_evidence_bindings b JOIN fs_evidence_manifests m ON m.reference=b.reference WHERE b.path=child.path AND b.etag=child.etag AND b.reference=child.content),length(CAST(child.content AS BLOB))),
        EXISTS (
            SELECT 1
            FROM fs_nodes descendant
@@ -2387,7 +2387,7 @@ fn sync_node_fts(
                     |r| {
                         Ok((
                             crate::sqlite::row_get(r, 0)?,
-                            crate::sqlite::row_get(r, 1)?,
+                            crate::sqlite::row_bool(r, 1)?,
                             crate::sqlite::row_get(r, 2)?,
                         ))
                     },
@@ -2423,7 +2423,7 @@ fn sync_node_fts(
             (false, node.content.clone())
         };
         if external {
-            tx.execute("INSERT INTO fs_search_metadata(node_row_id,title,shared,summary) VALUES(?1,?2,?3,?4)",params![row_id,title,shared,if shared {content.as_str()} else {""}]).map_err(|e|e.to_string())?;
+            tx.execute("INSERT INTO fs_search_metadata(node_row_id,title,shared,summary) VALUES(?1,?2,?3,?4)",params![row_id,title,i64::from(shared),if shared {content.as_str()} else {""}]).map_err(|e|e.to_string())?;
         }
         tx.execute(
             "INSERT INTO fs_nodes_fts(rowid,path,title,content) VALUES(?1,?2,?3,?4)",

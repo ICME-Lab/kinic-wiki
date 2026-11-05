@@ -310,12 +310,17 @@ impl Outbox {
     ) -> Result<(Vec<Event>, DeliveryReport)> {
         let mut selected = Vec::new();
         let mut report = DeliveryReport::default();
+        let upper: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(rowid),0) FROM learning_outbox WHERE scope=?1",
+            [&self.scope],
+            |r| r.get(0),
+        )?;
         let mut cursor = 0i64;
         let mut decisions = Vec::new();
         let mut bytes = 0usize;
         loop {
-            let mut stmt = self.conn.prepare("SELECT rowid,body FROM learning_outbox WHERE scope=?1 AND acknowledged=0 AND rowid>?2 AND NOT EXISTS (SELECT 1 FROM learning_exclusions e WHERE e.scope=learning_outbox.scope AND e.id=learning_outbox.id) ORDER BY rowid LIMIT 32")?;
-            let mut rows = stmt.query(params![self.scope, cursor])?;
+            let mut stmt = self.conn.prepare("SELECT rowid,body FROM learning_outbox WHERE scope=?1 AND acknowledged=0 AND rowid>?2 AND rowid<=?3 AND NOT EXISTS (SELECT 1 FROM learning_exclusions e WHERE e.scope=learning_outbox.scope AND e.id=learning_outbox.id) ORDER BY rowid LIMIT 32")?;
+            let mut rows = stmt.query(params![self.scope, cursor, upper])?;
             let mut found = false;
             while let Some(row) = rows.next()? {
                 found = true;

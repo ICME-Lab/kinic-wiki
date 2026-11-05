@@ -969,6 +969,7 @@ impl Command {
             Self::Database { command } => matches!(
                 command,
                 DatabaseCommand::Create { .. }
+                    | DatabaseCommand::EvidenceRebuild { .. }
                     | DatabaseCommand::PurchaseCycles { .. }
                     | DatabaseCommand::CyclesHistory { .. }
                     | DatabaseCommand::Metadata { .. }

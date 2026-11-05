@@ -3318,3 +3318,134 @@ fn retired_voice_methods_cannot_modify_or_reconcile_credits() {
         "voice retired"
     );
 }
+
+#[test]
+fn writer_cannot_begin_step_activate_or_read_private_rebuild_status() {
+    install_test_service();
+    let writer = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .unwrap()
+            .grant_database_access(
+                "default",
+                "2vxsx-fae",
+                &writer.to_text(),
+                DatabaseRole::Writer,
+                1,
+            )
+            .unwrap()
+    });
+    set_test_caller_principal_for_test(writer);
+    let r = vfs_types::EvidenceRebuildRequest {
+        database_id: "default".into(),
+        expected_source_mount: 11,
+        expected_schema: "vfs_store:005_evidence_storage".into(),
+    };
+    assert!(
+        super::evidence_rebuild_begin(r)
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_status(vfs_types::DatabaseIdRequest {
+            database_id: "default".into()
+        })
+        .unwrap_err()
+        .contains("controller")
+    );
+    let step = vfs_types::EvidenceRebuildStepRequest {
+        database_id: "default".into(),
+        migration_id: "not-authorized".into(),
+        expected_step: 0,
+        max_rows: 3,
+        max_bytes: 65536,
+    };
+    assert!(
+        super::evidence_rebuild_step(step.clone())
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_verify(step)
+            .unwrap_err()
+            .contains("controller")
+    );
+    let control = vfs_types::EvidenceRebuildControlRequest {
+        database_id: "default".into(),
+        migration_id: "not-authorized".into(),
+        expected_state_hash: "not-authorized".into(),
+    };
+    assert!(
+        super::evidence_rebuild_activate(control.clone())
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_rollback(control.clone())
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_resume_writes(control)
+            .unwrap_err()
+            .contains("controller")
+    );
+}
+
+#[test]
+fn controller_gate_does_not_charge_rejected_writer_update() {
+    install_test_service();
+    let writer = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .unwrap()
+            .grant_database_access(
+                "default",
+                "2vxsx-fae",
+                &writer.to_text(),
+                DatabaseRole::Writer,
+                1,
+            )
+            .unwrap()
+    });
+    let balance = || {
+        SERVICE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .unwrap()
+                .list_database_summaries_for_caller("2vxsx-fae")
+                .unwrap()
+                .into_iter()
+                .find(|d| d.database_id == "default")
+                .unwrap()
+                .cycles_balance
+        })
+    };
+    let before = balance();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    let idle = super::evidence_rebuild_status(vfs_types::DatabaseIdRequest {
+        database_id: "default".into(),
+    })
+    .unwrap();
+    super::evidence_rebuild_begin(vfs_types::EvidenceRebuildRequest {
+        database_id: "default".into(),
+        expected_source_mount: idle.source_mount,
+        expected_schema: idle.source_schema,
+    })
+    .unwrap();
+    set_test_caller_principal_for_test(writer);
+    assert!(
+        write_node(WriteNodeRequest {
+            database_id: "default".into(),
+            path: "/Knowledge/rejected.md".into(),
+            kind: NodeKind::File,
+            content: "must not commit".into(),
+            metadata_json: "{}".into(),
+            expected_etag: None
+        })
+        .is_err()
+    );
+    assert_eq!(balance(), before);
+}

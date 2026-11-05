@@ -40,6 +40,13 @@ const addedMethods = [...candidateMethods].filter((method) => !liveMethods.has(m
 const expectedAddedMethods = [
   "configure_voice_rate",
   "current_node_revision",
+  "evidence_rebuild_activate",
+  "evidence_rebuild_begin",
+  "evidence_rebuild_resume_writes",
+  "evidence_rebuild_rollback",
+  "evidence_rebuild_status",
+  "evidence_rebuild_step",
+  "evidence_rebuild_verify",
   "get_api_doc",
   "get_voice_access",
   "get_voice_policy",
