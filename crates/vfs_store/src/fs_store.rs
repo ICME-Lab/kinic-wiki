@@ -9,6 +9,7 @@ mod context;
 pub(crate) mod evidence;
 mod marketplace;
 pub(crate) mod rebuild;
+mod rebuild_schema;
 mod revisions;
 mod sql_json;
 mod sync;

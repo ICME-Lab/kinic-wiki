@@ -885,3 +885,43 @@ async fn delivery_policy_bytes_and_explicit_legacy_override_preserve_frozen_even
         serde_json::to_string(&e).unwrap()
     );
 }
+
+#[tokio::test]
+async fn run_acknowledgement_never_treats_exclusion_as_delivery() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(dir.path(), "canister", "db", "principal").unwrap();
+    assert!(!outbox.run_acknowledged("missing").unwrap());
+    let first = Event {
+        id: "first".into(),
+        run_id: "run".into(),
+        kind: "execution".into(),
+        payload: serde_json::json!({}),
+    };
+    let excluded = Event {
+        id: "excluded".into(),
+        run_id: "run".into(),
+        kind: "outcome".into(),
+        payload: serde_json::json!({}),
+    };
+    outbox.enqueue(&first).unwrap();
+    outbox.enqueue(&excluded).unwrap();
+    {
+        let _lease = outbox.acquire().unwrap().unwrap();
+        outbox.exclude(&excluded, "verified-preview").unwrap();
+    }
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 1);
+    assert!(outbox.event_acknowledged(&first.id).unwrap());
+    assert!(!outbox.event_acknowledged(&excluded.id).unwrap());
+    assert!(!outbox.run_acknowledged("run").unwrap());
+    assert_eq!(outbox.pending_count().unwrap(), 0);
+    outbox
+        .enqueue(&Event {
+            run_id: "other".into(),
+            id: "other".into(),
+            ..first
+        })
+        .unwrap();
+    outbox.flush(&client, "db").await.unwrap();
+    assert!(outbox.run_acknowledged("other").unwrap());
+}

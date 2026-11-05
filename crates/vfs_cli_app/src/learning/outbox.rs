@@ -102,6 +102,19 @@ impl Outbox {
             |r| r.get::<_, i64>(0),
         )? as usize)
     }
+    /// Exclusion and deferral never count as a remote acknowledgement.
+    pub fn event_acknowledged(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM learning_outbox WHERE scope=?1 AND id=?2 AND acknowledged=1)",
+            params![self.scope, id], |r| r.get(0),
+        )?)
+    }
+    pub fn run_acknowledged(&self, run: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*)>0 AND COALESCE(MIN(acknowledged),0)=1 FROM learning_outbox WHERE scope=?1 AND json_extract(body,'$.run_id')=?2",
+            params![self.scope, run], |r| r.get(0),
+        )?)
+    }
     /// True while a live process holds this scope's flush lease.
     pub fn flush_owner_active(&self) -> Result<bool> {
         let owner = self

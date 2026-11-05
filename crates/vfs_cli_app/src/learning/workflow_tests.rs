@@ -624,3 +624,58 @@ async fn prepared_stdin_settings_reach_real_recall_without_rereading_the_stream(
     }
     assert!(!root.path().join("-").exists());
 }
+
+#[tokio::test]
+async fn record_response_keeps_deferred_event_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let c = connection();
+    let state = state(dir.path());
+    let event = Event {
+        id: "deferred".into(),
+        run_id: "deferred-run".into(),
+        kind: "hook".into(),
+        payload: json!({"capture":{"session_evidence":{"records":["x".repeat(20_000)]}}}),
+    };
+    let result = record_value(&client, &c, &state, &event).await.unwrap();
+    assert_eq!(result["pending_sync"], true);
+    assert!(result["sync_error"].is_null());
+    assert!(
+        client
+            .store
+            .read_node(&event_path(&event))
+            .unwrap()
+            .is_none()
+    );
+}
+#[tokio::test]
+async fn receipt_response_checks_own_ack_behind_finite_backlog() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let c = connection();
+    let state = state(dir.path());
+    let outbox = open_outbox(&client, &c, &state).unwrap();
+    for n in 0..33 {
+        outbox
+            .enqueue(&event(&format!("earlier-{n}"), "execution", json!({"n":n})))
+            .unwrap();
+    }
+    let receipt:ContextReceipt=serde_json::from_value(json!({"id":"receipt","run_id":"current-run","candidates":[],"supplied":[],"rendered":"context","truncated":false,"index_model":null})).unwrap();
+    let result = persist_receipt(&client, &c, &state, &receipt, true)
+        .await
+        .unwrap();
+    assert_eq!(result["pending_sync"], true);
+    assert!(result["sync_error"].is_null());
+    let deferred = Event {
+        id: "unrelated".into(),
+        run_id: "unrelated".into(),
+        kind: "hook".into(),
+        payload: json!({"capture":{"session_evidence":{"records":["x".repeat(20_000)]}}}),
+    };
+    outbox.enqueue(&deferred).unwrap();
+    let result = persist_receipt(&client, &c, &state, &receipt, true)
+        .await
+        .unwrap();
+    assert_eq!(result["pending_sync"], false);
+    assert_eq!(outbox.pending_count().unwrap(), 1);
+}

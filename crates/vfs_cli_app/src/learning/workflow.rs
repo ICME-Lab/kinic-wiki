@@ -234,7 +234,22 @@ async fn persist_receipt(
         .flush(client, c.database_id.as_deref().unwrap())
         .await;
     Ok(
-        json!({"receipt":receipt,"event_path":event_path(&event),"pending_sync":result.is_err(),"sync_error":result.err().map(|e|e.to_string())}),
+        json!({"receipt":receipt,"event_path":event_path(&event),"pending_sync":!outbox.event_acknowledged(&event.id)?,"sync_error":result.err().map(|e|e.to_string())}),
+    )
+}
+async fn record_value(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    event: &Event,
+) -> Result<Value> {
+    let outbox = open_outbox(client, c, state)?;
+    outbox.enqueue(event)?;
+    let flushed = outbox
+        .flush(client, c.database_id.as_deref().unwrap())
+        .await;
+    Ok(
+        json!({"event_id":event.id,"event_path":event_path(event),"pending_sync":!outbox.event_acknowledged(&event.id)?,"sync_error":flushed.err().map(|e|e.to_string())}),
     )
 }
 /// Strip environment credential values from persisted configuration; execution uses the original configuration.
@@ -314,12 +329,7 @@ pub async fn run_agent(
             cwd: _,
         } => {
             let event: Event = read_json(&event_file)?;
-            let outbox = open_outbox(client, c, &state)?;
-            outbox.enqueue(&event)?;
-            let flushed = outbox.flush(client, db).await;
-            print(
-                &json!({"event_id":event.id,"event_path":event_path(&event),"pending_sync":flushed.is_err(),"sync_error":flushed.err().map(|e|e.to_string())}),
-            )
+            print(&record_value(client, c, &state, &event).await?)
         }
         AgentCommand::Flush {
             allow_legacy_evidence,
@@ -499,7 +509,7 @@ pub async fn run_agent(
                 }
             }
             print(
-                &json!({"run_id":id,"execution":execution,"outcome":outcome,"verified_success":outcome.verified_success(),"pending_sync":sync.is_err(),"sync_error":sync.err().map(|e|e.to_string())}),
+                &json!({"run_id":id,"execution":execution,"outcome":outcome,"verified_success":outcome.verified_success(),"pending_sync":!outbox.run_acknowledged(&id)?,"sync_error":sync.err().map(|e|e.to_string())}),
             )
         }
     }

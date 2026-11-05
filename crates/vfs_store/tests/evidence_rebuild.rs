@@ -227,3 +227,46 @@ fn measured_fixture(path: &std::path::Path) -> serde_json::Value {
         "fts_total_table_page_bytes":null,"canister_stable_bytes":null,
     })
 }
+
+#[test]
+fn rebuild_rejects_unknown_trigger_unique_index_and_changed_definitions() {
+    for change in [
+        "CREATE TRIGGER custom_protection BEFORE UPDATE ON fs_nodes BEGIN SELECT RAISE(ABORT,'protected'); END;",
+        "CREATE UNIQUE INDEX custom_uniqueness ON fs_nodes(etag);",
+        "DROP TRIGGER fs_node_revision_update; CREATE TRIGGER fs_node_revision_update AFTER UPDATE ON fs_nodes BEGIN SELECT 1; END;",
+        "PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql=replace(sql,'CHECK (deleted IN (0, 1))','CHECK (deleted IN (0, 1, 2))') WHERE name='fs_node_revisions'; PRAGMA writable_schema=OFF;",
+    ] {
+        let (dir, source) = common::new_store();
+        let db = rusqlite::Connection::open(source.database_path()).unwrap();
+        db.execute_batch(change).unwrap();
+        drop(db);
+        assert!(
+            source.rebuild_start_cursor().is_err(),
+            "accepted unknown schema: {change}"
+        );
+        let target = FsStore::new(dir.path().join("refused-target.sqlite"));
+        target.run_fs_migrations().unwrap();
+        assert!(source.begin_rebuild_into(&target).is_err());
+        assert!(!target.evidence_storage_enabled().unwrap());
+    }
+}
+
+#[test]
+fn rebuild_accepts_supported_fts_variants_and_statistics() {
+    for shared in [false, true] {
+        let (_dir, source) = common::new_store();
+        if shared {
+            source.enable_evidence_storage().unwrap();
+        }
+        let db = rusqlite::Connection::open(source.database_path()).unwrap();
+        if !shared {
+            db.execute_batch(include_str!("../migrations/003_fts_trigram.sql"))
+                .unwrap();
+        }
+        db.execute_batch("ANALYZE").unwrap();
+        drop(db);
+        source
+            .rebuild_start_cursor()
+            .unwrap_or_else(|e| panic!("shared={shared}: {e}"));
+    }
+}

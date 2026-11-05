@@ -1,0 +1,808 @@
+{
+  "legacy": [
+    [
+      "index",
+      "fs_links_source_path_idx",
+      "fs_links",
+      "CREATE INDEX fs_links_source_path_idx\nON fs_links (source_path, target_path)"
+    ],
+    [
+      "index",
+      "fs_links_target_path_idx",
+      "fs_links",
+      "CREATE INDEX fs_links_target_path_idx\nON fs_links (target_path, source_path)"
+    ],
+    [
+      "index",
+      "fs_node_revisions_identity",
+      "fs_node_revisions",
+      "CREATE INDEX fs_node_revisions_identity ON fs_node_revisions(node_id, revision DESC)"
+    ],
+    [
+      "index",
+      "fs_nodes_parent_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_parent_idx\nON fs_nodes(parent_id)"
+    ],
+    [
+      "index",
+      "fs_nodes_parent_name_idx",
+      "fs_nodes",
+      "CREATE UNIQUE INDEX fs_nodes_parent_name_idx\nON fs_nodes (COALESCE(parent_id, 0), name)"
+    ],
+    [
+      "index",
+      "fs_nodes_path_covering_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_path_covering_idx\nON fs_nodes (path, kind, updated_at, etag)"
+    ],
+    [
+      "index",
+      "fs_nodes_recent_covering_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_recent_covering_idx\nON fs_nodes (updated_at DESC, path ASC, kind, etag)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_bindings_1",
+      "fs_evidence_bindings",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_blobs_1",
+      "fs_evidence_blobs",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_manifests_1",
+      "fs_evidence_manifests",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_links_1",
+      "fs_links",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_node_identities_1",
+      "fs_node_identities",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_nodes_1",
+      "fs_nodes",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_path_state_1",
+      "fs_path_state",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_rebuild_receipts_1",
+      "fs_rebuild_receipts",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_learning_publication_commits_1",
+      "learning_publication_commits",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_schema_migrations_1",
+      "schema_migrations",
+      null
+    ],
+    [
+      "table",
+      "fs_change_log",
+      "fs_change_log",
+      "CREATE TABLE fs_change_log (\n    revision INTEGER PRIMARY KEY AUTOINCREMENT,\n    path TEXT NOT NULL,\n    change_kind TEXT NOT NULL\n        CHECK (change_kind IN ('upsert', 'path_removal'))\n)"
+    ],
+    [
+      "table",
+      "fs_evidence_bindings",
+      "fs_evidence_bindings",
+      "CREATE TABLE fs_evidence_bindings (path TEXT NOT NULL, etag TEXT NOT NULL, reference TEXT NOT NULL, PRIMARY KEY(path,etag,reference), FOREIGN KEY(reference) REFERENCES fs_evidence_manifests(reference))"
+    ],
+    [
+      "table",
+      "fs_evidence_blobs",
+      "fs_evidence_blobs",
+      "CREATE TABLE fs_evidence_blobs (run_id TEXT NOT NULL, sha256 TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(run_id,sha256))"
+    ],
+    [
+      "table",
+      "fs_evidence_manifests",
+      "fs_evidence_manifests",
+      "CREATE TABLE fs_evidence_manifests (reference TEXT PRIMARY KEY, manifest_json TEXT NOT NULL)"
+    ],
+    [
+      "table",
+      "fs_evidence_settings",
+      "fs_evidence_settings",
+      "CREATE TABLE fs_evidence_settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)))"
+    ],
+    [
+      "table",
+      "fs_links",
+      "fs_links",
+      "CREATE TABLE fs_links (\n    source_path TEXT NOT NULL,\n    target_path TEXT NOT NULL,\n    raw_href TEXT NOT NULL,\n    link_text TEXT NOT NULL,\n    link_kind TEXT NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (source_path, target_path, raw_href)\n)"
+    ],
+    [
+      "table",
+      "fs_node_identities",
+      "fs_node_identities",
+      "CREATE TABLE fs_node_identities (\n    node_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    current_row_id INTEGER UNIQUE\n)"
+    ],
+    [
+      "table",
+      "fs_node_revisions",
+      "fs_node_revisions",
+      "CREATE TABLE fs_node_revisions (\n    revision INTEGER PRIMARY KEY AUTOINCREMENT,\n    node_id INTEGER NOT NULL,\n    path TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    etag TEXT NOT NULL,\n    metadata_json TEXT NOT NULL,\n    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))\n)"
+    ],
+    [
+      "table",
+      "fs_nodes",
+      "fs_nodes",
+      "CREATE TABLE fs_nodes (\n    id INTEGER PRIMARY KEY,\n    path TEXT NOT NULL UNIQUE,\n    kind TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    etag TEXT NOT NULL,\n    metadata_json TEXT NOT NULL DEFAULT '{}',\n    parent_id INTEGER,\n    name TEXT\n)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts",
+      "fs_nodes_fts",
+      "CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(\n    path,\n    title,\n    content,\n    tokenize = 'trigram case_sensitive 0'\n)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_config",
+      "fs_nodes_fts_config",
+      "CREATE TABLE 'fs_nodes_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_content",
+      "fs_nodes_fts_content",
+      "CREATE TABLE 'fs_nodes_fts_content'(id INTEGER PRIMARY KEY, c0, c1, c2)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_data",
+      "fs_nodes_fts_data",
+      "CREATE TABLE 'fs_nodes_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_docsize",
+      "fs_nodes_fts_docsize",
+      "CREATE TABLE 'fs_nodes_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_idx",
+      "fs_nodes_fts_idx",
+      "CREATE TABLE 'fs_nodes_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+    ],
+    [
+      "table",
+      "fs_path_state",
+      "fs_path_state",
+      "CREATE TABLE fs_path_state (\n    path TEXT PRIMARY KEY,\n    last_change_revision INTEGER NOT NULL\n)"
+    ],
+    [
+      "table",
+      "fs_rebuild_receipts",
+      "fs_rebuild_receipts",
+      "CREATE TABLE fs_rebuild_receipts (phase TEXT NOT NULL, cursor TEXT NOT NULL, page_json TEXT NOT NULL, PRIMARY KEY(phase,cursor))"
+    ],
+    [
+      "table",
+      "fs_rebuild_state",
+      "fs_rebuild_state",
+      "CREATE TABLE fs_rebuild_state (id INTEGER PRIMARY KEY CHECK(id=1), source_guard TEXT NOT NULL, copy_done INTEGER NOT NULL DEFAULT 0, verify_done INTEGER NOT NULL DEFAULT 0)"
+    ],
+    [
+      "table",
+      "fs_search_metadata",
+      "fs_search_metadata",
+      "CREATE TABLE fs_search_metadata (node_row_id INTEGER PRIMARY KEY, title TEXT NOT NULL, shared INTEGER NOT NULL CHECK(shared IN (0,1)), summary TEXT NOT NULL)"
+    ],
+    [
+      "table",
+      "learning_publication_commits",
+      "learning_publication_commits",
+      "CREATE TABLE learning_publication_commits (\n    operation_id TEXT PRIMARY KEY,\n    request_json TEXT NOT NULL,\n    result_json TEXT NOT NULL\n)"
+    ],
+    [
+      "table",
+      "publication_mutation_commits",
+      "publication_mutation_commits",
+      "CREATE TABLE publication_mutation_commits (\n    operation_id INTEGER PRIMARY KEY\n)"
+    ],
+    [
+      "table",
+      "schema_migrations",
+      "schema_migrations",
+      "CREATE TABLE schema_migrations (\n    version TEXT PRIMARY KEY,\n    applied_at INTEGER NOT NULL\n)"
+    ],
+    [
+      "table",
+      "sqlite_sequence",
+      "sqlite_sequence",
+      "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_delete",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_delete AFTER DELETE ON fs_nodes BEGIN\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,OLD.path,OLD.kind,OLD.content,OLD.created_at,OLD.updated_at,OLD.etag,OLD.metadata_json,1\n    FROM fs_node_identities WHERE current_row_id=OLD.id;\n    UPDATE fs_node_identities SET current_row_id=NULL WHERE current_row_id=OLD.id;\nEND"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_insert",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_insert AFTER INSERT ON fs_nodes BEGIN\n    INSERT INTO fs_node_identities(current_row_id) VALUES (NEW.id);\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,NEW.path,NEW.kind,NEW.content,NEW.created_at,NEW.updated_at,NEW.etag,NEW.metadata_json,0\n    FROM fs_node_identities WHERE current_row_id=NEW.id;\nEND"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_update",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_update AFTER UPDATE ON fs_nodes\nWHEN OLD.path != NEW.path OR OLD.kind != NEW.kind OR OLD.content != NEW.content OR OLD.created_at != NEW.created_at OR OLD.updated_at != NEW.updated_at OR OLD.etag != NEW.etag OR OLD.metadata_json != NEW.metadata_json\nBEGIN\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,NEW.path,NEW.kind,NEW.content,NEW.created_at,NEW.updated_at,NEW.etag,NEW.metadata_json,0\n    FROM fs_node_identities WHERE current_row_id=NEW.id;\nEND"
+    ],
+    [
+      "view",
+      "fs_search_content",
+      "fs_search_content",
+      "CREATE VIEW fs_search_content AS SELECT n.id,n.path,n.kind,COALESCE(m.title,n.name,n.path) AS title,CASE WHEN m.shared=1 THEN m.summary ELSE n.content END AS content FROM fs_nodes n LEFT JOIN fs_search_metadata m ON m.node_row_id=n.id"
+    ]
+  ],
+  "legacy_renamed": [
+    [
+      "index",
+      "fs_links_source_path_idx",
+      "fs_links",
+      "CREATE INDEX fs_links_source_path_idx\nON fs_links (source_path, target_path)"
+    ],
+    [
+      "index",
+      "fs_links_target_path_idx",
+      "fs_links",
+      "CREATE INDEX fs_links_target_path_idx\nON fs_links (target_path, source_path)"
+    ],
+    [
+      "index",
+      "fs_node_revisions_identity",
+      "fs_node_revisions",
+      "CREATE INDEX fs_node_revisions_identity ON fs_node_revisions(node_id, revision DESC)"
+    ],
+    [
+      "index",
+      "fs_nodes_parent_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_parent_idx\nON fs_nodes(parent_id)"
+    ],
+    [
+      "index",
+      "fs_nodes_parent_name_idx",
+      "fs_nodes",
+      "CREATE UNIQUE INDEX fs_nodes_parent_name_idx\nON fs_nodes (COALESCE(parent_id, 0), name)"
+    ],
+    [
+      "index",
+      "fs_nodes_path_covering_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_path_covering_idx\nON fs_nodes (path, kind, updated_at, etag)"
+    ],
+    [
+      "index",
+      "fs_nodes_recent_covering_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_recent_covering_idx\nON fs_nodes (updated_at DESC, path ASC, kind, etag)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_bindings_1",
+      "fs_evidence_bindings",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_blobs_1",
+      "fs_evidence_blobs",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_manifests_1",
+      "fs_evidence_manifests",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_links_1",
+      "fs_links",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_node_identities_1",
+      "fs_node_identities",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_nodes_1",
+      "fs_nodes",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_path_state_1",
+      "fs_path_state",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_rebuild_receipts_1",
+      "fs_rebuild_receipts",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_learning_publication_commits_1",
+      "learning_publication_commits",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_schema_migrations_1",
+      "schema_migrations",
+      null
+    ],
+    [
+      "table",
+      "fs_change_log",
+      "fs_change_log",
+      "CREATE TABLE fs_change_log (\n    revision INTEGER PRIMARY KEY AUTOINCREMENT,\n    path TEXT NOT NULL,\n    change_kind TEXT NOT NULL\n        CHECK (change_kind IN ('upsert', 'path_removal'))\n)"
+    ],
+    [
+      "table",
+      "fs_evidence_bindings",
+      "fs_evidence_bindings",
+      "CREATE TABLE fs_evidence_bindings (path TEXT NOT NULL, etag TEXT NOT NULL, reference TEXT NOT NULL, PRIMARY KEY(path,etag,reference), FOREIGN KEY(reference) REFERENCES fs_evidence_manifests(reference))"
+    ],
+    [
+      "table",
+      "fs_evidence_blobs",
+      "fs_evidence_blobs",
+      "CREATE TABLE fs_evidence_blobs (run_id TEXT NOT NULL, sha256 TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(run_id,sha256))"
+    ],
+    [
+      "table",
+      "fs_evidence_manifests",
+      "fs_evidence_manifests",
+      "CREATE TABLE fs_evidence_manifests (reference TEXT PRIMARY KEY, manifest_json TEXT NOT NULL)"
+    ],
+    [
+      "table",
+      "fs_evidence_settings",
+      "fs_evidence_settings",
+      "CREATE TABLE fs_evidence_settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)))"
+    ],
+    [
+      "table",
+      "fs_links",
+      "fs_links",
+      "CREATE TABLE fs_links (\n    source_path TEXT NOT NULL,\n    target_path TEXT NOT NULL,\n    raw_href TEXT NOT NULL,\n    link_text TEXT NOT NULL,\n    link_kind TEXT NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (source_path, target_path, raw_href)\n)"
+    ],
+    [
+      "table",
+      "fs_node_identities",
+      "fs_node_identities",
+      "CREATE TABLE fs_node_identities (\n    node_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    current_row_id INTEGER UNIQUE\n)"
+    ],
+    [
+      "table",
+      "fs_node_revisions",
+      "fs_node_revisions",
+      "CREATE TABLE fs_node_revisions (\n    revision INTEGER PRIMARY KEY AUTOINCREMENT,\n    node_id INTEGER NOT NULL,\n    path TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    etag TEXT NOT NULL,\n    metadata_json TEXT NOT NULL,\n    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))\n)"
+    ],
+    [
+      "table",
+      "fs_nodes",
+      "fs_nodes",
+      "CREATE TABLE fs_nodes (\n    id INTEGER PRIMARY KEY,\n    path TEXT NOT NULL UNIQUE,\n    kind TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    etag TEXT NOT NULL,\n    metadata_json TEXT NOT NULL DEFAULT '{}',\n    parent_id INTEGER,\n    name TEXT\n)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts",
+      "fs_nodes_fts",
+      "CREATE VIRTUAL TABLE \"fs_nodes_fts\" USING fts5(\n    path,\n    title,\n    content,\n    tokenize = 'trigram case_sensitive 0'\n)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_config",
+      "fs_nodes_fts_config",
+      "CREATE TABLE \"fs_nodes_fts_config\"(k PRIMARY KEY, v) WITHOUT ROWID"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_content",
+      "fs_nodes_fts_content",
+      "CREATE TABLE \"fs_nodes_fts_content\"(id INTEGER PRIMARY KEY, c0, c1, c2)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_data",
+      "fs_nodes_fts_data",
+      "CREATE TABLE \"fs_nodes_fts_data\"(id INTEGER PRIMARY KEY, block BLOB)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_docsize",
+      "fs_nodes_fts_docsize",
+      "CREATE TABLE \"fs_nodes_fts_docsize\"(id INTEGER PRIMARY KEY, sz BLOB)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_idx",
+      "fs_nodes_fts_idx",
+      "CREATE TABLE \"fs_nodes_fts_idx\"(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+    ],
+    [
+      "table",
+      "fs_path_state",
+      "fs_path_state",
+      "CREATE TABLE fs_path_state (\n    path TEXT PRIMARY KEY,\n    last_change_revision INTEGER NOT NULL\n)"
+    ],
+    [
+      "table",
+      "fs_rebuild_receipts",
+      "fs_rebuild_receipts",
+      "CREATE TABLE fs_rebuild_receipts (phase TEXT NOT NULL, cursor TEXT NOT NULL, page_json TEXT NOT NULL, PRIMARY KEY(phase,cursor))"
+    ],
+    [
+      "table",
+      "fs_rebuild_state",
+      "fs_rebuild_state",
+      "CREATE TABLE fs_rebuild_state (id INTEGER PRIMARY KEY CHECK(id=1), source_guard TEXT NOT NULL, copy_done INTEGER NOT NULL DEFAULT 0, verify_done INTEGER NOT NULL DEFAULT 0)"
+    ],
+    [
+      "table",
+      "fs_search_metadata",
+      "fs_search_metadata",
+      "CREATE TABLE fs_search_metadata (node_row_id INTEGER PRIMARY KEY, title TEXT NOT NULL, shared INTEGER NOT NULL CHECK(shared IN (0,1)), summary TEXT NOT NULL)"
+    ],
+    [
+      "table",
+      "learning_publication_commits",
+      "learning_publication_commits",
+      "CREATE TABLE learning_publication_commits (\n    operation_id TEXT PRIMARY KEY,\n    request_json TEXT NOT NULL,\n    result_json TEXT NOT NULL\n)"
+    ],
+    [
+      "table",
+      "publication_mutation_commits",
+      "publication_mutation_commits",
+      "CREATE TABLE publication_mutation_commits (\n    operation_id INTEGER PRIMARY KEY\n)"
+    ],
+    [
+      "table",
+      "schema_migrations",
+      "schema_migrations",
+      "CREATE TABLE schema_migrations (\n    version TEXT PRIMARY KEY,\n    applied_at INTEGER NOT NULL\n)"
+    ],
+    [
+      "table",
+      "sqlite_sequence",
+      "sqlite_sequence",
+      "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_delete",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_delete AFTER DELETE ON fs_nodes BEGIN\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,OLD.path,OLD.kind,OLD.content,OLD.created_at,OLD.updated_at,OLD.etag,OLD.metadata_json,1\n    FROM fs_node_identities WHERE current_row_id=OLD.id;\n    UPDATE fs_node_identities SET current_row_id=NULL WHERE current_row_id=OLD.id;\nEND"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_insert",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_insert AFTER INSERT ON fs_nodes BEGIN\n    INSERT INTO fs_node_identities(current_row_id) VALUES (NEW.id);\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,NEW.path,NEW.kind,NEW.content,NEW.created_at,NEW.updated_at,NEW.etag,NEW.metadata_json,0\n    FROM fs_node_identities WHERE current_row_id=NEW.id;\nEND"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_update",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_update AFTER UPDATE ON fs_nodes\nWHEN OLD.path != NEW.path OR OLD.kind != NEW.kind OR OLD.content != NEW.content OR OLD.created_at != NEW.created_at OR OLD.updated_at != NEW.updated_at OR OLD.etag != NEW.etag OR OLD.metadata_json != NEW.metadata_json\nBEGIN\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,NEW.path,NEW.kind,NEW.content,NEW.created_at,NEW.updated_at,NEW.etag,NEW.metadata_json,0\n    FROM fs_node_identities WHERE current_row_id=NEW.id;\nEND"
+    ],
+    [
+      "view",
+      "fs_search_content",
+      "fs_search_content",
+      "CREATE VIEW fs_search_content AS SELECT n.id,n.path,n.kind,COALESCE(m.title,n.name,n.path) AS title,CASE WHEN m.shared=1 THEN m.summary ELSE n.content END AS content FROM fs_nodes n LEFT JOIN fs_search_metadata m ON m.node_row_id=n.id"
+    ]
+  ],
+  "shared": [
+    [
+      "index",
+      "fs_links_source_path_idx",
+      "fs_links",
+      "CREATE INDEX fs_links_source_path_idx\nON fs_links (source_path, target_path)"
+    ],
+    [
+      "index",
+      "fs_links_target_path_idx",
+      "fs_links",
+      "CREATE INDEX fs_links_target_path_idx\nON fs_links (target_path, source_path)"
+    ],
+    [
+      "index",
+      "fs_node_revisions_identity",
+      "fs_node_revisions",
+      "CREATE INDEX fs_node_revisions_identity ON fs_node_revisions(node_id, revision DESC)"
+    ],
+    [
+      "index",
+      "fs_nodes_parent_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_parent_idx\nON fs_nodes(parent_id)"
+    ],
+    [
+      "index",
+      "fs_nodes_parent_name_idx",
+      "fs_nodes",
+      "CREATE UNIQUE INDEX fs_nodes_parent_name_idx\nON fs_nodes (COALESCE(parent_id, 0), name)"
+    ],
+    [
+      "index",
+      "fs_nodes_path_covering_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_path_covering_idx\nON fs_nodes (path, kind, updated_at, etag)"
+    ],
+    [
+      "index",
+      "fs_nodes_recent_covering_idx",
+      "fs_nodes",
+      "CREATE INDEX fs_nodes_recent_covering_idx\nON fs_nodes (updated_at DESC, path ASC, kind, etag)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_bindings_1",
+      "fs_evidence_bindings",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_blobs_1",
+      "fs_evidence_blobs",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_evidence_manifests_1",
+      "fs_evidence_manifests",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_links_1",
+      "fs_links",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_node_identities_1",
+      "fs_node_identities",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_nodes_1",
+      "fs_nodes",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_path_state_1",
+      "fs_path_state",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_fs_rebuild_receipts_1",
+      "fs_rebuild_receipts",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_learning_publication_commits_1",
+      "learning_publication_commits",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_schema_migrations_1",
+      "schema_migrations",
+      null
+    ],
+    [
+      "table",
+      "fs_change_log",
+      "fs_change_log",
+      "CREATE TABLE fs_change_log (\n    revision INTEGER PRIMARY KEY AUTOINCREMENT,\n    path TEXT NOT NULL,\n    change_kind TEXT NOT NULL\n        CHECK (change_kind IN ('upsert', 'path_removal'))\n)"
+    ],
+    [
+      "table",
+      "fs_evidence_bindings",
+      "fs_evidence_bindings",
+      "CREATE TABLE fs_evidence_bindings (path TEXT NOT NULL, etag TEXT NOT NULL, reference TEXT NOT NULL, PRIMARY KEY(path,etag,reference), FOREIGN KEY(reference) REFERENCES fs_evidence_manifests(reference))"
+    ],
+    [
+      "table",
+      "fs_evidence_blobs",
+      "fs_evidence_blobs",
+      "CREATE TABLE fs_evidence_blobs (run_id TEXT NOT NULL, sha256 TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(run_id,sha256))"
+    ],
+    [
+      "table",
+      "fs_evidence_manifests",
+      "fs_evidence_manifests",
+      "CREATE TABLE fs_evidence_manifests (reference TEXT PRIMARY KEY, manifest_json TEXT NOT NULL)"
+    ],
+    [
+      "table",
+      "fs_evidence_settings",
+      "fs_evidence_settings",
+      "CREATE TABLE fs_evidence_settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)))"
+    ],
+    [
+      "table",
+      "fs_links",
+      "fs_links",
+      "CREATE TABLE fs_links (\n    source_path TEXT NOT NULL,\n    target_path TEXT NOT NULL,\n    raw_href TEXT NOT NULL,\n    link_text TEXT NOT NULL,\n    link_kind TEXT NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (source_path, target_path, raw_href)\n)"
+    ],
+    [
+      "table",
+      "fs_node_identities",
+      "fs_node_identities",
+      "CREATE TABLE fs_node_identities (\n    node_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    current_row_id INTEGER UNIQUE\n)"
+    ],
+    [
+      "table",
+      "fs_node_revisions",
+      "fs_node_revisions",
+      "CREATE TABLE fs_node_revisions (\n    revision INTEGER PRIMARY KEY AUTOINCREMENT,\n    node_id INTEGER NOT NULL,\n    path TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    etag TEXT NOT NULL,\n    metadata_json TEXT NOT NULL,\n    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))\n)"
+    ],
+    [
+      "table",
+      "fs_nodes",
+      "fs_nodes",
+      "CREATE TABLE fs_nodes (\n    id INTEGER PRIMARY KEY,\n    path TEXT NOT NULL UNIQUE,\n    kind TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    etag TEXT NOT NULL,\n    metadata_json TEXT NOT NULL DEFAULT '{}',\n    parent_id INTEGER,\n    name TEXT\n)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts",
+      "fs_nodes_fts",
+      "CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(path,title,content,\ncontent='fs_search_content',content_rowid='id',tokenize='trigram case_sensitive 0')"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_config",
+      "fs_nodes_fts_config",
+      "CREATE TABLE 'fs_nodes_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_data",
+      "fs_nodes_fts_data",
+      "CREATE TABLE 'fs_nodes_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_docsize",
+      "fs_nodes_fts_docsize",
+      "CREATE TABLE 'fs_nodes_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+    ],
+    [
+      "table",
+      "fs_nodes_fts_idx",
+      "fs_nodes_fts_idx",
+      "CREATE TABLE 'fs_nodes_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+    ],
+    [
+      "table",
+      "fs_path_state",
+      "fs_path_state",
+      "CREATE TABLE fs_path_state (\n    path TEXT PRIMARY KEY,\n    last_change_revision INTEGER NOT NULL\n)"
+    ],
+    [
+      "table",
+      "fs_rebuild_receipts",
+      "fs_rebuild_receipts",
+      "CREATE TABLE fs_rebuild_receipts (phase TEXT NOT NULL, cursor TEXT NOT NULL, page_json TEXT NOT NULL, PRIMARY KEY(phase,cursor))"
+    ],
+    [
+      "table",
+      "fs_rebuild_state",
+      "fs_rebuild_state",
+      "CREATE TABLE fs_rebuild_state (id INTEGER PRIMARY KEY CHECK(id=1), source_guard TEXT NOT NULL, copy_done INTEGER NOT NULL DEFAULT 0, verify_done INTEGER NOT NULL DEFAULT 0)"
+    ],
+    [
+      "table",
+      "fs_search_metadata",
+      "fs_search_metadata",
+      "CREATE TABLE fs_search_metadata (node_row_id INTEGER PRIMARY KEY, title TEXT NOT NULL, shared INTEGER NOT NULL CHECK(shared IN (0,1)), summary TEXT NOT NULL)"
+    ],
+    [
+      "table",
+      "learning_publication_commits",
+      "learning_publication_commits",
+      "CREATE TABLE learning_publication_commits (\n    operation_id TEXT PRIMARY KEY,\n    request_json TEXT NOT NULL,\n    result_json TEXT NOT NULL\n)"
+    ],
+    [
+      "table",
+      "publication_mutation_commits",
+      "publication_mutation_commits",
+      "CREATE TABLE publication_mutation_commits (\n    operation_id INTEGER PRIMARY KEY\n)"
+    ],
+    [
+      "table",
+      "schema_migrations",
+      "schema_migrations",
+      "CREATE TABLE schema_migrations (\n    version TEXT PRIMARY KEY,\n    applied_at INTEGER NOT NULL\n)"
+    ],
+    [
+      "table",
+      "sqlite_sequence",
+      "sqlite_sequence",
+      "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_delete",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_delete AFTER DELETE ON fs_nodes BEGIN\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,OLD.path,OLD.kind,OLD.content,OLD.created_at,OLD.updated_at,OLD.etag,OLD.metadata_json,1\n    FROM fs_node_identities WHERE current_row_id=OLD.id;\n    UPDATE fs_node_identities SET current_row_id=NULL WHERE current_row_id=OLD.id;\nEND"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_insert",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_insert AFTER INSERT ON fs_nodes BEGIN\n    INSERT INTO fs_node_identities(current_row_id) VALUES (NEW.id);\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,NEW.path,NEW.kind,NEW.content,NEW.created_at,NEW.updated_at,NEW.etag,NEW.metadata_json,0\n    FROM fs_node_identities WHERE current_row_id=NEW.id;\nEND"
+    ],
+    [
+      "trigger",
+      "fs_node_revision_update",
+      "fs_nodes",
+      "CREATE TRIGGER fs_node_revision_update AFTER UPDATE ON fs_nodes\nWHEN OLD.path != NEW.path OR OLD.kind != NEW.kind OR OLD.content != NEW.content OR OLD.created_at != NEW.created_at OR OLD.updated_at != NEW.updated_at OR OLD.etag != NEW.etag OR OLD.metadata_json != NEW.metadata_json\nBEGIN\n    INSERT INTO fs_node_revisions(node_id,path,kind,content,created_at,updated_at,etag,metadata_json,deleted)\n    SELECT node_id,NEW.path,NEW.kind,NEW.content,NEW.created_at,NEW.updated_at,NEW.etag,NEW.metadata_json,0\n    FROM fs_node_identities WHERE current_row_id=NEW.id;\nEND"
+    ],
+    [
+      "view",
+      "fs_search_content",
+      "fs_search_content",
+      "CREATE VIEW fs_search_content AS SELECT n.id,n.path,n.kind,COALESCE(m.title,n.name,n.path) AS title,CASE WHEN m.shared=1 THEN m.summary ELSE n.content END AS content FROM fs_nodes n LEFT JOIN fs_search_metadata m ON m.node_row_id=n.id"
+    ]
+  ],
+  "optional_statistics": [
+    [
+      "table",
+      "sqlite_stat1",
+      "sqlite_stat1",
+      "CREATE TABLE sqlite_stat1(tbl,idx,stat)"
+    ],
+    [
+      "table",
+      "sqlite_stat4",
+      "sqlite_stat4",
+      "CREATE TABLE sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample)"
+    ]
+  ]
+}

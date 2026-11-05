@@ -59,53 +59,7 @@ fn descriptor(table: &str) -> Result<(usize, &'static str), String> {
 }
 fn guard(conn: &Connection) -> Result<String, String> {
     crate::schema::validate_rebuild_source(conn)?;
-    let mut stmt = conn
-        .prepare("SELECT name,sql FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
-        .map_err(|e| e.to_string())?;
-    let schema = crate::sqlite::query_map(&mut stmt, params![], |r| {
-        Ok((
-            crate::sqlite::row_get::<String>(r, 0)?,
-            crate::sqlite::row_get::<Option<String>>(r, 1)?,
-        ))
-    })
-    .map_err(|e| e.to_string())?;
-    for (name, _) in &schema {
-        if TABLES.iter().any(|t| t.0 == name)
-            || [
-                "fs_nodes_fts",
-                "fs_nodes_fts_data",
-                "fs_nodes_fts_idx",
-                "fs_nodes_fts_content",
-                "fs_nodes_fts_docsize",
-                "fs_nodes_fts_config",
-                "fs_evidence_settings",
-                "fs_evidence_blobs",
-                "fs_evidence_manifests",
-                "fs_evidence_bindings",
-                "fs_search_metadata",
-                "fs_search_content",
-                "fs_rebuild_state",
-                "fs_rebuild_receipts",
-                "sqlite_stat1",
-            ]
-            .contains(&name.as_str())
-        {
-            continue;
-        }
-        return Err(format!("unknown rebuild source schema: {name}"));
-    }
-    for (table, columns) in TABLES {
-        let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .map_err(|e| e.to_string())?;
-        let actual = crate::sqlite::query_map(&mut stmt, params![], |r| {
-            crate::sqlite::row_get::<String>(r, 1)
-        })
-        .map_err(|e| e.to_string())?;
-        if actual.join(",") != *columns {
-            return Err(format!("unknown rebuild source columns: {table}"));
-        }
-    }
+    let schema = super::rebuild_schema::validate(conn)?;
     let revisions:(i64,i64)=conn.query_row("SELECT COALESCE((SELECT MAX(revision) FROM fs_change_log),0),COALESCE((SELECT MAX(revision) FROM fs_node_revisions),0)",params![],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?))).map_err(|e|e.to_string())?;
     Ok(sha256_hex(
         &serde_json::to_string(&(schema, revisions)).map_err(|e| e.to_string())?,
