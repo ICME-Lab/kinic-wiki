@@ -8,6 +8,12 @@ const root = join(here, "..", "..");
 const didPath = join(root, "crates", "vfs_canister", "vfs.did");
 
 const typeOrder = [
+  "ArchiveIntermediateSourceRequest",
+  "StoragePageStats",
+  "DatabaseStorageStats",
+  "ArchiveIntermediateSourceResult",
+  "ResultArchiveIntermediateSource",
+  "ResultDatabaseStorageStats",
   "EvidenceRebuildControlRequest",
   "EvidenceRebuildRequest",
   "EvidenceRebuildStatus",
@@ -189,6 +195,8 @@ const typeOrder = [
 ];
 
 const methodOrder = [
+  "database_storage_stats",
+  "archive_intermediate_source",
   "evidence_rebuild_status",
   "evidence_rebuild_begin",
   "evidence_rebuild_step",

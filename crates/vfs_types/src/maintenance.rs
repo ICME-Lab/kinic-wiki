@@ -40,3 +40,37 @@ pub struct EvidenceRebuildStatus {
     pub retained_old_logical_bytes: u64,
     pub resume_writes_allowed: bool,
 }
+
+/// Controller-only, one raw intermediate source with exactly one backed-up revision.
+/// Caller must scan references against expected_snapshot_revision and retain the
+/// verified backup identified by backup_manifest_sha256 before invoking this.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ArchiveIntermediateSourceRequest {
+    pub database_id: String,
+    pub expected_mount: u16,
+    pub path: String,
+    pub expected_etag: String,
+    pub expected_node_id: String,
+    pub expected_revision: u64,
+    pub expected_content_hash: String,
+    pub expected_snapshot_revision: String,
+    pub backup_manifest_sha256: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct StoragePageStats {
+    pub page_size: u64,
+    pub page_count: u64,
+    pub freelist_pages: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseStorageStats {
+    pub mount_id: u16,
+    pub pages: StoragePageStats,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ArchiveIntermediateSourceResult {
+    pub path: String,
+    pub snapshot_revision: String,
+    pub before: StoragePageStats,
+    pub after: StoragePageStats,
+}

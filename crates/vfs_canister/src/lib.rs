@@ -2723,6 +2723,19 @@ fn data_certificate() -> Option<Vec<u8>> {
 }
 
 #[query]
+fn database_storage_stats(r: DatabaseIdRequest) -> Result<vfs_types::DatabaseStorageStats, String> {
+    require_controller_caller()?;
+    with_service(|s| s.database_storage_stats(&r.database_id))
+}
+#[update]
+fn archive_intermediate_source(
+    r: vfs_types::ArchiveIntermediateSourceRequest,
+) -> Result<vfs_types::ArchiveIntermediateSourceResult, String> {
+    require_controller_caller()?;
+    with_service(|s| s.archive_intermediate_source(r))
+}
+
+#[query]
 fn evidence_rebuild_status(r: DatabaseIdRequest) -> Result<EvidenceRebuildStatus, String> {
     require_controller_caller()?;
     with_service(|s| s.evidence_rebuild_status(&r.database_id))
