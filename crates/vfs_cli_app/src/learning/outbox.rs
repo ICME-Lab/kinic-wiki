@@ -1,4 +1,7 @@
 //! Transactional, identity-partitioned outbox. Acknowledged IDs remain reserved.
+use super::delivery_policy::{
+    DeliveryDisposition, DeliveryPolicy, DeliveryReport, STORAGE_CAPABILITY, classify,
+};
 use super::model::*;
 use crate::agent_status::delivery_snapshot;
 use anyhow::{Result, bail};
@@ -44,7 +47,7 @@ impl Outbox {
         if !has_time {
             conn.execute_batch("ALTER TABLE learning_outbox ADD COLUMN enqueued_at TEXT")?;
         }
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_exclusions(scope TEXT NOT NULL,id TEXT NOT NULL,body_hash TEXT NOT NULL,manifest_hash TEXT NOT NULL,PRIMARY KEY(scope,id)); CREATE TABLE IF NOT EXISTS learning_delivery(scope TEXT PRIMARY KEY, last_attempt_at TEXT, last_success_at TEXT, last_failure_at TEXT, last_error_code TEXT); COMMIT;")?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS learning_exclusions(scope TEXT NOT NULL,id TEXT NOT NULL,body_hash TEXT NOT NULL,manifest_hash TEXT NOT NULL,PRIMARY KEY(scope,id)); CREATE TABLE IF NOT EXISTS learning_deferrals(scope TEXT NOT NULL,id TEXT NOT NULL,reason TEXT NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(scope,id)); CREATE TABLE IF NOT EXISTS learning_delivery(scope TEXT PRIMARY KEY, last_attempt_at TEXT, last_success_at TEXT, last_failure_at TEXT, last_error_code TEXT); COMMIT;")?;
         let outbox = Self {
             conn,
             scope: hash(&serde_json::to_string(&(canister, database, principal))?),
@@ -155,40 +158,24 @@ impl Outbox {
     /// The lease is released before the final pending check: an enqueuer either
     /// sees a live owner that will recheck, or may start its own flusher.
     pub async fn flush_exclusive(&self, client: &impl VfsApi, db: &str) -> Result<Option<usize>> {
-        let mut sent = 0;
-        loop {
-            let Some(lease) = self.acquire()? else {
-                return Ok((sent > 0).then_some(sent));
-            };
-            sent += self.flush_owned(client, db).await?;
-            drop(lease);
-            if self.pending_count()? == 0 {
-                return Ok(Some(sent));
-            }
-        }
+        let Some(_lease) = self.acquire()? else {
+            return Ok(None);
+        };
+        Ok(Some(self.flush_owned(client, db).await?))
     }
-    /// Flush only the selected runs while preserving the shared delivery lease.
+    /// A finite invocation; deferred events remain pending and never force a spin.
     pub async fn flush_runs(
         &self,
         client: &impl VfsApi,
         db: &str,
         runs: &std::collections::BTreeSet<String>,
     ) -> Result<Option<usize>> {
-        let mut sent = 0;
-        loop {
-            let Some(lease) = self.acquire()? else {
-                return Ok((sent > 0).then_some(sent));
-            };
-            sent += self.flush_owned_selection(client, db, Some(runs)).await?;
-            drop(lease);
-            if !self
-                .pending()?
-                .iter()
-                .any(|event| runs.contains(&event.run_id))
-            {
-                return Ok(Some(sent));
-            }
-        }
+        let Some(_lease) = self.acquire()? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.flush_owned_selection(client, db, Some(runs)).await?,
+        ))
     }
     /// All callers, including synchronous record/run commands, use the same lease.
     pub async fn flush(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
@@ -229,18 +216,75 @@ impl Outbox {
         db: &str,
         runs: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<usize> {
-        if !self
-            .pending()?
-            .iter()
-            .any(|event| runs.is_none_or(|runs| runs.contains(&event.run_id)))
-        {
-            return Ok(0);
+        self.flush_owned_report_selection(client, db, runs)
+            .await
+            .map(|r| r.sent)
+    }
+    pub(super) async fn flush_owned_report(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+    ) -> Result<DeliveryReport> {
+        self.flush_owned_report_selection(client, db, None).await
+    }
+    pub(super) async fn flush_owned_policy(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        policy: &DeliveryPolicy,
+    ) -> Result<DeliveryReport> {
+        self.flush_selected_with_policy(client, db, None, policy)
+            .await
+    }
+    async fn flush_owned_report_selection(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<DeliveryReport> {
+        let policy = DeliveryPolicy {
+            evidence_storage_v1: client
+                .memory_manifest(db)
+                .await
+                .ok()
+                .is_some_and(|m| m.capabilities.iter().any(|c| c.name == STORAGE_CAPABILITY)),
+            ..DeliveryPolicy::default()
+        };
+        self.flush_selected_with_policy(client, db, runs, &policy)
+            .await
+    }
+    pub async fn flush_with_policy(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        policy: &DeliveryPolicy,
+    ) -> Result<DeliveryReport> {
+        let _lease = self.acquire()?.ok_or_else(|| {
+            anyhow::anyhow!("delivery_pending: another process is sending evidence")
+        })?;
+        self.flush_selected_with_policy(client, db, None, policy)
+            .await
+    }
+    async fn flush_selected_with_policy(
+        &self,
+        client: &impl VfsApi,
+        db: &str,
+        runs: Option<&std::collections::BTreeSet<String>>,
+        policy: &DeliveryPolicy,
+    ) -> Result<DeliveryReport> {
+        anyhow::ensure!(
+            policy.max_events > 0 && policy.max_bytes > 0,
+            "delivery budget must be positive"
+        );
+        let (selected, mut report) = self.select_pending(runs, policy)?;
+        if selected.is_empty() {
+            return Ok(report);
         }
         self.mutate(|conn| {
             conn.execute("INSERT INTO learning_delivery(scope,last_attempt_at) VALUES(?1,?2) ON CONFLICT(scope) DO UPDATE SET last_attempt_at=excluded.last_attempt_at", params![self.scope,chrono::Utc::now().to_rfc3339()])?;
             Ok(())
         })?;
-        let result = self.send_pending(client, db, runs).await;
+        let result = self.send_pending(client, db, selected).await;
         match &result {
             Ok(_) => {
                 self.mutate(|conn| {
@@ -255,22 +299,77 @@ impl Outbox {
                 self.failure(delivery_failure_code(error, db))?;
             }
         }
-        result
+        report.sent = result?;
+        Ok(report)
+    }
+    // Page by immutable rowid, keeping only the finite delivery budget in memory.
+    fn select_pending(
+        &self,
+        runs: Option<&std::collections::BTreeSet<String>>,
+        policy: &DeliveryPolicy,
+    ) -> Result<(Vec<Event>, DeliveryReport)> {
+        let mut selected = Vec::new();
+        let mut report = DeliveryReport::default();
+        let mut cursor = 0i64;
+        let mut decisions = Vec::new();
+        let mut bytes = 0usize;
+        loop {
+            let mut stmt = self.conn.prepare("SELECT rowid,body FROM learning_outbox WHERE scope=?1 AND acknowledged=0 AND rowid>?2 AND NOT EXISTS (SELECT 1 FROM learning_exclusions e WHERE e.scope=learning_outbox.scope AND e.id=learning_outbox.id) ORDER BY rowid LIMIT 32")?;
+            let mut rows = stmt.query(params![self.scope, cursor])?;
+            let mut found = false;
+            while let Some(row) = rows.next()? {
+                found = true;
+                cursor = row.get(0)?;
+                let body: String = row.get(1)?;
+                let event: Event = serde_json::from_str(&body)?;
+                if runs.is_some_and(|r| !r.contains(&event.run_id)) {
+                    continue;
+                }
+                let reason = match classify(&event, policy.evidence_storage_v1) {
+                    DeliveryDisposition::Deferred { reason } => Some(reason),
+                    DeliveryDisposition::Eligible if body.len() > policy.max_bytes => {
+                        Some("event_exceeds_delivery_budget".into())
+                    }
+                    _ => None,
+                };
+                decisions.push((event.id.clone(), reason.clone(), body.len()));
+                if reason.is_some() {
+                    report.deferred += 1;
+                    report.deferred_bytes += body.len() as u64;
+                    continue;
+                }
+                if selected.len() >= policy.max_events || bytes + body.len() > policy.max_bytes {
+                    report.budget_exhausted = true;
+                    continue;
+                }
+                bytes += body.len();
+                selected.push(event);
+            }
+            if !found {
+                break;
+            }
+        }
+        self.mutate(|conn| {
+            for (id, reason, bytes) in decisions {
+                if let Some(reason) = reason {
+                    conn.execute("INSERT INTO learning_deferrals(scope,id,reason,bytes) VALUES(?1,?2,?3,?4) ON CONFLICT(scope,id) DO UPDATE SET reason=excluded.reason,bytes=excluded.bytes", params![self.scope,id,reason,bytes as i64])?;
+                } else {
+                    conn.execute("DELETE FROM learning_deferrals WHERE scope=?1 AND id=?2",params![self.scope,id])?;
+                }
+            }
+            Ok(())
+        })?;
+        Ok((selected, report))
     }
     async fn send_pending(
         &self,
         client: &impl VfsApi,
         db: &str,
-        runs: Option<&std::collections::BTreeSet<String>>,
+        events: Vec<Event>,
     ) -> Result<usize> {
         client.check_database_write_cycles(db).await?;
         let mut sent = 0;
-        for batch in batches(
-            self.pending()?
-                .into_iter()
-                .filter(|event| runs.is_none_or(|runs| runs.contains(&event.run_id)))
-                .collect(),
-        )? {
+        for batch in batches(events)? {
             let items = batch_items(&batch);
             if client
                 .write_nodes(WriteNodesRequest {

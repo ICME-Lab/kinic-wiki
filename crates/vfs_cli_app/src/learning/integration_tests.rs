@@ -757,3 +757,131 @@ async fn failed_delivery_persists_only_safe_diagnostics_and_recovers() {
     assert!(success >= time);
     assert_eq!(outbox.pending_count().unwrap(), 0);
 }
+
+// Removing legacy deferral would acknowledge oversized frozen snapshots on old servers.
+#[tokio::test]
+async fn legacy_deferral_preserves_body_and_allows_modern_delivery() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(dir.path(), "c", "db", "p").unwrap();
+    let legacy = Event {
+        id: "legacy".into(),
+        run_id: "r".into(),
+        kind: "hook".into(),
+        payload: serde_json::json!({"event":"PostToolUse","session_evidence":{"records":[{"text":"x".repeat(20_000)}]}}),
+    };
+    let modern = Event {
+        id: "modern".into(),
+        run_id: "r".into(),
+        kind: "hook".into(),
+        payload: serde_json::json!({"schema_version":2,"event":"PostToolUse","outcome":"observed"}),
+    };
+    outbox.enqueue(&legacy).unwrap();
+    outbox.enqueue(&modern).unwrap();
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 1);
+    let pending = outbox.pending().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&pending[0]).unwrap(),
+        serde_json::to_value(&legacy).unwrap()
+    );
+    assert!(
+        client
+            .store
+            .read_node(&outbox::evidence_path(&legacy))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        client
+            .store
+            .read_node(&outbox::evidence_path(&modern))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 0);
+}
+
+// Removing the invocation budget would drain an unbounded shared backlog.
+#[tokio::test]
+async fn only_deferred_terminates_and_budget_bounds_total_flush() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(dir.path(), "c", "db", "p").unwrap();
+    for n in 0..40 {
+        outbox
+            .enqueue(&Event {
+                id: format!("e{n}"),
+                run_id: "r".into(),
+                kind: "run".into(),
+                payload: serde_json::json!({}),
+            })
+            .unwrap();
+    }
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 32);
+    assert_eq!(outbox.pending_count().unwrap(), 8);
+    assert_eq!(outbox.flush(&client, "db").await.unwrap(), 8);
+}
+
+#[tokio::test]
+async fn delivery_policy_bytes_and_explicit_legacy_override_preserve_frozen_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = StoreClient::new(dir.path());
+    let outbox = Outbox::open(dir.path(), "c", "db", "p").unwrap();
+    for n in 0..40 {
+        outbox
+            .enqueue(&Event {
+                id: format!("bytes-{n}"),
+                run_id: "r".into(),
+                kind: "run".into(),
+                payload: serde_json::json!({"pad":"x".repeat(40_000)}),
+            })
+            .unwrap();
+    }
+    let before = outbox.pending().unwrap();
+    let sent = outbox.flush(&client, "db").await.unwrap();
+    assert!(sent < 32);
+    assert!(
+        before[..sent]
+            .iter()
+            .map(|e| serde_json::to_vec(e).unwrap().len())
+            .sum::<usize>()
+            <= 1_048_576
+    );
+    let other = tempfile::tempdir().unwrap();
+    let legacy = Outbox::open(other.path(), "c", "db", "p").unwrap();
+    let e = Event {
+        id: "frozen".into(),
+        run_id: "r".into(),
+        kind: "hook".into(),
+        payload: serde_json::json!({"capture":{"session_evidence":{"records":["x".repeat(20_000)]}}}),
+    };
+    legacy.enqueue(&e).unwrap();
+    let report = legacy
+        .flush_with_policy(&client, "db", &delivery_policy::DeliveryPolicy::default())
+        .await
+        .unwrap();
+    assert_eq!((report.sent, report.deferred), (0, 1));
+    assert!(report.deferred_bytes > 20_000);
+    let report = legacy
+        .flush_with_policy(
+            &client,
+            "db",
+            &delivery_policy::DeliveryPolicy {
+                evidence_storage_v1: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!((report.sent, report.deferred), (1, 0));
+    assert_eq!(
+        client
+            .store
+            .read_node(&outbox::evidence_path(&e))
+            .unwrap()
+            .unwrap()
+            .content,
+        serde_json::to_string(&e).unwrap()
+    );
+}
