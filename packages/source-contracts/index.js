@@ -130,3 +130,16 @@ function isSourceStemChar(value) {
 function isUnicodeAlphanumeric(value) {
   return /^[\p{L}\p{N}]$/u.test(value);
 }
+
+// Generation destinations are directories below the user-facing Knowledge root.
+export function normalizeKnowledgeTargetRoot(value) {
+  if (typeof value !== "string" || /[\x00-\x1f\x7f\\?#]/.test(value)) {
+    throw new Error("Generation folder must be an absolute folder below /Knowledge/");
+  }
+  const root = value.trim().replace(/\/+$/, "");
+  const segments = root.split("/");
+  if (!root.startsWith("/Knowledge/") || segments.slice(2).some(part => !part.trim() || part === "." || part === "..") || root.length > 1024) {
+    throw new Error("Generation folder must be an absolute folder below /Knowledge/ without empty, . or .. segments");
+  }
+  return root;
+}

@@ -1,3 +1,4 @@
+import { normalizeKnowledgeTargetRoot } from "@kinic/source-contracts";
 // Where: extensions/wiki-clipper/src/offscreen.js
 // What: DOM-backed authenticated source write worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
@@ -38,7 +39,7 @@ export function handleOffscreenMessage(message) {
     : message?.type === "run-source-capture-task"
       ? acceptSourceCaptureTask(message)
       : message?.type === "trigger-source-generation"
-        ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
+        ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce, message.targetRoot)
         : message?.type === "web-source-exists"
           ? webSourceExists(message.sourcePath, message.expectedUrl, message.config)
           : message?.type === "auth-status"
@@ -64,7 +65,7 @@ async function runSourceCaptureTask(task) {
   try {
     const saveResult = await saveEvidenceSource(task.evidenceSource, task.config);
     const triggerResult = task.queueGeneration
-      ? await triggerSourceGeneration(task.config, saveResult.path, saveResult.etag, saveResult.sourceRunSessionNonce)
+      ? await triggerSourceGeneration(task.config, saveResult.path, saveResult.etag, saveResult.sourceRunSessionNonce, task.targetRoot)
       : null;
     const generationQueued = task.queueGeneration ? Boolean(triggerResult?.triggered !== false) : false;
     await notifySourceCaptureTaskResult({
@@ -143,13 +144,13 @@ export async function saveEvidenceSource(evidenceSource, config) {
   };
 }
 
-export async function triggerSourceGeneration(config, sourcePath, sourceEtag, sessionNonce) {
+export async function triggerSourceGeneration(config, sourcePath, sourceEtag, sessionNonce, targetRoot) {
   if (!config?.canisterId) throw new Error("canister id is required");
   if (!config?.databaseId) throw new Error("database id is required");
   if (typeof sourcePath !== "string" || !sourcePath) throw new Error("source path is required");
   if (typeof sourceEtag !== "string" || !sourceEtag) throw new Error("source etag is required");
   if (typeof sessionNonce !== "string" || !sessionNonce) throw new Error("source run session nonce is required");
-  const trigger = await triggerSourceRun(config.canisterId, config.databaseId, sourcePath, sourceEtag, sessionNonce);
+  const trigger = await triggerSourceRun(config.canisterId, config.databaseId, sourcePath, sourceEtag, sessionNonce, targetRoot);
   return {
     sourcePath,
     sourceEtag,
@@ -174,6 +175,7 @@ function validateSourceCaptureTask(message) {
     evidenceSource: message.evidenceSource,
     config: message.config,
     queueGeneration: message.queueGeneration !== false,
+    targetRoot: message.targetRoot === undefined ? undefined : normalizeKnowledgeTargetRoot(message.targetRoot),
     sourceAlreadyExists: message.sourceAlreadyExists === true
   };
 }
@@ -443,12 +445,13 @@ function sourceUrlForPath(databaseId, path) {
   return `${RUNTIME_WIKI_ORIGIN}/db/${encodeURIComponent(databaseId)}/${suffix}`;
 }
 
-async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {
+async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce, targetRoot) {
+  if (targetRoot !== undefined) targetRoot = normalizeKnowledgeTargetRoot(targetRoot);
   try {
     const response = await fetchFactory(RUNTIME_SOURCE_TRIGGER_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ canisterId, databaseId, sourcePath, sourceEtag, sessionNonce })
+      body: JSON.stringify({ canisterId, databaseId, sourcePath, sourceEtag, sessionNonce, targetRoot })
     });
     if (!response.ok) {
       return { ok: false, error: `worker trigger failed: HTTP ${response.status}` };

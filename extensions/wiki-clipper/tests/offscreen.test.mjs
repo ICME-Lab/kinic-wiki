@@ -769,13 +769,16 @@ test("run-source-capture-task accepts immediately and later sends success notifi
   const runtimeMessages = [];
   const restore = installChromeRuntimeMessages(runtimeMessages);
   const write = createDeferred();
+  let triggerBody;
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => sourceWriteActor({ write }),
-    fetch: async () => Response.json({ accepted: true }, { status: 202 })
+    fetch: async (_url, init) => { triggerBody = JSON.parse(init.body); return Response.json({ accepted: true }, { status: 202 }); }
   });
   try {
-    const accepted = await handleOffscreenMessage(sourceCaptureTaskMessage());
+    const task = { ...sourceCaptureTaskMessage(), targetRoot: "/Knowledge/articles/" };
+    const accepted = await handleOffscreenMessage(task);
+    task.targetRoot = "/Knowledge/changed";
     assert.deepEqual(accepted, { accepted: true, taskId: "task-1" });
     assert.equal(runtimeMessages.length, 0);
 
@@ -787,6 +790,7 @@ test("run-source-capture-task accepts immediately and later sends success notifi
     });
     await waitUntil(() => runtimeMessages.length === 1);
 
+    assert.equal(triggerBody.targetRoot, "/Knowledge/articles");
     assert.equal(runtimeMessages[0].type, "source-capture-task-result");
     assert.equal(runtimeMessages[0].ok, true);
     assert.equal(runtimeMessages[0].result.sourcePath, "/Sources/chatgpt/abc.md");
@@ -1160,3 +1164,13 @@ function rawRecallHit(path, matchReasons, score, kind = { File: null }) {
     snippet: ["recall excerpt"]
   };
 }
+
+test("generation trigger forwards only a normalized Knowledge destination", async () => {
+  let body;
+  setOffscreenDepsForTest({ fetch: async (_url, init) => { body = JSON.parse(init.body); return Response.json({}, { status: 202 }); } });
+  try {
+    await triggerSourceGeneration(config(), "/Sources/chatgpt/a.md", "etag", "session", "/Knowledge/chats/");
+    assert.equal(body.targetRoot, "/Knowledge/chats");
+    await assert.rejects(triggerSourceGeneration(config(), "/Sources/chatgpt/a.md", "etag", "session", "/Sources/wrong"));
+  } finally { setOffscreenDepsForTest(); }
+});

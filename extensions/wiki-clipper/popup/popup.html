@@ -29,6 +29,16 @@
         <span>Database</span>
         <select id="database-id"></select>
       </label>
+      <form id="generation-folders-form">
+        <label class="field"><span>Web page generation folder</span>
+          <input id="web-target-root" type="text" value="/Knowledge/web" required autocomplete="off" />
+        </label>
+        <label class="field"><span>AI conversation generation folder</span>
+          <input id="conversation-target-root" type="text" value="/Knowledge/conversations" required autocomplete="off" />
+        </label>
+        <p>Choose folders below /Knowledge/. Applies to future generation requests.</p>
+        <button class="primary" type="submit">Save generation folders</button>
+      </form>
       <label class="settings-toggle">
         <input id="show-save-controls" type="checkbox" checked />
         <span>

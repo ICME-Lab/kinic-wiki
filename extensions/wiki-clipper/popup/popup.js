@@ -1,3 +1,4 @@
+import { normalizeKnowledgeTargetRoot } from "@kinic/source-contracts";
 // Where: extensions/wiki-clipper/popup/popup.js
 // What: Popup settings and Internet Identity session controls.
 // Why: Toolbar click runs without UI, but setup/login need a visible extension page.
@@ -93,6 +94,21 @@ createDatabaseForm.addEventListener("submit", async (event) => {
   }
 });
 
+const webTargetRootInput = document.querySelector("#web-target-root");
+const conversationTargetRootInput = document.querySelector("#conversation-target-root");
+document.querySelector("#generation-folders-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const config = {
+      webTargetRoot: normalizeKnowledgeTargetRoot(webTargetRootInput.value),
+      conversationTargetRoot: normalizeKnowledgeTargetRoot(conversationTargetRootInput.value)
+    };
+    await send({ type: "save-config", config });
+    webTargetRootInput.value = config.webTargetRoot;
+    conversationTargetRootInput.value = config.conversationTargetRoot;
+    statusText.textContent = "Generation folders saved.";
+  } catch (error) { statusText.textContent = error instanceof Error ? error.message : String(error); }
+});
 load();
 
 async function load() {
@@ -107,6 +123,8 @@ async function load() {
 
 async function loadUiSettings() {
   const response = await send({ type: "load-config" });
+  webTargetRootInput.value = response.config?.webTargetRoot ?? "/Knowledge/web";
+  conversationTargetRootInput.value = response.config?.conversationTargetRoot ?? "/Knowledge/conversations";
   showSaveControlsInput.checked = response.config?.showSaveControls !== false
     && response.config?.showSaveControls !== "false";
 }

@@ -9,3 +9,5 @@ export function isSafeSourceCaptureRequestId(value: unknown): value is string;
 export function sourceCaptureRequestId(timeMs: number, suffix: string): string;
 export function sourceCaptureRequestPath(requestId: string): string;
 export function isSourceCaptureRequestPath(path: unknown): path is string;
+
+export function normalizeKnowledgeTargetRoot(value: unknown): string;

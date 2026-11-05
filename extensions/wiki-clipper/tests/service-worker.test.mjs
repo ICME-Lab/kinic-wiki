@@ -75,6 +75,7 @@ test("save-source delegates evidence source writes to offscreen", async () => {
     assert.equal(calls[0].config.databaseId, "team-db");
     assert.match(calls[0].evidenceSource.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(calls[1].type, "trigger-source-generation");
+    assert.equal(calls[1].targetRoot, "/Knowledge/conversations");
     assert.equal(calls[1].sourcePath, calls[0].evidenceSource.path);
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
@@ -522,6 +523,7 @@ test("action click saves browser source then queues generation", async () => {
   assert.equal(messages[1].evidenceSource.path, rawWebSource().path);
   assert.equal(messages[1].config.databaseId, "team-db");
   assert.equal(messages[1].queueGeneration, true);
+  assert.equal(messages[1].targetRoot, "/Knowledge/web");
   assert.equal(response.result.sourcePath, rawWebSource().path);
   assert.equal(response.result.generationRequested, true);
   assert.equal(statuses[0].status, "generation_requested");
@@ -1528,3 +1530,37 @@ async function waitUntil(predicate) {
   }
   assert.fail("condition was not met");
 }
+
+test("generation destination settings default, normalize and survive partial updates", async () => {
+  const restore = installChromeStorage(memoryStorage());
+  try {
+    let result = await handleMessage({ type: "load-config" });
+    assert.equal(result.config.webTargetRoot, "/Knowledge/web");
+    assert.equal(result.config.conversationTargetRoot, "/Knowledge/conversations");
+    await handleMessage({ type: "save-config", config: { webTargetRoot: "/Knowledge/articles/", conversationTargetRoot: "/Knowledge/chats/" } });
+    await handleMessage({ type: "save-config", config: { databaseId: "db-test" } });
+    result = await handleMessage({ type: "load-config" });
+    assert.equal(result.config.webTargetRoot, "/Knowledge/articles");
+    assert.equal(result.config.conversationTargetRoot, "/Knowledge/chats");
+    await assert.rejects(handleMessage({ type: "save-config", config: { webTargetRoot: "/Sources/wrong" } }));
+    assert.equal((await handleMessage({ type: "load-config" })).config.webTargetRoot, "/Knowledge/articles");
+  } finally { restore(); }
+});
+
+test("all AI conversation providers use the saved conversation folder", async () => {
+  const restore = installChromeStorage(memoryStorage());
+  const requests = [];
+  setOffscreenBridgeForTest(async message => {
+    requests.push(message);
+    return message.type === "save-evidence-source"
+      ? { ok: true, result: { path: message.evidenceSource.path, etag: "etag", sourceRunSessionNonce: "nonce" } }
+      : { ok: true, result: { triggered: true } };
+  });
+  try {
+    await handleMessage({ type: "save-config", config: { databaseId: "team-db", conversationTargetRoot: "/Knowledge/private/chats/" } });
+    for (const [provider, url] of [["chatgpt", "https://chatgpt.com/c/abc"], ["claude", "https://claude.ai/chat/abc"], ["gemini", "https://gemini.google.com/app/abc"]]) {
+      await handleMessage({ type: "save-source", capture: { ...capture(), provider, url } }, { tab: { url } });
+      assert.equal(requests.at(-1).targetRoot, "/Knowledge/private/chats");
+    }
+  } finally { restore(); setOffscreenBridgeForTest(null); }
+});
