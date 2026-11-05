@@ -58,6 +58,7 @@ fn descriptor(table: &str) -> Result<(usize, &'static str), String> {
         .ok_or_else(|| "unknown rebuild table".into())
 }
 fn guard(conn: &Connection) -> Result<String, String> {
+    crate::schema::validate_rebuild_source(conn)?;
     let mut stmt = conn
         .prepare("SELECT name,sql FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
         .map_err(|e| e.to_string())?;
@@ -289,6 +290,13 @@ fn next_page(
     })
 }
 impl FsStore {
+    pub fn rebuild_destination_prepared(&self) -> Result<bool, String> {
+        self.read_conn(|c|{
+            let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='fs_rebuild_state')",params![],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string())?;
+            if !exists {return Ok(false);}
+            c.query_row("SELECT EXISTS(SELECT 1 FROM fs_rebuild_state WHERE id=1)",params![],|r|crate::sqlite::row_get(r,0)).map_err(|e|e.to_string())
+        })
+    }
     pub fn rebuild_start_cursor(&self) -> Result<RebuildCursor, String> {
         self.read_conn(|conn| {
             Ok(RebuildCursor {

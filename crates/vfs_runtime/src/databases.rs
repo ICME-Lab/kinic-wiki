@@ -621,6 +621,7 @@ impl VfsService {
     ) -> Result<(), String> {
         let database_id = request.database_id.as_str();
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(database_id)?;
         self.require_no_pending_cycles_operations(database_id)?;
         let status = self.read_index(|conn| load_database_status(conn, database_id))?;
         if !matches!(status, DatabaseStatus::Pending | DatabaseStatus::Active) {
@@ -673,6 +674,7 @@ impl VfsService {
         now: i64,
     ) -> Result<(), String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(database_id)?;
         if caller == principal && role != DatabaseRole::Owner {
             return Err("owner cannot downgrade own access".to_string());
         }
@@ -703,6 +705,7 @@ impl VfsService {
     ) -> Result<DatabaseMetadata, String> {
         validate_database_id(&request.database_id)?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(&request.database_id)?;
         self.database_meta(&request.database_id)?;
         let metadata = normalize_database_metadata(DatabaseMetadata {
             name: request.name,
@@ -744,6 +747,7 @@ impl VfsService {
     ) -> Result<(), String> {
         validate_database_id(&request.database_id)?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(&request.database_id)?;
         let mut metadata = self.database_meta(&request.database_id)?.metadata;
         metadata.name = request.name;
         let metadata = normalize_database_metadata(metadata)?;
@@ -767,6 +771,7 @@ impl VfsService {
         principal: &str,
     ) -> Result<(), String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(database_id)?;
         self.database_meta(database_id)?;
         if caller == principal {
             return Err("owner cannot revoke own access".to_string());

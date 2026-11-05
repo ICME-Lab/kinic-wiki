@@ -411,3 +411,8 @@ fn folder_etag(path: &str) -> String {
     hasher.update(b"\nfolder\n\n{}");
     format!("v4h:{:x}", hasher.finalize())
 }
+
+pub(crate) fn validate_rebuild_source(conn: &Connection) -> Result<(), String> {
+    validate_current_schema_marker(conn)?;
+    validate_current_schema_shape(conn)
+}
