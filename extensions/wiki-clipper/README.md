@@ -66,13 +66,15 @@ Required settings:
 
 The active-tab flow writes `/Sources/web/<source_id>.md` as a VFS `source`, then asks WikiBrowser to trigger generation for that source with its server-side token.
 
-ChatGPT/Claude/Gemini export only writes source evidence. Generate wiki pages later:
+## Generation folders and completion
 
-```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/chatgpt/<conversationId>.md
-```
+Extension settings remember separate generation folders: Web pages default to `/Knowledge/web`, and ChatGPT/Claude/Gemini conversations default to `/Knowledge/conversations`. Choose an absolute subfolder below `/Knowledge/`; the extension creates missing folders during generation. Settings affect future requests and do not move existing pages. Toolbar left-click and **Save source and create page** use the same Web folder setting. **Save source only** does not request generation.
 
-The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edited scaffold pages unless `--force` is supplied.
+Conversation **Save to Kinic** and exports save evidence under `/Sources/<provider>/` and then request Wiki page generation. Generation can send source material and related Wiki excerpts to TypeSafe and DeepSeek as described in the privacy policy. There is currently no conversation-export source-only option.
+
+Source saved, generation queued, and page generated are different outcomes. If queueing fails, the source may already be saved; the UI reports the generation error. A queued request and the `IN` badge do not confirm page generation has completed. Check the destination folder for the generated page. A request keeps its chosen destination through queue processing and retries, even if settings change later. Reusing an unchanged source version with a different destination is rejected with `source_target_conflict`; capture a new source version to use the new destination.
+
+Older extension/API callers that omit the destination keep the Worker's configured default. Apply generator D1 migration `0004_source_job_destination.sql` before deploying the generator Worker, WikiBrowser API second, and the extension last. Pause the source Queue consumer during the migration and Worker deployment. See [release behavior verification](store-listing/release-behavior-verification.md) for what was verified in the existing package and what remains unverified.
 
 ## Safety Notes
 

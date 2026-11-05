@@ -10,11 +10,14 @@ Kinic Wiki Clipper sends the current page URL or selected ChatGPT, Claude, and G
 
 Core features:
 
-- Queue the active web page URL for Kinic Wiki ingest.
-- Export recent ChatGPT and Claude conversations, or the current Gemini conversation, as evidence source files.
+- Capture active web page text, save its evidence source, and request a generated Wiki page; source-only saving is also available.
+- Export recent ChatGPT and Claude conversations, or the current Gemini conversation, as evidence source files and request generated Wiki pages.
+- Remember separate generation folders for Web pages and AI conversations under /Knowledge/.
 - Authenticate with Internet Identity before writing.
 - Select or explicitly create a writable Kinic Wiki database from extension settings.
 - Recall can show up to three related Kinic memories in ChatGPT after a database is selected. Users may insert one into the input for review. When relevance ranking is available, the current question and up to 20 short Wiki candidate previews are sent to TypeSafe through Kinic Wiki.
+
+Generation sends source material and selected related Wiki excerpts to external AI services, TypeSafe and DeepSeek. A successful source save or queued generation request does not mean the Wiki page is complete. If queueing fails, the source may still be saved.
 
 Data is written to the configured Kinic Wiki canister and `wiki.kinic.xyz` ingest endpoint. The extension does not sell data, serve ads, or use data for unrelated analytics.
 

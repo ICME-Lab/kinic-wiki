@@ -219,6 +219,11 @@ class TestD1Statement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    if (this.query.includes("INSERT INTO source_jobs")) {
+      const existing = this.job === undefined ? completedJobFromQueue(this.values) : this.job;
+      if (existing?.source_etag === this.values[2] && existing.status !== "failed") return null;
+      return queuedJobFromInsert(this.values) as T;
+    }
     if (this.query.includes("UPDATE source_jobs") && this.query.includes("ELSE 'processing'")) {
       const completed = this.job === undefined ? completedJobFromQueue(this.values) : this.job;
       if (completed?.status === "completed") return null;
@@ -320,4 +325,12 @@ function isQueueMessage(value: unknown): value is QueueMessage {
     );
   }
   return false;
+}
+
+export function queuedJobFromInsert(values: D1Value[]): SourceJob {
+  return {
+    ...claimedJob([values[0], values[1], values[2], null, null, values[3]]),
+    status: "queued", lease_owner: null, lease_expires_at: null,
+    requested_target_root: values[4] === null ? null : String(values[4])
+  };
 }
