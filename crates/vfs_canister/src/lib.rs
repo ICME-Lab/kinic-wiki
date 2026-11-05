@@ -1,5 +1,9 @@
 use vfs_types::ScopeRevisionRequest;
 use vfs_types::{
+    EvidenceRebuildControlRequest, EvidenceRebuildRequest, EvidenceRebuildStatus,
+    EvidenceRebuildStepRequest,
+};
+use vfs_types::{
     LearningPublicationRequest, LearningPublicationResult, NodeHistoryPage, NodeHistoryRequest,
     NodeRevision, NodeRevisionRequest,
 };
@@ -390,6 +394,15 @@ fn canister_health() -> CanisterHealth {
 #[query]
 fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String> {
     with_service(|service| service.status(&request.database_id, &caller_text()))?;
+    let mut capabilities = store_capabilities();
+    if with_service(|service| {
+        service.evidence_storage_enabled(&request.database_id, &caller_text())
+    })? {
+        capabilities.push(MemoryCapability {
+            name: "learning_evidence_storage_v1".into(),
+            description: "Lossless shared learning evidence with metadata-only search".into(),
+        });
+    }
     Ok(MemoryManifest {
         api_version: "kinic-stores-v1".to_string(),
         purpose: "Canister-backed memory, knowledge, skill, and session stores for agents"
@@ -413,7 +426,7 @@ fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String>
             store_root("/Skills", "skill"),
             store_root("/Sessions", "session"),
         ],
-        capabilities: store_capabilities(),
+        capabilities,
         canonical_roles: canonical_roles(),
         write_policy: "stores_read_only".to_string(),
         recommended_entrypoint: "query_context".to_string(),
@@ -2709,6 +2722,51 @@ fn data_certificate() -> Option<Vec<u8>> {
     None
 }
 
+#[query]
+fn evidence_rebuild_status(r: DatabaseIdRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_status(&r.database_id))
+}
+#[update]
+fn evidence_rebuild_begin(r: EvidenceRebuildRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_unmetered_update(
+        "evidence_rebuild_begin",
+        Some(r.database_id.clone()),
+        |s, _, now| s.evidence_rebuild_begin(r, now),
+    )
+}
+#[update]
+fn evidence_rebuild_step(r: EvidenceRebuildStepRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_step(r))
+}
+#[update]
+fn evidence_rebuild_verify(r: EvidenceRebuildStepRequest) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_verify(r))
+}
+#[update]
+fn evidence_rebuild_activate(
+    r: EvidenceRebuildControlRequest,
+) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_activate(r))
+}
+#[update]
+fn evidence_rebuild_rollback(
+    r: EvidenceRebuildControlRequest,
+) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_rollback(r))
+}
+#[update]
+fn evidence_rebuild_resume_writes(
+    r: EvidenceRebuildControlRequest,
+) -> Result<EvidenceRebuildStatus, String> {
+    require_controller_caller()?;
+    with_service(|s| s.evidence_rebuild_resume_writes(r))
+}
 export_service!();
 
 pub fn candid_interface() -> String {

@@ -4,7 +4,7 @@ use crate::{
     learning::{Event, cli::StatusArgs, hash, jobs::LearningJob, project::ProjectConfig},
 };
 use anyhow::Result;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -120,6 +120,7 @@ struct Entry {
     event: Event,
     acknowledged: bool,
     excluded: bool,
+    deferred: Option<(String, u64)>,
     sequence: i64,
 }
 fn events(path: &Path, scope: &str) -> ReadResult<(Vec<Entry>, bool)> {
@@ -133,6 +134,13 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
     let has_exclusions = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='learning_exclusions')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(|_| "source_unreadable")?;
+    let has_deferrals = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='learning_deferrals')",
             [],
             |r| r.get::<_, bool>(0),
         )
@@ -173,6 +181,17 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
                     |r| r.get::<_, bool>(0),
                 )
                 .map_err(|_| "source_unreadable")?;
+        let deferred = if has_deferrals {
+            conn.query_row(
+                "SELECT reason,bytes FROM learning_deferrals WHERE scope=?1 AND id=?2",
+                rusqlite::params![scope, event.id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)),
+            )
+            .optional()
+            .map_err(|_| "source_unreadable")?
+        } else {
+            None
+        };
         drop(body);
         // Only ownership and receipt metadata survives this iteration. Charge
         // the aggregate memory budget for retained metadata, not task bodies.
@@ -198,6 +217,7 @@ fn events_from_connection(conn: &Connection, scope: &str) -> ReadResult<(Vec<Ent
             event,
             acknowledged: ack == 1,
             excluded,
+            deferred,
             sequence,
         });
     }
@@ -392,6 +412,27 @@ fn records_from_entries(
     } else {
         json!(excluded)
     };
+    let deferred: Vec<_> = entries
+        .iter()
+        .filter(|e| !e.acknowledged && !e.excluded)
+        .filter_map(|e| e.deferred.as_ref())
+        .collect();
+    record["deferred_records"] = if incomplete {
+        Value::Null
+    } else {
+        json!(deferred.len())
+    };
+    record["deferred_bytes"] = if incomplete {
+        Value::Null
+    } else {
+        json!(deferred.iter().map(|(_, b)| *b).sum::<u64>())
+    };
+    record["deferred_reasons"] = json!(
+        deferred
+            .iter()
+            .map(|(r, _)| r.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+    );
     record["unattributed_records"] = json!(unattributed);
     if let Some(entry) = entries.first() {
         record["last_record"] = json!({"id":safe_id(&entry.event.id),"run_id":safe_id(&entry.event.run_id),"kind":safe_id(&entry.event.kind),"local_sequence":entry.sequence,"observed_at":null,"acknowledged":entry.acknowledged});

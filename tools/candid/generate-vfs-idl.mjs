@@ -8,6 +8,12 @@ const root = join(here, "..", "..");
 const didPath = join(root, "crates", "vfs_canister", "vfs.did");
 
 const typeOrder = [
+  "EvidenceRebuildControlRequest",
+  "EvidenceRebuildRequest",
+  "EvidenceRebuildStatus",
+  "EvidenceRebuildStepRequest",
+  "ResultEvidenceRebuild",
+
   "CanisterHealth",
   "DatabaseRole",
   "DatabaseStatus",
@@ -183,6 +189,14 @@ const typeOrder = [
 ];
 
 const methodOrder = [
+  "evidence_rebuild_status",
+  "evidence_rebuild_begin",
+  "evidence_rebuild_step",
+  "evidence_rebuild_verify",
+  "evidence_rebuild_activate",
+  "evidence_rebuild_rollback",
+  "evidence_rebuild_resume_writes",
+
   "get_api_doc",
   "scope_revision",
   "current_node_revision",

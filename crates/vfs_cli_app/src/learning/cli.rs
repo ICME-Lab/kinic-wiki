@@ -7,6 +7,25 @@ mod operational_cli_tests {
     use clap::Parser;
     #[test]
     fn bounded_recovery_arguments() {
+        assert!(
+            Cli::try_parse_from(["kinic", "agent", "flush", "--allow-legacy-evidence"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "kinic",
+                "agent",
+                "flush",
+                "--allow-legacy-evidence",
+                "--max-delivery-events",
+                "32",
+                "--max-delivery-bytes",
+                "1048576"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["kinic", "agent", "flush", "--max-delivery-events", "0"]).is_err()
+        );
         assert!(Cli::try_parse_from(["kinic", "learn", "drain", "--run-id", "r"]).is_ok());
         assert!(Cli::try_parse_from(["kinic", "learn", "drain", "--max-jobs", "3"]).is_ok());
         assert!(Cli::try_parse_from(["kinic", "learn", "drain", "--max-jobs", "0"]).is_err());
@@ -102,6 +121,13 @@ pub enum AgentCommand {
     Flush {
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Explicitly permit frozen legacy evidence, within the supplied finite budget.
+        #[arg(long, requires_all = ["max_delivery_events", "max_delivery_bytes"])]
+        allow_legacy_evidence: bool,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1000))]
+        max_delivery_events: Option<u32>,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1_500_000))]
+        max_delivery_bytes: Option<u32>,
         #[arg(long, requires = "engine")]
         replay_inbox: bool,
         #[arg(long, value_parser = ["codex", "dsh"], requires = "replay_inbox")]

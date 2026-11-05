@@ -1275,3 +1275,43 @@ fn main_cli_parses_claude_setup_as_local_command() {
     assert!(!setup.command.requires_identity());
     assert!(!setup.command.probes_anonymous_database_read());
 }
+
+#[test]
+fn maintenance_cli_requires_explicit_target_and_state() {
+    assert!(
+        Cli::try_parse_from(["kinic", "database", "evidence-rebuild", "preview", "memo"]).is_ok()
+    );
+    assert!(
+        Cli::try_parse_from(["kinic", "database", "evidence-rebuild", "activate", "memo"]).is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "kinic",
+            "database",
+            "evidence-rebuild",
+            "activate",
+            "memo",
+            "--migration-id",
+            "id",
+            "--expected-state-hash",
+            "hash"
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "kinic",
+            "database",
+            "evidence-rebuild",
+            "step",
+            "memo",
+            "--migration-id",
+            "id",
+            "--expected-step",
+            "1",
+            "--max-rows",
+            "0"
+        ])
+        .is_err()
+    );
+}

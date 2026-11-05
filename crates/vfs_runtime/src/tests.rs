@@ -116,6 +116,7 @@ fn index_migrations_create_current_schema_once() {
             INDEX_SCHEMA_VERSION_CURRENT.to_string(),
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
+            INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
         ]
     );
     assert_eq!(
@@ -144,7 +145,7 @@ fn index_migrations_apply_node_publications_once() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version != 'database_index:001_initial';",
@@ -167,6 +168,7 @@ fn index_migrations_apply_node_publications_once() {
             INDEX_SCHEMA_VERSION_CURRENT.to_string(),
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
+            INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
         ]
     );
 }
@@ -195,7 +197,7 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version IN ('database_index:003_publication_mutation_recovery',
@@ -219,6 +221,7 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
             INDEX_SCHEMA_VERSION_CURRENT.to_string(),
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
+            INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
         ]
     );
 }
@@ -243,7 +246,7 @@ fn index_migrations_roll_back_all_pending_steps_when_004_fails() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version != 'database_index:001_initial';
@@ -311,7 +314,7 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -333,7 +336,8 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
             INDEX_SCHEMA_VERSION_CURRENT,
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
-            INDEX_SCHEMA_VERSION_VOICE
+            INDEX_SCHEMA_VERSION_VOICE,
+            INDEX_SCHEMA_VERSION_MAINTENANCE
         ]
     );
     assert_eq!(
@@ -362,7 +366,7 @@ fn index_migration_004_allows_unconfigured_iap_authority() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -386,7 +390,7 @@ fn index_migration_004_allows_unconfigured_iap_authority() {
     );
     assert_eq!(
         index_versions(&index_path).last().map(String::as_str),
-        Some(INDEX_SCHEMA_VERSION_VOICE)
+        Some(INDEX_SCHEMA_VERSION_MAINTENANCE)
     );
 }
 
@@ -407,7 +411,7 @@ fn index_migration_004_requires_upgrade_config() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )

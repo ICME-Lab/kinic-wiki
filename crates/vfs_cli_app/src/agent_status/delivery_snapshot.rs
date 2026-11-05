@@ -25,6 +25,12 @@ struct Record {
     #[serde(default)]
     excluded_records: Option<u64>,
     pending_records: Option<u64>,
+    #[serde(default)]
+    deferred_records: Option<u64>,
+    #[serde(default)]
+    deferred_bytes: Option<u64>,
+    #[serde(default)]
+    deferred_reasons: Vec<String>,
     acknowledged_records: Option<u64>,
     unattributed_records: u64,
     last_record: Option<LastRecord>,

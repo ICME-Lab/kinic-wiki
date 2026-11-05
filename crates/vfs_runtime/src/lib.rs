@@ -11,6 +11,7 @@ pub use databases::generated_database_id_for_test;
 pub(crate) use databases::*;
 mod index_schema;
 pub(crate) use billing::{DatabaseLedgerInsert, insert_database_ledger};
+mod maintenance;
 mod market;
 mod metrics;
 mod publications;
@@ -69,12 +70,14 @@ const INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS: &str = "database_index:002_node_pu
 const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:003_publication_mutation_recovery";
 const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:004_iap_cycle_grants";
 const INDEX_SCHEMA_VERSION_VOICE: &str = "database_index:005_voice_billing";
+const INDEX_SCHEMA_VERSION_MAINTENANCE: &str = "database_index:006_database_maintenance";
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_INITIAL,
     INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
     INDEX_SCHEMA_VERSION_CURRENT,
     INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
     INDEX_SCHEMA_VERSION_VOICE,
+    INDEX_SCHEMA_VERSION_MAINTENANCE,
 ];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -343,6 +346,7 @@ impl VfsService {
 
     pub fn require_database_write_cycles_available(&self, database_id: &str) -> Result<(), String> {
         self.read_index(|conn| {
+            maintenance::require_open(conn, database_id)?;
             let config = load_cycles_billing_config(conn)?;
             require_database_write_cycles_available_for_conn(conn, database_id, &config)
         })
@@ -364,6 +368,7 @@ impl VfsService {
                     "principal lacks required database role: {database_id}"
                 ));
             }
+            maintenance::require_open(conn, database_id)?;
             let config = load_cycles_billing_config(conn)?;
             require_database_write_cycles_available_for_conn(conn, database_id, &config)?;
             Ok(config)
@@ -377,6 +382,8 @@ impl VfsService {
     ) -> Result<CyclesBillingConfig, NodeMutationError> {
         self.require_role(database_id, caller, RequiredRole::Writer)
             .map_err(NodeMutationError::forbidden)?;
+        self.require_maintenance_open(database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
         let config = self
             .cycles_billing_config()
             .map_err(NodeMutationError::write_unavailable)?;
@@ -397,6 +404,15 @@ impl VfsService {
         self.require_database_write_cycles_available(database_id)
     }
 
+    pub fn evidence_storage_enabled(
+        &self,
+        database_id: &str,
+        caller: &str,
+    ) -> Result<bool, String> {
+        self.with_database_store(database_id, caller, RequiredRole::Reader, |store| {
+            store.evidence_storage_enabled()
+        })
+    }
     pub fn status(&self, database_id: &str, caller: &str) -> Result<Status, String> {
         self.with_database_store(database_id, caller, RequiredRole::Reader, |store| {
             store.status()
@@ -879,6 +895,9 @@ impl VfsService {
         f: impl FnOnce(&FsStore) -> Result<T, String>,
     ) -> Result<T, String> {
         self.require_role(database_id, caller, required_role)?;
+        if matches!(required_role, RequiredRole::Writer | RequiredRole::Owner) {
+            self.require_maintenance_open(database_id)?;
+        }
         let meta = self.database_meta(database_id)?;
         let store = self.database_store(&meta)?;
         f(&store)
@@ -892,6 +911,8 @@ impl VfsService {
     ) -> Result<T, NodeMutationError> {
         self.require_role(database_id, caller, RequiredRole::Writer)
             .map_err(NodeMutationError::forbidden)?;
+        self.require_maintenance_open(database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
         let meta = self
             .database_meta(database_id)
             .map_err(NodeMutationError::write_unavailable)?;
@@ -922,6 +943,8 @@ impl VfsService {
     ) -> Result<T, NodeMutationError> {
         self.require_role(database_id, caller, RequiredRole::Writer)
             .map_err(NodeMutationError::forbidden)?;
+        self.require_maintenance_open(database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
         let meta = self
             .database_meta(database_id)
             .map_err(NodeMutationError::write_unavailable)?;

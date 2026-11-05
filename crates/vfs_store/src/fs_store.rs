@@ -6,7 +6,10 @@
 // That prevents SQLite `snippet()` cost from scaling with all matched rows.
 // Only returned hits pay preview generation cost.
 mod context;
+pub(crate) mod evidence;
 mod marketplace;
+pub(crate) mod rebuild;
+mod rebuild_schema;
 mod revisions;
 mod sql_json;
 mod sync;
@@ -86,7 +89,7 @@ SELECT child.path,
        child.kind,
        child.updated_at,
        child.etag,
-       length(CAST(child.content AS BLOB)),
+       COALESCE((SELECT CAST(json_extract(m.manifest_json,'$.original_len') AS INTEGER) FROM fs_evidence_bindings b JOIN fs_evidence_manifests m ON m.reference=b.reference WHERE b.path=child.path AND b.etag=child.etag AND b.reference=child.content),length(CAST(child.content AS BLOB))),
        EXISTS (
            SELECT 1
            FROM fs_nodes descendant
@@ -102,7 +105,7 @@ SELECT child.path,
        child.kind,
        child.updated_at,
        child.etag,
-       length(CAST(child.content AS BLOB)),
+       COALESCE((SELECT CAST(json_extract(m.manifest_json,'$.original_len') AS INTEGER) FROM fs_evidence_bindings b JOIN fs_evidence_manifests m ON m.reference=b.reference WHERE b.path=child.path AND b.etag=child.etag AND b.reference=child.content),length(CAST(child.content AS BLOB))),
        EXISTS (
            SELECT 1
            FROM fs_nodes descendant
@@ -2052,6 +2055,7 @@ fn update_existing_node(
 }
 
 fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i64, String> {
+    let content = evidence::store_evidence(tx, node, row_id)?;
     match row_id {
         Some(row_id) => {
             tx.execute(
@@ -2067,7 +2071,7 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
                 params![
                     node.path,
                     node_kind_to_db(&node.kind),
-                    node.content,
+                    content,
                     node.created_at,
                     node.updated_at,
                     node.etag,
@@ -2084,7 +2088,7 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
             let values = vec![
                 crate::sqlite::text_value(node.path.clone()),
                 crate::sqlite::text_value(node_kind_to_db(&node.kind)),
-                crate::sqlite::text_value(node.content.clone()),
+                crate::sqlite::text_value(content.clone()),
                 crate::sqlite::integer_value(node.created_at),
                 crate::sqlite::integer_value(node.updated_at),
                 crate::sqlite::text_value(node.etag.clone()),
@@ -2105,11 +2109,12 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
 }
 
 fn save_moved_node(tx: &Transaction<'_>, row_id: i64, node: &Node) -> Result<i64, String> {
+    let content = evidence::store_evidence(tx, node, Some(row_id))?;
     let (parent_id, name) = parent_fields_for_path(tx, &node.path)?;
     let values = vec![
         crate::sqlite::text_value(node.path.clone()),
         crate::sqlite::text_value(node_kind_to_db(&node.kind)),
-        crate::sqlite::text_value(node.content.clone()),
+        crate::sqlite::text_value(content),
         crate::sqlite::integer_value(node.created_at),
         crate::sqlite::integer_value(node.updated_at),
         crate::sqlite::text_value(node.etag.clone()),
@@ -2363,6 +2368,8 @@ fn sync_node_fts(
                 && stored.node.path == node.path
                 && file_search_title(&stored.node.path) == file_search_title(&node.path)
                 && stored.node.content == node.content
+                && stored.node.kind == node.kind
+                && stored.node.metadata_json == node.metadata_json
         }
         _ => false,
     };
@@ -2371,20 +2378,59 @@ fn sync_node_fts(
         return Ok(());
     }
 
+    let external = evidence::search_storage_enabled(tx)?;
     if let Some(stored) = old {
-        tx.execute(
-            "DELETE FROM fs_nodes_fts WHERE rowid = ?1",
-            params![stored.row_id],
-        )
-        .map_err(|error| error.to_string())?;
+        if external {
+            let indexed: Option<(String, bool, String)> = tx
+                .query_row(
+                    "SELECT title,shared,summary FROM fs_search_metadata WHERE node_row_id=?1",
+                    params![stored.row_id],
+                    |r| {
+                        Ok((
+                            crate::sqlite::row_get(r, 0)?,
+                            crate::sqlite::row_bool(r, 1)?,
+                            crate::sqlite::row_get(r, 2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let (title, shared, summary) = indexed
+                .unwrap_or_else(|| (file_search_title(&stored.node.path), false, String::new()));
+            let content = if shared {
+                summary.as_str()
+            } else {
+                stored.node.content.as_str()
+            };
+            tx.execute("INSERT INTO fs_nodes_fts(fs_nodes_fts,rowid,path,title,content) VALUES('delete',?1,?2,?3,?4)",params![stored.row_id,stored.node.path,title,content]).map_err(|e|e.to_string())?;
+            tx.execute(
+                "DELETE FROM fs_search_metadata WHERE node_row_id=?1",
+                params![stored.row_id],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            tx.execute(
+                "DELETE FROM fs_nodes_fts WHERE rowid=?1",
+                params![stored.row_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     if let Some((row_id, node)) = new {
         let title = file_search_title(&node.path);
+        let (shared, content) = if external {
+            evidence::search_projection(tx, node)?
+        } else {
+            (false, node.content.clone())
+        };
+        if external {
+            tx.execute("INSERT INTO fs_search_metadata(node_row_id,title,shared,summary) VALUES(?1,?2,?3,?4)",params![row_id,title,i64::from(shared),if shared {content.as_str()} else {""}]).map_err(|e|e.to_string())?;
+        }
         tx.execute(
-            "INSERT INTO fs_nodes_fts(rowid, path, title, content) VALUES(?1, ?2, ?3, ?4)",
-            params![row_id, node.path, title, node.content],
+            "INSERT INTO fs_nodes_fts(rowid,path,title,content) VALUES(?1,?2,?3,?4)",
+            params![row_id, node.path, title, content],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }

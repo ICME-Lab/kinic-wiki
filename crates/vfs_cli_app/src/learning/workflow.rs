@@ -234,7 +234,22 @@ async fn persist_receipt(
         .flush(client, c.database_id.as_deref().unwrap())
         .await;
     Ok(
-        json!({"receipt":receipt,"event_path":event_path(&event),"pending_sync":result.is_err(),"sync_error":result.err().map(|e|e.to_string())}),
+        json!({"receipt":receipt,"event_path":event_path(&event),"pending_sync":!outbox.event_acknowledged(&event.id)?,"sync_error":result.err().map(|e|e.to_string())}),
+    )
+}
+async fn record_value(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    event: &Event,
+) -> Result<Value> {
+    let outbox = open_outbox(client, c, state)?;
+    outbox.enqueue(event)?;
+    let flushed = outbox
+        .flush(client, c.database_id.as_deref().unwrap())
+        .await;
+    Ok(
+        json!({"event_id":event.id,"event_path":event_path(event),"pending_sync":!outbox.event_acknowledged(&event.id)?,"sync_error":flushed.err().map(|e|e.to_string())}),
     )
 }
 /// Strip environment credential values from persisted configuration; execution uses the original configuration.
@@ -314,14 +329,12 @@ pub async fn run_agent(
             cwd: _,
         } => {
             let event: Event = read_json(&event_file)?;
-            let outbox = open_outbox(client, c, &state)?;
-            outbox.enqueue(&event)?;
-            let flushed = outbox.flush(client, db).await;
-            print(
-                &json!({"event_id":event.id,"event_path":event_path(&event),"pending_sync":flushed.is_err(),"sync_error":flushed.err().map(|e|e.to_string())}),
-            )
+            print(&record_value(client, c, &state, &event).await?)
         }
         AgentCommand::Flush {
+            allow_legacy_evidence,
+            max_delivery_events,
+            max_delivery_bytes,
             state,
             cwd,
             replay_inbox,
@@ -329,18 +342,40 @@ pub async fn run_agent(
             recall_config,
         } => {
             let cwd = cwd.unwrap_or(std::env::current_dir()?);
+            let mut policy = super::delivery_policy::DeliveryPolicy {
+                evidence_storage_v1: allow_legacy_evidence
+                    || client
+                        .memory_manifest(c.database_id.as_deref().context("database required")?)
+                        .await
+                        .ok()
+                        .is_some_and(|m| {
+                            m.capabilities
+                                .iter()
+                                .any(|c| c.name == super::delivery_policy::STORAGE_CAPABILITY)
+                        }),
+                ..Default::default()
+            };
+            if let Some(n) = max_delivery_events {
+                policy.max_events = n as usize;
+            }
+            if let Some(n) = max_delivery_bytes {
+                policy.max_bytes = n as usize;
+            }
             print(
-                &deliver(
+                &deliver_configured(
                     client,
                     c,
                     &state,
-                    &cwd,
-                    if replay_inbox {
-                        engine.as_deref()
-                    } else {
-                        None
-                    },
-                    recall_config.as_deref(),
+                    (
+                        &cwd,
+                        if replay_inbox {
+                            engine.as_deref()
+                        } else {
+                            None
+                        },
+                        recall_config.as_deref(),
+                    ),
+                    Some(policy),
                 )
                 .await?,
             )
@@ -474,7 +509,7 @@ pub async fn run_agent(
                 }
             }
             print(
-                &json!({"run_id":id,"execution":execution,"outcome":outcome,"verified_success":outcome.verified_success(),"pending_sync":sync.is_err(),"sync_error":sync.err().map(|e|e.to_string())}),
+                &json!({"run_id":id,"execution":execution,"outcome":outcome,"verified_success":outcome.verified_success(),"pending_sync":!outbox.run_acknowledged(&id)?,"sync_error":sync.err().map(|e|e.to_string())}),
             )
         }
     }
@@ -1571,6 +1606,16 @@ pub async fn deliver(
     engine: Option<&str>,
     config: Option<&Path>,
 ) -> Result<Value> {
+    deliver_configured(client, c, state, (cwd, engine, config), None).await
+}
+async fn deliver_configured(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    context: (&Path, Option<&str>, Option<&Path>),
+    policy: Option<super::delivery_policy::DeliveryPolicy>,
+) -> Result<Value> {
+    let (cwd, engine, config) = context;
     let outbox = open_outbox(client, c, state)?;
     // Retain this project's wakeup even if another project or a synchronous
     // sender currently owns delivery. The wait occurs only in the finite child.
@@ -1618,19 +1663,15 @@ pub async fn deliver(
             }
         }
     }
-    let sent = outbox
-        .flush_owned(
-            client,
-            c.database_id.as_deref().context("database required")?,
-        )
-        .await?;
+    let db = c.database_id.as_deref().context("database required")?;
+    let report = if let Some(policy) = policy {
+        outbox.flush_owned_policy(client, db, &policy).await?
+    } else {
+        outbox.flush_owned_report(client, db).await?
+    };
+    let sent = report.sent;
     drop(lease);
-    // Recheck after release so concurrent local enqueues get another flush attempt.
-    let sent = sent
-        + outbox
-            .flush_exclusive(client, c.database_id.as_deref().unwrap())
-            .await?
-            .unwrap_or(0);
+    // A later wakeup can deliver remaining records; never reset this invocation's budget.
     let settings = crate::agent_config::AgentConfig::at(cwd)?;
     if engine.is_some()
         && let Some(path) = config.map(Path::to_path_buf).or(settings.hook_path()?)
@@ -1644,7 +1685,9 @@ pub async fn deliver(
             outbox.failure("drain_spawn_failed")?;
         }
     }
-    Ok(json!({"sent":sent,"pending_sync":outbox.pending_count()? > 0}))
+    Ok(
+        json!({"sent":sent,"pending_sync":outbox.pending_count()? > 0,"deferred":report.deferred,"deferred_bytes":report.deferred_bytes,"budget_exhausted":report.budget_exhausted}),
+    )
 }
 
 #[cfg(test)]

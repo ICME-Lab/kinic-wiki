@@ -9,6 +9,9 @@ pub(crate) async fn run_database_command(
     command: DatabaseCommand,
 ) -> Result<()> {
     match command {
+        DatabaseCommand::EvidenceRebuild { command } => {
+            super::database_maintenance::run(client, command).await?
+        }
         DatabaseCommand::Create { name } => {
             let result = client.create_database(&name).await?;
             println!("{}", result.database_id);
