@@ -60,8 +60,26 @@ pub(super) fn store_evidence(
             }
         }
     }
-    let Some((manifest, blobs)) = encode_evidence(&node.path, &node.metadata_json, &node.content)?
-    else {
+    let encoded = encode_evidence(&node.path, &node.metadata_json, &node.content)?;
+    let reference = format!("kinic:evidence:v1:{}", sha256_hex(&node.content));
+    // New encoding choices must not overwrite an older manifest for identical
+    // bytes, including when a deleted event is created again. Verify and reuse
+    // the immutable old representation before inserting any prospective blobs.
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT m.manifest_json FROM fs_evidence_manifests m WHERE m.reference=?1 AND (?2=1 OR EXISTS(SELECT 1 FROM fs_evidence_bindings b WHERE b.reference=m.reference AND b.path=?3))",
+            params![reference,i64::from(encoded.is_some()),node.path],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if let Some(json) = existing {
+        if decode_stored_manifest(conn, &json)? != node.content {
+            return Err("evidence manifest collision".into());
+        }
+        return bind(conn, node, &reference);
+    }
+    let Some((manifest, blobs)) = encoded else {
         return Ok(node.content.clone());
     };
     let run = manifest.pieces.iter().find_map(|p| match p {
@@ -88,7 +106,6 @@ pub(super) fn store_evidence(
             }
         }
     }
-    let reference = format!("kinic:evidence:v1:{}", manifest.original_sha256);
     let json = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT OR IGNORE INTO fs_evidence_manifests(reference,manifest_json) VALUES(?1,?2)",
@@ -130,8 +147,16 @@ pub(crate) fn hydrate_node(conn: &Connection, node: &mut Node) -> Result<(), Str
             |r| crate::sqlite::row_get(r, 0),
         )
         .map_err(|e| e.to_string())?;
-    let manifest: EncodedEvidence = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    node.content = decode_evidence(&manifest, |run, sha| {
+    node.content = decode_stored_manifest(conn, &json)?;
+    if compute_node_etag(node) != node.etag {
+        return Err("evidence node etag mismatch after reconstruction".into());
+    }
+    Ok(())
+}
+
+fn decode_stored_manifest(conn: &Connection, json: &str) -> Result<String, String> {
+    let manifest: EncodedEvidence = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    decode_evidence(&manifest, |run, sha| {
         let body: String = conn
             .query_row(
                 "SELECT body FROM fs_evidence_blobs WHERE run_id=?1 AND sha256=?2",
@@ -140,11 +165,7 @@ pub(crate) fn hydrate_node(conn: &Connection, node: &mut Node) -> Result<(), Str
             )
             .map_err(|e| e.to_string())?;
         Ok(body.into_bytes())
-    })?;
-    if compute_node_etag(node) != node.etag {
-        return Err("evidence node etag mismatch after reconstruction".into());
-    }
-    Ok(())
+    })
 }
 
 pub(super) fn search_projection(conn: &Connection, node: &Node) -> Result<(bool, String), String> {

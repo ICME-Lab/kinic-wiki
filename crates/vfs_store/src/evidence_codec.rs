@@ -6,6 +6,99 @@ use serde_json::{Value, value::RawValue};
 use std::collections::BTreeMap;
 
 pub const MAX_EVIDENCE_BYTES: usize = 2 * 1024 * 1024;
+/// Serialized manifest plus unique raw blob bytes; excludes SQLite page/index overhead.
+pub const MAX_ENCODED_EVIDENCE_BYTES: usize = 2 * 1024 * 1024;
+
+// Count serialization without allocating the output or continuing beyond its budget.
+fn json_bytes(value: &impl Serialize, limit: usize) -> Result<Option<usize>, String> {
+    struct Counter {
+        written: usize,
+        limit: usize,
+        exceeded: bool,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let Some(next) = self
+                .written
+                .checked_add(bytes.len())
+                .filter(|n| *n <= self.limit)
+            else {
+                self.exceeded = true;
+                return Err(std::io::Error::other("evidence encoding budget exceeded"));
+            };
+            self.written = next;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter {
+        written: 0,
+        limit,
+        exceeded: false,
+    };
+    match serde_json::to_writer(&mut counter, value) {
+        Ok(()) => Ok(Some(counter.written)),
+        Err(_) if counter.exceeded => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+fn whole_body(
+    run: &str,
+    body: &str,
+    sha: &str,
+) -> Result<Option<(EncodedEvidence, EvidenceBlobs)>, String> {
+    let manifest = EncodedEvidence {
+        version: 1,
+        original_sha256: sha.into(),
+        original_len: body.len() as u64,
+        pieces: vec![EvidencePiece::Blob {
+            run_id: run.into(),
+            sha256: sha.into(),
+            len: body.len() as u64,
+        }],
+    };
+    let remaining = MAX_ENCODED_EVIDENCE_BYTES.saturating_sub(body.len());
+    if json_bytes(&manifest, remaining)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some((
+        manifest,
+        vec![(sha.into(), body.as_bytes().to_vec())],
+    )))
+}
+struct PieceBudget {
+    manifest: usize,
+    blobs: usize,
+    parts: usize,
+    manifest_limit: usize,
+}
+impl PieceBudget {
+    fn reserve(&mut self, piece: &EvidencePiece, new_blob: usize) -> Result<bool, String> {
+        let blobs = self
+            .blobs
+            .checked_add(new_blob)
+            .ok_or("evidence byte count overflow")?;
+        let limit = self
+            .manifest_limit
+            .min(MAX_ENCODED_EVIDENCE_BYTES.saturating_sub(blobs));
+        let used = self
+            .manifest
+            .checked_add(usize::from(self.parts > 0))
+            .ok_or("evidence byte count overflow")?;
+        let Some(remaining) = limit.checked_sub(used) else {
+            return Ok(false);
+        };
+        let Some(bytes) = json_bytes(piece, remaining)? else {
+            return Ok(false);
+        };
+        self.manifest = used + bytes;
+        self.blobs = blobs;
+        self.parts += 1;
+        Ok(true)
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncodedEvidence {
     pub version: u32,
@@ -74,8 +167,35 @@ pub fn encode_evidence(
     let Some(records) = records else {
         return Ok(None);
     };
+    let sha = sha256_hex(body);
+    if let Some(encoded) = record_pieces(&run, body, records, &sha)? {
+        return Ok(Some(encoded));
+    }
+    whole_body(&run, body, &sha)
+}
+fn record_pieces(
+    run: &str,
+    body: &str,
+    records: Vec<&RawValue>,
+    sha: &str,
+) -> Result<Option<(EncodedEvidence, EvidenceBlobs)>, String> {
+    let empty = EncodedEvidence {
+        version: 1,
+        original_sha256: sha.into(),
+        original_len: body.len() as u64,
+        pieces: vec![],
+    };
+    let Some(header) = json_bytes(&empty, body.len())? else {
+        return Ok(None);
+    };
+    let mut budget = PieceBudget {
+        manifest: header,
+        blobs: 0,
+        parts: 0,
+        manifest_limit: body.len(),
+    };
     let mut pieces = Vec::new();
-    let mut blobs = BTreeMap::new();
+    let mut blobs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut cursor = 0;
     for record in records {
         let raw = record.get();
@@ -89,25 +209,42 @@ pub fn encode_evidence(
             return Err("invalid evidence span".into());
         }
         if offset > cursor {
-            pieces.push(EvidencePiece::Inline(
-                body.as_bytes()[cursor..offset].to_vec(),
-            ));
+            let piece = EvidencePiece::Inline(body.as_bytes()[cursor..offset].to_vec());
+            if !budget.reserve(&piece, 0)? {
+                return Ok(None);
+            }
+            pieces.push(piece);
         }
         let sha = sha256_hex(raw);
-        if let Some(prior) = blobs.insert(sha.clone(), raw.as_bytes().to_vec())
-            && prior != raw.as_bytes()
-        {
-            return Err("evidence hash collision".into());
-        }
-        pieces.push(EvidencePiece::Blob {
-            run_id: run.clone(),
-            sha256: sha,
+        let new_blob = match blobs.get(&sha) {
+            Some(prior) if prior.as_slice() != raw.as_bytes() => {
+                return Err("evidence hash collision".into());
+            }
+            Some(_) => 0,
+            None => raw.len(),
+        };
+        // At most one prospective piece is allocated before reserve; retained pieces
+        // are bounded by the original body, including repeated run identifiers.
+        let piece = EvidencePiece::Blob {
+            run_id: run.into(),
+            sha256: sha.clone(),
             len: raw.len() as u64,
-        });
+        };
+        if !budget.reserve(&piece, new_blob)? {
+            return Ok(None);
+        }
+        if new_blob > 0 {
+            blobs.insert(sha, raw.as_bytes().to_vec());
+        }
+        pieces.push(piece);
         cursor = end;
     }
     if cursor < body.len() {
-        pieces.push(EvidencePiece::Inline(body.as_bytes()[cursor..].to_vec()));
+        let piece = EvidencePiece::Inline(body.as_bytes()[cursor..].to_vec());
+        if !budget.reserve(&piece, 0)? {
+            return Ok(None);
+        }
+        pieces.push(piece);
     }
     Ok(Some((
         EncodedEvidence {
