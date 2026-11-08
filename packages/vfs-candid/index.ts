@@ -6,6 +6,48 @@ import { IDL } from "@icp-sdk/core/candid";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
+  const BekkoRefillConfig = idl.Record({
+    target_cycles: idl.Nat,
+    max_transfer_cycles: idl.Nat,
+    enabled: idl.Bool,
+    threshold_cycles: idl.Nat,
+    wiki_reserve_cycles: idl.Nat,
+    max_daily_cycles: idl.Nat
+  });
+  const BekkoRefillReconciliation = idl.Record({ deposited: idl.Bool, evidence: idl.Text });
+  const BekkoRefillOutcome = idl.Variant({
+    Depositing: idl.Null,
+    Failed: idl.Text,
+    Reconciled: BekkoRefillReconciliation,
+    Interrupted: idl.Null,
+    Sufficient: idl.Null,
+    DailyLimit: idl.Null,
+    WikiReserve: idl.Null,
+    Checking: idl.Null,
+    Succeeded: idl.Null,
+    Unknown: idl.Text,
+    ConfigChanged: idl.Null
+  });
+  const BekkoRefillAttempt = idl.Record({
+    id: idl.Nat64,
+    observed_bekko_cycles: idl.Opt(idl.Nat),
+    config_revision: idl.Nat64,
+    amount_cycles: idl.Nat,
+    outcome: BekkoRefillOutcome,
+    started_ns: idl.Nat64,
+    finished_ns: idl.Opt(idl.Nat64)
+  });
+  const BekkoRefillReservation = idl.Record({ amount_cycles: idl.Nat, sent_ns: idl.Nat64 });
+  const BekkoRefillResolution = idl.Variant({ Deposited: idl.Null, NotDeposited: idl.Null });
+  const BekkoRefillState = idl.Record({
+    active: idl.Opt(BekkoRefillAttempt),
+    reservations: idl.Vec(BekkoRefillReservation),
+    history: idl.Vec(BekkoRefillAttempt),
+    config_revision: idl.Nat64,
+    next_id: idl.Nat64,
+    config: BekkoRefillConfig
+  });
+  const ResultBekkoRefill = idl.Variant({ Ok: BekkoRefillState, Err: idl.Text });
   const EvidenceRebuildControlRequest = idl.Record({
     expected_state_hash: idl.Text,
     database_id: idl.Text,
@@ -618,6 +660,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
+    get_bekko_refill_state: idl.Func([], [ResultBekkoRefill], ["query"]),
+    configure_bekko_refill: idl.Func([BekkoRefillConfig], [ResultUnit], []),
+    check_bekko_refill: idl.Func([], [ResultBekkoRefill], []),
+    reconcile_bekko_refill: idl.Func([idl.Nat64, BekkoRefillResolution, idl.Text], [ResultUnit], []),
+    periodic_cycles_refill: idl.Func([], [ResultUnit], []),
+    periodic_storage_billing: idl.Func([], [ResultUnit], []),
     evidence_rebuild_status: idl.Func([DatabaseIdRequest], [ResultEvidenceRebuild], ["query"]),
     evidence_rebuild_begin: idl.Func([EvidenceRebuildRequest], [ResultEvidenceRebuild], []),
     evidence_rebuild_step: idl.Func([EvidenceRebuildStepRequest], [ResultEvidenceRebuild], []),

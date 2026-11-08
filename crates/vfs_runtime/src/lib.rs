@@ -1,3 +1,4 @@
+mod bekko_refill;
 // Where: crates/vfs_runtime/src/lib.rs
 // What: Service orchestration for multiple SQLite-backed VFS databases.
 // Why: One canister can host isolated databases while sharing one VFS store implementation.

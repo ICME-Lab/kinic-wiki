@@ -1,4 +1,5 @@
 use vfs_types::ScopeRevisionRequest;
+use vfs_types::{BekkoRefillConfig, BekkoRefillResolution, BekkoRefillState};
 use vfs_types::{
     EvidenceRebuildControlRequest, EvidenceRebuildRequest, EvidenceRebuildStatus,
     EvidenceRebuildStepRequest,
@@ -78,6 +79,7 @@ use vfs_types::{
 };
 
 mod api_doc;
+mod bekko_refill;
 mod candid_normalization;
 mod public_http;
 
@@ -1544,11 +1546,10 @@ fn schedule_storage_billing_timer() {
     {
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
         set_timer(Duration::ZERO, async {
-            run_cycles_top_up_check_from_timer().await;
+            bekko_refill::run_periodic_maintenance(false).await;
         });
         set_timer_interval(Duration::from_millis(interval_ms), || async {
-            run_cycles_top_up_check_from_timer().await;
-            run_storage_billing_timer_batches();
+            bekko_refill::run_periodic_maintenance(true).await;
         });
     }
 }
@@ -1626,6 +1627,7 @@ fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result
         service.run_database_migrations(&meta.database_id)?;
     }
     service.recover_pending_publication_mutations()?;
+    service.initialize_bekko_refill(now_nanos())?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }
@@ -1642,6 +1644,7 @@ fn initialize_service_for_upgrade(config: Option<CyclesBillingConfig>) -> Result
         service.run_database_migrations(&meta.database_id)?;
     }
     service.recover_pending_publication_mutations()?;
+    service.initialize_bekko_refill(now_nanos())?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }

@@ -3449,3 +3449,23 @@ fn controller_gate_does_not_charge_rejected_writer_update() {
     );
     assert_eq!(balance(), before);
 }
+
+#[test]
+fn bekko_refill_endpoints_require_controller_and_start_disabled() {
+    use super::bekko_refill::{check_bekko_refill, configure_bekko_refill, get_bekko_refill_state};
+    use vfs_types::BekkoRefillConfig;
+    install_test_service();
+    super::with_service(|svc| svc.initialize_bekko_refill(0)).unwrap();
+    set_test_caller_principal_for_test(Principal::anonymous());
+    assert!(get_bekko_refill_state().is_err());
+    assert!(configure_bekko_refill(BekkoRefillConfig::default()).is_err());
+    assert!(block_on_ready(check_bekko_refill()).is_err());
+    set_test_caller_principal_for_test(Principal::management_canister());
+    assert!(!get_bekko_refill_state().unwrap().config.enabled);
+    assert!(
+        block_on_ready(check_bekko_refill())
+            .unwrap()
+            .active
+            .is_none()
+    );
+}
