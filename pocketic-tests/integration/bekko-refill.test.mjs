@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { readFileSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import test from "node:test";
+import test, { before, after } from "node:test";
 import { idlFactory } from "../../packages/vfs-candid/index.ts";
 const req = createRequire(realpathSync(createRequire(import.meta.url).resolve("@dfinity/pic")));
 const { IDL } = req("@icp-sdk/core/candid");
@@ -20,6 +20,9 @@ const ok = (value) => { assert.ok("Ok" in value, JSON.stringify(value, (_, v) =>
 const topUpType = IDL.Record({ enabled: IDL.Bool, threshold_cycles: IDL.Nat, launcher_principal: IDL.Text });
 const configType = IDL.Record({ kinic_ledger_canister_id: IDL.Text, billing_authority_id: IDL.Text,
   iap_authority_id: IDL.Opt(IDL.Text), cycles_per_kinic: IDL.Nat64, min_update_cycles: IDL.Nat64, top_up: topUpType });
+let server;
+before(async () => { server = await PocketIcServer.start(); });
+after(async () => { await server?.stop(); });
 const billing = { kinic_ledger_canister_id: "aaaaa-aa", billing_authority_id: owner.toText(),
   iap_authority_id: [owner.toText()], cycles_per_kinic: 1000n, min_update_cycles: 1000000n,
   top_up: { enabled: false, threshold_cycles: 1000000000n, launcher_principal: "aaaaa-aa" } };
@@ -46,7 +49,7 @@ test("real deposit, authorization, compact-model upgrade, and persistent daily b
   const oldWasm = required("BEKKO_BASELINE_WASM");
   const newWasm = required("BEKKO_REFILL_WASM");
   const pack = readFileSync(required("BEKKO_COMPACT_PACK"));
-  const server = await PocketIcServer.start(); const pic = await PocketIc.create(server.getUrl());
+  const pic = await PocketIc.create(server.getUrl());
   try {
     const { actor: bekko } = await pic.setupCanister({ targetCanisterId: bekkoId, sender: owner,
       controllers: [owner], cycles: 10000000000000n, idlFactory: bekkoFactory, wasm: oldWasm });
@@ -106,11 +109,11 @@ test("real deposit, authorization, compact-model upgrade, and persistent daily b
     assert.ok("Failed" in failed.history.at(-1).outcome);
     assert.equal(failed.history.at(-1).amount_cycles, 0n);
     console.log("14 compact embeddings identical; Wiki->Bekko execution cycles increased; upgrade retained daily cap; frozen read sent nothing");
-  } finally { await pic.tearDown(); await server.stop(); }
+  } finally { await pic.tearDown(); }
 });
 
 test("daily billing continues when both self-refill and Bekko calls fail", { timeout: 120000 }, async () => {
-  const server = await PocketIcServer.start(); const pic = await PocketIc.create(server.getUrl());
+  const pic = await PocketIc.create(server.getUrl());
   try {
     const wiki = await createWiki(pic);
     const db = ok(await wiki.create_database({ name: "billing continuity" })).database_id;
@@ -123,5 +126,22 @@ test("daily billing continues when both self-refill and Bekko calls fail", { tim
     assert.ok(state.history.some((a) => "Failed" in a.outcome));
     const rows = ok(await wiki.query_index_sql_json(`SELECT json_object('charged', storage_charged_at_ms) FROM database_cycle_accounts WHERE database_id = '${db}'`, 1));
     assert.ok(JSON.parse(rows.rows[0]).charged > 0);
-  } finally { await pic.tearDown(); await server.stop(); }
+  } finally { await pic.tearDown(); }
+});
+
+test("liquid balance cap retains the real prepaid deposit-call cost", { timeout: 120000 }, async () => {
+  const pic = await PocketIc.create(server.getUrl());
+  try {
+    await pic.setupCanister({ targetCanisterId: bekkoId, sender: owner, controllers: [owner],
+      cycles: 10000000000000n, idlFactory: bekkoFactory, wasm: required("BEKKO_REFILL_WASM") });
+    const wiki = await createWiki(pic);
+    ok(await wiki.configure_bekko_refill({ enabled: true, threshold_cycles: 99000000000000n,
+      target_cycles: 100000000000000n, max_transfer_cycles: 30000000000000n,
+      max_daily_cycles: 60000000000000n, wiki_reserve_cycles: 1000000000n }));
+    const before = BigInt(await pic.getCyclesBalance(bekkoId));
+    const result = ok(await wiki.check_bekko_refill());
+    assert.ok("Succeeded" in result.history.at(-1).outcome,
+      JSON.stringify(result.history.at(-1), (_, v) => typeof v === "bigint" ? String(v) : v));
+    assert.ok(BigInt(await pic.getCyclesBalance(bekkoId)) > before + 20000000000000n);
+  } finally { await pic.tearDown(); }
 });

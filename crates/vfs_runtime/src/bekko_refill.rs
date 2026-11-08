@@ -78,7 +78,8 @@ impl VfsService {
         })
     }
 
-    /// Run immediately before constructing deposit_cycles, with fresh execution and liquid balances.
+    /// Run immediately before deposit_cycles, with fresh execution and liquid balances
+    /// after subtracting the exact CDK call prepayment from each.
     /// The reservation and Depositing journal entry commit together before the await.
     pub fn reserve_bekko_refill(
         &self,

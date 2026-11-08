@@ -44,9 +44,15 @@ async fn run_bekko_refill() -> Result<(), String> {
         }
     };
     // There is no await between these fresh balances, the persisted reservation, and the deposit.
-    let wiki = canister_balance_cycles();
+    // CDK prepays the maximum response and callback cost. A fixed safety margin
+    // alone cannot cover it, especially when the liquid balance is the binding cap.
     #[cfg(target_arch = "wasm32")]
-    let liquid = ic_cdk::api::canister_liquid_cycle_balance();
+    let call_reserve = bekko_deposit_call(0).get_cost();
+    #[cfg(not(target_arch = "wasm32"))]
+    let call_reserve = 0;
+    let wiki = canister_balance_cycles().saturating_sub(call_reserve);
+    #[cfg(target_arch = "wasm32")]
+    let liquid = ic_cdk::api::canister_liquid_cycle_balance().saturating_sub(call_reserve);
     #[cfg(not(target_arch = "wasm32"))]
     let liquid = wiki;
     let amount = with_service(|svc| {
@@ -78,20 +84,24 @@ async fn read_bekko_balance() -> Result<u128, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn deposit_bekko_cycles(amount: u128) -> BekkoRefillOutcome {
-    use ic_cdk::call::CallErrorExt;
+fn bekko_deposit_call(amount: u128) -> Call<'static, 'static> {
     #[derive(CandidType)]
     struct DepositArgs {
         canister_id: Principal,
     }
-    let result = Call::bounded_wait(Principal::management_canister(), "deposit_cycles")
+    Call::bounded_wait(Principal::management_canister(), "deposit_cycles")
         .with_arg(DepositArgs {
             canister_id: Principal::from_text(BEKKO_REFILL_CANISTER)
                 .expect("fixed Bekko principal"),
         })
         .with_cycles(amount)
         .change_timeout(30)
-        .await;
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn deposit_bekko_cycles(amount: u128) -> BekkoRefillOutcome {
+    use ic_cdk::call::CallErrorExt;
+    let result = bekko_deposit_call(amount).await;
     match result {
         Ok(response) => match response.candid::<()>() {
             Ok(()) => BekkoRefillOutcome::Succeeded,

@@ -13,7 +13,7 @@ The feature is **disabled by default**. On 2026-11-08 JST, controller `canister_
 | Bekko | 1,159,232,158,931 | 8,012,365,517 | 2,592,000 seconds | 240,370,965,510 |
 | Wiki | 6,760,068,977,582 | 85,988,432,546 | 2,592,000 seconds | 2,579,652,976,380 |
 
-Default Bekko threshold: 600,000,000,000; target: 1,200,000,000,000; maximum per transfer: 600,000,000,000; maximum attempted in a rolling 24 hours: 1,200,000,000,000. Wiki minimum retained execution balance: 4,000,000,000,000, plus a 1,000,000,000 fee/callback margin. The send amount is also capped by the current **liquid** balance (which excludes the system freezing reserve).
+Default Bekko threshold: 600,000,000,000; target: 1,200,000,000,000; maximum per transfer: 600,000,000,000; maximum attempted in a rolling 24 hours: 1,200,000,000,000. Wiki minimum retained execution balance: 4,000,000,000,000, plus the exact CDK call prepayment and an additional 1,000,000,000 safety margin. The send amount is also capped by the current **liquid** balance (which excludes the system freezing reserve). Both balance caps first deduct `Call::get_cost()` for the exact zero-cycle deposit call; this includes the prepaid maximum response and callback execution cost, measured as 42,102,453,000 cycles on the local test subnet. This cost is queried dynamically rather than assumed to be constant.
 
 These defaults leave about 45 days of Bekko idle burn above its measured freezing reserve and about 16 days of Wiki idle burn above its reserve. They are conservative initial values, not a forecast of update traffic. Before enabling, take at least two status samples across representative peak activity, include update/activation/upgrade costs and next-day delay, and adjust limits/reserve for observed consumption. Query counters do not measure the full execution-cycle burn. Keep disabled if this evidence or funding is insufficient. Re-evaluate after memory/compute settings or model/runtime changes.
 
@@ -60,7 +60,7 @@ BEKKO_COMPACT_PACK=/absolute/path/model-int8.pack \
 node --test pocketic-tests/integration/bekko-refill.test.mjs
 ```
 
-The rehearsal verifies 14 before/after embeddings bit-for-bit, model/weight/runtime/space identity, Wiki-only balance authorization, actual Wiki-to-Bekko cycle movement, disabled/controller gates, persisted daily limits across Wiki upgrade, frozen balance failure without a deposit, and daily billing after both external checks fail. Rust tests cover stale configuration, insufficient/liquid funds, overlap, ambiguous/upgrade recovery, audit-history pruning and reconciliation.
+The rehearsal verifies 14 before/after embeddings bit-for-bit, model/weight/runtime/space identity, Wiki-only balance authorization, actual Wiki-to-Bekko cycle movement, disabled/controller gates, persisted daily limits across Wiki upgrade, frozen balance failure without a deposit, daily billing after both external checks fail, and a successful liquid-bound transfer with the actual CDK prepayment retained. Rust tests cover stale configuration, insufficient/liquid funds, overlap, ambiguous/upgrade recovery, audit-history pruning and reconciliation.
 
 ## Production rollout after PR review and merge
 
