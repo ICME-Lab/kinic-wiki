@@ -6,7 +6,7 @@ import { chromium, expect } from "@playwright/test";
 import { build } from "esbuild";
 
 // Exercise the real popup module and markup; only Chrome messaging is replaced.
-test("settings persist both generation folders, reject invalid paths, and recover from save errors", async () => {
+test("folder dropdowns autosave, retain values on reload, and roll back failed saves", async () => {
   const root = new URL("../", import.meta.url);
   const html = await readFile(new URL("popup/popup.html", root), "utf8");
   const bundle = await build({ entryPoints: [new URL("popup/popup.js", root).pathname], bundle: true, write: false, format: "esm", define: { "process.env.KINIC_CAPTURE_DATABASE_ID": '""' } });
@@ -27,35 +27,81 @@ test("settings persist both generation folders, reject invalid paths, and recove
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(() => {
       window.chrome = { runtime: { sendMessage: async message => {
-        const config = JSON.parse(localStorage.getItem("test-config") || "{}");
+        const config = JSON.parse(localStorage.getItem("test-config") || '{"databaseId":"db-test"}');
         if (message.type === "load-config") return { ok: true, config };
+        if (message.type === "list-generation-folders" && !localStorage.getItem("lookup-released")) {
+          await new Promise(resolve => { window.finishFolderLookup = () => { localStorage.setItem("lookup-released", "true"); resolve(); }; });
+        }
+        if (message.type === "list-generation-folders" && window.largeFolderList) return {
+          ok: true, result: { folders: Array.from({ length: 500 }, (_, i) => `/Knowledge/retained-${i}`), truncated: true }
+        };
+        if (message.type === "list-generation-folders" && window.changedDatabase) return { ok: true, result: { folders: [], truncated: false } };
+        if (message.type === "list-generation-folders") return { ok: true, result: { folders: ["/Knowledge/articles", "/Knowledge/会話", "/Knowledge/failed"], truncated: false } };
         if (message.type === "save-config") {
-          if (Object.hasOwn(message.config, "showSaveControls")) return { ok: false, error: "fixture save failure" };
+          if (window.delayFolderSave && message.config.webTargetRoot) await new Promise(resolve => { window.finishFolderSave = resolve; });
+          if (message.config.databaseId) window.changedDatabase = true;
+          if (message.config.webTargetRoot === "/Knowledge/failed" || (Object.hasOwn(message.config, "showSaveControls") && !window.allowToggleSave)) return { ok: false, error: "fixture save failure" };
           localStorage.setItem("test-config", JSON.stringify({ ...config, ...message.config }));
         }
         return { ok: true, value: null };
       } } };
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/popup/popup.html`);
+    await page.waitForFunction(() => typeof window.finishFolderLookup === "function");
+    await page.evaluate(() => { window.allowToggleSave = true; });
+    await page.locator("#show-save-controls").uncheck();
+    await expect(page.locator("#status")).toHaveText("Save controls hidden");
     await expect(page.locator("#principal")).toHaveText("Not logged in");
-    const web = page.getByLabel("Web page generation folder", { exact: true });
-    const conversation = page.getByLabel("AI conversation generation folder", { exact: true });
+    await page.evaluate(() => window.finishFolderLookup());
+    await expect(page.locator("#web-target-root option[value='/Knowledge/articles']")).toHaveCount(1);
+    await expect(page.locator("#principal")).toHaveText("Not logged in");
+    await expect(page.locator("#show-save-controls")).not.toBeChecked();
+    await page.locator("#show-save-controls").check();
+    await expect(page.locator("#status")).toHaveText("Save controls shown");
+    await page.evaluate(() => { window.allowToggleSave = false; });
+    const web = page.getByRole("combobox", { name: "Web page generation folder", exact: true });
+    const conversation = page.getByRole("combobox", { name: "AI conversation generation folder", exact: true });
     await expect(web).toHaveValue("/Knowledge/web");
-    await web.fill("/Knowledge/articles/");
-    await conversation.fill("/Knowledge/会話/");
-    await page.getByRole("button", { name: "Save generation folders" }).click();
-    await expect(page.locator("#status")).toHaveText("Generation folders saved.");
+    await expect(page.getByRole("button", { name: "Save generation folders" })).toHaveCount(0);
+    await expect(page.getByText("Choose folders below /Knowledge/. Applies to future generation requests.")).toHaveCount(0);
+    await web.selectOption("/Knowledge/articles");
+    await expect(page.locator("#status")).toHaveText("Generation folder saved.");
+    await conversation.selectOption("/Knowledge/会話");
+    await expect(conversation).toBeEnabled();
     await page.reload();
     await expect(web).toHaveValue("/Knowledge/articles");
     await expect(conversation).toHaveValue("/Knowledge/会話");
-    await web.fill("/Knowledge/../private");
-    await page.getByRole("button", { name: "Save generation folders" }).click();
-    await expect(page.locator("#status")).toContainText("below /Knowledge/");
+    await web.selectOption("/Knowledge/failed");
+    await expect(page.locator("#status")).toHaveText("fixture save failure");
+    await expect(web).toHaveValue("/Knowledge/articles");
     await page.reload();
     await expect(web).toHaveValue("/Knowledge/articles");
     await page.locator("#show-save-controls").click();
     await expect(page.locator("#status")).toHaveText("fixture save failure");
     await expect(page.locator("#show-save-controls")).toBeChecked();
+    await page.evaluate(() => { window.delayFolderSave = true; });
+    await web.selectOption("/Knowledge/会話");
+    await page.evaluate(() => {
+      const database = document.querySelector("#database-id");
+      database.disabled = false;
+      database.innerHTML = '<option value="db-other">Other</option>';
+      database.dispatchEvent(new Event("change"));
+    });
+    await expect(web.locator("option[value='/Knowledge/failed']")).toHaveCount(0);
+    await expect(web).toHaveValue("/Knowledge/会話");
+    await page.evaluate(() => window.finishFolderSave());
+    await expect(web).toBeEnabled();
+    await expect(web).toHaveValue("/Knowledge/会話");
+    await page.evaluate(() => {
+      window.delayFolderSave = false;
+      window.largeFolderList = true;
+      document.querySelector("#database-id").dispatchEvent(new Event("change"));
+    });
+    await expect(page.locator("#status")).toContainText("Showing the first 500 folders");
+    await web.selectOption("/Knowledge/retained-499");
+    await expect(web).toBeEnabled();
+    await expect(web).toHaveValue("/Knowledge/retained-499");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("test-config")).webTargetRoot), "/Knowledge/retained-499");
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

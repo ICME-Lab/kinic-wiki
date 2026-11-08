@@ -56,6 +56,7 @@ let lastSettingsOpenedAt = 0;
 const activeSourceCaptures = new Map();
 const activeBadgeRefreshes = new Map();
 let nextBadgeRefreshGeneration = 0;
+let configSaveQueue = Promise.resolve();
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -127,9 +128,19 @@ export async function handleMessage(message, sender) {
     return { ok: true, config: await loadConfig() };
   }
   if (message?.type === "save-config") {
-    await saveConfig(message.config);
+    const save = configSaveQueue.then(() => saveConfig(message.config));
+    configSaveQueue = save.catch(() => {});
+    await save;
     await invalidateAndClearTabBadges();
     return { ok: true };
+  }
+  if (message?.type === "list-generation-folders") {
+    const response = await offscreenBridge({
+      target: "offscreen", type: "list-generation-folders",
+      config: withFixedRuntimeConfig(await loadConfig())
+    });
+    if (!response?.ok) throw new Error(response?.error || "Folder lookup failed.");
+    return { ok: true, result: response.result };
   }
   if (message?.type === "auth-status") {
     return { ok: true, result: await authStatus() };

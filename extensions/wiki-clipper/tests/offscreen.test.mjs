@@ -1174,3 +1174,18 @@ test("generation trigger forwards only a normalized Knowledge destination", asyn
     await assert.rejects(triggerSourceGeneration(config(), "/Sources/chatgpt/a.md", "etag", "session", "/Sources/wrong"));
   } finally { setOffscreenDepsForTest(); }
 });
+
+test("generation folder lookup uses the authenticated selected database", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async options => {
+      assert.equal(options.identity.tag, "identity");
+      return {list_children: async request => {calls.push(request);return {Ok:[{path:"/Knowledge/articles",kind:{Folder:null},has_children:false}]};}};
+    }
+  });
+  try {
+    assert.deepEqual(await handleOffscreenMessage({type:"list-generation-folders",config:config()}),{folders:["/Knowledge/articles"],truncated:false});
+    assert.deepEqual(calls,[{database_id:"team-db",path:"/Knowledge"}]);
+  } finally {setOffscreenDepsForTest();}
+});

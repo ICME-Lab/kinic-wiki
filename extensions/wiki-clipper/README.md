@@ -68,7 +68,7 @@ The active-tab flow writes `/Sources/web/<source_id>.md` as a VFS `source`, then
 
 ## Generation folders and completion
 
-Extension settings remember separate generation folders: Web pages default to `/Knowledge/web`, and ChatGPT/Claude/Gemini conversations default to `/Knowledge/conversations`. Choose an absolute subfolder below `/Knowledge/`; the extension creates missing folders during generation. Settings affect future requests and do not move existing pages. Toolbar left-click and **Save source and create page** use the same Web folder setting. **Save source only** does not request generation.
+Extension settings remember separate generation folders: Web pages default to `/Knowledge/web`, and ChatGPT/Claude/Gemini conversations default to `/Knowledge/conversations`. Select an existing folder below `/Knowledge/` from the dropdown. Selections save automatically. Up to 500 existing folders are listed; if the limit is reached, the available choices are retained and a notice indicates that more folders exist. The defaults and currently selected folders remain available even before those folders exist; generation creates missing folders. Settings affect future requests and do not move existing pages. Toolbar left-click and **Save source and create page** use the same Web folder setting. **Save source only** does not request generation.
 
 Conversation **Save to Kinic** and exports save evidence under `/Sources/<provider>/` and then request Wiki page generation. Generation can send source material and related Wiki excerpts to TypeSafe and DeepSeek as described in the privacy policy. There is currently no conversation-export source-only option.
 
