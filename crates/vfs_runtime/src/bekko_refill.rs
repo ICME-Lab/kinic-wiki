@@ -155,16 +155,16 @@ impl VfsService {
                 .as_mut()
                 .filter(|a| a.id == id)
                 .ok_or("stale refill result")?;
-            let allowed = match (&active.outcome, &outcome) {
-                (BekkoRefillOutcome::Checking, BekkoRefillOutcome::Failed(_)) => true,
-                (
-                    BekkoRefillOutcome::Depositing,
-                    BekkoRefillOutcome::Succeeded
-                    | BekkoRefillOutcome::Failed(_)
-                    | BekkoRefillOutcome::Unknown(_),
-                ) => true,
-                _ => false,
-            };
+            let allowed = matches!(
+                (&active.outcome, &outcome),
+                (BekkoRefillOutcome::Checking, BekkoRefillOutcome::Failed(_))
+                    | (
+                        BekkoRefillOutcome::Depositing,
+                        BekkoRefillOutcome::Succeeded
+                            | BekkoRefillOutcome::Failed(_)
+                            | BekkoRefillOutcome::Unknown(_),
+                    )
+            );
             if !allowed {
                 return Err("invalid refill completion".into());
             }
@@ -272,8 +272,10 @@ mod tests {
         svc
     }
     fn enabled(svc: &crate::VfsService) {
-        let mut cfg = BekkoRefillConfig::default();
-        cfg.enabled = true;
+        let cfg = BekkoRefillConfig {
+            enabled: true,
+            ..BekkoRefillConfig::default()
+        };
         svc.configure_bekko_refill(cfg).unwrap();
     }
     #[test]
@@ -330,8 +332,10 @@ mod tests {
         let svc = service(dir.path());
         enabled(&svc);
         let check = svc.begin_bekko_refill(1).unwrap().unwrap();
-        let mut cfg = BekkoRefillConfig::default();
-        cfg.enabled = true;
+        let cfg = BekkoRefillConfig {
+            enabled: true,
+            ..BekkoRefillConfig::default()
+        };
         svc.configure_bekko_refill(cfg).unwrap();
         assert_eq!(
             svc.reserve_bekko_refill(check.id, 0, u128::MAX, u128::MAX, 2)
