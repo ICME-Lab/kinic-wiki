@@ -8,6 +8,7 @@ import {
   createVfsActor as defaultCreateVfsActor,
   getCyclesBillingConfigOrNull,
   normalizeWritableDatabases,
+  listKnowledgeFoldersWithActor,
   requireDatabaseWriteCyclesAvailable,
   searchNodesWithActor
 } from "./vfs-actor.js";
@@ -44,6 +45,8 @@ export function handleOffscreenMessage(message) {
           ? webSourceExists(message.sourcePath, message.expectedUrl, message.config)
           : message?.type === "auth-status"
             ? authStatus()
+            : message?.type === "list-generation-folders"
+              ? listGenerationFolders(message.config)
             : message?.type === "list-writable-databases"
               ? listWritableDatabases(message.config)
               : message?.type === "recall-search"
@@ -460,4 +463,11 @@ async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, 
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "worker trigger failed" };
   }
+}
+
+export async function listGenerationFolders(config) {
+  if (!config?.canisterId || !config?.databaseId) throw new Error("Select a database to load folders.");
+  const snapshot = await authenticatedSnapshot();
+  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  return listKnowledgeFoldersWithActor(actor, config.databaseId);
 }

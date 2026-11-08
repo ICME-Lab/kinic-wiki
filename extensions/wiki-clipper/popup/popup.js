@@ -18,6 +18,7 @@ const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
 const showSaveControlsInput = document.querySelector("#show-save-controls");
+showSaveControlsInput.disabled = true;
 const createDatabaseForm = document.querySelector("#create-database-form");
 const databaseNameInput = document.querySelector("#database-name");
 const createDatabaseButton = document.querySelector("#create-database");
@@ -96,19 +97,67 @@ createDatabaseForm.addEventListener("submit", async (event) => {
 
 const webTargetRootInput = document.querySelector("#web-target-root");
 const conversationTargetRootInput = document.querySelector("#conversation-target-root");
-document.querySelector("#generation-folders-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
+let savedFolders = { webTargetRoot: "/Knowledge/web", conversationTargetRoot: "/Knowledge/conversations" };
+let folderLoadSequence = 0;
+let generationSaving = false;
+let availableFolders = [];
+const pendingFolders = {};
+for (const [key, select] of [["webTargetRoot", webTargetRootInput], ["conversationTargetRoot", conversationTargetRootInput]]) {
+  select.addEventListener("change", async () => {
+    const previous = savedFolders[key];
+    generationSaving = true;
+    webTargetRootInput.disabled = conversationTargetRootInput.disabled = true;
+    try {
+      const value = normalizeKnowledgeTargetRoot(select.value);
+      pendingFolders[key] = value;
+      await send({ type: "save-config", config: { [key]: value } });
+      savedFolders[key] = value;
+      statusText.textContent = "Generation folder saved.";
+    } catch (error) {
+      savedFolders[key] = previous;
+      statusText.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      delete pendingFolders[key];
+      generationSaving = false;
+      renderGenerationFolders();
+    }
+  });
+}
+
+function renderGenerationFolders(paths = availableFolders) {
+  availableFolders = paths;
+  const options = new Set(["/Knowledge/web", "/Knowledge/conversations", ...Object.values(savedFolders), ...Object.values(pendingFolders)]);
+  for (const path of paths) {
+    try { options.add(normalizeKnowledgeTargetRoot(path)); } catch { /* Ignore non-folder paths. */ }
+  }
+  for (const [key, select] of [["webTargetRoot", webTargetRootInput], ["conversationTargetRoot", conversationTargetRootInput]]) {
+    select.textContent = "";
+    for (const path of [...options].sort((a, b) => a.localeCompare(b))) {
+      const option = document.createElement("option");
+      option.value = option.textContent = path;
+      select.append(option);
+    }
+    select.value = pendingFolders[key] ?? savedFolders[key];
+    select.disabled = generationSaving;
+  }
+}
+
+async function refreshGenerationFolders(databaseId) {
+  const sequence = ++folderLoadSequence;
+  renderGenerationFolders([]);
+  if (!databaseId) return;
   try {
-    const config = {
-      webTargetRoot: normalizeKnowledgeTargetRoot(webTargetRootInput.value),
-      conversationTargetRoot: normalizeKnowledgeTargetRoot(conversationTargetRootInput.value)
-    };
-    await send({ type: "save-config", config });
-    webTargetRootInput.value = config.webTargetRoot;
-    conversationTargetRootInput.value = config.conversationTargetRoot;
-    statusText.textContent = "Generation folders saved.";
-  } catch (error) { statusText.textContent = error instanceof Error ? error.message : String(error); }
-});
+    const response = await send({ type: "list-generation-folders" });
+    if (sequence !== folderLoadSequence) return;
+    renderGenerationFolders(response.result?.folders || []);
+    if (response.result?.truncated) {
+      statusText.textContent = `Showing the first ${response.result.folders.length} folders. Other folders are not listed.`;
+    }
+  } catch (error) {
+    if (sequence === folderLoadSequence) statusText.textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
 load();
 
 async function load() {
@@ -123,10 +172,14 @@ async function load() {
 
 async function loadUiSettings() {
   const response = await send({ type: "load-config" });
-  webTargetRootInput.value = response.config?.webTargetRoot ?? "/Knowledge/web";
-  conversationTargetRootInput.value = response.config?.conversationTargetRoot ?? "/Knowledge/conversations";
+  savedFolders = {
+    webTargetRoot: response.config?.webTargetRoot ?? "/Knowledge/web",
+    conversationTargetRoot: response.config?.conversationTargetRoot ?? "/Knowledge/conversations"
+  };
   showSaveControlsInput.checked = response.config?.showSaveControls !== false
     && response.config?.showSaveControls !== "false";
+  showSaveControlsInput.disabled = false;
+  void refreshGenerationFolders(response.config?.databaseId || "");
 }
 
 async function saveShowSaveControlsSetting(showSaveControls) {
@@ -148,6 +201,7 @@ async function notifyAuthSessionChanged() {
 async function saveDatabaseSelection(databaseId) {
   await send({ type: "save-config", config: { databaseId } });
   statusText.textContent = databaseId ? "Database selected" : "No writable active databases found.";
+  await refreshGenerationFolders(databaseId);
 }
 
 async function refreshAuthAndDatabases(preferredDatabase = null) {
@@ -184,6 +238,7 @@ async function refreshAuthAndDatabases(preferredDatabase = null) {
     return;
   }
   statusText.textContent = "Database selected";
+  await refreshGenerationFolders(selectedDatabaseId);
 }
 
 function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No writable active databases found.") {

@@ -1564,3 +1564,16 @@ test("all AI conversation providers use the saved conversation folder", async ()
     }
   } finally { restore(); setOffscreenBridgeForTest(null); }
 });
+
+test("concurrent autosaves preserve both generation folder selections", async () => {
+  const restore = installChromeStorage(memoryStorage());
+  try {
+    await Promise.all([
+      handleMessage({type:"save-config",config:{webTargetRoot:"/Knowledge/articles"}}),
+      handleMessage({type:"save-config",config:{conversationTargetRoot:"/Knowledge/chats"}})
+    ]);
+    const {config} = await handleMessage({type:"load-config"});
+    assert.equal(config.webTargetRoot,"/Knowledge/articles");
+    assert.equal(config.conversationTargetRoot,"/Knowledge/chats");
+  } finally {restore();}
+});
