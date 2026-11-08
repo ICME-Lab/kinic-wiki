@@ -49,7 +49,9 @@ test("real deposit, authorization, compact-model upgrade, and persistent daily b
   const oldWasm = required("BEKKO_BASELINE_WASM");
   const newWasm = required("BEKKO_REFILL_WASM");
   const pack = readFileSync(required("BEKKO_COMPACT_PACK"));
-  const pic = await PocketIc.create(server.getUrl());
+  // Compiling the compact model and verifying its pack can exceed the client's
+  // default 30 seconds. Keep this host wait separate from canister call deadlines.
+  const pic = await PocketIc.create(server.getUrl(), { processingTimeoutMs: 120000 });
   try {
     const { actor: bekko } = await pic.setupCanister({ targetCanisterId: bekkoId, sender: owner,
       controllers: [owner], cycles: 10000000000000n, idlFactory: bekkoFactory, wasm: oldWasm });

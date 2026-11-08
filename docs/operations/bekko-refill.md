@@ -62,6 +62,20 @@ node --test pocketic-tests/integration/bekko-refill.test.mjs
 
 The rehearsal verifies 14 before/after embeddings bit-for-bit, model/weight/runtime/space identity, Wiki-only balance authorization, actual Wiki-to-Bekko cycle movement, disabled/controller gates, persisted daily limits across Wiki upgrade, frozen balance failure without a deposit, daily billing after both external checks fail, and a successful liquid-bound transfer with the actual CDK prepayment retained. Rust tests cover stale configuration, insufficient/liquid funds, overlap, ambiguous/upgrade recovery, audit-history pruning and reconciliation.
 
+## Deterministic fault and recovery tests
+
+The fault suite needs PocketIC 16 and the pinned Cargo dependencies, but no embedding model or external Bekko checkout:
+
+```sh
+POCKET_IC_BIN=/absolute/path/pocket-ic pnpm --dir pocketic-tests test:bekko-refill-faults
+```
+
+It runs real Wasm with real SQLite persistence and management cycle transfers. A small fixture supplies the authenticated balance endpoint. A held HTTPS outcall lets the runner delay a balance reply beyond the 30-second timeout. For deposit-response delay, a disposable Wiki build directs only the deposit call to a relay, which forwards all attached cycles through the real management `deposit_cycles` before holding its reply. This exercises the CDK transport timeout and Wiki uncertainty handling; it does not simulate delayed execution inside the management canister itself.
+
+A second disposable Wiki build traps immediately after a successful deposit response, before journal completion. The suite checks that the committed deposit remains locked, upgrades to the normal Wiki Wasm, and follows disabled/controller reconciliation before resuming. Another case upgrades while the relay response is still outstanding and then releases the old response. Repeated checks must never send again while locked; reconciliation must retain the attempted budget, and the resumed transfer must still obey the daily limit. The daily-expiry case also checks a storage-billing timestamp to prove the real daily maintenance ran while the unknown deposit remained locked.
+
+The builder copies current working sources into `.tmp-test/`, uses an isolated target directory, and removes the source copy in `finally`. Fault injection anchors must match exactly once or the build fails. Neither the normal Wiki Wasm nor production Rust files receive test hooks. Fault-injected Wasm files under `target/bekko-refill-*.wasm` are test artifacts and must not be deployed.
+
 ## Production rollout after PR review and merge
 
 1. Save current module hashes, controller status, model info and representative inference vectors. Verify the compact model pack SHA256 and build provenance. Keep the previous deployable Wasm.
