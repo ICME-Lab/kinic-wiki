@@ -58,16 +58,16 @@ describe("MCP inside the session Durable Object", () => {
     return JSON.parse(text.startsWith("event:") ? text.split("\n").find(line => line.startsWith("data: "))!.slice(6) : text);
   }
 
-  async function iiSession(id: string, rootKey = generateIiKey(), scope = "mcp:read") {
+  async function iiSession(id: string, rootKey = generateIiKey(), scope = "mcp:read", redirectUri = "https://chatgpt.com/callback") {
     const now = Date.now(), verifier = "v".repeat(43);
     const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
     const stub = env.MCP_AUTH_STATE.getByName(`session:${id}`);
-    const input = { ...await session(id, verifier, now, now + 10 * 60_000), scope };
+    const input = { ...await session(id, verifier, now, now + 10 * 60_000), scope, redirectUri };
     input.sessionKey = await encryptJson(generateIiKey().toJSON(), encryptionKey, sessionKeyContext(id));
     await stub.createSession(input);
     await stub.claimConnect("connect-state", `${id}.cookie`, now);
     const completed = await stub.completeConnect(now + 10 * 60_000, scope.includes("mcp:write") ? "all" : "queries", now, id);
-    const issued = await stub.exchangeCode({ code: completed!.code, clientId: "client", redirectUri: "https://chatgpt.com/callback", codeVerifier: verifier, issueRefreshToken: true, now });
+    const issued = await stub.exchangeCode({ code: completed!.code, clientId: "client", redirectUri, codeVerifier: verifier, issueRefreshToken: true, now });
     const appKey = generateIiKey(), expiresAt = now + 5 * 60_000;
     const chain = await DelegationChain.create(rootKey, appKey.getPublicKey(), new Date(expiresAt));
     const material: KinicDelegationMaterialV1 = { version: 1, targetOrigin, expiresAt, appKey: appKey.toJSON(), delegation: chain.toJSON() };
@@ -116,6 +116,27 @@ describe("MCP inside the session Durable Object", () => {
       await state.storage.put("record", record);
     });
     expect((await entry.fetch(mcpRequest(reconnected.issued.accessToken, "tools/call", params), env)).status).toBe(401);
+  });
+
+  it("omits the connection profile for authenticated Muse clients, including after refresh", async () => {
+    const muse = await iiSession("muse-no-profile", undefined, "mcp:read", "https://agent.meta.ai/api/hatch/oauth/callback");
+    const chatgpt = await iiSession("chatgpt-keeps-profile");
+    const request = mcpRequest(muse.issued.accessToken);
+    // Client-supplied labels must not turn the app-only profile back on.
+    request.headers.set("user-agent", "ChatGPT");
+    const tools = (await result(await entry.fetch(request, env))).result.tools;
+    expect(tools.map((tool: { name: string }) => tool.name)).not.toContain("get_profile");
+    const chatgptTools = (await result(await entry.fetch(mcpRequest(chatgpt.issued.accessToken), env))).result.tools;
+    expect(tools).toEqual(chatgptTools.filter((tool: { name: string }) => tool.name !== "get_profile"));
+    const denied = await result(await entry.fetch(mcpRequest(muse.issued.accessToken, "tools/call", { name: "get_profile", arguments: {} }), env));
+    expect(denied.result?.isError ?? Boolean(denied.error)).toBe(true);
+    expect(JSON.stringify(denied)).not.toContain(muse.rootKey.getPrincipal().toText());
+    expect(denied.result?.structuredContent).toBeUndefined();
+    expect(await profile(chatgpt.issued.accessToken)).toHaveProperty("id");
+    const refreshed = await muse.stub.rotateRefreshToken({ refreshToken: muse.issued.refreshToken!, clientId: "client", resource, now: Date.now() });
+    expect(refreshed).not.toBeNull();
+    const refreshedTools = (await result(await entry.fetch(mcpRequest(refreshed!.accessToken), env))).result.tools;
+    expect(refreshedTools).toEqual(tools);
   });
 
   it("returns the configured review profile through a read-only OAuth session", async () => {

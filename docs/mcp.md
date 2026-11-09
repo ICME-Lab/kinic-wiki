@@ -61,12 +61,17 @@ are different trusted connectors. The initial Kinic connection request expires
 after ten minutes; after changing trust settings, start a fresh connection from
 Muse rather than reusing an expired callback page.
 
-Muse's custom client returned all 16 registered Private tools, including
-`get_profile`, despite its app-only visibility metadata. Do not treat ChatGPT's
-15 model-visible tool behavior as verified for Muse. Muse-specific profile
-filtering remains a release requirement; do not call the profile during these
-discovery tests. The returned serverInfo title and embedded Kinic icon were
-confirmed, but this does not prove the custom connector list displays the logo.
+Muse's custom client originally returned all 16 registered Private tools,
+including `get_profile`, despite its app-only visibility metadata. For an
+OAuth session whose validated redirect URI is exactly
+`https://agent.meta.ai/api/hatch/oauth/callback`, the server now omits
+`get_profile` from registration: Muse receives only the 15 Wiki tools and cannot
+call the connection profile by guessing its name. The decision uses the saved,
+authenticated OAuth session, not User-Agent or MCP clientInfo, and also applies
+after token refresh and to existing sessions. Other clients retain their
+existing profile contract. No extra endpoint or reauthorization is required.
+The returned serverInfo title and embedded Kinic icon were confirmed, but this
+does not prove the custom connector list displays the logo.
 
 ## Connection profile
 

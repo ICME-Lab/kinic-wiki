@@ -488,6 +488,7 @@ export async function handleMcpRequest(
     parsedBody = parsed.body;
 
     let requestEnv = env;
+    let includeConnectionProfile = true;
     if (mcpRequestRequiresAuthentication(authMode)) {
       if (!request.headers.has("authorization")) {
         return withCors(
@@ -498,6 +499,7 @@ export async function handleMcpRequest(
       if ("response" in authenticated) {
         return withCors(authenticated.response);
       }
+      includeConnectionProfile = authenticated.includeConnectionProfile;
       requestEnv = {
         ...env,
         ...(authenticated.identity ? { KINIC_WIKI_IDENTITY: authenticated.identity } : {}),
@@ -508,7 +510,7 @@ export async function handleMcpRequest(
         }
       };
     }
-    const server = createServer(requestEnv, { accessPolicy, writesAvailable });
+    const server = createServer(requestEnv, { accessPolicy, writesAvailable, includeConnectionProfile });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     return withCors(await transport.handleRequest(request, { parsedBody }));
@@ -539,7 +541,7 @@ function openAiAppsChallengeResponse(env: RuntimeEnv) {
 
 export function createServer(
   env: RuntimeEnv,
-  options: { accessPolicy?: McpAccessPolicy; writesAvailable?: boolean } = {}
+  options: { accessPolicy?: McpAccessPolicy; writesAvailable?: boolean; includeConnectionProfile?: boolean } = {}
 ): McpServer {
   const accessPolicy = options.accessPolicy ?? "public";
   const writesAvailable = options.writesAvailable ?? false;
@@ -669,7 +671,7 @@ export function createServer(
     registerMutationTools(server, env, writeToolMeta);
   }
 
-  if (accessPolicy === "private_required") {
+  if (accessPolicy === "private_required" && options.includeConnectionProfile !== false) {
     server.registerTool("get_profile", {
       description: "Return the stable profile ID and a short PID label represented by this request's authenticated credentials for connection management.",
       inputSchema: profileInputSchema,
