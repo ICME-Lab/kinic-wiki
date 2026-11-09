@@ -55,6 +55,15 @@ for (const [project, mode, fixture, filename] of targets) {
           MCP_REVIEW_ACCESS_VERSION: "review-closed-20261014"
         };
       }
+      // Muse host verification was added after migration to private production.
+      // Keep the historical fixture unchanged and require only this exact delta;
+      // all other modes must continue to omit the verification binding.
+      if (project === "workers/wiki-mcp" && mode === "private" && field === "vars") {
+        expected = {
+          ...expected,
+          MUSE_CHALLENGE_TOKEN: "0129745c2e46164a5448a20c1f20ba74877141e775db04dab5c8cfab5ad0e831"
+        };
+      }
       assert.deepEqual(normalized(field, native[field], native.name), normalized(field, expected, legacy.name), field);
     }
     if (project === "workers/wiki-assistant") {
