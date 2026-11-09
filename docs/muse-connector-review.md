@@ -27,24 +27,26 @@ Accounts and restrictions: Internet Identity and access to an existing Kinic Wik
 
 ## Portal fields and assets
 
-Observed in the authenticated submission form on 2026-11-09: Overview → Technical specs → Review. Only Overview has been inspected so far; later steps are not yet verified.
+Observed in the authenticated submission form on 2026-11-09: Overview → Technical specs → Review. The draft reached the final Review screen; no authorization or Terms checkbox was selected and Submit for review was not pressed.
 
 | Field | Prepared value or required input |
 | --- | --- |
 | Connector name | Kinic Wiki |
-| Company or developer | Kinic is the existing product brand; authorized submitter must verify the exact business/developer name |
+| Company or developer | Entered by the operator in the live draft; confirm authority and consistency with product terms before submission |
 | Product website | https://wiki.kinic.xyz |
 | Example prompts | Use the examples above, with a dedicated fixture database for review |
 | Connector icon | Existing `wikibrowser/public/kinic-logo-large.png`, 952×952; uploaded to the draft and confirmed resized to 512×512 by the portal |
 | Payments | “My connector does not accept payments” selected; no payment tools are exposed. Disclose underlying service charges separately |
-| Your name | Authorized submitter's first and last name, matching their ID; not inferred from a username or chat greeting |
-| Work email | Authorized submitter's company email; not inferred from Git configuration |
+| Your name | Entered by the operator in the live draft; ID matching is the submitter's attestation, not independently verified |
+| Work email | Entered by the operator in the live draft; confirm it satisfies Meta's work-email requirement |
 | Support email or URL | Existing published contact: https://x.com/kinic_app; verify acceptance in the portal |
 | Privacy policy | https://wiki.kinic.xyz/privacy-policy; live page verified in Chrome, dated September 30, 2026; deployed settings still require review before final attestation |
-| Terms of service | A verified public product terms URL is required; no such document was found in the inspected repository legal/store-listing materials |
+| Terms of service | Candidate https://www.kinic.io/terms-of-service, found on the official site and added to the draft. Dated May 28, 2025, it focuses on the Chrome extension and names Kinic, Inc.; applicability to Wiki/Muse and consistency with the submitted developer identity require authorized confirmation |
 | Anything else | Private Wiki content CRUD via OAuth-protected remote MCP; no payment, account administration, or publication tools |
 
 Do not fill unknown legal/business facts with placeholders in the live portal. The maintainer must verify business authority, support ownership, and product terms before submission.
+
+Technical specs fields: Existing MCP; production endpoint `https://wiki-private-mcp.kinic.xyz/mcp`; API/MCP documentation `https://github.com/ICME-Lab/kinic-wiki/blob/main/docs/mcp.md` (repository verified public); access requirements describe II, read/write scopes, database roles, exclusions, and securely supplied review fixture credentials. The form does not request credentials at this step. Final Review requires attestations of brand/submission authority, understanding approval/promotion limits, and agreement to Muse Connector Terms. Do not accept these on the operator's behalf without action-time confirmation.
 
 ## Technical connection contract
 
