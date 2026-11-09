@@ -62,6 +62,7 @@ import {
   toolAuthMetadata
 } from "./tool-metadata.js";
 import { clipText } from "./text.js";
+import { KINIC_ICON } from "./brand-icon.js";
 
 const DEFAULT_DATABASE_LIMIT = 10;
 const profileInputSchema = z.strictObject({});
@@ -542,7 +543,9 @@ export function createServer(
   const server = new McpServer(
     {
       name: "kinic-wiki-mcp",
-      version: "0.1.0"
+      title: "Kinic Wiki",
+      version: "0.1.0",
+      icons: [KINIC_ICON]
     },
     {
       maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,

@@ -1,6 +1,8 @@
 # Kinic Wiki — Muse Connector Review Package
 
-Status: **Preparation in progress; not submitted or published.**
+Status: **Submitted on 2026-11-09; review requirements incomplete; not approved or published.**
+
+The browser now shows submission `724a1604-909e-4f83-8819-9a44fc501d51`. The controller did not click Submit or accept the final attestations. Business verification, data processing questionnaire, and technical details remain Not started (0/3).
 
 Target: Meta's personal Muse app, not Muse Code. Requirements reference:
 [Connector guidelines](https://platform.muse.ai/docs), checked 2026-11-09.
@@ -72,9 +74,9 @@ Check actual tool discovery before submission. The shared Private endpoint curre
 
 **Authenticated tool discovery blocker:** Muse reported HTTP 403 followed by two 45-second timeouts for tools/list, without obtaining tool names or invoking tools/call. A scoped staging Worker log query confirmed registration 201 and code exchange 200, with `clientSupportsRefresh`, `refreshIssued`, and `offlineAccessGranted` all true. No corresponding POST `/mcp` invocation appeared in that window. A credential-free local initialize POST returned the expected 401 challenge, while Muse's GET returned 405. Determine the actual 403 response origin before changing server authentication, Origin handling, or transport. Refresh-token issuance is verified; refresh rotation from Muse and end-to-end tool use are not.
 
-A subsequent single direct curl POST from Muse, without Authorization or the connector helper, timed out after 15 seconds with zero origin-response bytes. Only the proxy's `HTTP/1.1 200 Connection Established` was available; no origin HTTP status, Server, CF-Ray, Content-Type, or body was received. The earlier helper discarded the 403 headers/body, so that response's origin cannot be determined retrospectively. Do not label this a proven Kinic authorization failure or a proven Meta outage. Resolve the Muse-to-staging transport path before proceeding to fixture CRUD, production rollout, or submission. Network approvals were one-time only; no domain-wide permanent allowance was enabled.
+A subsequent single direct curl POST from Muse, without Authorization or the connector helper, timed out after 15 seconds with zero origin-response bytes. Only the proxy's `HTTP/1.1 200 Connection Established` was available; no origin HTTP status, Server, CF-Ray, Content-Type, or body was received. The earlier helper discarded the 403 headers/body, so that response's origin cannot be determined retrospectively. Do not label this a proven Kinic authorization failure or a proven Meta outage. Resolve the transport path before claiming successful end-to-end operation. The operator subsequently authorized a reviewed production Worker rollout and a dedicated production fixture as an alternative to restoring staging. Network approvals were one-time only; no domain-wide permanent allowance was enabled.
 
-**Staging canister blocker:** After the operator explicitly authorized the separate staging administration context, `list_databases` was rejected with replica error `IC0207`: canister `3ryrw-kyaaa-aaaaf-qgxpq-cai` is frozen. Management status and snapshot inventory were also rejected, with a reported minimum top-up of approximately 45.82 billion execution cycles. No fixture was created. Restore the canister execution balance before running data tests; cycles held in a cycles-ledger account are a separate balance. Funding is a separate operator decision. This error does not establish the cause of Muse's credential-free POST transport timeout. The Muse settings page still lists Kinic Wiki as linked; do not repeatedly reconnect in response to the earlier stale authentication question.
+**Staging canister blocker:** After the operator explicitly authorized the separate staging administration context, `list_databases` was rejected with replica error `IC0207`: canister `3ryrw-kyaaa-aaaaf-qgxpq-cai` is frozen. Management status and snapshot inventory were also rejected, with a reported minimum top-up of approximately 45.82 billion execution cycles. No fixture was created. Staging restoration was superseded by the operator-approved production fixture approach; no top-up is authorized. Cycles held in a cycles-ledger account are a separate balance. This error does not establish the cause of Muse's credential-free POST transport timeout. The Muse settings page still lists Kinic Wiki as linked; do not repeatedly reconnect in response to the earlier stale authentication question.
 
 ## Tool inventory and permissions
 
@@ -149,3 +151,13 @@ Use unique test paths and a dedicated II identity. Before destructive steps, obt
 Local validation for the callback patch: 111 Node tests, 328 regular Vitest tests, and 92 Worker tests passed; typecheck and staging/private cf dry-run builds passed. Existing dependency sourcemap warnings remain. A separate read-only reviewer found no actionable patch issues; live interoperability and legal/business facts were explicitly outside that review's evidence.
 
 Keep the portal receipt and review status in the workflow record. Address each requested change against a reproducible case. A submitted connector, a working custom connector, an approved connector, and a published listing are separate milestones.
+
+## Production test and icon review update
+
+The operator authorized review, fixes, and a test using the existing production canister. Do not upgrade the canister or transfer cycles. The CLI created `muse-review-fixture` (`db_ifvclcexmagf`) without any payment, but the DB is pending with zero internal cycles: the administrator already used its initial free grant. No synthetic pages or CRUD tests have run. Activation requires a separately authorized billing decision; do not silently use an ordinary database instead.
+
+Use the already-authorized ordinary Internet Identity for interactive connection tests. Its access is broader than the fixture: always select the exact fixture DB and unique scratch paths; this is an operational test boundary, not server-side isolation. A later reviewer credential must have access only to the dedicated DB and must not reuse OpenAI credentials. Reviewer login stays disabled during ordinary II tests.
+
+The icon patch adds Kinic Wiki title and the existing 128×128 PNG as embedded MCP serverInfo metadata, avoiding an external asset fetch. An independent reviewer found no actionable issues. Initialization checks verify exact icon bytes; all 111 Node, 329 regular Vitest, and 92 Worker tests pass (532 total), as do typecheck and private cf dry-run build. Existing dependency sourcemap warnings remain. Muse reported that its supported custom connector.yaml fields do not include an icon URL. Therefore MCP metadata does not establish that the custom connector list icon is fixed. The submission artwork was uploaded separately.
+
+Production Worker rollback version before rollout: `bfe09af4-e7ef-414a-9189-14756746608c`. Existing production canister is Running; its module hash was recorded before the test.
