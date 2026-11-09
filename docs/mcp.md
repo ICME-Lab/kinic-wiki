@@ -40,6 +40,34 @@ Route behavior:
 
 On both Private endpoints, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
 
+## Muse connection troubleshooting
+
+For personal Muse custom clients, send an application-identifying HTTP header such as
+`User-Agent: Kinic-Wiki-Muse/1.0`. The Python `urllib` default
+`Python-urllib/3.12` was rejected by Cloudflare Browser Integrity Check with HTTP
+403 / error 1010 before the request reached the Worker. Changing only this
+header allowed authenticated `initialize` and `tools/list` to succeed. Use the
+client's supported request-header configuration; keep this setting in its normal
+connector client, not only a temporary diagnostic script. Do not impersonate a
+browser or disable zone-wide protections to address this client default.
+
+If a request fails, preserve its status, `Server`, `CF-Ray`, `Content-Type`, and a
+sanitized error reason. Never log Authorization, tokens, OAuth codes/state, or
+Wiki contents. A missing Worker invocation alone cannot identify the rejecting
+component. See [Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/).
+
+Internet Identity must trust the exact MCP URL in use. Staging and production
+are different trusted connectors. The initial Kinic connection request expires
+after ten minutes; after changing trust settings, start a fresh connection from
+Muse rather than reusing an expired callback page.
+
+Muse's custom client returned all 16 registered Private tools, including
+`get_profile`, despite its app-only visibility metadata. Do not treat ChatGPT's
+15 model-visible tool behavior as verified for Muse. Muse-specific profile
+filtering remains a release requirement; do not call the profile during these
+discovery tests. The returned serverInfo title and embedded Kinic icon were
+confirmed, but this does not prove the custom connector list displays the logo.
+
 ## Connection profile
 
 Private MCP registers `get_profile` with `_meta["openai/profile"]: true` and
