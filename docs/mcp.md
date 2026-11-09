@@ -96,6 +96,14 @@ Discovery and OAuth endpoints:
 
 OAuth uses authorization code with mandatory S256 PKCE and DCR. Each audience is fixed to its exact Private MCP URL. II defaults to a 30-day connection request; the user can choose a shorter duration. The local session ends at the earliest of the II-approved expiry, its saved cap, and 30 days from creation. Existing shorter sessions are not extended. Authorization codes expire after at most ten minutes, and access tokens last at most one hour.
 
+Hosted OAuth callbacks allow the existing ChatGPT hosts and the exact personal
+Muse callback `https://agent.meta.ai/api/hatch/oauth/callback`, observed in Muse's
+custom connector setup on 2026-11-09. Other Meta paths, subdomains, ports, query
+strings, fragments, and trailing-slash variants are not permitted. Loopback
+callbacks remain supported for local clients. This callback compatibility does
+not establish successful Muse consent, tool discovery, review, or publication;
+see [the Muse review package](muse-connector-review.md) for those milestones.
+
 II-approved sessions issue rotating refresh tokens to clients registered for `refresh_token`, without requiring `offline_access`. The `mcp:read` and `mcp:write` scopes remain limited to the approved permissions; `offline_access` is accepted and echoed only when requested for compatibility. Token exchange does not add scopes. DCR without `grant_types` still registers only `authorization_code`; such clients receive no refresh token and cannot use the refresh grant. Reviewer sessions retain their eight-hour cap and existing `offline_access` requirements. Refresh never extends the approved session expiry. Reuse of an authorization code or spent refresh token revokes the active session. All replay hashes are retained, with a fresh connection required after 4,096 successful refresh rotations.
 
 The authorization page offers Internet Identity. A review-only username/password path is available when `MCP_REVIEW_LOGIN_ENABLED=true`; checked-in native cf configurations disable it after review completion. `MCP_REVIEW_ACCESS_VERSION` was changed to invalidate earlier reviewer sessions when deployed. Review credentials authorize a dedicated Ed25519 service identity whose private key and expected principal are stored as Cloudflare Secrets; all MCP tools still call the real canister. For that identity, the Worker enforces the environment-specific `MCP_REVIEW_DATABASE_ID` and `MCP_REVIEW_WRITE_PREFIX` before every write, including both sides of a move, while the service principal remains limited to `writer` on `openai-review-fixture`. Reviewer sessions use the same PKCE, code, token, scope, expiration, and refresh-replay controls as II sessions. `MCP_REVIEW_ACCESS_VERSION` is checked before authorization-code exchange, refresh rotation, and access-token use, providing explicit credential-session revocation; earlier version values must not be reused.

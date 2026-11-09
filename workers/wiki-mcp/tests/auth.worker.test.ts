@@ -272,7 +272,7 @@ describe("staging OAuth discovery and registration", () => {
     await expect(response.json()).resolves.toEqual({ error: "invalid_connection" });
   });
 
-  it("allows only the hosted OpenAI redirects and loopback redirects", async () => {
+  it("preserves hosted OpenAI and loopback redirects while rejecting unrelated hosts", async () => {
     const accepted = await register(["https://chatgpt.com/connector/oauth/callback", "http://127.0.0.1:43210/callback"]);
     expect(accepted.status).toBe(201);
     const acceptedBody = await accepted.json<{ client_id: string }>();
@@ -281,6 +281,37 @@ describe("staging OAuth discovery and registration", () => {
     const rejected = await register(["https://attacker.example/callback"]);
     expect(rejected.status).toBe(400);
     await expect(rejected.json()).resolves.toEqual({ error: "invalid_redirect_uri" });
+  });
+
+  it("registers the observed Muse callback and starts PKCE authorization", async () => {
+    const redirectUri = "https://agent.meta.ai/api/hatch/oauth/callback";
+    const response = await register([redirectUri]);
+    expect(response.status).toBe(201);
+    const client = await response.json<{ client_id: string; grant_types: string[] }>();
+    expect(client.grant_types).toEqual(["authorization_code", "refresh_token"]);
+    const url = new URL(await authorizationUrl(client.client_id, "m".repeat(43)));
+    url.searchParams.set("redirect_uri", redirectUri);
+    const authorization = await fetchWorker(url.toString());
+    expect(authorization.status).toBe(200);
+    expect(authorization.headers.get("content-security-policy")).toContain("https://agent.meta.ai");
+    expect(authorization.headers.get("content-security-policy")).not.toContain("https://platform.openai.com");
+    expect(await authorization.text()).toContain("Internet Identity");
+  });
+
+  it.each([
+    "http://agent.meta.ai/api/hatch/oauth/callback",
+    "https://agent.meta.ai.evil.example/api/hatch/oauth/callback",
+    "https://evil.agent.meta.ai/api/hatch/oauth/callback",
+    "https://agent.meta.ai/api/hatch/oauth/callback/",
+    "https://agent.meta.ai/api/hatch/oauth/callback?next=https://evil.example",
+    "https://agent.meta.ai/api/hatch/oauth/callback#fragment",
+    "https://user:pass@agent.meta.ai/api/hatch/oauth/callback",
+    "https://agent.meta.ai:8443/api/hatch/oauth/callback",
+    "https://agent.meta.ai/api/hatch/oauth/other"
+  ])("rejects unapproved Muse callback variants: %s", async (redirectUri) => {
+    const response = await register([redirectUri]);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_redirect_uri" });
   });
 
   it("limits client registration per connecting IP", async () => {

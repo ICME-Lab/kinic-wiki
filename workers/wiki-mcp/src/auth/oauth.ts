@@ -1003,6 +1003,11 @@ function isAllowedRedirectUri(value: string): boolean {
     if (url.username || url.password || url.hash) {
       return false;
     }
+    // Observed in the personal Muse app's custom connector setup. Keep this
+    // callback exact rather than trusting all paths or subdomains on Meta.
+    if (value === "https://agent.meta.ai/api/hatch/oauth/callback") {
+      return true;
+    }
     if (url.protocol === "https:" && (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com")) {
       return true;
     }
