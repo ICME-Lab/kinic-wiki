@@ -483,7 +483,9 @@ jobs:
       - name: Install workspace dependencies for the MCP reader
         run: pnpm install --frozen-lockfile
       - name: Install PocketIC probe dependencies
-        run: npm ci --prefix pocketic-tests
+        # @dfinity/pic's postinstall downloads an unused PocketIC 12 binary.
+        # The steps below provision and verify the runtimes these tests use.
+        run: npm ci --prefix pocketic-tests --ignore-scripts
       - name: Provision PocketIC runtime
         run: bash scripts/setup_canbench_ci.sh
       - name: Run ignored-native replacement canister probe
