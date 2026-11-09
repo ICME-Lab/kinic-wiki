@@ -35,12 +35,12 @@ Observed in the authenticated submission form on 2026-11-09: Overview → Techni
 | Company or developer | Kinic is the existing product brand; authorized submitter must verify the exact business/developer name |
 | Product website | https://wiki.kinic.xyz |
 | Example prompts | Use the examples above, with a dedicated fixture database for review |
-| Connector icon | Existing `wikibrowser/public/kinic-logo-large.png`, 952×952. The form accepts square PNGs up to 4096×4096 and scales them to 512×512 |
-| Payments | No payment tools are exposed. Select the corresponding actual portal option after inspecting its choices; disclose underlying service charges separately |
+| Connector icon | Existing `wikibrowser/public/kinic-logo-large.png`, 952×952; uploaded to the draft and confirmed resized to 512×512 by the portal |
+| Payments | “My connector does not accept payments” selected; no payment tools are exposed. Disclose underlying service charges separately |
 | Your name | Authorized submitter's first and last name, matching their ID; not inferred from a username or chat greeting |
 | Work email | Authorized submitter's company email; not inferred from Git configuration |
 | Support email or URL | Existing published contact: https://x.com/kinic_app; verify acceptance in the portal |
-| Privacy policy | https://wiki.kinic.xyz/privacy-policy; verify the live page and current implementation before submission |
+| Privacy policy | https://wiki.kinic.xyz/privacy-policy; live page verified in Chrome, dated September 30, 2026; deployed settings still require review before final attestation |
 | Terms of service | A verified public product terms URL is required; no such document was found in the inspected repository legal/store-listing materials |
 | Anything else | Private Wiki content CRUD via OAuth-protected remote MCP; no payment, account administration, or publication tools |
 
@@ -63,6 +63,8 @@ Each Private origin exposes:
 Read scope: `mcp:read`. Editing additionally requires `mcp:write` and Internet Identity **Actions & questions**. **Questions only** removes write scope. An account connection does not grant permission for unrelated operations. Never weaken PKCE, audience validation, scope checks, or database authorization for Muse compatibility.
 
 **Observed Muse preparation:** Muse displayed `mcp:read offline_access`, S256 PKCE, `token_endpoint_auth_method=none`, and RFC 7591 registration for the staging endpoint. Clicking Connect produced: “The provider rejected automatic app registration” (Japanese UI). Muse then inspected its connection configuration and reported the exact callback `https://agent.meta.ai/api/hatch/oauth/callback`. Actual DCR `grant_types` could not be inspected. These are values reported by Muse's setup/diagnosis, not a captured wire request. A regression test using the reported callback reproduced HTTP 400 `invalid_redirect_uri`; the patch adds that exact callback without permitting other Meta URLs. No authorization page was reached in the pre-patch live test and no Wiki contents were fetched. Live post-deployment verification remains required.
+
+**Post-patch staging result:** Commit `bf01b78a` was deployed using the guarded `deploy:staging` script and the `kinic-production` Cloudflare profile. Version `81042f80-5ebb-4d27-810f-6de92a35e91b` is serving 100% of staging traffic; the previous version is `09149e79-9655-4269-a434-6b1a65875478`. Retrying Muse Connect passed automatic registration and reached Internet Identity. II displayed “This MCP server isn't trusted yet.” The ordinary user's trust setting was not changed; testing is waiting for a separate test Identity with the exact staging endpoint trusted. No Wiki content was read or changed. Tool discovery, consent completion, refresh, CRUD, and production deployment remain unverified.
 
 Check actual tool discovery before submission. The shared Private endpoint currently registers seven reads, eight content mutations, and one OpenAI app-only `get_profile`. Do not claim that Muse hides the profile until observed. If it appears to the model, isolate Muse discovery on a separate route without changing the existing ChatGPT contract.
 
@@ -130,10 +132,12 @@ Use unique test paths and a dedicated II identity. Before destructive steps, obt
 ## Submission and release record
 
 - Submission ID/date: not submitted.
-- Confirmed endpoint/callback/client-registration requirements: pending actual request evidence.
+- Confirmed endpoint/callback/client-registration requirements: exact reported callback implemented; live staging DCR reached Internet Identity; wire-level grant types/refresh support still unverified.
 - Review account and per-tool demo: not provisioned / not run.
 - Muse policy/business verification and Terms acceptance: pending authorized submitter.
 - Production compatibility deployment: not performed.
 - Meta review decision and directory listing: pending.
+
+Local validation for the callback patch: 111 Node tests, 328 regular Vitest tests, and 92 Worker tests passed; typecheck and staging/private cf dry-run builds passed. Existing dependency sourcemap warnings remain. A separate read-only reviewer found no actionable patch issues; live interoperability and legal/business facts were explicitly outside that review's evidence.
 
 Keep the portal receipt and review status in the workflow record. Address each requested change against a reproducible case. A submitted connector, a working custom connector, an approved connector, and a published listing are separate milestones.
