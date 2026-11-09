@@ -462,6 +462,13 @@ export async function handleMcpRequest(
     if (request.method === "GET" && url.pathname === "/.well-known/openai-apps-challenge") {
       return withCors(openAiAppsChallengeResponse(env));
     }
+    const museChallenge = env.MUSE_CHALLENGE_TOKEN;
+    if (request.method === "GET" && museChallenge && /^[a-f0-9]{64}$/u.test(museChallenge)
+      && url.pathname === `/.well-known/muse-challenge/${museChallenge}`) {
+      return withCors(new Response(`muse-challenge=${museChallenge}`, {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" }
+      }));
+    }
     if (url.pathname !== "/mcp" || (request.method !== "POST" && request.method !== "GET")) {
       return withCors(Response.json({ error: "not found" }, { status: 404 }));
     }

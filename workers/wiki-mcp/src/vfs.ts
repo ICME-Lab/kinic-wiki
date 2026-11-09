@@ -35,6 +35,7 @@ export type RuntimeEnv = {
   KINIC_WIKI_MCP_TARGET_ORIGIN?: string;
   KINIC_WIKI_PUBLIC_ORIGIN?: string;
   OPENAI_APPS_CHALLENGE_TOKEN?: string;
+  MUSE_CHALLENGE_TOKEN?: string;
   MCP_ACCESS_POLICY?: string;
   MCP_WRITE_POLICY?: string;
   MCP_PUBLIC_ORIGIN?: string;
