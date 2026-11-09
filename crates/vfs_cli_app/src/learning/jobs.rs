@@ -16,6 +16,9 @@ pub struct LearningJob {
     pub error: Option<String>,
     #[serde(default)]
     pub config_hash: Option<String>,
+    /// Claude terminal-observation generation used for this candidate/attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_evidence: Option<String>,
     #[serde(default)]
     pub retry_policy: Option<RetryPolicy>,
     #[serde(default)]
@@ -239,6 +242,7 @@ impl JobQueue {
             evaluation_path: None,
             error: None,
             config_hash: None,
+            terminal_evidence: None,
             retry_policy: Some(RetryPolicy::default()),
             pause: None,
         };

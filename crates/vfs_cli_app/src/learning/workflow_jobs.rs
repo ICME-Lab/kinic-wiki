@@ -248,7 +248,7 @@ pub async fn drain_selected(
     if !project.enabled {
         return Ok(json!({"disabled":true,"jobs":q.list()?}));
     }
-    // Each job is attempted at most once by this finite process. Release the
+    // Each job/evidence generation is attempted at most once by this finite process. Release the
     // lease before the final queue check: an enqueuer either sees an owner that
     // will recheck, or can start its own owner after release.
     let mut attempted = std::collections::BTreeSet::new();
@@ -263,6 +263,7 @@ pub async fn drain_selected(
         }
         first_pass = false;
         let outbox = open_outbox(client, c, state)?;
+        refresh_claude_evidence(&q, &outbox, selection.run_id.as_deref())?;
         let selected = if selection.run_id.is_some() || selection.max_jobs.is_some() {
             Some(
                 q.list()?
@@ -324,7 +325,7 @@ pub async fn drain_selected(
         let (wake_generation, jobs) = q.wakeup_and_jobs()?;
         let mut delivery_blocked = false;
         for mut job in jobs {
-            if attempted.contains(&job.run_id) || !selected_job(&job) {
+            if attempted.contains(&attempt_key(&job)) || !selected_job(&job) {
                 continue;
             }
             if selection.max_jobs.is_some_and(|max| started >= max) {
@@ -346,7 +347,7 @@ pub async fn drain_selected(
             if !current.enabled {
                 break;
             }
-            attempted.insert(job.run_id.clone());
+            attempted.insert(attempt_key(&job));
             if job.state == "candidate"
                 && job.candidate_path.is_some()
                 && current.validation_suite.is_none()
@@ -431,6 +432,7 @@ async fn process(
     q: &JobQueue,
     job: &mut LearningJob,
 ) -> Result<()> {
+    ensure_terminal_evidence(client, c, state, job)?;
     ensure!(job.config_path == path, "job configuration changed");
     ensure!(
         active_project_at(client, c, &job.cwd, Some(path))?
@@ -499,6 +501,7 @@ async fn process(
         .into();
         job.error = value["reason"].as_str().map(str::to_owned);
         q.save(job)?;
+        ensure_terminal_evidence(client, c, state, job)?;
         if job.state == "held" {
             return Ok(());
         }
@@ -542,12 +545,14 @@ async fn process(
         job.error = None;
         q.save(job)?;
     }
+    ensure_terminal_evidence(client, c, state, job)?;
     if job.state == "held" {
         return Ok(());
     }
     let current = load_project(path)?;
     ensure!(current.enabled, "learning disabled before publication");
     ensure_current_config(&current, job)?;
+    ensure_terminal_evidence(client, c, state, job)?;
     job.state = "publishing".into();
     q.save(job)?;
     let result = promote_candidate_at(
@@ -601,9 +606,73 @@ fn config_fingerprint(project: &ProjectConfig) -> Result<String> {
     Ok(hash(&serde_json::to_string(&(config, suite))?))
 }
 
+fn attempt_key(job: &LearningJob) -> String {
+    job.terminal_evidence
+        .as_ref()
+        .map(|generation| format!("{}:{generation}", job.run_id))
+        .unwrap_or_else(|| job.run_id.clone())
+}
+
+/// Called under the existing project job lease. Hooks only append observations
+/// and wake the queue; they never rewrite a running worker's job body.
+fn refresh_claude_evidence(
+    q: &JobQueue,
+    outbox: &outbox::Outbox,
+    selected_run: Option<&str>,
+) -> Result<()> {
+    for mut job in q.list()? {
+        if selected_run.is_some_and(|run| run != job.run_id) {
+            continue;
+        }
+        let signature = outbox.claude_terminal_signature(&job.run_id)?;
+        if signature.is_none() || signature == job.terminal_evidence {
+            continue;
+        }
+        if ["published", "publishing"].contains(&job.state.as_str()) {
+            job.error = Some("New Claude terminal evidence retained; prior publication requires explicit reconciliation".into());
+            q.save(&job)?;
+            continue;
+        }
+        if job.state == "paused"
+            && !job
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Claude terminal evidence changed"))
+        {
+            // New evidence cannot resume an operator pause or a failed model.
+            continue;
+        }
+        job.terminal_evidence = signature;
+        job.candidate_path = None;
+        job.evaluation_path = None;
+        job.error = None;
+        job.pause = None;
+        job.retry_policy = Some(crate::learning::jobs::RetryPolicy::default());
+        job.state = "pending".into();
+        q.save(&job)?;
+    }
+    Ok(())
+}
+
+fn ensure_terminal_evidence(
+    client: &impl VfsApi,
+    c: &ResolvedConnection,
+    state: &StateArgs,
+    job: &LearningJob,
+) -> Result<()> {
+    if job.terminal_evidence.is_some() {
+        ensure!(
+            open_outbox(client, c, state)?.claude_terminal_signature(&job.run_id)?
+                == job.terminal_evidence,
+            "Claude terminal evidence changed during learning; candidate must be refreshed"
+        );
+    }
+    Ok(())
+}
+
 fn unattempted(jobs: &[LearningJob], attempted: &std::collections::BTreeSet<String>) -> bool {
     jobs.iter()
-        .any(|j| DrainSelection::default().includes(j) && !attempted.contains(&j.run_id))
+        .any(|j| DrainSelection::default().includes(j) && !attempted.contains(&attempt_key(j)))
 }
 #[cfg(test)]
 mod recovery_tests {
@@ -670,6 +739,64 @@ fn ensure_current_config(project: &ProjectConfig, job: &LearningJob) -> Result<(
 mod fingerprint_tests {
     use super::*;
     #[test]
+    fn claude_evidence_refresh_preserves_operator_pauses_and_publication_reconciliation() {
+        let root = tempfile::tempdir().unwrap();
+        let q = JobQueue::open(root.path(), "binding", "project").unwrap();
+        let outbox = outbox::Outbox::open(root.path(), "canister", "db", "principal").unwrap();
+        let _lease = q.acquire().unwrap().unwrap();
+        for run in ["paused", "published", "publishing", "candidate"] {
+            q.enqueue(run, root.path(), &root.path().join("config"))
+                .unwrap();
+            let mut job = q
+                .list()
+                .unwrap()
+                .into_iter()
+                .find(|j| j.run_id == run)
+                .unwrap();
+            job.state = run.into();
+            job.candidate_path = Some("old-candidate".into());
+            job.terminal_evidence = Some("old-generation".into());
+            if run == "paused" {
+                job.pause = Some(crate::learning::jobs::JobPause {
+                    previous_state: "candidate".into(),
+                    reason: "operator_paused".into(),
+                });
+            }
+            q.save(&job).unwrap();
+            outbox.enqueue(&event(run, "hook", json!({"engine":"claude","capture":{"event":"Stop","last_assistant_message":"new evidence"}}))).unwrap();
+        }
+        refresh_claude_evidence(&q, &outbox, Some("candidate")).unwrap();
+        assert!(
+            q.list()
+                .unwrap()
+                .into_iter()
+                .filter(|job| job.run_id != "candidate")
+                .all(|job| job.terminal_evidence.as_deref() == Some("old-generation"))
+        );
+        refresh_claude_evidence(&q, &outbox, None).unwrap();
+        for job in q.list().unwrap() {
+            match job.run_id.as_str() {
+                "candidate" => {
+                    assert_eq!(job.state, "pending");
+                    assert!(job.candidate_path.is_none());
+                    assert_ne!(job.terminal_evidence.as_deref(), Some("old-generation"));
+                }
+                "paused" => {
+                    assert_eq!(job.state, "paused");
+                    assert_eq!(job.pause.unwrap().reason, "operator_paused");
+                    assert_eq!(job.candidate_path.as_deref(), Some("old-candidate"));
+                }
+                "published" | "publishing" => {
+                    assert_eq!(job.state, job.run_id);
+                    assert_eq!(job.candidate_path.as_deref(), Some("old-candidate"));
+                    assert!(job.error.unwrap().contains("explicit reconciliation"));
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
     fn publication_rechecks_validation_manifest_bytes() {
         let root = tempfile::tempdir().unwrap();
         let suite = root.path().join("suite.json");
@@ -684,6 +811,7 @@ mod fingerprint_tests {
             evaluation_path: None,
             error: None,
             config_hash: Some(config_fingerprint(&project).unwrap()),
+            terminal_evidence: None,
             retry_policy: None,
             pause: None,
         };

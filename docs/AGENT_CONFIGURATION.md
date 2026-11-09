@@ -423,8 +423,12 @@ learning hooks skip their work while skill and SessionEnd recording remain
 available. In a configured project, UserPromptSubmit supplies recall context,
 PostToolUse records bounded metadata and Stop retains a redacted current-turn
 snapshot and queues the existing finite learning job. A Stop notification is not
-a successful-task attestation. Repeated Stop notifications preserve the first
-terminal observation and one job for that run.
+a successful-task attestation. Identical Stop retries preserve one observation. A genuine continuation retains
+a new immutable snapshot and refreshes the existing job against the complete
+evidence generation, rather than reusing its earlier candidate. An operator pause
+or failed-model pause is not automatically resumed. Evidence arriving after a
+completed or ambiguous publication is retained and reported for explicit
+reconciliation; it does not automatically republish knowledge.
 
 For CLI-owned runs, configure Claude Code **2.1.286 or newer**. The runner uses
 `claude --print --bare --restricted` with structured `stream-json` output. Bare

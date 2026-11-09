@@ -50,6 +50,8 @@ assert match, prompt
 proposal = {'operation':'new','rationale':'Recorded project work supplies an observation; validation is still required.',
  'targets':[{'path':match.group(1)+'portable.md','kind':'File','content':'portable lesson for '+os.path.basename(os.getcwd()),
  'metadata_json':json.dumps({'authority':'agent'}),'expected_etag':None}], 'dependency_paths':[]}
+if 'FINAL_CORRECTION' in prompt:
+    proposal['targets'][0]['content'] += ' final-correction'
 if claude:
     print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':json.dumps(proposal),'usage':{'input_tokens':10,'output_tokens':10}}))
 else:
@@ -2055,27 +2057,143 @@ async fn compact_inbox_does_not_retain_dropped_tool_bodies() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn claude_repeated_stop_retains_first_terminal_and_one_job() {
-    let (_dir, client, state, root, _) = fixture().await;
+async fn claude_stop_continuation_preserves_both_snapshots_and_refreshes_one_job() {
+    let (dir, client, state, root, _) =
+        fixture_for(crate::learning_runner::AgentEngine::Claude).await;
     let c = connection();
+    let log = dir.path().join("continuation.jsonl");
+    std::fs::write(
+        &log,
+        "{\"type\":\"user\",\"message\":{\"content\":\"portable build\"}}\n",
+    )
+    .unwrap();
     let response = hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"claude-session","event":"UserPromptSubmit","prompt":"portable build"})).await.unwrap();
-    let mut stop = json!({"cwd":root,"session_id":"claude-session","event":"Stop","last_assistant_message":"first response","stop_hook_active":false});
+    let mut stop = json!({"cwd":root,"session_id":"claude-session","event":"Stop","last_assistant_message":"first response","stop_hook_active":false,"transcript_path":log});
     let first = hooks::handle(&client, &c, "claude", None, &state, stop.clone())
         .await
         .unwrap();
     assert_eq!(first["run_id"], response["run_id"]);
     let before = open_outbox(&client, &c, &state).unwrap().pending().unwrap();
-    stop["last_assistant_message"] = json!("response after another Stop hook");
+    let mut identical = stop.clone();
+    identical["stop_hook_active"] = json!(true);
+    hooks::handle(&client, &c, "claude", None, &state, identical)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(before).unwrap(),
+        serde_json::to_value(open_outbox(&client, &c, &state).unwrap().pending().unwrap()).unwrap()
+    );
+    let old = job_driver::drain(&client, &c, &root, &state).await.unwrap();
+    let first_path = old["jobs"][0]["candidate_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let initial: RevisionCandidate = remote_json(&client, "db", &first_path).await.unwrap();
+    assert!(!initial.targets[0].content.contains("final-correction"));
+    hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"claude-session","event":"PostToolUse","tool_use_id":"continuation-tool","tool_name":"Bash","tool_response":{"output":"FINAL_CORRECTION"}})).await.unwrap();
+    use std::io::Write;
+    writeln!(std::fs::OpenOptions::new().append(true).open(&log).unwrap(), "{{\"type\":\"user\",\"message\":{{\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"continuation-tool\",\"content\":\"FINAL_CORRECTION\"}}]}}}}").unwrap();
+    stop["last_assistant_message"] = json!("FINAL_CORRECTION after another Stop hook");
     stop["stop_hook_active"] = json!(true);
     let second = hooks::handle(&client, &c, "claude", None, &state, stop)
         .await
         .unwrap();
     assert_eq!(first["run_id"], second["run_id"]);
-    let after = open_outbox(&client, &c, &state).unwrap().pending().unwrap();
-    assert_eq!(
-        serde_json::to_value(before).unwrap(),
-        serde_json::to_value(after).unwrap()
+    let refreshed = job_driver::drain(&client, &c, &root, &state).await.unwrap();
+    let next_path = refreshed["jobs"][0]["candidate_path"].as_str().unwrap();
+    assert_ne!(next_path, first_path);
+    let candidate: RevisionCandidate = remote_json(&client, "db", next_path).await.unwrap();
+    assert!(candidate.targets[0].content.contains("final-correction"));
+    let mut snapshots = Vec::new();
+    for reference in &candidate.evidence {
+        if let Ok(event) = remote_json::<Event>(&client, "db", &reference.path).await
+            && event.kind == "hook"
+            && event.payload["capture"]["event"] == "Stop"
+        {
+            snapshots.push(event);
+        }
+    }
+    assert_eq!(snapshots.len(), 2);
+    assert!(
+        serde_json::to_string(&snapshots)
+            .unwrap()
+            .contains("FINAL_CORRECTION")
     );
+    let project = load_project(&root.join(CONFIG_FILE)).unwrap();
+    assert_eq!(
+        job_driver::queue(&client, &c, &state, &project)
+            .unwrap()
+            .list()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_new_stop_during_inference_invalidates_the_old_candidate() {
+    let (dir, client, state, root, _) =
+        fixture_for(crate::learning_runner::AgentEngine::Claude).await;
+    let c = connection();
+    let receipt = hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"during-inference","event":"UserPromptSubmit","prompt":"portable build"})).await.unwrap();
+    hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"during-inference","event":"Stop","last_assistant_message":"first observation"})).await.unwrap();
+    let mut payload = open_outbox(&client, &c, &state)
+        .unwrap()
+        .pending()
+        .unwrap()
+        .into_iter()
+        .find(|event| event.kind == "hook")
+        .unwrap()
+        .payload;
+    payload["capture"]["last_assistant_message"] =
+        json!("FINAL_CORRECTION arrived while model was running");
+    let observation = event(receipt["run_id"].as_str().unwrap(), "hook", payload);
+    let observation_file = dir.path().join("new-observation.json");
+    std::fs::write(&observation_file, serde_json::to_vec(&observation).unwrap()).unwrap();
+    let database = state
+        .state_dir
+        .as_ref()
+        .unwrap()
+        .join("learning-outbox.sqlite3");
+    let script = dir.path().join("model-peer.py");
+    let addition = format!(
+        r#"
+import sqlite3
+connection = sqlite3.connect({database:?})
+new_event = json.load(open({observation_file:?}))
+scope = connection.execute('SELECT scope FROM learning_outbox LIMIT 1').fetchone()[0]
+connection.execute('INSERT OR IGNORE INTO learning_outbox(scope,id,body,acknowledged) VALUES(?,?,?,0)', (scope,new_event['id'],json.dumps(new_event,separators=(',',':'))))
+connection.commit()
+"#
+    );
+    use std::io::Write;
+    write!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(script)
+            .unwrap(),
+        "{addition}"
+    )
+    .unwrap();
+    let result = job_driver::drain(&client, &c, &root, &state).await.unwrap();
+    assert_eq!(result["jobs"][0]["state"], "paused");
+    assert!(
+        result["jobs"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Claude terminal evidence changed")
+    );
+    let first_path = result["jobs"][0]["candidate_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let result = job_driver::drain(&client, &c, &root, &state).await.unwrap();
+    assert_eq!(result["jobs"][0]["state"], "candidate");
+    let candidate_path = result["jobs"][0]["candidate_path"].as_str().unwrap();
+    assert_ne!(candidate_path, first_path);
+    let candidate: RevisionCandidate = remote_json(&client, "db", candidate_path).await.unwrap();
+    assert!(candidate.targets[0].content.contains("final-correction"));
     let project = load_project(&root.join(CONFIG_FILE)).unwrap();
     assert_eq!(
         job_driver::queue(&client, &c, &state, &project)

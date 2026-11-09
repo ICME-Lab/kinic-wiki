@@ -102,13 +102,14 @@ impl Outbox {
             |r| r.get::<_, i64>(0),
         )? as usize)
     }
-    /// Includes pending and acknowledged immutable reservations in this binding only.
-    pub(super) fn event_recorded(&self, id: &str) -> Result<bool> {
-        Ok(self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM learning_outbox WHERE scope=?1 AND id=?2)",
-            params![self.scope, id],
-            |row| row.get(0),
-        )?)
+    /// Content-addressed terminal observations, including undelivered evidence.
+    /// A worker must not reuse a Claude candidate after this generation changes.
+    pub(super) fn claude_terminal_signature(&self, run: &str) -> Result<Option<String>> {
+        let mut query = self.conn.prepare("SELECT id FROM learning_outbox WHERE scope=?1 AND json_extract(body,'$.run_id')=?2 AND json_extract(body,'$.kind')='hook' AND json_extract(body,'$.payload.engine')='claude' AND (json_extract(body,'$.payload.capture.event')='Stop' OR json_extract(body,'$.payload.capture.hook_event_name')='Stop' OR json_extract(body,'$.payload.capture.terminal')=1) ORDER BY id")?;
+        let ids = query
+            .query_map(params![self.scope, run], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((!ids.is_empty()).then(|| hash(&ids.join("\n"))))
     }
     /// Exclusion and deferral never count as a remote acknowledgement.
     pub fn event_acknowledged(&self, id: &str) -> Result<bool> {

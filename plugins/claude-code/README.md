@@ -35,8 +35,12 @@ marketplace/plugin in Claude Code and review `/hooks` separately. The older
 After explicit `learn setup --runner-file ...`, UserPromptSubmit recalls authorized
 knowledge, PostToolUse captures compact tool metadata and Stop queues redacted
 current-turn evidence for the existing candidate/evaluation/revision pipeline.
-Stop never asserts task success. Repeated Stop preserves the first terminal
-snapshot; SessionEnd remains session archival and does not enqueue a second job.
+Stop never asserts task success. Identical Stop retries deduplicate. A genuine continuation retains an additional
+immutable snapshot and refreshes the same job from the new evidence; old candidate
+artifacts remain available. A changed snapshot during inference invalidates the
+stale attempt. Existing operator/failure pauses and publication reconciliation
+remain explicit. SessionEnd remains session archival and does not enqueue a
+second job.
 Unconfigured projects skip learning; disabling learning preserves evidence and
 blocks new learning jobs under the existing shared policy.
 

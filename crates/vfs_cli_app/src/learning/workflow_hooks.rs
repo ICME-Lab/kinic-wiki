@@ -89,6 +89,12 @@ fn evidence(request: &Value) -> Value {
     } else {
         request.clone()
     };
+    if request["engine"] == "claude" {
+        // Continuation state and delivery timestamps are not new observations.
+        for field in ["stop_hook_active", "timestamp"] {
+            capture.as_object_mut().unwrap().remove(field);
+        }
+    }
     // Persisted session evidence is optional and explicitly bounded. Never turn a
     // completed hook into a verified outcome.
     let kind = request["event"]
@@ -287,19 +293,6 @@ pub async fn handle(
     }
     let terminal = kind == "Stop" || request["terminal"] == true;
     let outbox = open_outbox(client, c, state)?;
-    // Claude can run Stop again after another hook continues a turn. Keep the
-    // first immutable terminal observation, including after acknowledgement.
-    if engine == "claude"
-        && terminal
-        && outbox.event_recorded(&hash(&format!("{id}:hook:terminal-v2")))?
-    {
-        if let Some(p) = job_project {
-            job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
-        }
-        return Ok(
-            json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":!outbox.run_acknowledged(&id)?,"queued":job_project.is_some_and(|p|p.enabled)}),
-        );
-    }
     let mut payload = evidence(&request);
     if request["missing_recall"] == true {
         payload["capture"]["missing_recall"] = json!(true);
@@ -308,7 +301,7 @@ pub async fn handle(
     payload["project_id"] = json!(project.as_ref().map(|p| &p.project_id));
     let versioned = payload["schema_version"] == 2;
     let mut record = event(&id, "hook", payload);
-    if terminal && versioned {
+    if terminal && versioned && engine != "claude" {
         record.id = hash(&format!("{id}:hook:terminal-v2"));
     }
     if !terminal && versioned {
