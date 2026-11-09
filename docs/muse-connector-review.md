@@ -2,11 +2,38 @@
 
 Status: **Submitted on 2026-11-09; review requirements incomplete; not approved or published.**
 
-The browser now shows submission `724a1604-909e-4f83-8819-9a44fc501d51`. The controller did not click Submit or accept the final attestations. Business verification, data processing questionnaire, and technical details remain Not started (0/3).
+The browser now shows submission `724a1604-909e-4f83-8819-9a44fc501d51`. The controller did not click Submit or accept the final attestations. Live portal rechecked: Business verification is Not started; Data processing questionnaire and Technical details are Finish and submit. Requirements remain 0/3 completed.
 
 Target: Meta's personal Muse app, not Muse Code. Requirements reference:
 [Connector guidelines](https://platform.muse.ai/docs), checked 2026-11-09.
 Execution progress is maintained in Kinic workflow `42b3e09b-e38d-4ea3-b21d-c10a8b5e5cc5`.
+
+## Current remaining work
+
+This section and the release record below describe current status. Dated diagnostic
+updates later in this file are historical evidence, not instructions to repeat
+completed work.
+
+- Obtain a usable isolated synthetic fixture. The existing DB is pending with
+  zero internal credit; no spending is authorized. A paid top-up is one possible
+  mechanism, not itself a publication requirement.
+- Complete fixture read/write, denial, concurrency, uncertain-outcome and token
+  lifecycle tests. Production ordinary-II testing is authorized; do not require
+  another test Identity, staging restoration or canister upgrade.
+- Finish the portal's business, data processing and technical requirements.
+  Questionnaire pages 1–2 were saved; remaining answers must match the build and
+  actual retention/recipients. Inspect the current host challenge and expiry
+  before retrying verification. Confirm the reviewer access mechanism when the
+  portal reveals it; do not enable a particular service login speculatively.
+- Confirm product terms applicability, provide required review access/demo,
+  address review feedback and verify publication/new-client operation after
+  approval. Revoke any dedicated reviewer access when review ends.
+
+Completed: production OAuth, initialize/discovery, descriptive User-Agent fix,
+server icon metadata, guarded rollout, local regression tests, and Muse profile
+compatibility cleanup. The profile change was not remediation of an observed
+cross-user disclosure. Custom connector list artwork is an optional UI follow-up;
+portal artwork and MCP icon metadata have already been supplied.
 
 ## Listing copy
 
@@ -70,7 +97,7 @@ Read scope: `mcp:read`. Editing additionally requires `mcp:write` and Internet I
 
 **Post-patch staging result:** Commit `bf01b78a` was deployed using the guarded `deploy:staging` script and the `kinic-production` Cloudflare profile. Version `81042f80-5ebb-4d27-810f-6de92a35e91b` is serving 100% of staging traffic; the previous version is `09149e79-9655-4269-a434-6b1a65875478`. Retrying Muse Connect passed automatic registration and reached Internet Identity. After the operator configured trust and explicitly authorized use of their ordinary Identity (accepting possible replacement of its earlier MCP grant), Questions only consent completed with a 30-day duration. Muse displayed “Kinic Wiki に接続できました.” The fresh browser authorization request confirmed the exact callback, S256, resource, and `mcp:read offline_access` scopes. Wiki contents were not read or changed. Tool discovery/model visibility, refresh, CRUD, and production deployment still require verification. Use synthetic fixture data for subsequent tests.
 
-Check actual tool discovery before submission. The shared Private endpoint currently registers seven reads, eight content mutations, and one OpenAI app-only `get_profile`. Do not claim that Muse hides the profile until observed. If it appears to the model, isolate Muse discovery on a separate route without changing the existing ChatGPT contract.
+Verified current discovery: authenticated Muse sessions receive seven reads and eight content mutation tools (15 total), without get_profile. Selection uses the exact saved OAuth callback, so the existing endpoint and sessions work without another route or reconnect. ChatGPT retains its app-only profile contract. Muse raw discovery and a direct-call error with no profile value were verified after deployment.
 
 **Authenticated tool discovery blocker:** Muse reported HTTP 403 followed by two 45-second timeouts for tools/list, without obtaining tool names or invoking tools/call. A scoped staging Worker log query confirmed registration 201 and code exchange 200, with `clientSupportsRefresh`, `refreshIssued`, and `offlineAccessGranted` all true. No corresponding POST `/mcp` invocation appeared in that window. A credential-free local initialize POST returned the expected 401 challenge, while Muse's GET returned 405. Determine the actual 403 response origin before changing server authentication, Origin handling, or transport. Refresh-token issuance is verified; refresh rotation from Muse and end-to-end tool use are not.
 
@@ -118,17 +145,17 @@ No credentials, OAuth state/code/token, private principal, or real user Wiki con
 
 ## Dedicated review account and fixture
 
-Prepare a separate database named `muse-review-fixture` with synthetic evidence pages under `/Knowledge/review/` and disposable writes under `/MuseReview/scratch/`. Use a dedicated reviewer identity, separate staging/production credentials, and no access to ordinary user databases. Do not reuse or reopen the OpenAI reviewer credential set.
+Prepare a separate database named `muse-review-fixture` with synthetic evidence pages under `/Knowledge/review/` and disposable writes under `/MuseReview/scratch/`. If review credentials are required, use a dedicated reviewer identity with no access to ordinary user databases, and do not share credentials between environments. Do not reuse or reopen the OpenAI reviewer credential set.
 
-The existing review login supports one configured service identity per Worker. Do not overwrite an active review configuration to add Muse. Provision Muse access only after confirming the current review state; preserve other provider access if active. New review identities receive `writer`, never `owner`; enforce the fixture database and scratch path boundary before every mutation, including both sides of a move.
+The existing review login supports one configured service identity per Worker. Do not overwrite an active review configuration to add Muse. Confirm the portal's required review-access method before choosing this service-login mechanism. Provision Muse access only after confirming the current review state; preserve other provider access if active. New review identities receive `writer`, never `owner`; enforce the fixture database and scratch path boundary before every mutation, including both sides of a move.
 
 Deliver credentials only through the portal's secure mechanism. Keep the account available throughout review. Record review access version, fixture ID, and secret names in operator records without secret values. Revoke reviewer access after review, invalidate its sessions, and verify ordinary II connections still work.
 
 ## Acceptance and demo script
 
-Use unique test paths and a dedicated II identity. Before destructive steps, obtain the required Muse approval. Record date, environment, client, actual invoked tools, pass/fail, safe errors, and any remaining fixture path. A scripted HTTP test alone does not prove Muse routing or browser consent.
+Use unique paths in the synthetic fixture with the already-authorized ordinary II identity for operator tests. Use isolated reviewer access if required for review. Before destructive steps, obtain the required Muse approval. Record date, environment, client, actual invoked tools, pass/fail, safe errors, and any remaining fixture path. A scripted HTTP test alone does not prove Muse routing or browser consent.
 
-1. Connect staging with read-only consent. Find the fixture, search a distinctive release-checklist term, fetch its evidence, and answer with exact paths. Verify no `get_profile` model capability appears.
+1. Reuse the completed production read-only connection. Once the fixture is active, find it, search a distinctive release-checklist term, fetch its evidence, and answer with exact paths. Verify no `get_profile` model capability appears.
 2. Request a write from the read-only connection. It must fail or require explicit scope escalation without changing data. Validate denial separately from successful write consent.
 3. With write consent, create a unique note, read it back, append text, apply an exact edit and ordered edits, create a folder, move the note, and verify the final path/content. Exercise both same-kind and heterogeneous atomic batches.
 4. Propose full replacement, move-overwrite, and deletion. Deny one request and verify no mutation; approve subsequent fixture-only actions and verify exact results. Do not infer approval behavior from a successful API call.
@@ -137,15 +164,15 @@ Use unique test paths and a dedicated II identity. Before destructive steps, obt
 7. Simulate an uncertain write response. Read the original unique path before any retry; avoid duplicate append/create and clean up only nodes whose marker and current etag match.
 8. Verify token renewal, expiry, disconnect/revocation, and reconnect. Do not invalidate this II test grant with another connection during the renewal test.
 9. Re-run existing ChatGPT OAuth/discovery behavior. Run package tests/typecheck and staging/private build checks on the exact patch.
-10. After staging passes, deploy with guarded cf scripts, verify production against its own fixture, and record rollback version. Complete a fresh Muse connection after approval and verify directory discovery.
+10. The reviewed changes are already deployed with a recorded rollback version. Deploy again only for a new change. Complete a fresh Muse connection after approval and verify directory discovery.
 
 ## Submission and release record
 
-- Submission ID/date: not submitted.
-- Confirmed endpoint/callback/client-registration requirements: exact reported callback implemented; live staging DCR reached Internet Identity; wire-level grant types/refresh support still unverified.
+- Submission ID/date: `724a1604-909e-4f83-8819-9a44fc501d51`; portal displays Submitted 2026-11-09, rechecked after the profile fix. The controller did not perform the submission action.
+- Connection requirements: exact Muse callback, production OAuth, refresh-token issuance and MCP discovery verified. Live token renewal/expiry/revocation tests remain; do not conflate issuance with renewal.
 - Review account and per-tool demo: not provisioned / not run.
-- Muse policy/business verification and Terms acceptance: pending authorized submitter.
-- Production compatibility deployment: not performed.
+- Portal requirements: business verification Not started; data questionnaire and technical details Finish and submit; 0/3 completed. Product terms applicability remains to confirm; do not assert that no terms were accepted during the externally completed submission.
+- Production compatibility deployment: completed; profile fix `29489570`, live Worker `caae5089-b613-43ad-b29e-8a80e0641724`. No additional rollout is a prerequisite without a new change.
 - Meta review decision and directory listing: pending.
 
 Local validation for the callback patch: 111 Node tests, 328 regular Vitest tests, and 92 Worker tests passed; typecheck and staging/private cf dry-run builds passed. Existing dependency sourcemap warnings remain. A separate read-only reviewer found no actionable patch issues; live interoperability and legal/business facts were explicitly outside that review's evidence.
@@ -168,7 +195,7 @@ The portal requires an unauthenticated host verification file at its exact `/.we
 
 Latest observed state (supersedes older rollout/submission prerequisites above): ownership-file commit `12f9a5a1` is deployed as `4a626371-c62e-4d9a-a30f-e98f96d29c9c`. A credential-free GET returned HTTP 200, text/plain, no redirect, and exact required body. Two Muse Verify attempts returned “We couldn’t confirm what happened” and a cooldown, with Next disabled. In the scoped Worker log window, the sole challenge GET matched the local check; a Muse verifier request was not identified. Do not assert a proven cause or successful ownership verification. Challenge expires 2026-11-10 13:40 JST; replace/remove the public challenge after review as appropriate.
 
-Production read-only OAuth reached the trusted II Questions only screen, 30 days, and is waiting for user passkey authentication. No data calls were performed. Data questionnaire pages 1–2 were saved (software organisation: none of the listed regulated organisations; connector exposes none of the licensed financial/legal actions). Page 3 onward remains unanswered; business verification remains untouched.
+Historical OAuth stage: production read-only OAuth reached II and initially waited for a passkey. It subsequently completed; no passkey action remains pending. No data calls were performed. Data questionnaire pages 1–2 were saved (software organisation: none of the listed regulated organisations; connector exposes none of the licensed financial/legal actions). Page 3 onward remains unanswered; business verification remains untouched.
 
 ## Resolved initialize 403 (2026-11-09)
 
@@ -176,7 +203,7 @@ The header-preserving Muse diagnostic returned Cloudflare HTTP403/error1010, CF-
 
 A controlled, credential-free local comparison reproduced403/error1010 with Python-urllib and returned401/unauthorized after changing only User-Agent to `Kinic-Wiki-Muse/1.0`. An invalid token with the descriptive User-Agent still returned401/invalid_token. In Muse, changing only User-Agent produced authenticated initialize200 and successful tools/list, with corresponding POST200 Worker logs. ServerInfo title is Kinic Wiki and icons contains one entry. No Wiki tool calls or content mutations were performed.
 
-Muse returned all16 registered tools and considered get_profile model-callable; provider-specific profile filtering remains required before publication. This discovery result supersedes the earlier unknown visibility status. The current403 is resolved by client identification; it was not caused by the canister, token scopes, or callback allowlist. Normal-client persistence and fresh-process verification are recorded separately when complete.
+Muse returned all16 registered tools and considered get_profile model-callable; profile filtering was subsequently completed as a compatibility improvement, not as a required response to an observed data disclosure. This discovery result supersedes the earlier unknown visibility status. The current403 is resolved by client identification; it was not caused by the canister, token scopes, or callback allowlist. Normal-client persistence and fresh-process verification are recorded separately when complete.
 
 Persistence verified in Muse: `~/workspace/custom-connectors/custom.kinic-wiki-production/bin/client.py` now defines USER_AGENT next to PROVIDER/ENDPOINT and uses it in request headers. Its CONNECTOR.md records the requirement and regeneration behavior. The scaffolder preserves existing connector files; overwriting client.py from a fresh common template requires reapplying the header. Common templates and the staging client were left unchanged. A new process using the normal client again returned initialize200 and all16 tool descriptors. This fixes the current personal Muse custom connector; it is not a platform-wide fix for independently generated clients.
 
