@@ -756,9 +756,21 @@ assert sys.argv[sys.argv.index('--tools')+1] == 'Read,Glob,Grep'
 assert sys.argv[sys.argv.index('--mcp-config')+1] == '{"mcpServers":{}}'
 assert sys.argv[sys.argv.index('--model')+1] == 'sonnet'
 assert sys.argv[sys.argv.index('--effort')+1] == 'high'
+assert 'CLAUDE_CODE_SIMPLE' not in os.environ
+assert 'CLAUDE_CONFIG_DIR' not in os.environ
+assert os.environ['KINIC_LEARNING_OWNED_RUN'] == '1'
+assert os.environ['CLAUDE_CODE_USE_BEDROCK'] == '1'
 print(json.dumps({'type':'assistant','message':{'role':'assistant','content':[{'type':'thinking','thinking':'PRIVATE_THINKING'},{'type':'text','text':'partial'}]}}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'answer','permission_denials':[], 'usage':{'input_tokens':11,'cache_creation_input_tokens':2,'cache_read_input_tokens':3,'output_tokens':7}}))"#,
         );
+        cfg.environment
+            .insert("CLAUDE_CODE_SIMPLE".into(), "0".into());
+        cfg.environment
+            .insert("CLAUDE_CONFIG_DIR".into(), "/untrusted/settings".into());
+        cfg.environment
+            .insert("KINIC_LEARNING_OWNED_RUN".into(), "0".into());
+        cfg.environment
+            .insert("CLAUDE_CODE_USE_BEDROCK".into(), "1".into());
         cfg.read_only = true;
         cfg.model = Some("sonnet".into());
         cfg.reasoning_effort = Some("high".into());

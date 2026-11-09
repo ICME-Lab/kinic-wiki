@@ -23,7 +23,7 @@ For many medium-sized agent workflows, structured file-system search is often mo
 - Four stores (memory, knowledge, skill, session) plus a shared source evidence root
 - Database access control with owner, writer, and reader roles, including anonymous public reads
 - Skill store packages for discovering, evaluating, and improving agent skills
-- Continual learning for Codex and DeepSeek Harness, with session and skill-run capture for Claude Code and Hermes
+- Continual learning for Codex, DeepSeek Harness, and Claude Code, with skill-run capture for Hermes
 - Evidence capture from the web, AI chat exports, GitHub, and iOS share sheets, with LLM generation of review-ready wiki pages
 - Public node publication, database cycles billing, and a marketplace for paid read access
 - Read-only Store API methods for direct canister clients
@@ -113,9 +113,9 @@ See [docs/DB_LIFECYCLE.md](docs/DB_LIFECYCLE.md) for creation, suspension, and d
 
 ## Continual Learning
 
-The CLI can connect Codex and DeepSeek Harness to versioned context receipts, durable run evidence, isolated evaluation and guarded lesson revision. Set up an arbitrary project with `kinic-vfs-cli agent setup --engine <codex|dsh>` and `kinic-vfs-cli learn setup`. See [portable project setup](docs/PORTABLE_LEARNING.md), [continual learning](docs/CONTINUAL_LEARNING.md), and [agent configuration](docs/AGENT_CONFIGURATION.md).
+The CLI can connect Codex, DeepSeek Harness, and Claude Code to versioned context receipts, durable run evidence, isolated evaluation and guarded lesson revision. Set up an arbitrary project with `kinic-vfs-cli agent setup --engine <codex|dsh|claude>` and `kinic-vfs-cli learn setup --runner-file /absolute/path/runner.json`. See [portable project setup](docs/PORTABLE_LEARNING.md), [continual learning](docs/CONTINUAL_LEARNING.md), and [agent configuration](docs/AGENT_CONFIGURATION.md).
 
-`kinic-vfs-cli claude setup` and `kinic-vfs-cli hermes setup` install plugins that record skill run evidence and, for Claude Code, session transcripts.
+`kinic-vfs-cli claude setup` retains the existing recorder installation entry point; automatic learning still requires explicit project setup. `kinic-vfs-cli hermes setup` installs the skill-run recorder. Claude Code owned runs require CLI version 2.1.286 or newer and API/provider credentials; ordinary interactive session hooks can use the existing subscription login. See the [Claude Code setup guide](docs/AGENT_CONFIGURATION.md#claude-code).
 
 ## Skill Store
 

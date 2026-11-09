@@ -17,6 +17,13 @@ fn connection() -> ResolvedConnection {
 
 #[cfg(unix)]
 async fn fixture() -> (tempfile::TempDir, StoreClient, StateArgs, PathBuf, PathBuf) {
+    fixture_for(crate::learning_runner::AgentEngine::Codex).await
+}
+
+#[cfg(unix)]
+async fn fixture_for(
+    engine: crate::learning_runner::AgentEngine,
+) -> (tempfile::TempDir, StoreClient, StateArgs, PathBuf, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let client = StoreClient::new(dir.path());
@@ -27,20 +34,32 @@ async fn fixture() -> (tempfile::TempDir, StoreClient, StateArgs, PathBuf, PathB
     let executable = dir.path().join("model-peer.py");
     std::fs::write(&executable, r#"#!/usr/bin/env python3
 import json, os, re, sys
-assert sys.argv[1:3] == ['exec', '--json']
-assert '--sandbox' in sys.argv and sys.argv[sys.argv.index('--sandbox')+1] == 'read-only'
+if sys.argv[1:] == ['--version']:
+    print('2.1.286 (Claude Code)'); sys.exit()
+claude = '--bare' in sys.argv
+if claude:
+    assert '--restricted' in sys.argv
+    assert sys.argv[sys.argv.index('--tools')+1] == 'Read,Glob,Grep'
+    assert os.environ['KINIC_LEARNING_OWNED_RUN'] == '1'
+else:
+    assert sys.argv[1:3] == ['exec', '--json']
+    assert '--sandbox' in sys.argv and sys.argv[sys.argv.index('--sandbox')+1] == 'read-only'
 prompt = sys.stdin.read()
 match = re.search(r'New target path under (\S+)\. Preserve', prompt)
 assert match, prompt
 proposal = {'operation':'new','rationale':'Recorded project work supplies an observation; validation is still required.',
  'targets':[{'path':match.group(1)+'portable.md','kind':'File','content':'portable lesson for '+os.path.basename(os.getcwd()),
  'metadata_json':json.dumps({'authority':'agent'}),'expected_etag':None}], 'dependency_paths':[]}
-print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(proposal)}}))
-print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tokens':10}}))
+if claude:
+    print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':json.dumps(proposal),'usage':{'input_tokens':10,'output_tokens':10}}))
+else:
+    print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(proposal)}}))
+    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tokens':10}}))
 "#).unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let runner = dir.path().join("runner.json");
     let config = RunnerConfig {
+        engine,
         executable,
         ..RunnerConfig::default()
     };
@@ -167,12 +186,27 @@ async fn revision_startup_failure_reports_safe_reason_and_stays_paused() {
 #[cfg(unix)]
 #[tokio::test]
 async fn portable_hooks_and_finite_jobs_keep_unrelated_projects_separate() {
-    let (_dir, client, state, a, b) = fixture().await;
+    portable_jobs_for_engines(crate::learning_runner::AgentEngine::Codex, ["codex", "dsh"]).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_hooks_and_inference_keep_two_projects_separate_without_unvalidated_publication() {
+    portable_jobs_for_engines(
+        crate::learning_runner::AgentEngine::Claude,
+        ["claude", "claude"],
+    )
+    .await;
+}
+
+#[cfg(unix)]
+async fn portable_jobs_for_engines(engine: crate::learning_runner::AgentEngine, hooks: [&str; 2]) {
+    let (_dir, client, state, a, b) = fixture_for(engine).await;
     let c = connection();
     let mut runs = vec![];
     for (root, engine, own, other) in [
-        (&a, "codex", "unrelated-a", "unrelated-b"),
-        (&b, "dsh", "unrelated-b", "unrelated-a"),
+        (&a, hooks[0], "unrelated-a", "unrelated-b"),
+        (&b, hooks[1], "unrelated-b", "unrelated-a"),
     ] {
         let request = json!({"cwd":root,"session_id":"same-session","turn_id":"same-turn","event":"UserPromptSubmit","prompt":"portable build"});
         let response = hooks::handle(&client, &c, engine, None, &state, request)
@@ -358,12 +392,44 @@ async fn portable_candidates_cannot_cross_write_and_disable_preserves_pending_jo
 #[cfg(unix)]
 #[tokio::test]
 async fn offline_inbox_binds_explicit_config_engine_and_original_run_before_replay() {
+    offline_replay_for_engine("codex").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_offline_retry_keeps_project_destination_engine_and_original_run() {
+    offline_replay_for_engine("claude").await;
+}
+
+#[cfg(unix)]
+async fn offline_replay_for_engine(selected_engine: &str) {
     let (_dir, client, state, a, b) = fixture().await;
     let c = connection();
     let request = json!({"event":"UserPromptSubmit","cwd":a,"session_id":"same-session","prompt":"portable task"});
-    let first = hooks::spool(&c, &state, "codex", Some(a.join(CONFIG_FILE)), &request).unwrap();
-    let second = hooks::spool(&c, &state, "codex", Some(a.join(CONFIG_FILE)), &request).unwrap();
-    let other = hooks::spool(&c, &state, "codex", Some(b.join(CONFIG_FILE)), &request).unwrap();
+    let first = hooks::spool(
+        &c,
+        &state,
+        selected_engine,
+        Some(a.join(CONFIG_FILE)),
+        &request,
+    )
+    .unwrap();
+    let second = hooks::spool(
+        &c,
+        &state,
+        selected_engine,
+        Some(a.join(CONFIG_FILE)),
+        &request,
+    )
+    .unwrap();
+    let other = hooks::spool(
+        &c,
+        &state,
+        selected_engine,
+        Some(b.join(CONFIG_FILE)),
+        &request,
+    )
+    .unwrap();
     let engine = hooks::spool(&c, &state, "dsh", Some(a.join(CONFIG_FILE)), &request).unwrap();
     assert_ne!(first.parent(), other.parent());
     assert_ne!(first.parent(), engine.parent());
@@ -371,7 +437,14 @@ async fn offline_inbox_binds_explicit_config_engine_and_original_run_before_repl
     let two: Value = read_json(&second).unwrap();
     assert_ne!(one["__kinic_run_id"], two["__kinic_run_id"]);
     let stop = json!({"event":"Stop","cwd":a,"session_id":"same-session","terminal":true});
-    let terminal = hooks::spool(&c, &state, "codex", Some(a.join(CONFIG_FILE)), &stop).unwrap();
+    let terminal = hooks::spool(
+        &c,
+        &state,
+        selected_engine,
+        Some(a.join(CONFIG_FILE)),
+        &stop,
+    )
+    .unwrap();
     let terminal_value: Value = read_json(&terminal).unwrap();
     assert_eq!(terminal_value["__kinic_run_id"], two["__kinic_run_id"]);
     // Replay missed prompt evidence, preserving its own reserved identity and
@@ -379,7 +452,7 @@ async fn offline_inbox_binds_explicit_config_engine_and_original_run_before_repl
     hooks::replay(
         &client,
         &c,
-        "codex",
+        selected_engine,
         Some(a.join(CONFIG_FILE)),
         &state,
         &terminal,
@@ -445,7 +518,18 @@ async fn dsh_setup_accepts_portable_project_config_without_identity_or_profile_e
 #[cfg(unix)]
 #[tokio::test]
 async fn private_publication_and_rollback_reach_next_recall_without_cross_project_writes() {
-    let (_dir, client, state, a, b) = fixture().await;
+    private_publication_for_engine(crate::learning_runner::AgentEngine::Codex).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_project_guarded_publication_and_rollback_reach_next_recall() {
+    private_publication_for_engine(crate::learning_runner::AgentEngine::Claude).await;
+}
+
+#[cfg(unix)]
+async fn private_publication_for_engine(engine: crate::learning_runner::AgentEngine) {
+    let (_dir, client, state, a, b) = fixture_for(engine).await;
     let c = connection();
     let project = load_project(&a.join(CONFIG_FILE)).unwrap();
     let target = format!("{}/prior.md", project.knowledge_scope());
