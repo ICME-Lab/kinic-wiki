@@ -529,3 +529,130 @@ fn claude_engine_is_accepted_by_all_agent_entrypoints() {
         );
     }
 }
+
+#[test]
+fn claude_setup_prepares_payload_without_activation_and_preserves_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let home = root.join("home");
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let settings = home.join(".claude/settings.json");
+    fs::write(
+        &settings,
+        r#"{"theme":"dark","enabledPlugins":{"keep@tools":true}}"#,
+    )
+    .unwrap();
+    let original = fs::read(&settings).unwrap();
+    let args = [
+        "agent",
+        "setup",
+        "--engine",
+        "claude",
+        "--executable",
+        "/bin/echo",
+        "--json",
+    ];
+    let dry = invoke(root, &home, &[args.as_slice(), &["--dry-run"]].concat());
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert!(!home.join(".claude/plugins/kinic").exists());
+    assert!(!root.join(".kinic").exists());
+    let output = invoke(root, &home, &args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let plugin = home.join(".claude/plugins/kinic/plugins/kinic-skill-recorder");
+    assert_eq!(value["plugin_directory"], plugin.to_string_lossy().as_ref());
+    assert!(plugin.join("hooks/hooks.json").exists());
+    assert_eq!(fs::read(&settings).unwrap(), original);
+    assert!(!root.join(".kinic-learning.json").exists());
+    let manifest = home.join(".claude/plugins/kinic/.claude-plugin/marketplace.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    let descriptor: serde_json::Value =
+        serde_json::from_slice(&fs::read(plugin.join(".claude-plugin/plugin.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        metadata["plugins"][0]["version"], descriptor["version"],
+        "marketplace version must match embedded plugin"
+    );
+    metadata["custom"] = serde_json::json!("keep");
+    metadata["plugins"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"name":"other","source":"./other"}));
+    fs::write(&manifest, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let output = invoke(root, &home, &[args.as_slice(), &["--apply"]].concat());
+    assert!(output.status.success());
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    assert_eq!(after["custom"], "keep");
+    assert_eq!(after["plugins"].as_array().unwrap().len(), 2);
+    let output = invoke(root, &home, &args);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["status"], "unchanged");
+    assert!(!value["next"].as_str().unwrap().contains("Codex"));
+    fs::write(plugin.join("hooks/hooks.json"), "local customization").unwrap();
+    let output = invoke(root, &home, &args);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["status"], "changes_pending");
+    assert_eq!(
+        fs::read_to_string(plugin.join("hooks/hooks.json")).unwrap(),
+        "local customization"
+    );
+}
+
+#[test]
+fn claude_doctor_inspects_claude_payload_without_executing_wrapper() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let home = root.join("home");
+    let plugin = home.join(".claude/plugins/kinic/plugins/kinic-skill-recorder/hooks");
+    fs::create_dir_all(&plugin).unwrap();
+    fs::write(plugin.join("hooks.json"), "{}").unwrap();
+    let output = invoke(
+        root,
+        &home,
+        &[
+            "agent",
+            "setup",
+            "--engine",
+            "claude",
+            "--executable",
+            "/definitely/missing/claude",
+            "--dry-run",
+            "--json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = invoke(
+        root,
+        &home,
+        &["agent", "doctor", "--engine", "claude", "--json"],
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "engine.claude.placement" && c["code"] == "payload_present")
+    );
+    assert!(
+        value["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["code"] == "executable_missing")
+    );
+    assert!(!root.join(".kinic").exists());
+}

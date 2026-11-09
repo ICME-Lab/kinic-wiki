@@ -76,34 +76,56 @@ fn install_claude_plugin(plugin_dir: &Path) -> Result<()> {
     replace_dir_with_payload(plugin_dir, &[CLAUDE_PLUGIN_FILES, RUNTIME_FILES])
 }
 
+pub(crate) fn plugin_directory(home: &Path) -> PathBuf {
+    ClaudePaths::resolve(home).plugin_dir
+}
+
+/// Plan shared marketplace content without changing application settings.
+pub(crate) fn marketplace_payload(home: &Path) -> Result<(PathBuf, Vec<u8>)> {
+    let paths = ClaudePaths::resolve(home);
+    let mut manifest = read_json_object_or_default(&paths.marketplace_manifest)?;
+    let object = manifest.as_object_mut().expect("object checked");
+    if let Some(name) = object.get("name") {
+        anyhow::ensure!(
+            name == MARKETPLACE_NAME,
+            "Claude marketplace name conflicts with managed marketplace"
+        );
+    }
+    object.insert("name".into(), json!(MARKETPLACE_NAME));
+    object.entry("owner").or_insert(json!({"name":"Kinic"}));
+    let plugins = object
+        .entry("plugins")
+        .or_insert(json!([]))
+        .as_array_mut()
+        .context("Claude marketplace plugins must be an array")?;
+    let managed = json!({"name":PLUGIN_NAME,"displayName":"Kinic Skill Recorder","description":"Record Kinic skill and session evidence; connect configured projects to continual learning.","version":serde_json::from_str::<Value>(include_str!("../../../plugins/claude-code/.claude-plugin/plugin.json"))?["version"],"source":"./plugins/kinic-skill-recorder","category":"Productivity","tags":["kinic","skills","evidence"]});
+    if let Some(existing) = plugins
+        .iter_mut()
+        .find(|plugin| plugin["name"] == PLUGIN_NAME)
+    {
+        existing
+            .as_object_mut()
+            .context("Claude marketplace plugin must be an object")?
+            .extend(managed.as_object().unwrap().clone());
+    } else {
+        plugins.push(managed);
+    }
+    Ok((
+        paths.marketplace_manifest,
+        serde_json::to_vec_pretty(&manifest)?,
+    ))
+}
+
 fn write_marketplace_manifest(paths: &ClaudePaths) -> Result<()> {
-    let parent = paths
-        .marketplace_manifest
-        .parent()
-        .ok_or_else(|| anyhow!("invalid marketplace path"))?;
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    let manifest = json!({
-        "name": MARKETPLACE_NAME,
-        "owner": {
-            "name": "Kinic"
-        },
-        "plugins": [
-            {
-                "name": PLUGIN_NAME,
-                "displayName": "Kinic Skill Recorder",
-                "description": "Record Kinic Skill Registry run evidence from Claude Code.",
-                "version": "0.1.2",
-                "source": "./plugins/kinic-skill-recorder",
-                "category": "Productivity",
-                "tags": ["kinic", "skills", "evidence"]
-            }
-        ]
-    });
-    fs::write(
-        &paths.marketplace_manifest,
-        serde_json::to_string_pretty(&manifest)? + "\n",
-    )
-    .with_context(|| format!("failed to write {}", paths.marketplace_manifest.display()))?;
+    // Resolve from the marketplace's fixed ancestor; no environment-dependent paths.
+    let home = paths
+        .marketplace_dir
+        .ancestors()
+        .nth(3)
+        .context("Claude marketplace home missing")?;
+    let (path, bytes) = marketplace_payload(home)?;
+    fs::create_dir_all(path.parent().context("marketplace parent missing")?)?;
+    fs::write(path, bytes)?;
     Ok(())
 }
 
