@@ -40,6 +40,39 @@ Route behavior:
 
 On both Private endpoints, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
 
+## Muse connection troubleshooting
+
+For personal Muse custom clients, send an application-identifying HTTP header such as
+`User-Agent: Kinic-Wiki-Muse/1.0`. The Python `urllib` default
+`Python-urllib/3.12` was rejected by Cloudflare Browser Integrity Check with HTTP
+403 / error 1010 before the request reached the Worker. Changing only this
+header allowed authenticated `initialize` and `tools/list` to succeed. Use the
+client's supported request-header configuration; keep this setting in its normal
+connector client, not only a temporary diagnostic script. Do not impersonate a
+browser or disable zone-wide protections to address this client default.
+
+If a request fails, preserve its status, `Server`, `CF-Ray`, `Content-Type`, and a
+sanitized error reason. Never log Authorization, tokens, OAuth codes/state, or
+Wiki contents. A missing Worker invocation alone cannot identify the rejecting
+component. See [Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/).
+
+Internet Identity must trust the exact MCP URL in use. Staging and production
+are different trusted connectors. The initial Kinic connection request expires
+after ten minutes; after changing trust settings, start a fresh connection from
+Muse rather than reusing an expired callback page.
+
+Muse's custom client originally returned all 16 registered Private tools,
+including `get_profile`, despite its app-only visibility metadata. For an
+OAuth session whose validated redirect URI is exactly
+`https://agent.meta.ai/api/hatch/oauth/callback`, the server now omits
+`get_profile` from registration: Muse receives only the 15 Wiki tools and cannot
+call the connection profile by guessing its name. The decision uses the saved,
+authenticated OAuth session, not User-Agent or MCP clientInfo, and also applies
+after token refresh and to existing sessions. Other clients retain their
+existing profile contract. No extra endpoint or reauthorization is required.
+The returned serverInfo title and embedded Kinic icon were confirmed, but this
+does not prove the custom connector list displays the logo.
+
 ## Connection profile
 
 Private MCP registers `get_profile` with `_meta["openai/profile"]: true` and
@@ -95,6 +128,14 @@ Discovery and OAuth endpoints:
 - `GET|POST /mcp/connect`
 
 OAuth uses authorization code with mandatory S256 PKCE and DCR. Each audience is fixed to its exact Private MCP URL. II defaults to a 30-day connection request; the user can choose a shorter duration. The local session ends at the earliest of the II-approved expiry, its saved cap, and 30 days from creation. Existing shorter sessions are not extended. Authorization codes expire after at most ten minutes, and access tokens last at most one hour.
+
+Hosted OAuth callbacks allow the existing ChatGPT hosts and the exact personal
+Muse callback `https://agent.meta.ai/api/hatch/oauth/callback`, observed in Muse's
+custom connector setup on 2026-11-09. Other Meta paths, subdomains, ports, query
+strings, fragments, and trailing-slash variants are not permitted. Loopback
+callbacks remain supported for local clients. This callback compatibility does
+not establish successful Muse consent, tool discovery, review, or publication;
+see [the Muse review package](muse-connector-review.md) for those milestones.
 
 II-approved sessions issue rotating refresh tokens to clients registered for `refresh_token`, without requiring `offline_access`. The `mcp:read` and `mcp:write` scopes remain limited to the approved permissions; `offline_access` is accepted and echoed only when requested for compatibility. Token exchange does not add scopes. DCR without `grant_types` still registers only `authorization_code`; such clients receive no refresh token and cannot use the refresh grant. Reviewer sessions retain their eight-hour cap and existing `offline_access` requirements. Refresh never extends the approved session expiry. Reuse of an authorization code or spent refresh token revokes the active session. All replay hashes are retained, with a fresh connection required after 4,096 successful refresh rotations.
 

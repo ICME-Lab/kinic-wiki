@@ -55,7 +55,11 @@ PLATFORM_SUFFIX="$(detect_platform_suffix)"
 POCKET_IC_URL="https://github.com/dfinity/pocketic/releases/download/${POCKET_IC_VERSION}/pocket-ic-${PLATFORM_SUFFIX}.gz"
 
 if [[ ! -x "${POCKET_IC_BIN}" ]]; then
-  curl -fsSL "${POCKET_IC_URL}" | gzip -d > "${POCKET_IC_BIN}"
+  # Release asset delivery can return transient 5xx responses. Download to a
+  # file so curl can restart cleanly instead of appending retries to a pipe.
+  curl -fsSL --retry 3 --retry-delay 2 "${POCKET_IC_URL}" -o "${POCKET_IC_BIN}.gz"
+  gzip -dc "${POCKET_IC_BIN}.gz" > "${POCKET_IC_BIN}"
+  rm "${POCKET_IC_BIN}.gz"
   chmod +x "${POCKET_IC_BIN}"
 fi
 
