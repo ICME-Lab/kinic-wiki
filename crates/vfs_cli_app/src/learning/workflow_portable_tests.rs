@@ -1968,3 +1968,37 @@ async fn compact_inbox_does_not_retain_dropped_tool_bodies() {
     assert!(!body.contains("large-tool-output"));
     assert!(body.len() < 16 * 1024);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_repeated_stop_retains_first_terminal_and_one_job() {
+    let (_dir, client, state, root, _) = fixture().await;
+    let c = connection();
+    let response = hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"claude-session","event":"UserPromptSubmit","prompt":"portable build"})).await.unwrap();
+    let mut stop = json!({"cwd":root,"session_id":"claude-session","event":"Stop","last_assistant_message":"first response","stop_hook_active":false});
+    let first = hooks::handle(&client, &c, "claude", None, &state, stop.clone())
+        .await
+        .unwrap();
+    assert_eq!(first["run_id"], response["run_id"]);
+    let before = open_outbox(&client, &c, &state).unwrap().pending().unwrap();
+    stop["last_assistant_message"] = json!("response after another Stop hook");
+    stop["stop_hook_active"] = json!(true);
+    let second = hooks::handle(&client, &c, "claude", None, &state, stop)
+        .await
+        .unwrap();
+    assert_eq!(first["run_id"], second["run_id"]);
+    let after = open_outbox(&client, &c, &state).unwrap().pending().unwrap();
+    assert_eq!(
+        serde_json::to_value(before).unwrap(),
+        serde_json::to_value(after).unwrap()
+    );
+    let project = load_project(&root.join(CONFIG_FILE)).unwrap();
+    assert_eq!(
+        job_driver::queue(&client, &c, &state, &project)
+            .unwrap()
+            .list()
+            .unwrap()
+            .len(),
+        1
+    );
+}

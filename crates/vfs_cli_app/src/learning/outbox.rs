@@ -102,6 +102,14 @@ impl Outbox {
             |r| r.get::<_, i64>(0),
         )? as usize)
     }
+    /// Includes pending and acknowledged immutable reservations in this binding only.
+    pub(super) fn event_recorded(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM learning_outbox WHERE scope=?1 AND id=?2)",
+            params![self.scope, id],
+            |row| row.get(0),
+        )?)
+    }
     /// Exclusion and deferral never count as a remote acknowledgement.
     pub fn event_acknowledged(&self, id: &str) -> Result<bool> {
         Ok(self.conn.query_row(

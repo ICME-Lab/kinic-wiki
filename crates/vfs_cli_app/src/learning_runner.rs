@@ -1,5 +1,6 @@
 //! Owned external-agent execution with bounded transport evidence.
 mod claude;
+pub(crate) use claude::public_event;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -154,6 +155,10 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
     anyhow::ensure!(
         config.max_output_bytes > 0,
         "max_output_bytes must be positive"
+    );
+    anyhow::ensure!(
+        config.engine != AgentEngine::Claude || config.extra_args.is_empty(),
+        "Claude extra_args are unsupported: runner policy must not be overridden"
     );
     for argument in &config.extra_args {
         let option = argument.split('=').next().unwrap_or(argument);
@@ -821,6 +826,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':
         let (dir, mut cfg) = claude_fixture("raise Exception('must never run')");
         cfg.extra_args = vec!["--tools=default".into()];
         assert!(execute(&cfg, dir.path(), "x").await.is_err());
+        cfg.extra_args = vec!["--api-key=PRIVATE_OVERRIDE_VALUE".into()];
+        assert!(
+            !execute(&cfg, dir.path(), "x")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("PRIVATE_OVERRIDE_VALUE")
+        );
         cfg.extra_args.clear();
         cfg.reasoning_effort = Some("unsupported".into());
         assert!(execute(&cfg, dir.path(), "x").await.is_err());

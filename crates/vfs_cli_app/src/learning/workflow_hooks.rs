@@ -84,7 +84,11 @@ fn evidence(request: &Value) -> Value {
     if let Some(snapshot) = request.get("__kinic_evidence") {
         return snapshot.clone();
     }
-    let mut capture = request.clone();
+    let mut capture = if request["engine"] == "claude" {
+        crate::learning_runner::public_event(request.clone())
+    } else {
+        request.clone()
+    };
     // Persisted session evidence is optional and explicitly bounded. Never turn a
     // completed hook into a verified outcome.
     let kind = request["event"]
@@ -156,14 +160,29 @@ fn evidence(request: &Value) -> Value {
                 .filter_map(|line| serde_json::from_str::<Value>(line).ok())
                 .collect::<Vec<_>>();
             let boundary = rows.iter().rposition(|row| {
+                if request["engine"] == "claude" {
+                    return row["type"] == "user"
+                        && row["isMeta"] != true
+                        && row["isCompactSummary"] != true
+                        && (row["message"]["content"].is_string()
+                            || row["message"]["content"].as_array().is_some_and(|blocks| {
+                                blocks.iter().any(|block| block["type"] == "text")
+                            }));
+                }
                 row["payload"]["type"] == "user_message"
                     || row["type"] == "user"
                     || row["payload"]["role"] == "user"
                     || row["message"]["role"] == "user"
             });
-            let records = boundary
+            let mut records = boundary
                 .map(|index| rows.split_off(index))
                 .unwrap_or_default();
+            if request["engine"] == "claude" {
+                records = records
+                    .into_iter()
+                    .map(crate::learning_runner::public_event)
+                    .collect();
+            }
             Ok(
                 json!({"records":records,"complete":false,"truncated":truncated,"missing_turn_boundary":boundary.is_none(),"limitations":["current turn snapshot only; task success and adoption not inferred"]}),
             )
@@ -186,7 +205,7 @@ pub async fn handle(
 ) -> Result<Value> {
     request["engine"] = json!(engine);
     ensure!(
-        ["codex", "dsh"].contains(&engine),
+        ["codex", "dsh", "claude"].contains(&engine),
         "unsupported hook engine"
     );
     let cwd =
@@ -266,14 +285,27 @@ pub async fn handle(
             json!({"routing_binding":binding,"additionalContext":receipt.rendered,"receipt_id":receipt.id,"run_id":id,"hookSpecificOutput":{"hookEventName":kind,"additionalContext":receipt.rendered},"pending_sync":true}),
         );
     }
+    let terminal = kind == "Stop" || request["terminal"] == true;
+    let outbox = open_outbox(client, c, state)?;
+    // Claude can run Stop again after another hook continues a turn. Keep the
+    // first immutable terminal observation, including after acknowledgement.
+    if engine == "claude"
+        && terminal
+        && outbox.event_recorded(&hash(&format!("{id}:hook:terminal-v2")))?
+    {
+        if let Some(p) = job_project {
+            job_driver::enqueue(client, c, state, p, &id, &cwd, &config)?;
+        }
+        return Ok(
+            json!({"routing_binding":binding,"recorded":true,"run_id":id,"pending_sync":!outbox.run_acknowledged(&id)?,"queued":job_project.is_some_and(|p|p.enabled)}),
+        );
+    }
     let mut payload = evidence(&request);
     if request["missing_recall"] == true {
         payload["capture"]["missing_recall"] = json!(true);
     }
     payload["engine"] = json!(engine);
     payload["project_id"] = json!(project.as_ref().map(|p| &p.project_id));
-    let outbox = open_outbox(client, c, state)?;
-    let terminal = kind == "Stop" || request["terminal"] == true;
     let versioned = payload["schema_version"] == 2;
     let mut record = event(&id, "hook", payload);
     if terminal && versioned {
@@ -635,6 +667,37 @@ mod capture_tests {
 #[cfg(test)]
 mod terminal_capture_tests {
     use super::*;
+
+    #[test]
+    fn claude_snapshot_keeps_human_prompt_before_tool_results_and_excludes_thinking() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("claude.jsonl");
+        let rows = [
+            json!({"type":"user","message":{"role":"user","content":"current human task"}}),
+            json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"PRIVATE_CHAIN"},{"type":"tool_use","id":"call-1","name":"Read"}]}}),
+            json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"file content"}]}}),
+            json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer"}]}}),
+        ];
+        std::fs::write(
+            &log,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let value = evidence(
+            &json!({"engine":"claude","event":"Stop","session_id":"s","transcript_path":log}),
+        );
+        let records = value["capture"]["session_evidence"]["records"]
+            .as_array()
+            .unwrap();
+        assert_eq!(records.len(), 4);
+        assert!(records[0].to_string().contains("current human task"));
+        assert!(!value.to_string().contains("PRIVATE_CHAIN"));
+        assert!(!value.to_string().contains("thinking"));
+        assert_eq!(value["complete"], false);
+    }
 
     #[test]
     fn multiple_tool_events_keep_tool_evidence_and_capture_transcript_only_at_stop() {

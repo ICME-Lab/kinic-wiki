@@ -64,6 +64,43 @@ else:
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
+    def test_claude_installed_hooks_forward_each_event_and_return_context(self):
+        plugin = self.root / 'installed plugin with spaces'
+        shutil.copytree(RUNTIME.parent / 'claude-code', plugin)
+        shutil.copytree(RUNTIME / 'kinic_agent_runtime', plugin / 'kinic_agent_runtime')
+        hooks = json.loads((plugin / 'hooks/hooks.json').read_text())['hooks']
+        self.assertIn('SessionEnd', hooks)
+        env = {**self.env, 'CLAUDE_PLUGIN_ROOT':str(plugin)}
+        env.pop('PYTHONPATH', None)
+        for event in ['UserPromptSubmit','PostToolUse','Stop']:
+            command = hooks[event][0]['hooks'][0]['command']
+            output = subprocess.run(['/bin/sh','-c',command], input=json.dumps({**self.base,'hook_event_name':event,'prompt':'task','tool_name':'Bash','tool_use_id':'tool-1'}), capture_output=True, text=True, env=env)
+            self.assertEqual(output.returncode,0,output.stderr)
+            call = self.calls()[-1]
+            self.assertEqual(call['argv'][call['argv'].index('--engine')+1], 'claude')
+            self.assertEqual(call['request']['engine'], 'claude')
+            self.assertEqual(call['request']['event'], event)
+            if event == 'UserPromptSubmit':
+                self.assertIn('additionalContext',json.loads(output.stdout)['hookSpecificOutput'])
+            else:
+                self.assertEqual(json.loads(output.stdout),{})
+
+    def test_claude_owned_runs_do_not_call_cli_or_persist_state(self):
+        self.env['KINIC_LEARNING_OWNED_RUN'] = '1'
+        output = subprocess.run([sys.executable,'-m','kinic_agent_runtime.learning_hook','--engine','claude'], input=json.dumps({**self.base,'hook_event_name':'Stop'}), capture_output=True,text=True,env=self.env)
+        self.assertEqual(output.returncode,0,output.stderr)
+        self.assertEqual(json.loads(output.stdout),{})
+        self.assertFalse(self.log.exists())
+        self.assertFalse((self.root/'data').exists())
+
+    def test_claude_unconfigured_recorder_projects_skip_learning(self):
+        self.env['FIXTURE_SKIP'] = '1'
+        output = subprocess.run([sys.executable,'-m','kinic_agent_runtime.learning_hook','--engine','claude'],input=json.dumps({**self.base,'hook_event_name':'Stop'}),capture_output=True,text=True,env=self.env)
+        self.assertEqual(output.returncode,0,output.stderr)
+        self.assertEqual(json.loads(output.stdout),{})
+        self.assertEqual(self.calls()[0]['request']['engine'],'claude')
+        self.assertFalse((self.root/'data').exists())
+
     def test_recall_only_returns_supported_context_and_uses_cli_settings(self):
         self.env['KINIC_VFS_CLI_ALLOW_NON_II']='1'
         self.env['KINIC_LEARNING_RECALL_CONFIG']='config/custom.json'

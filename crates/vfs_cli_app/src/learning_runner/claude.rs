@@ -132,7 +132,13 @@ pub(super) async fn check_version(config: &RunnerConfig, cwd: &Path) -> Result<(
 }
 
 /// Strip private reasoning before any event is retained, including nested blocks.
-pub(super) fn public_event(value: Value) -> Value {
+pub(crate) fn public_event(value: Value) -> Value {
+    if matches!(
+        value["type"].as_str(),
+        Some("thinking" | "redacted_thinking" | "thinking_delta" | "signature_delta")
+    ) {
+        return Value::Null;
+    }
     match value {
         Value::Array(items) => Value::Array(
             items
