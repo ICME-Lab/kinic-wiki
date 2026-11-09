@@ -1,4 +1,5 @@
 //! Owned external-agent execution with bounded transport evidence.
+mod claude;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use tokio::{
 pub enum AgentEngine {
     Codex,
     Dsh,
+    Claude,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +184,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
                     || argument.starts_with("-C")
             }
             AgentEngine::Dsh => option == "--profile" || (config.read_only && option == "--patch"),
+            AgentEngine::Claude => true,
         };
         anyhow::ensure!(
             !forbidden,
@@ -222,6 +225,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
             }
             command.args(&config.extra_args).arg("-");
         }
+        AgentEngine::Claude => {}
         AgentEngine::Dsh => {
             // The shipped sdk profile reads this mode in dsh-base's sandbox-policy.
             // Apply it after caller environment to prevent inherited broad access.
@@ -235,6 +239,10 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
             );
             command.args(["--profile", "sdk"]).args(&config.extra_args);
         }
+    }
+    if config.engine == AgentEngine::Claude {
+        claude::configure(&mut command, config)?;
+        claude::check_version(config, cwd).await?;
     }
     let mut child = command.spawn()?;
     let mut stdin = child.stdin.take();
@@ -256,7 +264,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
     let drive = async {
         let mut prompt_pipe_closed = false;
         match config.engine {
-            AgentEngine::Codex => {
+            AgentEngine::Codex | AgentEngine::Claude => {
                 if let Err(error) = stdin
                     .as_mut()
                     .expect("piped stdin")
@@ -295,7 +303,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
             let retained = &chunk.bytes[..chunk.bytes.len().min(remaining)];
             count = count.saturating_add(chunk.bytes.len());
             if count > config.max_output_bytes {
-                state.execution.events.push(json!({"stream":if chunk.stderr { "stderr" } else { "stdout" },"text":String::from_utf8_lossy(retained),"partial":true}));
+                state.execution.events.push(if config.engine == AgentEngine::Claude { json!({"stream":if chunk.stderr { "stderr" } else { "stdout" },"discarded_bytes":retained.len(),"partial":true}) } else { json!({"stream":if chunk.stderr { "stderr" } else { "stdout" },"text":String::from_utf8_lossy(retained),"partial":true}) });
                 state.execution.exit_reason = "output_limit".into();
                 return Ok::<(), anyhow::Error>(());
             }
@@ -315,7 +323,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
                         Ok(Value::Object(value)) => Value::Object(value),
                         _ => {
                             state.execution.events.push(
-                                json!({"stream":"stdout","text":String::from_utf8_lossy(&bytes)}),
+                                if config.engine == AgentEngine::Claude { json!({"stream":"stdout","invalid_json_bytes":bytes.len()}) } else { json!({"stream":"stdout","text":String::from_utf8_lossy(&bytes)}) },
                             );
                             state.execution.exit_reason = "malformed_jsonl".into();
                             return Ok::<(), anyhow::Error>(());
@@ -323,6 +331,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
                     };
                     match config.engine {
                         AgentEngine::Codex => state.codex(value),
+                        AgentEngine::Claude => state.claude(value)?,
                         AgentEngine::Dsh => {
                             let initialized = state.dsh(value)?;
                             if initialized {
@@ -358,7 +367,7 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
         Ok(Ok(())) => {}
     }
     if !state.pending.is_empty() {
-        state.execution.events.push(json!({"stream":"stdout","text":String::from_utf8_lossy(&state.pending),"partial":true}));
+        state.execution.events.push(if config.engine == AgentEngine::Claude { json!({"stream":"stdout","discarded_bytes":state.pending.len(),"partial":true}) } else { json!({"stream":"stdout","text":String::from_utf8_lossy(&state.pending),"partial":true}) });
     }
     let expected_success = state.done && state.execution.exit_reason == "completed";
     if config.engine == AgentEngine::Dsh && state.done {
@@ -378,7 +387,8 @@ pub async fn execute(config: &RunnerConfig, cwd: &Path, prompt: &str) -> anyhow:
     drop(stdin);
     // EOF can arrive just before the OS reports exit. Wait for the owned child
     // within the original deadline rather than killing it and losing its status.
-    let await_exit = (config.engine == AgentEngine::Codex && expected_success)
+    let await_exit = (matches!(config.engine, AgentEngine::Codex | AgentEngine::Claude)
+        && state.done)
         || state.execution.exit_reason == "missing_terminal";
     let status = if await_exit {
         tokio::time::timeout_at(deadline, child.wait())
@@ -720,6 +730,128 @@ mod tests {
             ..Default::default()
         };
         (dir, config)
+    }
+
+    fn claude_fixture(body: &str) -> (tempfile::TempDir, RunnerConfig) {
+        let body = format!(
+            "if sys.argv[1:] == ['--version']:\n    print('2.1.286 (Claude Code)');sys.exit()\n{body}"
+        );
+        let (dir, mut cfg) = fixture(&body, AgentEngine::Codex);
+        cfg.engine = serde_json::from_str("\"claude\"").expect("Claude is a supported engine");
+        (dir, cfg)
+    }
+
+    #[tokio::test]
+    async fn claude_reads_prompt_enforces_policy_and_returns_terminal_usage() {
+        let (dir, mut cfg) = claude_fixture(
+            r#"assert sys.stdin.read() == 'hello $() `quoted`'
+for option in ['--bare','--restricted','--strict-mcp-config','--no-session-persistence','--verbose']:
+    assert option in sys.argv, option
+assert sys.argv[sys.argv.index('--tools')+1] == 'Read,Glob,Grep'
+assert sys.argv[sys.argv.index('--mcp-config')+1] == '{"mcpServers":{}}'
+assert sys.argv[sys.argv.index('--model')+1] == 'sonnet'
+assert sys.argv[sys.argv.index('--effort')+1] == 'high'
+print(json.dumps({'type':'assistant','message':{'role':'assistant','content':[{'type':'thinking','thinking':'PRIVATE_THINKING'},{'type':'text','text':'partial'}]}}))
+print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'answer','permission_denials':[], 'usage':{'input_tokens':11,'cache_creation_input_tokens':2,'cache_read_input_tokens':3,'output_tokens':7}}))"#,
+        );
+        cfg.read_only = true;
+        cfg.model = Some("sonnet".into());
+        cfg.reasoning_effort = Some("high".into());
+        let result = execute(&cfg, dir.path(), "hello $() `quoted`")
+            .await
+            .unwrap();
+        assert!(result.complete, "{result:?}");
+        assert_eq!(result.output, "answer");
+        assert_eq!(result.input_tokens, Some(16));
+        assert_eq!(result.output_tokens, Some(7));
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("PRIVATE_THINKING")
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_rejects_failed_missing_denied_and_truncated_results() {
+        for (body, expected) in [
+            (
+                "print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'done'}]}}))",
+                "missing_terminal",
+            ),
+            (
+                "print(json.dumps({'type':'result','subtype':'error_max_turns','is_error':True,'result':'done'}))",
+                "turn_failed",
+            ),
+            (
+                "print(json.dumps({'type':'result','subtype':'success','is_error':False,'permission_denials':[{'tool_name':'Bash'}],'result':'done'}))",
+                "turn_failed",
+            ),
+            ("print('not-json')", "malformed_jsonl"),
+            ("print('{',end='')", "truncated_jsonl"),
+            (
+                "print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'done'}));sys.exit(4)",
+                "process_exit:4",
+            ),
+            (
+                "print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'done'}));print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'again'}))",
+                "protocol_error",
+            ),
+        ] {
+            let (dir, cfg) = claude_fixture(body);
+            let result = execute(&cfg, dir.path(), "x").await.unwrap();
+            assert!(!result.complete, "{body}: {result:?}");
+            assert_eq!(result.exit_reason, expected, "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_writable_tasks_use_explicit_coding_tools_without_bypass() {
+        let (dir, cfg) = claude_fixture(
+            r#"sys.stdin.read()
+assert sys.argv[sys.argv.index('--tools')+1] == 'Read,Glob,Grep,Edit,Write,Bash'
+assert sys.argv[sys.argv.index('--permission-mode')+1] == 'acceptEdits'
+assert 'bypassPermissions' not in sys.argv
+print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'done'}))"#,
+        );
+        assert!(execute(&cfg, dir.path(), "x").await.unwrap().complete);
+    }
+
+    #[tokio::test]
+    async fn claude_rejects_overrides_unsupported_effort_and_old_cli_before_task() {
+        let (dir, mut cfg) = claude_fixture("raise Exception('must never run')");
+        cfg.extra_args = vec!["--tools=default".into()];
+        assert!(execute(&cfg, dir.path(), "x").await.is_err());
+        cfg.extra_args.clear();
+        cfg.reasoning_effort = Some("unsupported".into());
+        assert!(execute(&cfg, dir.path(), "x").await.is_err());
+        cfg.reasoning_effort = None;
+        std::fs::write(
+            &cfg.executable,
+            "#!/bin/sh\nprintf '2.1.100 (Claude Code)\\n'\n",
+        )
+        .unwrap();
+        assert!(
+            execute(&cfg, dir.path(), "x")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("2.1.286")
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_bounds_timeout_and_output() {
+        for (body, expected) in [
+            ("sys.stdin.read();time.sleep(3)", "timeout"),
+            ("print('x'*5000)", "output_limit"),
+        ] {
+            let (dir, mut cfg) = claude_fixture(body);
+            cfg.timeout_seconds = 1;
+            cfg.max_output_bytes = 1024;
+            let result = execute(&cfg, dir.path(), "x").await.unwrap();
+            assert!(!result.complete);
+            assert_eq!(result.exit_reason, expected);
+        }
     }
 
     #[test]

@@ -513,3 +513,19 @@ fn stdin_recall_errors_are_sanitized_and_portable_policies_require_a_file() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot both read stdin"));
     assert_eq!(fs::read_dir(root).unwrap().count(), 0);
 }
+
+#[test]
+fn claude_engine_is_accepted_by_all_agent_entrypoints() {
+    for args in [
+        vec!["agent", "setup", "--engine", "claude", "--dry-run"],
+        vec!["agent", "doctor", "--engine", "claude"],
+        vec!["agent", "run", "--engine", "claude", "--task", "fix"],
+        vec!["agent", "hook", "--engine", "claude"],
+        vec!["agent", "flush", "--engine", "claude", "--replay-inbox"],
+    ] {
+        assert!(
+            Cli::try_parse_from(std::iter::once("kinic-vfs-cli").chain(args.clone())).is_ok(),
+            "{args:?}"
+        );
+    }
+}
