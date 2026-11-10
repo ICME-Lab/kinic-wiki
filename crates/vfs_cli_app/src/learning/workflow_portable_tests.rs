@@ -2204,3 +2204,74 @@ connection.commit()
         1
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_stop_before_job_snapshot_refreshes_pending_job_without_another_trigger() {
+    claude_stop_before_job_snapshot(false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_stop_before_job_snapshot_refreshes_existing_candidate_without_another_trigger() {
+    claude_stop_before_job_snapshot(true).await;
+}
+
+#[cfg(unix)]
+async fn claude_stop_before_job_snapshot(existing_candidate: bool) {
+    let (dir, client, state, root, _) =
+        fixture_for(crate::learning_runner::AgentEngine::Claude).await;
+    let c = connection();
+    hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"snapshot-race","event":"UserPromptSubmit","prompt":"portable build"})).await.unwrap();
+    hooks::handle(&client, &c, "claude", None, &state, json!({"cwd":root,"session_id":"snapshot-race","event":"Stop","last_assistant_message":"initial result"})).await.unwrap();
+    let project = load_project(&root.join(CONFIG_FILE)).unwrap();
+    let q = job_driver::queue(&client, &c, &state, &project).unwrap();
+    let old_candidate = if existing_candidate {
+        job_driver::drain(&client, &c, &root, &state).await.unwrap();
+        q.list().unwrap().remove(0).candidate_path
+    } else {
+        None
+    };
+    q.request_wakeup().unwrap();
+    let source = dir.path().to_path_buf();
+    let target = root.clone();
+    let saved_state = state.clone();
+    job_driver::TEST_AFTER_OUTBOX_CHECK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            std::thread::spawn(move || {
+                tokio::runtime::Runtime::new().unwrap().block_on(async move {
+                    let other = StoreClient::new(&source);
+                    let c = connection();
+                    hooks::handle(&other, &c, "claude", None, &saved_state, json!({"cwd":target,"session_id":"snapshot-race","event":"Stop","stop_hook_active":true,"last_assistant_message":"FINAL_CORRECTION"})).await.unwrap();
+                    // The continuation's flusher can finish while the original
+                    // worker still owns the job lease; its replacement exits busy.
+                    open_outbox(&other, &c, &saved_state).unwrap().flush_exclusive(&other, "db").await.unwrap();
+                    let replacement = job_driver::drain_with_config(&other, &c, &target, &saved_state, None, true).await.unwrap();
+                    assert_eq!(replacement["busy"], true);
+                })
+            }).join().unwrap();
+        }));
+    });
+    let result = job_driver::drain_with_config(&client, &c, &root, &state, None, true)
+        .await
+        .unwrap();
+    assert_eq!(result["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result["jobs"][0]["state"], "candidate",
+        "continuation must be processed before the owner exits: {result}"
+    );
+    let candidate_path = result["jobs"][0]["candidate_path"].as_str().unwrap();
+    if let Some(old) = old_candidate {
+        assert_ne!(candidate_path, old);
+    }
+    let candidate: RevisionCandidate = remote_json(&client, "db", candidate_path).await.unwrap();
+    assert!(
+        candidate.targets[0].content.contains("final-correction"),
+        "latest delivered continuation was not used"
+    );
+    assert_eq!(
+        q.pending_wakeup().unwrap(),
+        None,
+        "consume the wake only after processing its evidence generation"
+    );
+}

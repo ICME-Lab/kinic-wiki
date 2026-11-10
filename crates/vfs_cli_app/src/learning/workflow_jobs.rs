@@ -258,7 +258,10 @@ pub async fn drain_selected(
         let Some(lease) = q.acquire()? else {
             return Ok(json!({"busy":true,"jobs":q.list()?}));
         };
-        if first_pass && require_wakeup && q.pending_wakeup()?.is_none() {
+        // Capture the wake before refreshing evidence. A continuation arriving
+        // afterward must retain its newer wake until its generation is observed.
+        let (wake_generation, _) = q.wakeup_and_jobs()?;
+        if first_pass && require_wakeup && wake_generation.is_none() {
             return Ok(json!({"already_woken":true,"jobs":q.list()?}));
         }
         first_pass = false;
@@ -322,7 +325,7 @@ pub async fn drain_selected(
         if let Some(callback) = TEST_AFTER_OUTBOX_CHECK.with(|hook| hook.borrow_mut().take()) {
             callback();
         }
-        let (wake_generation, jobs) = q.wakeup_and_jobs()?;
+        let jobs = q.list()?;
         let mut delivery_blocked = false;
         for mut job in jobs {
             if attempted.contains(&attempt_key(&job)) || !selected_job(&job) {
