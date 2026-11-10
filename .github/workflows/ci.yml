@@ -515,7 +515,7 @@ jobs:
         include:
           - os: ubuntu-latest
             name: linux-x86_64
-          - os: macos-14
+          - os: macos-15
             name: macos-arm64
     steps:
       - uses: actions/checkout@v5

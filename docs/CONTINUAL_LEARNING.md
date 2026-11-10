@@ -29,6 +29,22 @@ A runner file selects the external executable and model. Examples:
 {"engine":"dsh","executable":"/absolute/path/to/dsh","model":"deepseek-official/deepseek-flash","timeout_seconds":600,"max_output_bytes":8388608,"environment":{}}
 ```
 
+Claude Code is also supported in this source revision:
+
+```json
+{"engine":"claude","executable":"claude","model":"sonnet","timeout_seconds":600,"inherited_environment":["ANTHROPIC_API_KEY"]}
+```
+
+Owned Claude runs require CLI >=2.1.286 and API/provider credentials, and use bare
+print mode with explicit tool limits. Bare mode does not use subscription login.
+Interactive Claude hooks can retain their normal subscription session. See
+[Claude Code configuration](AGENT_CONFIGURATION.md#claude-code) for setup,
+activation, credential inheritance, permission boundaries and supported options.
+Read-only inference cannot edit or run shell tools; coding-suite evaluation keeps
+the configured writable mode inside its exported workspace. These tool and
+workspace controls do not add an OS sandbox. Existing validation/promotion rules
+apply unchanged, including candidate-only results without a configured suite.
+
 An executable may be a normal launcher script that forwards argv. For the local
 DSH source installation, `scripts/launch-local-dsh.node.sh` launches its supported
 CLI/profile entrypoint. Avoid a wrapper that rewrites arguments or refreshes
@@ -41,7 +57,7 @@ receive a shutdown request. The CLI drains bounded stdout/stderr while waiting u
 to two seconds for session persistence/disposal, then terminates an owned runtime
 that has not exited. Teardown does not turn a failed task into success, and the
 bounded grace period does not guarantee persistence when shutdown fails or hangs.
-Both capture bounded evidence, time and available token counts. Missing costs
+All three engines capture bounded evidence, time and available token counts. Missing costs
 stay unknown. Timeouts and malformed/truncated streams produce incomplete runs.
 
 `reasoning_effort` is optional. `read_only` defaults to false; Codex explicitly

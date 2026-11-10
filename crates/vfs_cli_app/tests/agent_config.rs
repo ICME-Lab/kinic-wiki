@@ -298,3 +298,41 @@ fn legacy_file_and_stdin_retain_portable_policy() {
         Some("b".repeat(32))
     );
 }
+
+#[test]
+fn claude_config_preserves_precedence_and_rejects_engine_mismatch_and_secrets() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    put(
+        &home,
+        ".config/kinic-vfs-cli/config.toml",
+        "[agents.claude]\nmodel='user-model'\ntimeout_seconds=44\n",
+    );
+    put(
+        root.path(),
+        ".kinic/config.toml",
+        "[agents.claude]\nmodel='project-model'\n",
+    );
+    let config = AgentConfig::load(root.path(), &home).unwrap();
+    let runner = config.runner(Some("claude"), None).unwrap();
+    assert_eq!(runner.executable, Path::new("claude"));
+    assert_eq!(runner.model.as_deref(), Some("project-model"));
+    assert_eq!(runner.timeout_seconds, 44);
+    assert_eq!(config.configured_engines(), vec!["claude"]);
+    let json = root.path().join("runner.json");
+    fs::write(&json, r#"{"engine":"claude","model":"json-model"}"#).unwrap();
+    assert_eq!(
+        config.runner(None, Some(&json)).unwrap().model.as_deref(),
+        Some("json-model")
+    );
+    assert!(config.runner(Some("codex"), Some(&json)).is_err());
+    put(
+        root.path(),
+        ".kinic/config.toml",
+        "[agents.claude.environment]\nANTHROPIC_API_KEY='private-value'\n",
+    );
+    let error = AgentConfig::load(root.path(), &home)
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("private-value"));
+}

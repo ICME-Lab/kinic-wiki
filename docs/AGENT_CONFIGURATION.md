@@ -386,3 +386,111 @@ oversized or nonregular files leave the relevant evidence unavailable.
 
 This implements proposal stage B. `doctor --probe`, `status --refresh` and new
 observation indices remain conditional additions, based on operational gaps.
+
+
+## Claude Code
+
+This source revision adds `claude` alongside `codex` and `dsh` as an engine.
+Use a CLI built from this revision until a release containing this feature is available.
+
+```sh
+kinic-vfs-cli agent setup --engine claude --dry-run --json
+kinic-vfs-cli agent setup --engine claude
+# Existing file replacements require an explicit apply:
+kinic-vfs-cli agent setup --engine claude --apply
+kinic-vfs-cli agent doctor --engine claude --json
+```
+
+Setup prepares the bundled plugin and local marketplace at
+`~/.claude/plugins/kinic`, plus the shared engine configuration. It leaves
+`~/.claude/settings.json`, unrelated plugins and automatic-learning enrollment
+unchanged. Register that directory as a local marketplace in Claude Code, install
+the plugin, review `/hooks`, and restart if needed:
+
+```sh
+claude plugin marketplace add "$HOME/.claude/plugins/kinic"
+claude plugin install kinic-skill-recorder@kinic
+```
+
+These are explicit application activation steps. Generic
+`--install-plugin` currently applies only to Codex. Custom Claude configuration
+locations require separate inspection; doctor checks the default location only.
+
+The older `kinic-vfs-cli claude setup` command still installs and enables the
+recorder through its existing settings path. It does not create a portable
+learning project or enable learning jobs. In an unconfigured project, the new
+learning hooks skip their work while skill and SessionEnd recording remain
+available. In a configured project, UserPromptSubmit supplies recall context,
+PostToolUse records bounded metadata and Stop retains a redacted current-turn
+snapshot and queues the existing finite learning job. A Stop notification is not
+a successful-task attestation. Identical Stop retries preserve one observation. A genuine continuation retains
+a new immutable snapshot and refreshes the existing job against the complete
+evidence generation, rather than reusing its earlier candidate. An operator pause
+or failed-model pause is not automatically resumed. Evidence arriving after a
+completed or ambiguous publication is retained and reported for explicit
+reconciliation; it does not automatically republish knowledge.
+
+For CLI-owned runs, configure Claude Code **2.1.286 or newer**. The runner uses
+`claude --print --bare --restricted` with structured `stream-json` output. Bare
+mode disables hooks, plugins, CLAUDE.md and automatic MCP discovery, preventing
+learning inference from recursively recording itself. It also **does not use
+subscription OAuth/keychain login**: provide existing API or supported provider
+credentials in the environment. No setup command obtains or copies credentials.
+Ordinary interactive Claude Code sessions keep their normal login; this
+credential requirement applies to the owned runner, not the interactive hooks.
+
+Optional shared configuration:
+
+```toml
+[agents.claude]
+executable = "claude"
+model = "sonnet"
+reasoning_effort = "high"
+timeout_seconds = 600
+inherited_environment = ["ANTHROPIC_API_KEY"]
+```
+
+Omit model and effort to retain Claude's defaults. Supported explicit effort
+values are `low`, `medium`, `high`, `xhigh` and `max`; the chosen model must support
+the level. TOML stores environment variable names, never secret values. For
+isolated evaluation, list the credential variables in `inherited_environment` so
+they are available after the evaluator clears the environment.
+
+```sh
+kinic-vfs-cli agent run --engine claude --task 'Fix the regression and run the tests'
+kinic-vfs-cli learn setup --project-root . --runner-file /absolute/path/claude-runner.json
+kinic-vfs-cli agent status --json
+```
+
+A runner JSON for the separate learning registration can be:
+
+```json
+{"engine":"claude","executable":"claude","model":"sonnet","timeout_seconds":600,"inherited_environment":["ANTHROPIC_API_KEY"]}
+```
+
+The runner checks its executable version only when explicitly executing a task.
+Setup and doctor never start Claude or a model; authentication, model access,
+plugin activation and observed operation remain unverified until exercised.
+
+Read-only proposal/source-assessment inference exposes only `Read`, `Glob` and
+`Grep`, denies MCP, disables hooks and rejects extra arguments that could widen
+policy. This is a Claude tool restriction, **not an OS sandbox**. Coding tasks and
+coding-suite evaluation expose `Edit`, `Write` and `Bash` as well, with explicit
+tool permission and no bypass-permissions flag. Evaluation runs in an exported
+workspace and checks allowed paths; shell commands are not confined by a new OS
+sandbox. Use an appropriately isolated execution environment for untrusted coding
+tasks. User/project settings and installed plugins are not loaded by owned bare
+runs. Shared runner environment settings cannot re-enable Claude customizations;
+provider-selection variables remain supported. `extra_args` are unsupported for
+Claude; use the typed model/effort/limit fields instead.
+
+The existing candidate, evaluation, promotion and rollback rules are unchanged.
+Without a validation suite, a proposal remains a candidate. Missing terminal
+results, permission denials, failed results, nonzero exits, timeouts and malformed
+output are not successful runs. The transport removes thinking blocks before
+retaining events. A passing fake-CLI test proves this adapter's contract, not
+native Claude compatibility or improved learning quality.
+
+References: [programmatic execution](https://code.claude.com/docs/en/headless),
+[CLI options](https://code.claude.com/docs/en/cli-reference), and
+[hook events](https://code.claude.com/docs/en/hooks).

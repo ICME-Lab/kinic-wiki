@@ -217,7 +217,7 @@ impl AgentConfig {
                 value.get("learning").is_none_or(Value::is_object),
                 "learning must be a table"
             );
-            for engine in ["codex", "dsh"] {
+            for engine in ["codex", "dsh", "claude"] {
                 ensure!(
                     value
                         .pointer(&format!("/agents/{engine}"))
@@ -247,7 +247,7 @@ impl AgentConfig {
         self.values.get("learning").is_some()
     }
     pub fn configured_engines(&self) -> Vec<String> {
-        let mut engines: Vec<String> = ["codex", "dsh"]
+        let mut engines: Vec<String> = ["codex", "dsh", "claude"]
             .into_iter()
             .filter(|e| self.values.pointer(&format!("/agents/{e}")).is_some())
             .map(str::to_owned)
@@ -284,7 +284,7 @@ impl AgentConfig {
             .or(file.map(|_| "codex"))
             .context("specify --engine or --runner-file")?;
         ensure!(
-            ["codex", "dsh"].contains(&engine),
+            ["codex", "dsh", "claude"].contains(&engine),
             "unsupported agent engine"
         );
         let mut value = self

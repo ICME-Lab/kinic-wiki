@@ -1,8 +1,8 @@
 {
   "name": "kinic-skill-recorder",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "displayName": "Kinic Skill Recorder",
-  "description": "Record Claude Code skill run evidence through kinic-vfs-cli.",
+  "description": "Record Claude Code skill/session evidence and connect configured projects to Kinic continual learning.",
   "author": {
     "name": "Kinic"
   },
