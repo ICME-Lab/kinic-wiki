@@ -180,6 +180,11 @@ impl JobQueue {
                 "completed or held proposal cannot be paused"
             );
             job.pause("operator_paused");
+            // An explicit operator pause supersedes an existing automatic pause
+            // without losing the state needed for a later explicit resume.
+            if let Some(paused) = job.pause.as_mut() {
+                paused.reason = "operator_paused".into();
+            }
         } else {
             ensure!(job.state == "paused", "only paused jobs can be resumed");
             ensure!(

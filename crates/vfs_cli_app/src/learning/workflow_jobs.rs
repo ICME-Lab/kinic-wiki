@@ -634,10 +634,14 @@ fn refresh_claude_evidence(
             continue;
         }
         if job.state == "paused"
-            && !job
-                .error
-                .as_deref()
-                .is_some_and(|error| error.contains("Claude terminal evidence changed"))
+            && (job
+                .pause
+                .as_ref()
+                .is_some_and(|pause| pause.reason == "operator_paused")
+                || !job
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("Claude terminal evidence changed")))
         {
             // New evidence cannot resume an operator pause or a failed model.
             continue;
@@ -794,6 +798,61 @@ mod fingerprint_tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn operator_pause_after_evidence_change_requires_explicit_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        let q = JobQueue::open(root.path(), "binding", "project").unwrap();
+        let outbox = outbox::Outbox::open(root.path(), "canister", "db", "principal").unwrap();
+        q.enqueue("run", root.path(), &config).unwrap();
+        let mut job = q.list().unwrap().remove(0);
+        job.state = "candidate".into();
+        job.candidate_path = Some("retained-candidate".into());
+        job.terminal_evidence = Some("old-generation".into());
+        assert!(job.begin_attempt(0));
+        job.fail_attempt(
+            "Claude terminal evidence changed during learning; candidate must be refreshed",
+            0,
+        );
+        q.save(&job).unwrap();
+        outbox.enqueue(&event("run", "hook", json!({"engine":"claude","capture":{"event":"Stop","last_assistant_message":"new evidence"}}))).unwrap();
+
+        let preview = q.control("run", &config, true, false, "").unwrap();
+        assert_eq!(preview.pause.as_ref().unwrap().reason, "operator_paused");
+        assert_eq!(
+            q.list().unwrap()[0].pause.as_ref().unwrap().reason,
+            "binding_or_evidence_changed",
+            "preview must not mutate the queue"
+        );
+        q.control("run", &config, true, true, "").unwrap();
+        {
+            let _lease = q.acquire().unwrap().unwrap();
+            refresh_claude_evidence(&q, &outbox, None).unwrap();
+        }
+        let stopped = q.list().unwrap().remove(0);
+        assert_eq!(
+            stopped.state, "paused",
+            "new evidence must not override manual pause"
+        );
+        assert_eq!(stopped.pause.as_ref().unwrap().reason, "operator_paused");
+        assert_eq!(stopped.pause.as_ref().unwrap().previous_state, "candidate");
+        assert_eq!(stopped.error, job.error, "retain the original diagnostic");
+        assert_eq!(stopped.candidate_path, job.candidate_path);
+        assert_eq!(stopped.terminal_evidence, job.terminal_evidence);
+        assert_eq!(stopped.retry_policy.as_ref().unwrap().attempts, 1);
+
+        q.control("run", &config, false, true, "").unwrap();
+        {
+            let _lease = q.acquire().unwrap().unwrap();
+            refresh_claude_evidence(&q, &outbox, None).unwrap();
+        }
+        let resumed = q.list().unwrap().remove(0);
+        assert_eq!(resumed.state, "pending");
+        assert!(resumed.candidate_path.is_none());
+        assert_ne!(resumed.terminal_evidence, job.terminal_evidence);
+        assert_eq!(resumed.retry_policy.as_ref().unwrap().attempts, 0);
     }
 
     #[test]
