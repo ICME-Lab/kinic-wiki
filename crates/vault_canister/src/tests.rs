@@ -294,3 +294,96 @@ fn certified_asset_policy_rejects_embedding_without_breaking_ii_popup() {
         assert!(bytes.len() < 1_900_000, "asset needs streaming");
     }
 }
+#[test]
+fn fee_admission_precedes_io_and_fences_cleanup_expiry_and_upgrade() {
+    state::initialize().unwrap();
+    let cfg = FundingConfig {
+        ledger: p(70),
+        recipient: p(71),
+        cycles_per_kinic: 100_000_000,
+    };
+    let req = |n| PurchaseRequest {
+        operation: vec![n; 16],
+        beneficiary: p(72),
+        amount_e8s: 100_000_000,
+        min_credits: 20_000_000,
+        created_at_time: 0,
+    };
+    let mut invalid = req(1);
+    invalid.amount_e8s = 0;
+    assert!(admit_quote(p(73), invalid, cfg.clone(), 0).is_err());
+    let first = match admit_quote(p(73), req(1), cfg.clone(), 0).unwrap() {
+        QuoteAdmission::Fee(f) => f,
+        _ => panic!("fee slot expected"),
+    };
+    assert!(admit_quote(p(73), req(2), cfg.clone(), 0).is_err());
+    let mut flights = vec![first.clone()];
+    for n in 74..81 {
+        match admit_quote(p(n), req(n), cfg.clone(), 0).unwrap() {
+            QuoteAdmission::Fee(f) => flights.push(f),
+            _ => panic!("fee slot expected"),
+        }
+    }
+    assert!(admit_quote(p(81), req(81), cfg.clone(), 0).is_err());
+    assert!(finish_quote(&first, Err(vault_types::Error::KeyService), 1).is_err());
+    let replacement = match admit_quote(p(73), req(1), cfg.clone(), 2).unwrap() {
+        QuoteAdmission::Fee(f) => f,
+        _ => panic!("fee slot expected"),
+    };
+    assert!(finish_quote(&first, Ok(10), 3).is_err()); // old failed callback cannot clear a replacement
+    assert!(admit_quote(p(73), req(3), cfg.clone(), 3).is_err());
+    state::State.vault_start_generation().unwrap();
+    let fresh = match admit_quote(p(73), req(1), cfg.clone(), 4).unwrap() {
+        QuoteAdmission::Fee(f) => f,
+        _ => panic!("fee slot expected"),
+    };
+    assert!(finish_quote(&replacement, Ok(10), 5).is_err());
+    assert_eq!(finish_quote(&fresh, Ok(20), 6).unwrap().fee, 20);
+    assert!(matches!(
+        admit_quote(p(73), req(1), cfg.clone(), 7).unwrap(),
+        QuoteAdmission::Existing(_)
+    ));
+    let expired = match admit_quote(p(74), req(4), cfg.clone(), 8).unwrap() {
+        QuoteAdmission::Fee(f) => f,
+        _ => panic!("fee slot expected"),
+    };
+    assert!(finish_quote(&expired, Ok(10), 120_000_000_009).is_err());
+    assert!(matches!(
+        admit_quote(p(74), req(4), cfg, 120_000_000_010).unwrap(),
+        QuoteAdmission::Fee(_)
+    ));
+}
+#[test]
+fn pending_fee_reserves_global_payment_capacity_before_dispatch() {
+    state::initialize().unwrap();
+    let cfg = FundingConfig {
+        ledger: p(90),
+        recipient: p(91),
+        cycles_per_kinic: 100_000_000,
+    };
+    let req = |id| PurchaseRequest {
+        operation: vec![id; 16],
+        beneficiary: p(92),
+        amount_e8s: 100_000_000,
+        min_credits: 20_000_000,
+        created_at_time: 0,
+    };
+    for owner in 128..=191 {
+        for id in 0..if owner == 191 { 15 } else { 16 } {
+            record_quote(p(owner), req(id), cfg.clone(), 10, 0).unwrap();
+        }
+    }
+    let last = match admit_quote(p(192), req(1), cfg.clone(), 0).unwrap() {
+        QuoteAdmission::Fee(f) => f,
+        _ => panic!("fee slot expected"),
+    };
+    assert!(matches!(
+        admit_quote(p(193), req(1), cfg.clone(), 0),
+        Err(vault_types::Error::QuotaExceeded)
+    ));
+    finish_quote(&last, Ok(10), 1).unwrap();
+    assert!(matches!(
+        admit_quote(p(193), req(1), cfg, 2),
+        Err(vault_types::Error::QuotaExceeded)
+    ));
+}

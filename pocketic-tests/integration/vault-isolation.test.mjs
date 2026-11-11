@@ -105,6 +105,8 @@ try {
   });
   const fakeIDL = () => IDL.Service({
     configure: IDL.Func([IDL.Nat8, IDL.Nat64], [], []),
+    fee_behavior: IDL.Func([IDL.Bool, IDL.Bool], [], []),
+    fee_calls: IDL.Func([], [IDL.Nat64], ['query']),
     calls: IDL.Func([], [IDL.Vec(transferIDL)], ['query'])
   });
   const fake = await pic.setupCanister({
@@ -127,6 +129,123 @@ try {
     min_credits: 1_000_000_000n,
     created_at_time: BigInt(await pic.getTime()) * 1_000_000n
   });
+  // Admission must happen before any ledger call, including malformed requests.
+  const feeBefore = await fake.actor.fee_calls();
+  for (const changes of [{
+    amount_e8s: 0n
+  }, {
+    min_credits: 0n
+  }, {
+    min_credits: 2_000_000_000n
+  }, {
+    operation: new Uint8Array(15)
+  }, {
+    created_at_time: 0n
+  }]) {
+    assert.ok('Err' in (await actor.quote_purchase({
+      ...(await request(80)),
+      ...changes
+    })));
+    assert.equal(await fake.actor.fee_calls(), feeBefore, 'invalid request dispatched a fee lookup');
+  }
+  const until = async observe => {
+    for (let i = 0; i < 100; i++) {
+      if (await observe()) return;
+      await pic.tick();
+    }
+    assert.fail('delayed fee condition was not reached');
+  };
+  const release = async held => {
+    await pic.mockPendingHttpsOutcall({
+      requestId: held.requestId,
+      subnetId: held.subnetId,
+      response: {
+        type: 'success',
+        statusCode: 200,
+        headers: [],
+        body: new Uint8Array()
+      }
+    });
+    await pic.tick(10);
+  };
+  await fake.actor.fee_behavior(true, false);
+  const finishes = [];
+  for (let i = 0; i < 8; i++) {
+    const deferred = pic.createDeferredActor(vaultIDL, canisterId);
+    deferred.setPrincipal(Principal.selfAuthenticating(new Uint8Array(32).fill(100 + i)));
+    finishes.push(await deferred.quote_purchase(await request(90 + i)));
+  }
+  await until(async () => (await fake.actor.fee_calls()) === feeBefore + 8n);
+  actor.setPrincipal(Principal.selfAuthenticating(new Uint8Array(32).fill(100)));
+  assert.ok('Err' in (await actor.quote_purchase(await request(110))));
+  actor.setPrincipal(owner);
+  assert.ok('Err' in (await actor.quote_purchase(await request(111))));
+  assert.equal(await fake.actor.fee_calls(), feeBefore + 8n, 'over-limit request dispatched a fee lookup');
+  const held = await pic.getPendingHttpsOutcalls();
+  assert.equal(held.length, 8);
+  for (const h of held) await release(h);
+  for (const finish of finishes) ok(await finish());
+  await fake.actor.fee_behavior(false, false);
+  // A full wallet's completed quotes also stop fee lookup before dispatch.
+  const fullWallet = Principal.selfAuthenticating(new Uint8Array(32).fill(120));
+  actor.setPrincipal(fullWallet);
+  for (let i = 0; i < 16; i++) ok(await actor.quote_purchase(await request(130 + i)));
+  const fullCount = await fake.actor.fee_calls();
+  assert.ok('Err' in (await actor.quote_purchase(await request(150))));
+  assert.equal(await fake.actor.fee_calls(), fullCount);
+  actor.setPrincipal(owner);
+  // Fee decode failure releases the slot, so the same unpaid operation can retry.
+  await fake.actor.fee_behavior(false, true);
+  const failedFee = await request(151);
+  assert.ok('Err' in (await actor.quote_purchase(failedFee)));
+  await fake.actor.fee_behavior(false, false);
+  ok(await actor.quote_purchase(failedFee));
+  // Bounded timeout releases a lease; its late reply cannot overwrite a fresh one.
+  await fake.actor.fee_behavior(true, false);
+  const deferred = pic.createDeferredActor(vaultIDL, canisterId);
+  deferred.setPrincipal(owner);
+  const timeoutReq = await request(152);
+  const timeoutFinish = await deferred.quote_purchase(timeoutReq);
+  await until(async () => (await pic.getPendingHttpsOutcalls()).length === 1);
+  const timed = (await pic.getPendingHttpsOutcalls())[0];
+  await pic.advanceTime(61_000);
+  await pic.tick(20);
+  assert.ok('Err' in (await timeoutFinish()));
+  const oldFeeStillPending = (await pic.getPendingHttpsOutcalls()).some(h => h.requestId === timed.requestId);
+  const replacementFinish = await deferred.quote_purchase({
+    ...timeoutReq,
+    created_at_time: BigInt(await pic.getTime()) * 1_000_000n
+  });
+  await until(async () => (await pic.getPendingHttpsOutcalls()).length === (oldFeeStillPending ? 2 : 1));
+  const replacement = (await pic.getPendingHttpsOutcalls()).find(h => h.requestId !== timed.requestId);
+  if (oldFeeStillPending) await release(timed);
+  assert.deepEqual(ok(await actor.payment_status(timeoutReq.operation)), []);
+  await release(replacement);
+  ok(await replacementFinish());
+  // Upgrade invalidates a fee lease. A fresh lease for the same operation survives
+  // the old management HTTP reply, then alone publishes its quote.
+  const upgradeReq = await request(153);
+  await deferred.quote_purchase(upgradeReq);
+  await until(async () => (await pic.getPendingHttpsOutcalls()).length === 1);
+  const oldHeld = (await pic.getPendingHttpsOutcalls())[0];
+  await pic.upgradeCanister({
+    sender: owner,
+    canisterId,
+    wasm,
+    arg: IDL.encode([], [])
+  });
+  const upgradeFinish = await deferred.quote_purchase({
+    ...upgradeReq,
+    created_at_time: BigInt(await pic.getTime()) * 1_000_000n
+  });
+  await until(async () => (await pic.getPendingHttpsOutcalls()).length === 2);
+  const newHeld = (await pic.getPendingHttpsOutcalls()).find(h => h.requestId !== oldHeld.requestId);
+  await release(oldHeld);
+  assert.deepEqual(ok(await actor.payment_status(upgradeReq.operation)), []);
+  await release(newHeld);
+  ok(await upgradeFinish());
+  await fake.actor.fee_behavior(false, false);
+  console.log('PASS fee admission: invalid/full-wallet/over-flight limits dispatch no ledger call; delayed fee failure, timeout, late callback and upgrade recovery remain fenced.');
   await fake.actor.configure(6, 10n);
   const req = await request(40);
   const quote = ok(await actor.quote_purchase(req));

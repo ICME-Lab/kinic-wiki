@@ -84,13 +84,24 @@ fn generation(db: &sql::Connection) -> Result<i64> {
     )
     .map_err(|_| Error::Storage)
 }
-pub fn record_quote(
+/// A durable fee lookup occupies both payment capacity and a physical-flight slot.
+/// No account is allocated until the later, authoritative transfer succeeds.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FeeFlight {
+    payment: Payment,
+    token: i64,
+    expires: u64,
+}
+pub enum QuoteAdmission {
+    Existing(Payment),
+    Fee(FeeFlight),
+}
+pub fn admit_quote(
     wallet: Principal,
     request: PurchaseRequest,
     config: FundingConfig,
-    fee: u64,
     now: u64,
-) -> Result<Payment> {
+) -> Result<QuoteAdmission> {
     auth(wallet)?;
     auth(request.beneficiary)?;
     if request.operation.len() != 16
@@ -103,7 +114,7 @@ pub fn record_quote(
     transaction(|db| {
         if let Some(old) = load(db, wallet, &request.operation)? {
             return if old.request == request {
-                Ok(old)
+                Ok(QuoteAdmission::Existing(old))
             } else {
                 Err(Error::Conflict)
             };
@@ -113,21 +124,6 @@ pub fn record_quote(
         {
             return Err(Error::Expired);
         }
-        db.execute(
-            "DELETE FROM payments WHERE expires<?1",
-            params![(now / 1_000_000_000) as i64],
-        )
-        .map_err(|_| Error::Storage)?;
-        let (global, owner): (i64, i64) = db
-            .query_row(
-                "SELECT count(*),coalesce(sum(wallet=?1),0) FROM payments",
-                params![wallet.to_text()],
-                |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
-            )
-            .map_err(|_| Error::Storage)?;
-        if global >= 1024 || owner >= 16 {
-            return Err(Error::QuotaExceeded);
-        }
         let credits = u64::try_from(
             u128::from(request.amount_e8s) * u128::from(config.cycles_per_kinic) / 100_000_000,
         )
@@ -135,28 +131,130 @@ pub fn record_quote(
         if credits < 20_000_000 || credits < request.min_credits || credits > i64::MAX as u64 {
             return Err(Error::InvalidInput);
         }
+        let generation = generation(db)?;
+        let nanos = i64::try_from(now).map_err(|_| Error::InvalidInput)?;
+        db.execute(
+            "DELETE FROM quote_fee_flights WHERE generation<>?1 OR expires_ns<=?2",
+            params![generation, nanos],
+        )
+        .map_err(|_| Error::Storage)?;
+        db.execute(
+            "DELETE FROM payments WHERE expires<?1",
+            params![(now / 1_000_000_000) as i64],
+        )
+        .map_err(|_| Error::Storage)?;
+        let (payments, owned): (i64, i64) = db
+            .query_row(
+                "SELECT count(*),coalesce(sum(wallet=?1),0) FROM payments",
+                params![wallet.to_text()],
+                |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+            )
+            .map_err(|_| Error::Storage)?;
+        let (flights, own_flights): (i64, i64) = db
+            .query_row(
+                "SELECT count(*),coalesce(sum(wallet=?1),0) FROM quote_fee_flights",
+                params![wallet.to_text()],
+                |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+            )
+            .map_err(|_| Error::Storage)?;
+        if payments + flights >= 1024 || owned + own_flights >= 16 {
+            return Err(Error::QuotaExceeded);
+        }
+        // One caller cannot monopolize all eight physical fee calls. A 120s lease
+        // exceeds the transport's 60s bounded wait; upgrades invalidate old leases.
+        if flights >= 8 || own_flights >= 1 {
+            return Err(Error::Busy);
+        }
+        let serial:i64=db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='quote_fee_serial'),0)",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+        let token = serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
+        db.execute("INSERT INTO global_settings(key,value) VALUES('quote_fee_serial',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![token.to_string()]).map_err(|_|Error::Storage)?;
         let mut hash = Sha256::new();
         hash.update(b"kinic-vault/payment/v1");
         hash.update(wallet.as_slice());
         hash.update(&request.operation);
         hash.update(request.created_at_time.to_be_bytes());
-        let p = Payment {
+        let payment = Payment {
             wallet,
-            created_at_time: now,
             request,
             config,
-            fee,
+            fee: 0,
             credits,
             memo: hash.finalize().to_vec(),
+            created_at_time: now,
             status: Status::Quoted,
+            generation,
             uncertain: false,
             attempt: 0,
             sent_at: 0,
-            generation: generation(db)?,
         };
-        save(db, &p)?;
-        Ok(p)
+        let expires = now
+            .checked_add(120_000_000_000)
+            .ok_or(Error::InvalidInput)?;
+        let flight = FeeFlight {
+            payment,
+            token,
+            expires,
+        };
+        db.execute("INSERT INTO quote_fee_flights(wallet,operation,token,generation,expires_ns,record) VALUES(?1,?2,?3,?4,?5,?6)",params![wallet.to_text(),flight.payment.request.operation,token,generation,i64::try_from(expires).map_err(|_|Error::InvalidInput)?,serde_json::to_string(&flight).map_err(|_|Error::Storage)?]).map_err(|_|Error::Storage)?;
+        Ok(QuoteAdmission::Fee(flight))
     })
+}
+pub fn finish_quote(sent: &FeeFlight, fee: Result<u64>, now: u64) -> Result<Payment> {
+    // Commit cleanup even when the external fee call failed. Returning the inner
+    // error directly from the DB closure would roll back deletion of its lease.
+    transaction(|db| {
+        let raw: Option<String> = db
+            .query_row(
+                "SELECT record FROM quote_fee_flights WHERE wallet=?1 AND operation=?2",
+                params![
+                    sent.payment.wallet.to_text(),
+                    sent.payment.request.operation
+                ],
+                |r| sql::row_get(r, 0),
+            )
+            .optional()
+            .map_err(|_| Error::Storage)?;
+        let Some(raw) = raw else {
+            return Ok(Err(Error::Expired));
+        };
+        let current: FeeFlight = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
+        if current.token != sent.token || current.payment.generation != sent.payment.generation {
+            return Ok(Err(Error::Expired));
+        }
+        db.execute(
+            "DELETE FROM quote_fee_flights WHERE wallet=?1 AND operation=?2 AND token=?3",
+            params![
+                sent.payment.wallet.to_text(),
+                sent.payment.request.operation,
+                sent.token
+            ],
+        )
+        .map_err(|_| Error::Storage)?;
+        if generation(db)? != current.payment.generation || current.expires <= now {
+            return Ok(Err(Error::Expired));
+        }
+        let fee = match fee {
+            Ok(fee) => fee,
+            Err(error) => return Ok(Err(error)),
+        };
+        let mut payment = current.payment;
+        payment.fee = fee;
+        save(db, &payment)?;
+        Ok(Ok(payment))
+    })?
+}
+#[cfg(test)]
+pub fn record_quote(
+    wallet: Principal,
+    request: PurchaseRequest,
+    config: FundingConfig,
+    fee: u64,
+    now: u64,
+) -> Result<Payment> {
+    match admit_quote(wallet, request, config, now)? {
+        QuoteAdmission::Existing(p) => Ok(p),
+        QuoteAdmission::Fee(f) => finish_quote(&f, Ok(fee), now),
+    }
 }
 pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
     auth(wallet)?;
@@ -347,18 +445,20 @@ async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment
             .map_err(|_| Error::Storage)?
             .ok_or(Error::Unauthorized)
     })?;
-    let response = ic_cdk::call::Call::bounded_wait(config.ledger, "icrc1_fee")
-        .change_timeout(60)
-        .await
-        .map_err(|_| Error::KeyService)?;
-    let fee: Nat = response.candid().map_err(|_| Error::KeyService)?;
-    record_quote(
-        caller,
-        request,
-        config,
-        nat(&fee).ok_or(Error::InvalidInput)?,
-        crate::now_nanos(),
-    )
+    let flight = match admit_quote(caller, request, config, crate::now_nanos())? {
+        QuoteAdmission::Existing(payment) => return Ok(payment),
+        QuoteAdmission::Fee(flight) => flight,
+    };
+    let fee = async {
+        let response = ic_cdk::call::Call::bounded_wait(flight.payment.config.ledger, "icrc1_fee")
+            .change_timeout(60)
+            .await
+            .map_err(|_| Error::KeyService)?;
+        let fee: Nat = response.candid().map_err(|_| Error::KeyService)?;
+        nat(&fee).ok_or(Error::InvalidInput)
+    }
+    .await;
+    finish_quote(&flight, fee, crate::now_nanos())
 }
 #[derive(CandidType, Deserialize)]
 struct Account {

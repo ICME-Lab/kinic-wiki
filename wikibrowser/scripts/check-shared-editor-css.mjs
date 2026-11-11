@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require=createRequire(import.meta.url);
+const postcss=require('postcss');
+const tailwind=require('tailwindcss');
+const loadConfig=require('tailwindcss/loadConfig');
+const wiki=fileURLToPath(new URL('../',import.meta.url));
+process.chdir(wiki);
+const config=loadConfig(`${wiki}tailwind.config.ts`);
+const result=await postcss([tailwind(config)]).process('@tailwind utilities;',{from:undefined});
+assert.match(result.css,/\.bg-paper\\\/95\s*\{[^}]*background-color: rgb\(var\(--paper\) \/ 0\.95\)/,'shared editor sticky toolbar must retain its opaque paper background');
+console.log('Shared editor toolbar opacity is included in generated Wiki CSS');

@@ -8,11 +8,28 @@ struct Account { owner: Principal, subaccount: Option<Vec<u8>> }
 struct Transfer { spender_subaccount: Option<Vec<u8>>, from: Account, to: Account, amount: Nat, fee: Option<Nat>, memo: Option<Vec<u8>>, created_at_time: Option<u64> }
 #[derive(CandidType, Deserialize)]
 enum TransferError { BadFee { expected_fee: Nat }, InsufficientFunds { balance: Nat }, InsufficientAllowance { allowance: Nat }, Duplicate { duplicate_of: Nat } }
-thread_local! {static MODE: Cell<u8> = const {Cell::new(0)}; static FEE:Cell<u64>=const{Cell::new(10)};static CALLS:RefCell<Vec<Transfer>>=const{RefCell::new(Vec::new())};}
+thread_local! {static FEE_DELAY:Cell<bool>=const{Cell::new(false)};static FEE_INVALID:Cell<bool>=const{Cell::new(false)};static FEE_CALLS:Cell<u64>=const{Cell::new(0)};static MODE: Cell<u8> = const {Cell::new(0)}; static FEE:Cell<u64>=const{Cell::new(10)};static CALLS:RefCell<Vec<Transfer>>=const{RefCell::new(Vec::new())};}
 #[ic_cdk::update]
 fn configure(mode:u8,fee:u64){assert!(ic_cdk::api::is_controller(&ic_cdk::api::msg_caller()));MODE.set(mode);FEE.set(fee);}
 #[ic_cdk::update]
-fn icrc1_fee()->Nat{FEE.get().into()}
+async fn icrc1_fee()->Nat{
+ let number=FEE_CALLS.get()+1;FEE_CALLS.set(number);
+ if FEE_DELAY.get(){
+  ic_cdk::call::Call::unbounded_wait(Principal::management_canister(),"http_request").with_arg(HttpArgs{url:format!("https://vault-fee.invalid/{number}"),max_response_bytes:Some(1000),method:HttpMethod::get,headers:vec![],body:None}).with_cycles(30_000_000_000).await.expect("test must release fee lookup");
+ }
+ if FEE_INVALID.get(){Nat::from(u128::MAX)}else{FEE.get().into()}
+}
+#[ic_cdk::update]
+fn fee_behavior(delay:bool,invalid:bool){assert!(ic_cdk::api::is_controller(&ic_cdk::api::msg_caller()));FEE_DELAY.set(delay);FEE_INVALID.set(invalid);}
+#[ic_cdk::query]
+fn fee_calls()->u64{FEE_CALLS.get()}
+#[derive(CandidType)]
+struct HttpArgs{url:String,max_response_bytes:Option<u64>,method:HttpMethod,headers:Vec<Header>,body:Option<Vec<u8>>}
+#[derive(CandidType)]
+#[allow(non_camel_case_types)]
+enum HttpMethod{get}
+#[derive(CandidType)]
+struct Header{name:String,value:String}
 #[ic_cdk::update]
 fn icrc2_transfer_from(arg:Transfer)->Result<Nat,TransferError>{
  CALLS.with(|calls|{let mut calls=calls.borrow_mut();assert!(calls.len()<64);calls.push(arg);});

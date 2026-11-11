@@ -6,3 +6,4 @@ CREATE TABLE IF NOT EXISTS payments(wallet TEXT NOT NULL,operation BLOB NOT NULL
 CREATE INDEX IF NOT EXISTS payments_expiry ON payments(expires);
 CREATE TABLE IF NOT EXISTS account_ledger(id INTEGER PRIMARY KEY AUTOINCREMENT,owner TEXT NOT NULL,kind TEXT NOT NULL,amount_cycles INTEGER NOT NULL,balance_after INTEGER NOT NULL,at_ms INTEGER NOT NULL,operation BLOB);
 CREATE INDEX IF NOT EXISTS account_ledger_owner ON account_ledger(owner,id);
+CREATE TABLE IF NOT EXISTS quote_fee_flights(wallet TEXT NOT NULL,operation BLOB NOT NULL,token INTEGER NOT NULL,generation INTEGER NOT NULL,expires_ns INTEGER NOT NULL,record TEXT NOT NULL,PRIMARY KEY(wallet,operation));
