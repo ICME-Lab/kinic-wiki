@@ -1,0 +1,379 @@
+{
+  "source": "kinic-vault",
+  "head": "a998092256b031308161351fca51cdc8fac7446d",
+  "includes_working_tree": true,
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "c212f1cdc52fd7c18e70ab15eb99ddc33ccbdb971b2856bd32177ef72f4bc4c0"
+    },
+    {
+      "path": ".prettierignore",
+      "sha256": "63c1fc965afdeba3dd564156b60d77742183205c6319697ee1cf1f201369b96a"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "d681cf5b156cf3081b03277029383f3696a839a9eb55ee45c92a03438e503494"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "78f8a3a13fd9b111fd508103f9a3587a9bd23451a758a9a70d7fc1c0abb1fad8"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "8ce4fe41e105bb94d48ecb4971da23cbb5bb32151eac49fb8082c8fb9fd6da8e"
+    },
+    {
+      "path": "README.md",
+      "sha256": "c360202e29b243411f00cbccd2467e8647ad3d4535ee258d6c90d233bd40876b"
+    },
+    {
+      "path": "apps/recovery/src/main.mjs",
+      "sha256": "3639a8d420bdc81b02eb73733cf3004f906432908358fbe2d87c5c8820b8d261"
+    },
+    {
+      "path": "apps/recovery/src/offline.mjs",
+      "sha256": "b65e917aa9c6a71e63294baf89521a318c479a0881d4dce44827e2a70fd3ea97"
+    },
+    {
+      "path": "apps/recovery/test/offline.test.mjs",
+      "sha256": "f77c15b6ba1bd9924b57ef0b45c99ea7f42f164943854f78ce22f0ad50eb73be"
+    },
+    {
+      "path": "apps/web/ii-check.html",
+      "sha256": "15d4d7daef8f86c7b88bcd88bc80fd208aabc64e0b309fd7ee791884ab6b92c4"
+    },
+    {
+      "path": "apps/web/index.html",
+      "sha256": "a7d93e1826eed0eacf2ebba03bbce5a631544951f6ddc1308ee044ed2915d092"
+    },
+    {
+      "path": "apps/web/package.json",
+      "sha256": "df4ef7626fa684305903d78e11bc31caf84c8bdaf4647032339f4a682cf3b003"
+    },
+    {
+      "path": "apps/web/public/_headers",
+      "sha256": "3b91760d059479ba2aec058fb0976b269af670a269f346c2d5e119a210946ca4"
+    },
+    {
+      "path": "apps/web/src/api.test.ts",
+      "sha256": "04d68d01a36d0273f2ef6609efb35deae3f1a37d595f0458c75b59f10fb79ed7"
+    },
+    {
+      "path": "apps/web/src/api.ts",
+      "sha256": "afabd37dc18d04d50cc9b2af9f62946cc40f34348cea0fde2ec8abe61f3e0ac8"
+    },
+    {
+      "path": "apps/web/src/env.d.ts",
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "sha256": "575c6f19729d052b34ada39b6df62ce430d6de3961091dadecf3561ab8e3fd6e"
+    },
+    {
+      "path": "apps/web/src/session.test.ts",
+      "sha256": "7c4677e37e7553767d75e6324d1e6716c8d0248b615279814c9074a37c53a575"
+    },
+    {
+      "path": "apps/web/src/session.ts",
+      "sha256": "7497d2cecee69f58dbd84362f48f24d654da955190a8cf29e9d81f0132a29133"
+    },
+    {
+      "path": "apps/web/src/style.css",
+      "sha256": "92f31f5bde9f1e58201d59e4d0fb54c2f628e719680f54967299b2ca95e187cc"
+    },
+    {
+      "path": "apps/web/src/webauthn.ts",
+      "sha256": "b20bf06089c8c57b4d352f857659a25991a22025d92eb3f310c37267fbf4015b"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "sha256": "0e584d064294c13f7ff046b89f34c0236b7e3ef704f78afbaa217f08ea1e518b"
+    },
+    {
+      "path": "crates/kinic-sqlite-compat/Cargo.toml",
+      "sha256": "8e6ccb1c1bb4cf1723cf56211c964d1490c9d9379b0de654e5716cc725987d83"
+    },
+    {
+      "path": "crates/kinic-sqlite-compat/LICENSE",
+      "sha256": "0a10368aa2b409c870457bfee5645563cd998de48e3b6cbb1f44ba25006a0441"
+    },
+    {
+      "path": "crates/kinic-sqlite-compat/NOTICE.md",
+      "sha256": "ce610fdc10bbb8b78798d69d41b170161b92f88011779c752b5ff7815136b5b9"
+    },
+    {
+      "path": "crates/kinic-sqlite-compat/src/lib.rs",
+      "sha256": "d913153713bbefb9836ae0e97e08eaf63108d247401ad8bb5eb70666357c5eea"
+    },
+    {
+      "path": "crates/vault-canister/Cargo.toml",
+      "sha256": "831752de7b9336a5f8595b162419b75b716f6f6e1d48fd4349ab3a9a4b1d71a9"
+    },
+    {
+      "path": "crates/vault-canister/examples/export.rs",
+      "sha256": "1e7c40c8e852e2b722ebbff7b4e0cf07fcfbb46cada7d012ed51e431d3458ee9"
+    },
+    {
+      "path": "crates/vault-canister/src/auth.rs",
+      "sha256": "ebf53613e0b797a13bb5c50a063213b1cddcbf59aa22076e8eed3977dfc557b6"
+    },
+    {
+      "path": "crates/vault-canister/src/lib.rs",
+      "sha256": "3ce77f4d4510ac0d9e7f399e8f42335b6fc44d64966dd8c7f703bd514c5f019c"
+    },
+    {
+      "path": "crates/vault-canister/src/runtime.rs",
+      "sha256": "41fa32e385fc59b2c0fc6078efac111fbc983af1caec563b6a43c145a2fc3fd0"
+    },
+    {
+      "path": "crates/vault-store/Cargo.toml",
+      "sha256": "5099e3ee3452b7ca7d25234d16a59c004ab74b61f6c91b0757a10cbb8fbae656"
+    },
+    {
+      "path": "crates/vault-store/src/content-schema.sql",
+      "sha256": "5715d1cddc6ea6b4574218b0b223d1f04d6b16b746174bed46b01abf97928575"
+    },
+    {
+      "path": "crates/vault-store/src/content.rs",
+      "sha256": "7675bb5558b845922e7e0cfec9bc31737d97cd8b38e2625f5f86adc3d83e11d5"
+    },
+    {
+      "path": "crates/vault-store/src/lib.rs",
+      "sha256": "1751f27280563c56d6a30b4f66c834090dd350c88b912a12195f7449b18fe192"
+    },
+    {
+      "path": "crates/vault-store/src/restore-schema.sql",
+      "sha256": "be94948abd57aacba972c459b88617d4b556767d50e3fa854f260c5ce1df7f2d"
+    },
+    {
+      "path": "crates/vault-store/src/restore.rs",
+      "sha256": "1854806d8e9df77ecb67486a5a1dbe83bf848a81f020689a5789b98e12de3450"
+    },
+    {
+      "path": "crates/vault-store/src/schema.sql",
+      "sha256": "34c2924e4eac42523b827918715dffb5736e902b774c6c506a819d5ef6f6de39"
+    },
+    {
+      "path": "crates/vault-store/src/setup.rs",
+      "sha256": "a5f816ad70eca01e2d84d53c1d3f6cb4f43150faa34226ea65dd52ca0d458e07"
+    },
+    {
+      "path": "crates/vault-store/src/tests.rs",
+      "sha256": "ff51f39252d7e812e4c3563ccd8e52deeea63b45dcf3d8c4c12add437918b155"
+    },
+    {
+      "path": "crates/vault-types/Cargo.toml",
+      "sha256": "7dacb81ec05fad8849b58912b7bf123a16374b818a261fc0f2eebaf7cc375b66"
+    },
+    {
+      "path": "crates/vault-types/src/lib.rs",
+      "sha256": "a5d80979149b6ed64d5693498610ff2b8c0cbbbd8eda660468a928c2782a9488"
+    },
+    {
+      "path": "docs/api.md",
+      "sha256": "74ce5aac1baf98b8c53f1ae864310862371cc2f00f777c4f4f52d445886c1f36"
+    },
+    {
+      "path": "docs/canister-reuse.md",
+      "sha256": "f34cfbc569d9a532283d50836fd458c9b8634a7437289a1a722df5f3bf2a3d2b"
+    },
+    {
+      "path": "docs/costs-and-sources.md",
+      "sha256": "32d3a35806d636d5b34acbbb81434dd8eaba1d3e4c03551e880b16bba55f8a19"
+    },
+    {
+      "path": "docs/crypto-format.md",
+      "sha256": "f3897154121cc84dd3eacd5b8992557fafdad172e0010d5b0dab226d4dbdadb3"
+    },
+    {
+      "path": "docs/design.md",
+      "sha256": "33fa4f59a1a43ba179d1f2d1a1769eeb9831ad19a366fdaca2ba116ea81737e8"
+    },
+    {
+      "path": "docs/implementation-plan.md",
+      "sha256": "3175784441c4b57d9efbd36090128fe890374421ffb27c753c30f8edd3a1ab76"
+    },
+    {
+      "path": "docs/local-validation.md",
+      "sha256": "0b8b70f547f50b126d7fe128cb08e12dd3d58b8cf7e5843004f47d9b57061ca1"
+    },
+    {
+      "path": "docs/recovery.md",
+      "sha256": "c82118bc1969543c90752243d1c351d09712c5976da0fa18d73950479ca32886"
+    },
+    {
+      "path": "docs/review-resolutions.md",
+      "sha256": "656ec241932b064195e1c3183f3d683381599ff7f2b5bdb816e26441bfd33aaf"
+    },
+    {
+      "path": "docs/wiki-integration.md",
+      "sha256": "439b7f0a6d39aade2061764fd245d432e0cf206a78757eaa20d0a86b7b2ab634"
+    },
+    {
+      "path": "package.json",
+      "sha256": "a49914cd3d1bc9c17cc032140240935fd5f945fae8a2517acf5e585991df4613"
+    },
+    {
+      "path": "packages/backup/package.json",
+      "sha256": "477d7cd9f0986f1dcce2494a28e47fdc9e036a24909da587d8df4de8fc788d84"
+    },
+    {
+      "path": "packages/backup/src/index.ts",
+      "sha256": "11546e3cafec7c5abd03f91cee0cad1630a467908ab38575ea4817c52fce623e"
+    },
+    {
+      "path": "packages/backup/test/recovery.test.ts",
+      "sha256": "b030cff3b08c4f24b9da0e75a7392629c9bff622a6d358a34db1f1e32efa5a4e"
+    },
+    {
+      "path": "packages/contracts/vault.did",
+      "sha256": "64fac78f249b8adcfdff8c1cf4bfe3192e6bb615edb1a615cafbad6b01b44129"
+    },
+    {
+      "path": "packages/contracts/vault.did.d.ts",
+      "sha256": "597e9a7cb7510ad5bb2edbcd7401269362e0c44450d1e2b6186286cea2f29e93"
+    },
+    {
+      "path": "packages/contracts/vault.did.js",
+      "sha256": "aad2d6295a25b236c83354045049c7719ec700878d4ad2e7c6046711508487ee"
+    },
+    {
+      "path": "packages/crypto/package.json",
+      "sha256": "52e7a6c7e2b461ecf63fc9e576252aa57c28d146ba1d95557fe602b14ef2f1a1"
+    },
+    {
+      "path": "packages/crypto/src/documents.ts",
+      "sha256": "708a25710d688b9f88e879813b62fa7ac801d2906f8dd044af8404cd0304fcd8"
+    },
+    {
+      "path": "packages/crypto/src/index.ts",
+      "sha256": "a2762d28e05236f2ebf8c5316a2243969b4179806c017e017a0d4e6f92bc64e0"
+    },
+    {
+      "path": "packages/crypto/test/envelope.test.ts",
+      "sha256": "a3ad2979f2a8ea5c3f5dbbf367f738a48232fe14efc1baafd36d920b2c19a6d0"
+    },
+    {
+      "path": "packages/crypto/test/vector.json",
+      "sha256": "39cdc3fb77bbabbe287ee190faf9df536fa7e36a2f13903ee1f72f3dce9439cd"
+    },
+    {
+      "path": "playwright.config.ts",
+      "sha256": "27e8c7e4fcb73447b892b3576f70b11e2581f025e55ebd2a1a1be1d0d0ac1a67"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "f1ce95f16bdb5c66d617e67b1ed78130fbf6ff0c7f1f930df169dcef449291f7"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "sha256": "4797854b0c24ec4aaa51fd3f93374cbc2e7c4d2b53f81f912d8b9081e5d03701"
+    },
+    {
+      "path": "pocketic-tests/capacity.mjs",
+      "sha256": "e5d4d1762837b70a897e591ebb6afc041c9f749028dbf97167d2f2d4e1f4deb9"
+    },
+    {
+      "path": "pocketic-tests/fixtures.mjs",
+      "sha256": "04be3c99e48fa204b669d6bee6b5eda704b52258c89f785f1a605360ce840438"
+    },
+    {
+      "path": "pocketic-tests/keys.test.mjs",
+      "sha256": "412889172546dfec0e1e7e96f7f4010197b582347116a926fdd4432b1897e5c0"
+    },
+    {
+      "path": "tests/e2e/vault.spec.ts",
+      "sha256": "8cbb7e1460c57cef97b59d63d14cfaf5df3393d4e50a33dff64e38d6ec73ebdf"
+    },
+    {
+      "path": "tests/ui-copy.txt",
+      "sha256": "c117e7dcbb8755631348a10306e034230f8225ad8f12946dc22e6ab8cf46154f"
+    },
+    {
+      "path": "tools/build-canister.mjs",
+      "sha256": "8ea4c6e97f79508d9e8d5d67fb568c738123fbac31318a76a9a631a6fee0c90b"
+    },
+    {
+      "path": "tools/contracts.mjs",
+      "sha256": "f8da2e5f14d19af920be20fe3830981e0f603897c6c57ee3cff441ee83f7b485"
+    },
+    {
+      "path": "tools/ii-check.mjs",
+      "sha256": "2dd024f42758865998b18a0d3171ebfe0f9d7141942fc8fe7fe9d412620d3755"
+    },
+    {
+      "path": "tools/local.mjs",
+      "sha256": "741ea78936fb8b1af91fae55211a54f467f2116d303960e0dd495e1e3800dac3"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "c68192e2e5f861d2ea57c891868bb209a0e46ae92ae5bd860d53bfe30e79b510"
+    },
+    {
+      "path": "vendor/passkey-auth/APACHE-LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "vendor/passkey-auth/Cargo.toml",
+      "sha256": "6bc5dc70f0dd7ffaf729c46b189be77e44fd28aa50c3a588160d539b7f6c2895"
+    },
+    {
+      "path": "vendor/passkey-auth/LICENSE",
+      "sha256": "002c2696d92b5c8cf956c11072baa58eaf9f6ade995c031ea635c6a1ee342ad1"
+    },
+    {
+      "path": "vendor/passkey-auth/NOTICE.md",
+      "sha256": "0e904bef6b0c203425992fe9f18e91f3acf1b25ec28c69d47a36e26734a3772d"
+    },
+    {
+      "path": "vendor/passkey-auth/README.md",
+      "sha256": "aa148470d69db8fa9786d21f5c73899c733dcc097c16c6e8a0a16c35b4475142"
+    },
+    {
+      "path": "vendor/passkey-auth/src/attestation.rs",
+      "sha256": "bc87b6eb3a4a35d8a260ea7455c519f4bd73f5c95a0601e4893b625d456b6a8b"
+    },
+    {
+      "path": "vendor/passkey-auth/src/auth_data.rs",
+      "sha256": "fdfdae20455638760527053547243a47d50566390dbfa95130c2f7eed42e0bfe"
+    },
+    {
+      "path": "vendor/passkey-auth/src/ceremony.rs",
+      "sha256": "033c2aa137e48fe8b70394617ea63c9d98c9f7de8bad586cfe35d7b44e9f12e9"
+    },
+    {
+      "path": "vendor/passkey-auth/src/client_data.rs",
+      "sha256": "638b1e6c4f0994576e9e2e6aad96fb40eb977d6504d00aa643519c6fec612d9e"
+    },
+    {
+      "path": "vendor/passkey-auth/src/cose.rs",
+      "sha256": "a7da5a2a19d9533b3fc6af602a7182347fefe497c665553563e6a6adddfa4bf4"
+    },
+    {
+      "path": "vendor/passkey-auth/src/crypto.rs",
+      "sha256": "d0c0eb33714af93611ed33d23e3a7aba81c524f5387779b3dbefabe0790d1feb"
+    },
+    {
+      "path": "vendor/passkey-auth/src/error.rs",
+      "sha256": "d0c2980562e26916b88acb2c1271f36b75d5a88cce7a29427bd84b6c545b7ddb"
+    },
+    {
+      "path": "vendor/passkey-auth/src/lib.rs",
+      "sha256": "2a9061b46fae8b4ee783f3c3ffd0aa6a40a02ff0f5d53d0f7b908dbc6057ef85"
+    },
+    {
+      "path": "vendor/passkey-auth/src/types.rs",
+      "sha256": "2c9f404e43a347e8fd52befdf98928aeae3af967f33f6643baf4befd3410bfdc"
+    },
+    {
+      "path": "vendor/passkey-auth/src/x509.rs",
+      "sha256": "1e8b664a9cff0ca79fe58839178ed09b9097b5bd1e1c4febddbef2e03de4dc8c"
+    },
+    {
+      "path": "vitest.config.ts",
+      "sha256": "dd39b47b222df843d98bdde187d86e0c312eee18a4985dbac3ce0cb55c57e6f2"
+    }
+  ]
+}
