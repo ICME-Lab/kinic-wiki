@@ -18,6 +18,7 @@ import type {
 } from "@kinic/vault-client/contracts";
 import { b64, unb64 } from "@kinic/vault-crypto/documents";
 import { VaultButton, VaultPanel, vaultError } from "./ui";
+import { VaultRecovery } from "./recovery";
 import { VaultSetup } from "./setup";
 import { VaultDocuments } from "./documents";
 import {
@@ -302,6 +303,22 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       {busy ? (
         <output className="text-sm">Processing Vault operation…</output>
       ) : null}
+      <VaultRecovery
+        client={client}
+        disabled={busy}
+        enabled={eligible}
+        credential={
+          credential
+            ? unb64(credential)
+            : credentials.length === 1
+              ? bytes(credentials[0].id)
+              : undefined
+        }
+        run={run}
+        onChanged={async () => {
+          await Promise.all([refreshLists(), refreshConfiguration()]);
+        }}
+      />
       <div className="grid min-w-0 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
         <VaultPanel label="Vaults">
           <h2 className="font-semibold">Vaults</h2>
@@ -338,9 +355,6 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
           >
             Create Vault
           </VaultButton>
-          <p className="text-sm text-muted">
-            Restore and scoped-passkey creation use separate recovery workflows.
-          </p>
           <VaultButton
             disabled={busy}
             onClick={() =>

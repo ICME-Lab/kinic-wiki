@@ -186,3 +186,101 @@ it("a lock during the UV prompt prevents finishing the grant", async () => {
   ).rejects.toThrow();
   expect(finish).not.toHaveBeenCalled();
 });
+
+it.each([
+  "saved",
+  "reject-save",
+  "wrong-kit",
+  "lock-save",
+  "lock-reselect",
+  "changed-readback",
+])(
+  "direct prepare save/reselect/readback %s never confirms before verification",
+  async (mode) => {
+    const { g, j, kek } = await fixture();
+    j.phase = { Allocated: null };
+    let saved = new Uint8Array(),
+      selected = new Uint8Array();
+    const operations: string[] = [];
+    const client = new CreateEmptyClient(
+      {
+        create_empty_status: async () => ({
+          Ok: [{ ...j, target: { ...j.target } }],
+        }),
+      } as unknown as VaultActor,
+      g.owner,
+      g.canister,
+      "localhost",
+      true,
+    );
+    const send = async (op: any) => {
+      operations.push(Object.keys(op)[0]);
+      if (op.CreateEmptyStage) {
+        j.normal = [op.CreateEmptyStage.normal];
+        j.recovery = [op.CreateEmptyStage.recovery];
+        j.recovery_verifier = op.CreateEmptyStage.recovery_verifier;
+        j.phase = { EnvelopesStaged: null };
+        if (mode === "changed-readback") j.target.attempt = b(99);
+      }
+      if (op.CreateEmptyConfirmKit) j.phase = { KitConfirmed: null };
+      return { Unit: null };
+    };
+    Object.assign(client, {
+      derive: async () => kek,
+      signer: { send, destroy: () => {} },
+    });
+    const pending = client.prepare(
+      async (x) => {
+        saved = x.slice();
+        if (mode === "reject-save") throw Error("save rejected");
+        if (mode === "lock-save") client.session.lock();
+      },
+      async () => {
+        selected =
+          mode === "wrong-kit"
+            ? encodeIncidentKit(g, randomBytes(32))
+            : saved.slice();
+        if (mode === "lock-reselect") client.session.lock();
+        return selected;
+      },
+    );
+    if (mode === "saved") await pending;
+    else await expect(pending).rejects.toThrow();
+    expect(operations.includes("CreateEmptyConfirmKit")).toBe(mode === "saved");
+    if (selected.length) expect(selected.every((x) => x === 0)).toBe(true);
+  },
+);
+it("confirmSavedKit reopens staged envelopes and fences a late derive after lock", async () => {
+  const { g, j, kek, secret } = await fixture();
+  const send = vi.fn(async () => ({ Unit: null }));
+  const client = new CreateEmptyClient(
+    {
+      create_empty_status: async () => ({
+        Ok: [{ ...j, target: { ...j.target } }],
+      }),
+    } as unknown as VaultActor,
+    g.owner,
+    g.canister,
+    "localhost",
+    true,
+  );
+  Object.assign(client, {
+    derive: async () => kek,
+    signer: { send, destroy: () => {} },
+  });
+  await client.confirmSavedKit(encodeIncidentKit(g, secret));
+  expect(send).toHaveBeenCalledWith({
+    CreateEmptyConfirmKit: { envelope_digest: j.envelope_digest },
+  });
+  send.mockClear();
+  Object.assign(client, {
+    derive: async () => {
+      client.session.lock();
+      return kek;
+    },
+  });
+  await expect(
+    client.confirmSavedKit(encodeIncidentKit(g, secret)),
+  ).rejects.toThrow("Locked");
+  expect(send).not.toHaveBeenCalled();
+});

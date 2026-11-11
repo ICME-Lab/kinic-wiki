@@ -36,6 +36,7 @@ const kitTarget = (j: CreateEmptyStatus) => ({
 });
 export class CreateEmptyClient {
   private signer?: SignedMutations;
+  private detach: () => void;
   constructor(
     private actor: VaultActor,
     private owner: Principal,
@@ -44,10 +45,16 @@ export class CreateEmptyClient {
     private local: boolean,
     readonly session = new Session(),
   ) {
-    session.addLockCleanup(() => {
+    this.detach = session.addLockCleanup(() => {
       this.signer?.destroy();
       this.signer = undefined;
     });
+  }
+  destroy() {
+    this.session.lock();
+    this.signer?.destroy();
+    this.signer = undefined;
+    this.detach();
   }
   private signed() {
     if (!this.signer) throw Error("FreshScopedProofRequired");
@@ -67,6 +74,7 @@ export class CreateEmptyClient {
     target: PendingCreation,
     source: Generation,
   ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     const ticket = this.session.capture(),
       keys = await ephemeralSigner();
     this.session.check(ticket);

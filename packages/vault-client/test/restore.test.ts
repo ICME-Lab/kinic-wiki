@@ -483,3 +483,162 @@ it("rejects noncanonical tombstones before reserving their flat restore charge",
       "InvalidBackup",
     );
 });
+
+it.each(["before-confirm", "before-preflight", "after-preflight"])(
+  "resumes saved randomized target files after %s without staging new roots",
+  async (point) => {
+    const f = await fixture();
+    let kit = new Uint8Array(),
+      prepared = new Uint8Array();
+    const send = f.send;
+    const implementation = send.getMockImplementation()!;
+    send.mockImplementation(async (op) => {
+      if (point === "before-confirm" && "RestoreConfirmKit" in op)
+        throw Error("interrupted");
+      if (point === "before-preflight" && "RestorePreflight" in op)
+        throw Error("interrupted");
+      const result = await implementation(op);
+      if (point === "after-preflight" && "RestorePreflight" in op)
+        throw Error("interrupted");
+      return result;
+    });
+    await expect(
+      f.client.prepare(
+        f.archive,
+        f.secret,
+        async (x) => {
+          kit = x.slice();
+        },
+        async () => kit.slice(),
+        async (x) => {
+          prepared = x.slice();
+        },
+        async () => prepared.slice(),
+      ),
+    ).rejects.toThrow("interrupted");
+    const envelopes = JSON.stringify(f.j.pipeline[0]!.normal);
+    send.mockImplementation(implementation);
+    f.calls.length = 0;
+    await f.client.resumePrepared(f.archive, f.secret, prepared, kit);
+    expect(f.j.pipeline[0]!.preflight).toHaveLength(1);
+    expect(JSON.stringify(f.j.pipeline[0]!.normal)).toBe(envelopes);
+    expect(f.calls.some((x) => "RestoreStage" in x)).toBe(false);
+    expect(f.calls.filter((x) => "RestoreConfirmKit" in x)).toHaveLength(
+      point === "before-confirm" ? 1 : 0,
+    );
+    expect(f.calls.filter((x) => "RestorePreflight" in x)).toHaveLength(
+      point === "after-preflight" ? 0 : 1,
+    );
+  },
+);
+
+it.each(["missing", "persisted", "existing", "lock"])(
+  "resumes %s admission registration with fresh possession and no extra physical key",
+  async (mode) => {
+    const f = await fixture(),
+      id = new Uint8Array([41]);
+    const fresh = {
+      bytes: randomBytes(32),
+      expires: 9999999999n,
+      registration: false,
+      credential_ids: [id],
+    };
+    if (mode === "existing")
+      f.j.request.candidate_mode = [{ ExistingInstances: id }];
+    const reg = vi.fn(async () => ({ Ok: fresh }));
+    Object.assign(f.actor, {
+      resume_restore_admission: async () => ({
+        Ok: { ...fresh, registration: mode === "missing" || mode === "lock" },
+      }),
+      register_restore_candidate: reg,
+      prove_restore_candidate: async () => ({ Ok: f.j }),
+    });
+    vi.mocked(register)
+      .mockReset()
+      .mockImplementation(async () => {
+        if (mode === "lock") f.client.session.lock();
+        return "new-public-registration";
+      });
+    vi.mocked(assertCredential).mockReset().mockResolvedValue("fresh-uv");
+    if (mode === "lock")
+      await expect(f.client.resume(f.archive, f.secret)).rejects.toThrow(
+        "Locked",
+      );
+    else await f.client.resume(f.archive, f.secret);
+    expect(register).toHaveBeenCalledTimes(
+      mode === "missing" || mode === "lock" ? 1 : 0,
+    );
+    expect(reg).toHaveBeenCalledTimes(mode === "missing" ? 1 : 0);
+    expect(assertCredential).toHaveBeenCalledTimes(mode === "lock" ? 0 : 1);
+  },
+);
+
+it.each(["source", "target", "kit", "header", "preflight", "lock"])(
+  "saved prepared resume rejects %s mismatch without confirmation or import",
+  async (mode) => {
+    const f = await fixture();
+    let kit = new Uint8Array(),
+      prepared = new Uint8Array();
+    await f.client.prepare(
+      f.archive,
+      f.secret,
+      async (x) => {
+        kit = x.slice();
+      },
+      async () => kit.slice(),
+      async (x) => {
+        prepared = x.slice();
+      },
+      async () => prepared.slice(),
+    );
+    f.calls.length = 0;
+    const source = f.archive.slice();
+    if (mode === "source") source[source.length - 1] ^= 1;
+    if (mode === "target")
+      f.j.pipeline[0]!.target = { ...f.next, nonce: randomBytes(32) };
+    if (mode === "kit") kit = encodeIncidentKit(f.next, randomBytes(32));
+    if (mode === "header") {
+      const secret = unb64(JSON.parse(new TextDecoder().decode(kit)).secret),
+        o = await openArchive(prepared, secret);
+      prepared = await makeArchive(
+        { ...o.header, sequence: "8" },
+        o.records,
+        async (r, i) => o.chunks[o.records.indexOf(r)][i],
+        o.rootRaw,
+      );
+      o.rootRaw.fill(0);
+      secret.fill(0);
+    }
+    if (mode === "preflight") f.j.pipeline[0]!.preflight[0]!.sequence = 8n;
+    if (mode === "lock")
+      vi.mocked(f.client.deriveTarget).mockImplementation(async () => {
+        f.client.session.lock();
+        return f.kek;
+      });
+    await expect(
+      f.client.resumePrepared(source, f.secret, prepared, kit),
+    ).rejects.toThrow();
+    expect(f.calls).toEqual([]);
+  },
+);
+it("existing scoped admission refuses a substituted registration challenge without enrolling another key", async () => {
+  const f = await fixture();
+  f.j.request.candidate_mode = [{ ExistingInstances: new Uint8Array([41]) }];
+  Object.assign(f.actor, {
+    resume_restore_admission: async () => ({
+      Ok: {
+        bytes: randomBytes(32),
+        expires: 9999999999n,
+        registration: true,
+        credential_ids: [new Uint8Array([42])],
+      },
+    }),
+  });
+  vi.mocked(register).mockClear();
+  vi.mocked(assertCredential).mockClear();
+  await expect(f.client.resume(f.archive, f.secret)).rejects.toThrow(
+    "RestoreCandidateChanged",
+  );
+  expect(register).not.toHaveBeenCalled();
+  expect(assertCredential).not.toHaveBeenCalled();
+});

@@ -88,6 +88,9 @@ export class VaultClient {
       this.rpId = options.rpId ?? "";
     }
   }
+  get recoveryConfiguration() {
+    return { rpId: this.rpId, local: this.local };
+  }
   configurePasskeys(rpId: string) {
     this.rpId = rpId;
   }

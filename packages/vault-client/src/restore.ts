@@ -19,7 +19,13 @@ import {
 } from "./incident";
 import { portableExport, portableRecord } from "./incident-backup";
 import { restorePreflight, restoreRevision } from "./restore-cost";
-import { b64, unb64, hash, unpack } from "../../vault-crypto/src/documents";
+import {
+  b64,
+  unb64,
+  hash,
+  unpack,
+  pack,
+} from "../../vault-crypto/src/documents";
 import {
   randomBytes,
   generationBytes,
@@ -49,6 +55,7 @@ export function sameRestoreGeneration(a: Generation, b: Generation) {
   }
 }
 function canonical(value: unknown): string {
+  if (typeof value === "bigint") return JSON.stringify(value.toString());
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object")
     return `{${Object.entries(value)
@@ -59,7 +66,7 @@ function canonical(value: unknown): string {
 }
 type Save = (file: Uint8Array) => Promise<void>;
 type Select = () => Promise<Uint8Array>;
-function kitSecret(kit: Uint8Array, g: Generation) {
+export function kitSecret(kit: Uint8Array, g: Generation) {
   if (kit.length > 4096) throw Error("InvalidKit");
   const k = strictJSON(
     new TextDecoder("utf-8", { fatal: true }).decode(kit),
@@ -95,6 +102,7 @@ const kitTarget = (j: RestoreAdmissionStatus) => {
 };
 export class RestoreClient {
   private signer?: SignedMutations;
+  private detach: () => void;
   constructor(
     private actor: VaultActor,
     private owner: Principal,
@@ -103,10 +111,16 @@ export class RestoreClient {
     private local: boolean,
     readonly session = new Session(),
   ) {
-    session.addLockCleanup(() => {
+    this.detach = session.addLockCleanup(() => {
       this.signer?.destroy();
       this.signer = undefined;
     });
+  }
+  destroy() {
+    this.session.lock();
+    this.signer?.destroy();
+    this.signer = undefined;
+    this.detach();
   }
   private signed() {
     if (!this.signer) throw Error("FreshRestoreProofRequired");
@@ -120,6 +134,7 @@ export class RestoreClient {
     return j;
   }
   async authenticate(credential: Uint8Array, purpose: GrantPurpose) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     const ticket = this.session.capture(),
       keys = await ephemeralSigner();
     this.session.check(ticket);
@@ -182,6 +197,7 @@ export class RestoreClient {
     currentSecret?: Uint8Array,
     existingCredential?: Uint8Array,
   ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     const ticket = this.session.capture(),
       source = await openArchive(archive, sourceSecret);
     const detach = this.session.addLockCleanup(() => source.rootRaw.fill(0));
@@ -285,14 +301,42 @@ export class RestoreClient {
     sourceSecret: Uint8Array,
     currentSecret?: Uint8Array,
   ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     const ticket = this.session.capture(),
       j = await this.status(),
       source = await this.verifySource(j, archive, sourceSecret);
     const detach = this.session.addLockCleanup(() => source.rootRaw.fill(0));
     try {
       this.session.check(ticket);
-      const ch = ok(await this.actor.resume_restore_admission(j.request.job));
+      let ch = ok(await this.actor.resume_restore_admission(j.request.job));
       this.session.check(ticket);
+      const existing = j.request.candidate_mode?.[0];
+      if (
+        existing &&
+        "ExistingInstances" in existing &&
+        (ch.registration ||
+          ch.credential_ids.length !== 1 ||
+          !equal(ch.credential_ids[0], existing.ExistingInstances))
+      )
+        throw Error("RestoreCandidateChanged");
+      if (ch.registration) {
+        const registration = await register(
+          ch,
+          this.owner.toUint8Array(),
+          this.rpId,
+          this.session.signal,
+        );
+        this.session.check(ticket);
+        ch = ok(
+          await this.actor.register_restore_candidate(
+            j.request.job,
+            registration,
+          ),
+        );
+        this.session.check(ticket);
+      }
+      if (ch.registration || ch.credential_ids.length !== 1)
+        throw Error("RestoreCandidateChanged");
       const proof = await assertCredential(ch, this.rpId, this.session.signal);
       this.session.check(ticket);
       const fresh = ok(
@@ -457,17 +501,53 @@ export class RestoreClient {
     this.session.check(ticket);
     return this.status();
   }
+  /** Resume only from explicitly saved ciphertext; never recreate randomized wrappers. */
+  async resumePrepared(
+    sourceArchive: Uint8Array,
+    oldSecret: Uint8Array,
+    preparedArchive: Uint8Array,
+    newKit: Uint8Array,
+  ) {
+    return this.processPrepared(
+      sourceArchive,
+      oldSecret,
+      preparedArchive,
+      newKit,
+      true,
+    );
+  }
   async importPrepared(
     sourceArchive: Uint8Array,
     oldSecret: Uint8Array,
     preparedArchive: Uint8Array,
     newKit: Uint8Array,
   ) {
+    return this.processPrepared(
+      sourceArchive,
+      oldSecret,
+      preparedArchive,
+      newKit,
+      false,
+    );
+  }
+  private async processPrepared(
+    sourceArchive: Uint8Array,
+    oldSecret: Uint8Array,
+    preparedArchive: Uint8Array,
+    newKit: Uint8Array,
+    resumeOnly: boolean,
+  ) {
     const ticket = this.session.capture(),
       j = await this.status(),
       p = target(j),
       f = p.preflight[0];
-    if (!f) throw Error("MissingPreflight");
+    if (!(
+      "EnvelopesStaged" in p.phase ||
+      "KitConfirmed" in p.phase ||
+      "Importing" in p.phase ||
+      "BackupVerified" in p.phase
+    ))
+      throw Error("PreparedResumeUnavailable");
     const source = await this.verifySource(j, sourceArchive, oldSecret);
     let secret: Uint8Array;
     try {
@@ -494,10 +574,43 @@ export class RestoreClient {
         raw.fill(0);
       }
       if (
-        !equal(prepared.restoreRoot, f.target_commitment) ||
+        (f && !equal(prepared.restoreRoot, f.target_commitment)) ||
         prepared.header.generation?.nonce !== b64(bytes(p.target.nonce)) ||
         prepared.records.length !== source.records.length
       )
+        throw Error("PreparedArchiveMismatch");
+      const cg = cryptoGeneration(p.target);
+      const previousEpoch =
+        j.current_live[0] &&
+        j.current_live[0].epoch > BigInt(source.header.epoch)
+          ? j.current_live[0].epoch
+          : BigInt(source.header.epoch);
+      if (
+        !p.normal[0] ||
+        !p.recovery[0] ||
+        cg.epoch !== previousEpoch + 1n ||
+        source.header.generation?.nonce === b64(cg.nonce)
+      )
+        throw Error("TargetChanged");
+      const wireEnvelope = (e: NonNullable<(typeof p.normal)[0]>) =>
+        pack({ ...e, nonce: bytes(e.nonce), ciphertext: bytes(e.ciphertext) });
+      const expectedHeader = {
+        ...source.header,
+        version: 2,
+        envelope_revision: "0",
+        epoch: cg.epoch.toString(),
+        key_name: cg.key_name,
+        generation: {
+          ...cg,
+          vault: b64(cg.vault),
+          nonce: b64(cg.nonce),
+          epoch: cg.epoch.toString(),
+        },
+        normal: wireEnvelope(p.normal[0]),
+        recovery: wireEnvelope(p.recovery[0]),
+        recovery_verifier: b64(bytes(p.recovery_verifier)),
+      };
+      if (canonical(prepared.header) !== canonical(expectedHeader))
         throw Error("PreparedArchiveMismatch");
       for (let i = 0; i < source.records.length; i++) {
         const a = source.records[i],
@@ -505,6 +618,13 @@ export class RestoreClient {
         if (
           JSON.stringify({ ...a, manifest: "" }) !==
           JSON.stringify({ ...b, manifest: "" })
+        )
+          throw Error("SourceChanged");
+        if (
+          source.chunks[i].length !== prepared.chunks[i].length ||
+          source.chunks[i].some(
+            (chunk, index) => !equal(chunk, prepared!.chunks[i][index]),
+          )
         )
           throw Error("SourceChanged");
         if (!a.deleted) {
@@ -521,6 +641,28 @@ export class RestoreClient {
             throw Error("SourceChanged");
         }
       }
+      const preflight = restorePreflight(
+        j,
+        prepared.records,
+        prepared.restoreRoot,
+        BigInt(prepared.header.sequence),
+      );
+      if (f && canonical(f) !== canonical(preflight))
+        throw Error("PreparedArchiveMismatch");
+      if (resumeOnly) {
+        if ("EnvelopesStaged" in p.phase) {
+          await this.signed().send({
+            RestoreConfirmKit: { envelope_digest: p.envelope_digest },
+          });
+          this.session.check(ticket);
+        }
+        if (!f) {
+          await this.signed().send({ RestorePreflight: preflight });
+          this.session.check(ticket);
+        }
+        return this.status();
+      }
+      if (!f) throw Error("MissingPreflight");
       if ("KitConfirmed" in p.phase) {
         await this.signed().send({ RestoreBeginImport: null });
         this.session.check(ticket);

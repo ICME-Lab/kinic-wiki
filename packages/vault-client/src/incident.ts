@@ -103,6 +103,7 @@ export async function verifyIncidentKit(
 }
 export class IncidentClient {
   private signer?: SignedMutations;
+  private detach: () => void;
   private roots?: { source: CryptoKey; target: CryptoKey; binding: string };
   constructor(
     private actor: VaultActor,
@@ -112,17 +113,25 @@ export class IncidentClient {
     private local: boolean,
     readonly session = new Session(),
   ) {
-    session.addLockCleanup(() => {
+    this.detach = session.addLockCleanup(() => {
       this.signer?.destroy();
       this.signer = undefined;
       this.roots = undefined;
     });
+  }
+  destroy() {
+    this.session.lock();
+    this.signer?.destroy();
+    this.signer = undefined;
+    this.roots = undefined;
+    this.detach();
   }
   async authenticate(
     credential: Uint8Array,
     purpose: GrantPurpose,
     generations: Generation[],
   ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     const ticket = this.session.capture(),
       keys = await ephemeralSigner();
     this.session.check(ticket);
@@ -162,7 +171,9 @@ export class IncidentClient {
     return grant;
   }
   async status(): Promise<IncidentStatus> {
+    const ticket = this.session.capture();
     const j = ok(await this.actor.incident_status())[0];
+    this.session.check(ticket);
     if (!j) throw Error("NoIncident");
     return j;
   }

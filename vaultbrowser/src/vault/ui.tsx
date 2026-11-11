@@ -50,6 +50,24 @@ export function VaultPanel({
   );
 }
 const errors: Record<string, string> = {
+  FileSelectionCancelled:
+    "File selection stopped. Preparation is incomplete; resume with the saved files or cancel the attempt.",
+  RecoveryFileTooLarge:
+    "The selected file is too large. Recovery kits are limited to 4 KiB and backup archives to 256 MiB.",
+  CurrentLiveKitRequired:
+    "Select the recovery kit for the current live Vault, separately from an older source backup kit.",
+  TargetChanged:
+    "The recovery target changed. Refresh its status and select the files for the current attempt.",
+  PreparedArchiveMismatch:
+    "The prepared backup does not match this restoration attempt. Select its exact saved target backup and new kit.",
+  ExplicitCancelRequired:
+    "This target has already been prepared. Resume with the saved files, or cancel this exact attempt before creating a replacement.",
+  FreshScopedProofRequired:
+    "Verify the current scoped source passkey before continuing empty creation.",
+  FreshIncidentProofRequired:
+    "Verify a trusted remaining passkey before continuing this incident.",
+  FreshRestoreProofRequired:
+    "Resume with the source files and replacement passkey before continuing restoration.",
   ChoosePasskey:
     "Choose the registered passkey that authorizes this Vault or account action.",
   FreshProofRequired: "Unlock with a registered passkey before making changes.",
