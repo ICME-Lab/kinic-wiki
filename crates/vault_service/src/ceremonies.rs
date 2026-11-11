@@ -60,11 +60,11 @@ pub(crate) fn validate_request(
         if h.generation.as_ref() != Some(g) {
             return Err(Error::Unauthorized);
         }
-        if matches!(r.purpose, GrantPurpose::Normal)
-            && h.state != VaultState::Active
-            && h.state != VaultState::Pending
-        {
-            return Err(Error::Conflict);
+        if matches!(r.purpose, GrantPurpose::Normal) {
+            cleanup::normal_allowed(db, &h)?;
+            if h.state != VaultState::Active && h.state != VaultState::Pending {
+                return Err(Error::Conflict);
+            }
         }
     }
     Ok(())

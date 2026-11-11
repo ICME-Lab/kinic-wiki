@@ -188,10 +188,11 @@ pub(crate) fn current(db: &Connection, env: &impl Environment, g: &Grant) -> Res
             }
             Err(e) => return Err(e),
         };
-        if matches!(g.info.purpose, GrantPurpose::Normal)
-            && !matches!(h.state, VaultState::Active | VaultState::Pending)
-        {
-            return Err(Error::Unauthorized);
+        if matches!(g.info.purpose, GrantPurpose::Normal) {
+            cleanup::normal_allowed(db, &h)?;
+            if !matches!(h.state, VaultState::Active | VaultState::Pending) {
+                return Err(Error::Unauthorized);
+            }
         }
         if h.generation.as_ref() != Some(generation)
             || !crate::authorization::covers(&authority.scope, generation)

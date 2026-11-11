@@ -1,6 +1,7 @@
 use super::*;
 use candid::Principal;
 use std::cell::{Cell, RefCell};
+type TestHook = Box<dyn FnOnce(&TestEnvironment)>;
 struct TestEnvironment {
     authorized: Cell<bool>,
     funded: Cell<bool>,
@@ -16,6 +17,9 @@ struct TestEnvironment {
     settled: Cell<Option<u64>>,
     change_config: Cell<bool>,
     public_names: RefCell<Vec<String>>,
+    public_hook: RefCell<Option<TestHook>>,
+    derive_hook: RefCell<Option<TestHook>>,
+    derive_calls: Cell<u64>,
     actual_payment: Cell<Option<u64>>,
     checkpoints: Cell<u64>,
 }
@@ -50,6 +54,9 @@ impl TestEnvironment {
             settled: Cell::new(None),
             change_config: Cell::new(false),
             public_names: RefCell::new(vec![]),
+            public_hook: RefCell::new(None),
+            derive_hook: RefCell::new(None),
+            derive_calls: Cell::new(0),
             actual_payment: Cell::new(None),
             checkpoints: Cell::new(0),
         }
@@ -159,6 +166,9 @@ impl Environment for TestEnvironment {
             "public-key await must have a durable execution checkpoint"
         );
         self.public_names.borrow_mut().push(name.into());
+        if let Some(hook) = self.public_hook.borrow_mut().take() {
+            hook(self);
+        }
         if self.replace_flight.replace(false) {
             self.transaction(|db| {
                 let mut c = control(db)?;
@@ -185,6 +195,10 @@ impl Environment for TestEnvironment {
             self.checkpoints.get() >= 2,
             "derive await must have an updated execution checkpoint"
         );
+        self.derive_calls.set(self.derive_calls.get() + 1);
+        if let Some(hook) = self.derive_hook.borrow_mut().take() {
+            hook(self);
+        }
         Err(Error::KeyService)
     }
 }
@@ -469,7 +483,10 @@ fn signed_call(
         .sign(&[MUTATION_DOMAIN, &payload].concat())
         .to_bytes()
         .to_vec();
-    futures::executor::block_on(mutations::mutate(env, payload, signature))
+    // Management futures in this fixture are ready; polling directly also permits
+    // a signed cleanup interleaving from an injected callback without nesting executors.
+    futures::FutureExt::now_or_never(mutations::mutate(env, payload, signature))
+        .expect("TestEnvironment management futures must complete synchronously")
 }
 #[test]
 fn signed_dispatch_rolls_back_effect_and_counter_and_rejects_stale_scope() {
@@ -1343,4 +1360,434 @@ fn review_cancel_pending_creation_survives_nonce_publication_at_every_proof_boun
         ));
         assert!(signed_call(&env, &key, &grant, 0, op).is_ok());
     }
+}
+
+fn cancelling_generated_fixture(
+    full_generation: bool,
+) -> (
+    TestEnvironment,
+    ed25519_dalek::SigningKey,
+    GrantInfo,
+    GrantInfo,
+    GrantInfo,
+    GrantRequest,
+) {
+    let (env, key, mut unrelated) = signed_fixture(GrantPurpose::Normal);
+    let passkey = install_test_passkey(&env);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    env.time.set(now);
+    let normal = env
+        .transaction(|db| {
+            let mut old = grants::load(db, &unrelated.id)?;
+            old.info.expires = now + 300;
+            unrelated = old.info.clone();
+            grants::save(db, &old)?;
+            let mut h = store::reserve(
+                db,
+                env.owner(),
+                Reserve {
+                    vault: vec![81; 16],
+                    operation: vec![82; 16],
+                },
+                now,
+            )?;
+            let mut generation = old.info.generations[0].clone();
+            generation.vault = h.id.clone();
+            generation.nonce = vec![83; 32];
+            h.generation = Some(generation.clone());
+            store::put_header(db, &h)?;
+            old.info.id = vec![84; 32];
+            old.info.generations = vec![generation];
+            grants::save(db, &old)?;
+            Ok(old.info)
+        })
+        .unwrap();
+    let target = PendingCreation {
+        namespace: vec![51; 32],
+        vault: vec![81; 16],
+        attempt: vec![82; 16],
+    };
+    let request = GrantRequest {
+        operation: vec![85; 16],
+        public_key: key.verifying_key().to_bytes().to_vec(),
+        credential: vec![41],
+        purpose: if full_generation {
+            GrantPurpose::Cleanup { job: vec![86; 16] }
+        } else {
+            GrantPurpose::CancelCreation {
+                job: vec![86; 16],
+                target,
+            }
+        },
+        generations: if full_generation {
+            normal.generations.clone()
+        } else {
+            vec![]
+        },
+    };
+    let challenge = cleanup::begin(&env, request.clone()).unwrap();
+    let cleanup = cleanup::finish(
+        &env,
+        request.operation.clone(),
+        passkey_assertion(&env, &passkey, &challenge),
+    )
+    .unwrap();
+    env.cleanup_settled.set(false);
+    (env, key, normal, unrelated, cleanup, request)
+}
+fn cancellation_operation(cursor: u64) -> MutationOperation {
+    MutationOperation::Cleanup {
+        job: vec![86; 16],
+        cursor,
+        action: CleanupAction::CancelSetup {
+            attempt: vec![82; 16],
+        },
+    }
+}
+fn pending_activation() -> MutationOperation {
+    MutationOperation::Activate {
+        request: Activate {
+            vault: vec![81; 16],
+            attempt: Some(vec![82; 16]),
+            operation: vec![87; 16],
+            normal: Envelope {
+                version: 2,
+                nonce: vec![1; 12],
+                ciphertext: vec![2; 48],
+            },
+            recovery: Envelope {
+                version: 2,
+                nonce: vec![3; 12],
+                ciphertext: vec![4; 48],
+            },
+            registration: None,
+            assertion: None,
+        },
+        recovery_verifier: ed25519_dalek::SigningKey::from_bytes(&[88; 32])
+            .verifying_key()
+            .to_bytes()
+            .to_vec(),
+    }
+}
+fn pending_derive() -> Derive {
+    Derive {
+        vault: vec![81; 16],
+        attempt: Some(vec![82; 16]),
+        epoch: 0,
+        transport: ic_bls12_381::G1Affine::generator().to_compressed().to_vec(),
+        assertion: None,
+    }
+}
+#[test]
+fn review2_incomplete_cancellation_freezes_activation_and_preserves_cleanup_and_other_vault() {
+    for full_generation in [false, true] {
+        let (env, key, normal, unrelated, cleanup_grant, request) =
+            cancelling_generated_fixture(full_generation);
+        let passkey = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+        let normal_request = GrantRequest {
+            purpose: GrantPurpose::Normal,
+            generations: normal.generations.clone(),
+            ..request.clone()
+        };
+        let before =
+            futures::executor::block_on(ceremonies::begin(&env, normal_request.clone())).unwrap();
+        assert!(matches!(
+            signed_call(&env, &key, &cleanup_grant, 0, cancellation_operation(0)),
+            Ok(MutationResult::Cleanup(CleanupProgress {
+                complete: false,
+                ..
+            }))
+        ));
+        assert_eq!(
+            ceremonies::finish(
+                &env,
+                normal_request.operation.clone(),
+                passkey_assertion(&env, &passkey, &before)
+            )
+            .unwrap_err(),
+            Error::Unauthorized
+        );
+        assert_eq!(
+            futures::executor::block_on(ceremonies::begin(&env, normal_request)).unwrap_err(),
+            Error::Unauthorized
+        );
+        let mut alternate = request.clone();
+        alternate.purpose = GrantPurpose::Cleanup { job: vec![95; 16] };
+        alternate.generations = unrelated.generations.clone();
+        assert_eq!(cleanup::begin(&env, alternate).unwrap_err(), Error::Busy);
+        let rejected = MutationOperation::Cleanup {
+            job: vec![86; 16],
+            cursor: 1,
+            action: CleanupAction::CancelSetup {
+                attempt: vec![94; 16],
+            },
+        };
+        assert_eq!(
+            signed_call(&env, &key, &cleanup_grant, 1, rejected).unwrap_err(),
+            Error::Unauthorized
+        );
+        env.transaction(|db| {
+            let n = cleanup::namespace(db)?;
+            assert_eq!(
+                n.cancelled,
+                Some(PendingCreation {
+                    namespace: vec![51; 32],
+                    vault: vec![81; 16],
+                    attempt: vec![82; 16]
+                })
+            );
+            assert_eq!(n.job.unwrap().cursor, 1);
+            assert_eq!(n.grant.unwrap().info.next_counter, 1);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            signed_call(&env, &key, &normal, 0, pending_activation()).unwrap_err(),
+            Error::Unauthorized
+        );
+        assert_eq!(
+            signed_call(
+                &env,
+                &key,
+                &normal,
+                0,
+                MutationOperation::Derive(pending_derive())
+            )
+            .unwrap_err(),
+            Error::Unauthorized
+        );
+        assert!(env.public_names.borrow().is_empty());
+        assert_eq!(
+            env.transaction(|db| store::header(db, &[81; 16]))
+                .unwrap()
+                .state,
+            VaultState::Pending
+        );
+        // A distinct Active target can still use its already-issued grant.
+        assert!(
+            signed_call(
+                &env,
+                &key,
+                &unrelated,
+                0,
+                MutationOperation::BeginRevision(BeginRevision {
+                    vault: vec![1; 16],
+                    object: vec![89; 16],
+                    expected_revision: 0,
+                    operation: vec![90; 16],
+                    plain_size: 1,
+                    manifest: test_manifest(),
+                    chunk_hashes: vec![vec![99; 32]],
+                })
+            )
+            .is_ok()
+        );
+        let unrelated_handle = vec![96; 32];
+        env.transaction(|db| {
+            let mut g = grants::load(db, &unrelated.id)?;
+            let mut derive = pending_derive();
+            derive.vault = vec![1; 16];
+            derive.attempt = None;
+            g.work = Some(grants::Work {
+                handle: unrelated_handle.clone(),
+                expires: env.now() + 120,
+                request: grants::WorkRequest::Derive(derive),
+                result: Some(Ok(MutationResult::Key(KeyReply {
+                    encrypted_key: vec![5],
+                    public_key: vec![6],
+                }))),
+            });
+            grants::save(db, &g)
+        })
+        .unwrap();
+        assert!(matches!(
+            signed_call(
+                &env,
+                &key,
+                &unrelated,
+                1,
+                MutationOperation::KeyResult {
+                    handle: unrelated_handle
+                }
+            ),
+            Ok(MutationResult::Key(_))
+        ));
+        let passkey = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+        let ch = cleanup::begin(&env, request.clone()).unwrap();
+        let renewed = cleanup::finish(
+            &env,
+            request.operation,
+            passkey_assertion(&env, &passkey, &ch),
+        )
+        .unwrap();
+        env.cleanup_settled.set(true);
+        env.funded.set(false);
+        let terminal = signed_call(&env, &key, &renewed, 0, cancellation_operation(1)).unwrap();
+        assert!(matches!(
+            terminal,
+            MutationResult::Cleanup(CleanupProgress { complete: true, .. })
+        ));
+        assert!(signed_call(&env, &key, &renewed, 0, cancellation_operation(1)).is_ok());
+        assert!(env.transaction(|db| store::header(db, &[81; 16])).is_err());
+    }
+}
+#[test]
+fn review2_incomplete_cancellation_fences_unread_and_cached_key_results() {
+    for full_generation in [false, true] {
+        for cached in [false, true] {
+            let (env, key, normal, _, cleanup_grant, _) =
+                cancelling_generated_fixture(full_generation);
+            let handle = vec![91; 32];
+            env.transaction(|db| {
+                let mut g = grants::load(db, &normal.id)?;
+                g.work = Some(grants::Work {
+                    handle: handle.clone(),
+                    expires: env.now() + 120,
+                    request: grants::WorkRequest::Derive(pending_derive()),
+                    result: Some(Ok(MutationResult::Key(KeyReply {
+                        encrypted_key: vec![7],
+                        public_key: vec![8],
+                    }))),
+                });
+                grants::save(db, &g)
+            })
+            .unwrap();
+            let op = MutationOperation::KeyResult { handle };
+            if cached {
+                signed_call(&env, &key, &normal, 0, op.clone()).unwrap();
+            }
+            signed_call(&env, &key, &cleanup_grant, 0, cancellation_operation(0)).unwrap();
+            assert_eq!(
+                signed_call(&env, &key, &normal, 0, op.clone()).unwrap_err(),
+                Error::Unauthorized
+            );
+            if cached {
+                assert_eq!(
+                    signed_call(&env, &key, &normal, 1, op).unwrap_err(),
+                    Error::Unauthorized
+                );
+            }
+            assert_eq!(
+                env.transaction(|db| Ok(grants::load(db, &normal.id)?.info.next_counter))
+                    .unwrap(),
+                u64::from(cached)
+            );
+        }
+    }
+}
+
+#[test]
+fn review2_incomplete_cancellation_fences_each_key_callback_but_settles_its_cost() {
+    for after_derive in [false, true] {
+        let (env, key, normal, _, cleanup_grant, _) = cancelling_generated_fixture(false);
+        let cleanup_key = key.clone();
+        let hook: TestHook = Box::new(move |env| {
+            assert!(matches!(
+                signed_call(
+                    env,
+                    &cleanup_key,
+                    &cleanup_grant,
+                    0,
+                    cancellation_operation(0)
+                ),
+                Ok(MutationResult::Cleanup(CleanupProgress {
+                    complete: false,
+                    ..
+                }))
+            ));
+        });
+        if after_derive {
+            *env.derive_hook.borrow_mut() = Some(hook);
+        } else {
+            *env.public_hook.borrow_mut() = Some(hook);
+        }
+        assert!(matches!(
+            signed_call(
+                &env,
+                &key,
+                &normal,
+                0,
+                MutationOperation::Derive(pending_derive())
+            ),
+            Ok(MutationResult::Handle(_))
+        ));
+        assert_eq!(env.derive_calls.get(), u64::from(after_derive));
+        assert_eq!(
+            env.settled.get(),
+            Some(if after_derive { 30_000_000_000 } else { 0 })
+        );
+        let work = env
+            .transaction(|db| Ok(grants::load(db, &normal.id)?.work.unwrap()))
+            .unwrap();
+        assert!(matches!(work.result, Some(Err(Error::Expired))));
+        assert_eq!(
+            signed_call(
+                &env,
+                &key,
+                &normal,
+                1,
+                MutationOperation::KeyResult {
+                    handle: work.handle
+                }
+            )
+            .unwrap_err(),
+            Error::Unauthorized
+        );
+    }
+}
+
+#[test]
+fn review2_completed_cancellation_marker_does_not_freeze_a_new_creation_attempt() {
+    let (env, key, _, _, cleanup_grant, mut request) = cancelling_generated_fixture(false);
+    signed_call(&env, &key, &cleanup_grant, 0, cancellation_operation(0)).unwrap();
+    env.cleanup_settled.set(true);
+    signed_call(&env, &key, &cleanup_grant, 1, cancellation_operation(1)).unwrap();
+    let generation = env
+        .transaction(|db| {
+            let mut h = store::reserve(
+                db,
+                env.owner(),
+                Reserve {
+                    vault: vec![81; 16],
+                    operation: vec![97; 16],
+                },
+                env.now(),
+            )?;
+            let mut g = store::header(db, &[1; 16])?.generation.unwrap();
+            g.vault = h.id.clone();
+            g.nonce = vec![98; 32];
+            h.generation = Some(g.clone());
+            store::put_header(db, &h)?;
+            Ok(g)
+        })
+        .unwrap();
+    request.operation = vec![99; 16];
+    request.purpose = GrantPurpose::Normal;
+    request.generations = vec![generation];
+    let ch = futures::executor::block_on(ceremonies::begin(&env, request.clone())).unwrap();
+    let passkey = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+    let normal = ceremonies::finish(
+        &env,
+        request.operation,
+        passkey_assertion(&env, &passkey, &ch),
+    )
+    .unwrap();
+    let mut activation = pending_activation();
+    if let MutationOperation::Activate { request, .. } = &mut activation {
+        request.attempt = Some(vec![97; 16]);
+    }
+    assert!(matches!(
+        signed_call(&env, &key, &normal, 0, activation),
+        Ok(MutationResult::Header(Header {
+            state: VaultState::Active,
+            ..
+        }))
+    ));
+    assert_eq!(
+        signed_call(&env, &key, &cleanup_grant, 1, cancellation_operation(1)).unwrap_err(),
+        Error::Unauthorized
+    );
 }

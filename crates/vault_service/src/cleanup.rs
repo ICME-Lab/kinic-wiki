@@ -291,3 +291,29 @@ pub(crate) fn pending_creation(
         _ => Err(Error::Unauthorized),
     }
 }
+
+/// The cancellation marker is immutable for the running job. Check the stored creation
+/// operation, not a client epoch or the current phase, so an old Normal grant cannot
+/// revive the cancelling attempt. A new namespace/attempt and unrelated Vault stay usable.
+pub(crate) fn normal_allowed(db: &Connection, h: &Header) -> Result<()> {
+    let Some(n) = store::load::<Namespace>(db, "cleanup")? else {
+        return Ok(());
+    };
+    let Some(target) = n
+        .cancelled
+        .as_ref()
+        .filter(|target| target.namespace == n.identity && target.vault == h.id)
+    else {
+        return Ok(());
+    };
+    let attempt: Vec<u8> = db.query_row(
+        "SELECT operation FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",
+        params![h.id],
+        |r| kinic_sqlite_compat::row_get(r, 0),
+    ).map_err(|_| Error::Storage)?;
+    if attempt == target.attempt {
+        Err(Error::Unauthorized)
+    } else {
+        Ok(())
+    }
+}

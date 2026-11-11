@@ -502,6 +502,22 @@ fn cleanup_operation(
     let targets: Vec<Id> = pending
         .map(|p| vec![p.vault.clone()])
         .unwrap_or_else(|| g.info.generations.iter().map(|g| g.vault.clone()).collect());
+    // Both cancellation routes validate the same exact never-activated attempt
+    // before accounting. Its freeze marker and accounting progress commit atomically.
+    let cancellation_target = if let CleanupAction::CancelSetup { attempt } = action {
+        if targets.len() != 1 {
+            return Err(Error::InvalidInput);
+        }
+        let target = PendingCreation {
+            namespace: n.identity.clone(),
+            vault: targets[0].clone(),
+            attempt: attempt.clone(),
+        };
+        cleanup::pending_creation(db, &target, None)?;
+        Some(target)
+    } else {
+        None
+    };
     // Immutable job identity includes the action; each grant renewal continues the same job.
     let digest = hash(&(job, action, &targets))?;
     if !n.action.is_empty() && n.action != digest {
@@ -537,7 +553,7 @@ fn cleanup_operation(
                 c.random = None;
                 store::save(db, "control", &c)?;
             }
-            n.cancelled = pending.cloned();
+            n.cancelled = cancellation_target;
             if settled {
                 store::setup::cancel(db, &targets[0], attempt, env.now())?;
             }
@@ -554,7 +570,12 @@ fn cleanup_operation(
     };
     progress.cursor = progress.cursor.checked_add(1).ok_or(Error::QuotaExceeded)?;
     progress.complete = complete;
-    if complete && *action == CleanupAction::Purge {
+    if complete
+        && matches!(
+            action,
+            CleanupAction::Purge | CleanupAction::CancelSetup { .. }
+        )
+    {
         n.deleted = g.info.generations.clone();
     }
     n.job = Some(progress.clone());
