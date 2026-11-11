@@ -98,6 +98,7 @@ type GrantInfo = record {
 };
 type GrantPurpose = variant {
   Restore : record { job : blob };
+  CancelCreation : record { job : blob; target : PendingCreation };
   Credentials;
   Normal;
   Cleanup : record { job : blob };
@@ -169,6 +170,12 @@ type Payment = record {
   created_at_time : nat64;
   config : FundingConfig;
 };
+// Public namespace identity and immutable creation attempt; never a generation or secret.
+type PendingCreation = record {
+  attempt : blob;
+  vault : blob;
+  namespace : blob;
+};
 type PurchaseRequest = record {
   beneficiary : principal;
   amount_e8s : nat64;
@@ -237,6 +244,7 @@ type UnfinishedVault = record {
   attempt : blob;
   vault : blob;
   state : VaultState;
+  namespace : opt blob;
 };
 type Upload = record { id : blob; expires : nat64; revision : nat64 };
 // Exact WebAuthn deployment configuration, independent from II derivation origin.

@@ -22,6 +22,17 @@ pub fn leaf(r: &Revision) -> Vec<u8> {
     }
     Sha256::digest(data).to_vec()
 }
+/// Versioned target identity is committed even when there are no live records.
+pub fn target_seed(generation: &Generation) -> Result<Vec<u8>> {
+    Ok(Sha256::digest(
+        [
+            b"kinic-vault/restore-root/v2\0".as_slice(),
+            &generation.bytes()?,
+        ]
+        .concat(),
+    )
+    .to_vec())
+}
 pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     id(&r.header.id)?;
     id(&r.operation)?;
@@ -92,11 +103,29 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     h.backup_sequence = None;
     h.backup_at = None;
     h.key_name = cfg.key_name;
+    if let Some(g) = &h.generation {
+        if g.owner != cfg.owner || g.vault != h.id || g.epoch != h.epoch || g.key_name != h.key_name
+        {
+            return Err(Error::InvalidInput);
+        }
+    }
     if let Some(e) = &h.recovery {
-        envelope(e)?
+        if h.generation.is_some() {
+            if e.version != 2 || e.nonce.len() != 12 || e.ciphertext.len() != 48 {
+                return Err(Error::InvalidInput);
+            }
+        } else {
+            envelope(e)?;
+        }
     } else {
         return Err(Error::InvalidInput);
     }
+    let seed = h
+        .generation
+        .as_ref()
+        .map(target_seed)
+        .transpose()?
+        .unwrap_or(vec![0u8; 32]);
     db.execute(
         "INSERT INTO vaults VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4)",
         params![
@@ -115,7 +144,7 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
             (now + DAY) as i64,
             r.count as i64,
             r.root,
-            vec![0u8; 32],
+            seed,
             r.reserved_bytes as i64,
             digest
         ],

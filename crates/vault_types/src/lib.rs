@@ -225,6 +225,7 @@ pub struct RestoreProgress {
 
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct UnfinishedVault {
+    pub namespace: Option<Vec<u8>>,
     pub vault: Id,
     pub attempt: Id,
     pub state: VaultState,

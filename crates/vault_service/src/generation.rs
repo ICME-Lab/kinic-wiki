@@ -13,27 +13,53 @@ pub async fn bootstrap(env: &impl Environment, request: Bootstrap) -> Result<Boo
     if request.public_key.len() != 32 {
         return Err(Error::InvalidInput);
     }
-    let prepared=env.transaction(|db|{
-        store::authorize(db,env.owner())?;
-        cleanup::reclaim_empty(db,env.now())?;
-        if let Some(s)=store::load::<Setup>(db,"bootstrap")? {
-            if hash(&s.request)?==hash(&request)? && s.fence==grants::fence(db)? && s.expires>env.now() {
-                if let Some(challenge)=s.challenge{return Ok(Err(BootstrapReply{header:store::header(db,&request.reserve.vault)?,challenge}));}
+    let prepared = env.transaction(|db| {
+        store::authorize(db, env.owner())?;
+        cleanup::reclaim_empty(db, env.now())?;
+        if let Some(s) = store::load::<Setup>(db, "bootstrap")? {
+            if hash(&s.request)? == hash(&request)?
+                && s.fence == grants::fence(db)?
+                && s.expires > env.now()
+            {
+                if let Some(challenge) = s.challenge {
+                    return Ok(Err(BootstrapReply {
+                        header: store::header(db, &request.reserve.vault)?,
+                        challenge,
+                    }));
+                }
                 return Err(Error::Busy);
             }
             return Err(Error::Conflict);
         }
-        let count:i64=db.query_row("SELECT (SELECT count(*) FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT count(*) FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
-        if count!=0 || store::load::<cleanup::Namespace>(db,"cleanup")?.is_some(){return Err(Error::Unauthorized);}
-        let mut c=control(db)?;c.serial=c.serial.checked_add(1).filter(|x|*x<=i64::MAX as u64).ok_or(Error::QuotaExceeded)?;
-        let token=c.serial;store::save(db,"control",&c)?;
-        // Both fixed control slots are prepaid before external work. The namespace has no
-        // cleanup authority until its independent private seed has been generated.
-        cleanup::save(db,&cleanup::Namespace{identity:vec![],seed:None,serial:0,pending:None,grant:None,job:None,action:vec![],deleted:vec![],budget:Default::default()})?;
-        store::save(db,"authorities",&authorization::Authorities::default())?;
+        let count: i64 = db.query_row(
+            "SELECT (SELECT count(*) FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT count(*) FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",
+            params![],
+            |r| kinic_sqlite_compat::row_get(r, 0),
+        ).map_err(|_| Error::Storage)?;
+        if count != 0 || store::load::<cleanup::Namespace>(db, "cleanup")?.is_some() {
+            return Err(Error::Unauthorized);
+        }
+        let mut c = control(db)?;
+        c.serial = c.serial.checked_add(1)
+            .filter(|x| *x <= i64::MAX as u64)
+            .ok_or(Error::QuotaExceeded)?;
+        let token = c.serial;
+        store::save(db, "control", &c)?;
+        // Prepay both fixed slots before external work. Cleanup authority waits for
+        // an independent private seed; the retained owner budget survives recreation.
+        cleanup::save(db, &cleanup::Namespace {
+            identity: vec![], seed: None, serial: 0, pending: None, grant: None,
+            job: None, action: vec![], deleted: vec![],
+            budget: c.cleanup_budget.clone(), cancelled: None,
+        })?;
+        store::save(db, "authorities", &authorization::Authorities::default())?;
         grants::prepay(db)?;
-        store::reserve(db,env.owner(),request.reserve.clone(),env.now())?;
-        store::save(db,"bootstrap",&Setup{request:request.clone(),token,expires:env.now()+120,fence:grants::fence(db)?,challenge:None})?;Ok(Ok(token))
+        store::reserve(db, env.owner(), request.reserve.clone(), env.now())?;
+        store::save(db, "bootstrap", &Setup {
+            request: request.clone(), token, expires: env.now() + 120,
+            fence: grants::fence(db)?, challenge: None,
+        })?;
+        Ok(Ok(token))
     })?;
     let token = match prepared {
         Ok(t) => t,

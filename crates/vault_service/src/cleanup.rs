@@ -15,6 +15,8 @@ pub(crate) struct Namespace {
     pub deleted: Vec<Generation>,
     #[serde(default)]
     pub budget: Budget,
+    #[serde(default)]
+    pub cancelled: Option<PendingCreation>,
 }
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct Pending {
@@ -46,10 +48,27 @@ pub(crate) struct Budget {
     proof: u64,
     mutation: u64,
 }
+impl Budget {
+    fn merge(&mut self, other: &Self, day: u64) {
+        if self.day != day {
+            *self = Self {
+                day,
+                ..Default::default()
+            };
+        }
+        if other.day == day {
+            self.challenge = self.challenge.max(other.challenge);
+            self.proof = self.proof.max(other.proof);
+            self.mutation = self.mutation.max(other.mutation);
+        }
+    }
+}
 /// Persist counters outside the proof transaction so failed cryptographic proofs count.
 pub(crate) fn budget(db: &Connection, now: u64, kind: u8) -> Result<()> {
     let mut namespace = namespace(db)?;
-    let mut owner = namespace.budget.clone();
+    let mut c = control(db)?;
+    let mut owner = c.cleanup_budget.clone();
+    owner.merge(&namespace.budget, now / DAY);
     let raw: Option<String> = db
         .query_row(
             "SELECT value FROM global_settings WHERE key='cleanup-budget'",
@@ -87,6 +106,8 @@ pub(crate) fn budget(db: &Connection, now: u64, kind: u8) -> Result<()> {
     }
     *o += 1;
     *g += 1;
+    c.cleanup_budget = owner.clone();
+    store::save(db, "control", &c)?;
     namespace.budget = owner;
     save(db, &namespace)?;
     db.execute("INSERT INTO global_settings(key,value) VALUES('cleanup-budget',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serde_json::to_string(&global).map_err(|_|Error::Storage)?]).map_err(|_|Error::Storage)?;
@@ -97,8 +118,9 @@ pub fn begin(env: &impl Environment, r: GrantRequest) -> Result<Challenge> {
         store::authorize(db, env.owner())?;
         let mut n = namespace(db)?;
         let seed = n.seed.as_ref().ok_or(Error::Unauthorized)?;
-        let GrantPurpose::Cleanup { job } = &r.purpose else {
-            return Err(Error::Unauthorized);
+        let job = match &r.purpose {
+            GrantPurpose::Cleanup { job } | GrantPurpose::CancelCreation { job, .. } => job,
+            _ => return Err(Error::Unauthorized),
         };
         id(job)?;
         crate::ceremonies::validate_request(db, env, &r)?;
@@ -118,6 +140,7 @@ pub fn begin(env: &impl Environment, r: GrantRequest) -> Result<Challenge> {
             n.job = None;
             n.action.clear();
             n.deleted.clear();
+            n.cancelled = None;
         }
         budget(db, env.now(), 0)?;
         n.budget = namespace(db)?.budget;
@@ -224,6 +247,7 @@ pub(crate) fn reclaim_empty(db: &Connection, now: u64) -> Result<()> {
         return Ok(());
     }
     let mut c = control(db)?;
+    c.cleanup_budget.merge(&n.budget, now / DAY);
     c.ceremony = None;
     c.random = None;
     c.derive = None;
@@ -234,4 +258,36 @@ pub(crate) fn reclaim_empty(db: &Connection, now: u64) -> Result<()> {
     )
     .map_err(|_| Error::Storage)?;
     store::save(db, "control", &c)
+}
+
+/// A never-activated creation is identified by its immutable attempt. Nonce publication
+/// during the passkey ceremony does not change that target or grant any key authority.
+pub(crate) fn pending_creation(
+    db: &Connection,
+    target: &PendingCreation,
+    replay_job: Option<&Id>,
+) -> Result<()> {
+    id(&target.vault)?;
+    id(&target.attempt)?;
+    let n = namespace(db)?;
+    if target.namespace.len() != 32 || target.namespace != n.identity || n.seed.is_none() {
+        return Err(Error::Unauthorized);
+    }
+    match store::header(db, &target.vault) {
+        Ok(h) => {
+            if h.state != VaultState::Pending || h.sequence != 0 {
+                return Err(Error::Unauthorized);
+            }
+            store::setup::check_attempt(db, &h, Some(&target.attempt))
+                .map_err(|_| Error::Unauthorized)
+        }
+        Err(Error::NotFound)
+            if replay_job
+                .is_some_and(|job| n.job.as_ref().is_some_and(|j| &j.job == job && j.complete))
+                && n.cancelled.as_ref() == Some(target) =>
+        {
+            Ok(())
+        }
+        _ => Err(Error::Unauthorized),
+    }
 }

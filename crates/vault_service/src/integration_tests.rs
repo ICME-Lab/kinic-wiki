@@ -8,6 +8,9 @@ struct TestEnvironment {
     owner: Cell<Principal>,
     time: Cell<u64>,
     cancel_random: Cell<bool>,
+    fail_random: Cell<bool>,
+    cleanup_settled: Cell<bool>,
+    upgrade_random: Cell<bool>,
     cancel_public: Cell<bool>,
     replace_flight: Cell<bool>,
     settled: Cell<Option<u64>>,
@@ -39,6 +42,9 @@ impl TestEnvironment {
             owner: Cell::new(Principal::self_authenticating([1; 32])),
             time: Cell::new(1),
             cancel_random: Cell::new(false),
+            fail_random: Cell::new(false),
+            cleanup_settled: Cell::new(true),
+            upgrade_random: Cell::new(false),
             cancel_public: Cell::new(false),
             replace_flight: Cell::new(false),
             settled: Cell::new(None),
@@ -74,6 +80,14 @@ impl TestEnvironment {
     }
 }
 impl Environment for TestEnvironment {
+    fn cleanup_existing_flights(
+        &self,
+        _db: &Connection,
+        _targets: &[Id],
+        _cancel_live: bool,
+    ) -> Result<bool> {
+        Ok(self.cleanup_settled.get())
+    }
     fn mutation_authorized(&self) -> bool {
         self.authorized.get()
     }
@@ -124,6 +138,18 @@ impl Environment for TestEnvironment {
         );
         if self.cancel_random.replace(false) {
             cancel_vault_setup(self, vec![1; 16], vec![2; 16])?;
+        }
+        if self.fail_random.replace(false) {
+            return Err(Error::KeyService);
+        }
+        if self.upgrade_random.replace(false) {
+            self.db
+                .borrow()
+                .execute(
+                    "INSERT INTO global_settings VALUES('generation','1')",
+                    params![],
+                )
+                .unwrap();
         }
         Ok(vec![9; 32])
     }
@@ -416,7 +442,7 @@ fn signed_fixture(
         let mut h=store::header(db,&[1;16])?;h.state=VaultState::Active;h.sequence=1;store::put_header(db,&h)?;
         db.execute("UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![]).unwrap();
         store::save(db,"authorities",&authorization::Authorities{credentials:vec![authorization::Authority{id:vec![41],version:0,revoked:false,scope:CredentialScope::Global}]})?;
-        cleanup::save(db,&cleanup::Namespace{identity:vec![51;32],seed:Some(vec![52;32]),serial:0,pending:None,grant:None,job:None,action:vec![],deleted:vec![],budget:Default::default()})?;
+        cleanup::save(db,&cleanup::Namespace{identity:vec![51;32],seed:Some(vec![52;32]),serial:0,pending:None,grant:None,job:None,action:vec![],deleted:vec![],budget:Default::default(),cancelled:None})?;
         let g=grants::Grant{info:GrantInfo{id:vec![53;32],expires:301,next_counter:0,purpose,generations:vec![h.generation.unwrap()]},owner:env.owner(),canister:env.canister(),public_key:signing.verifying_key().to_bytes().to_vec(),credential:vec![41],credential_version:0,fence:grants::fence(db)?,revoked:false,last_digest:vec![],last_result:None,work:None};
         grants::save(db,&g)?;Ok(g.info)
     }).unwrap();
@@ -738,6 +764,30 @@ fn javascript_candid_signatures_all_variants_and_generation_aad_match() {
         nonce: vec![4; 32],
         key_name: "key_1".into(),
     };
+    let seed = store::restore::target_seed(&g).unwrap();
+    let tombstone = Revision {
+        vault: g.vault.clone(),
+        object: vec![5; 16],
+        revision: 1,
+        sequence: 1,
+        plain_size: 0,
+        manifest: vec![],
+        chunk_hashes: vec![],
+        deleted: true,
+    };
+    let leaf = store::restore::leaf(&tombstone);
+    assert_eq!(
+        hex::encode(&seed),
+        fixture["commitments"]["empty"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex::encode(Sha256::digest([seed, leaf.clone()].concat())),
+        fixture["commitments"]["tombstone"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex::encode(Sha256::digest([vec![0; 32], leaf].concat())),
+        fixture["commitments"]["v1_tombstone"].as_str().unwrap()
+    );
     assert_eq!(
         hex::encode(g.bytes().unwrap()),
         fixture["generation"].as_str().unwrap()
@@ -919,4 +969,378 @@ fn current_recovery_verifier_never_trusts_source_kit_or_reused_vault_id() {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+fn review_purging_denies_completed_key_result_and_cached_replay() {
+    for cached in [false, true] {
+        let (env, key, info) = signed_fixture(GrantPurpose::Normal);
+        let handle = vec![81; 32];
+        env.transaction(|db| {
+            let mut grant = grants::load(db, &info.id)?;
+            grant.work = Some(grants::Work {
+                handle: handle.clone(),
+                expires: 100,
+                request: grants::WorkRequest::Derive(Derive {
+                    vault: vec![1; 16],
+                    attempt: None,
+                    epoch: 0,
+                    transport: vec![8; 48],
+                    assertion: None,
+                }),
+                result: Some(Ok(MutationResult::Key(KeyReply {
+                    encrypted_key: vec![7],
+                    public_key: vec![8],
+                }))),
+            });
+            grants::save(db, &grant)
+        })
+        .unwrap();
+        let operation = MutationOperation::KeyResult { handle };
+        if cached {
+            signed_call(&env, &key, &info, 0, operation.clone()).unwrap();
+        }
+        env.transaction(|db| {
+            db.execute("INSERT INTO revision_chunks VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,0,?3)", params![vec![1u8;16], vec![2u8;16], vec![3u8]]).unwrap();
+            assert!(!store::cleanup::purge_batch(db, &[vec![1;16]])?);
+            Ok(())
+        }).unwrap();
+        assert_eq!(
+            signed_call(&env, &key, &info, 0, operation.clone()).unwrap_err(),
+            Error::Unauthorized
+        );
+        if cached {
+            assert_eq!(
+                signed_call(&env, &key, &info, 1, operation).unwrap_err(),
+                Error::Unauthorized
+            );
+        }
+    }
+}
+
+#[test]
+fn review_cleanup_owner_budget_survives_recreation_same_day() {
+    let (env, _, _) = signed_fixture(GrantPurpose::Normal);
+    env.transaction(|db| {
+        for _ in 0..100 {
+            cleanup::budget(db, env.now(), 0)?;
+        }
+        for _ in 0..100 {
+            cleanup::budget(db, env.now(), 1)?;
+        }
+        for _ in 0..1000 {
+            cleanup::budget(db, env.now(), 2)?;
+        }
+        let mut replacement = cleanup::namespace(db)?;
+        assert!(store::cleanup::purge_batch(db, &[vec![1; 16]])?);
+        cleanup::reclaim_empty(db, 500)?;
+        replacement.seed = Some(vec![77; 32]);
+        replacement.identity = vec![78; 32];
+        replacement.serial = 0;
+        replacement.budget = Default::default();
+        cleanup::save(db, &replacement)?;
+        for kind in 0..3 {
+            assert_eq!(
+                cleanup::budget(db, 500, kind),
+                Err(Error::RateLimited { retry_after: DAY })
+            );
+        }
+        for kind in 0..3 {
+            cleanup::budget(db, DAY + 1, kind)?;
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn review_cancel_nonce_less_creation_requires_fresh_global_exact_attempt() {
+    for upgrade in [false, true] {
+        let (env, key, mut creation) = signed_fixture(GrantPurpose::Create);
+        let passkey = install_test_passkey(&env);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        env.time.set(now);
+        env.transaction(|db| {
+            let mut grant = grants::load(db, &creation.id)?;
+            grant.info.expires = now + 300;
+            creation = grant.info.clone();
+            grants::save(db, &grant)
+        })
+        .unwrap();
+        env.fail_random.set(!upgrade);
+        env.upgrade_random.set(upgrade);
+        let work = signed_call(
+            &env,
+            &key,
+            &creation,
+            0,
+            MutationOperation::Create(Reserve {
+                vault: vec![71; 16],
+                operation: vec![72; 16],
+            }),
+        )
+        .unwrap();
+        assert!(matches!(work, MutationResult::Handle(_)));
+        assert!(
+            env.transaction(|db| store::header(db, &[71; 16]))
+                .unwrap()
+                .generation
+                .is_none()
+        );
+        env.funded.set(false);
+        assert_eq!(
+            cancel_vault_setup(&env, vec![71; 16], vec![72; 16]),
+            Err(Error::Unauthorized)
+        );
+        let target = PendingCreation {
+            namespace: vec![51; 32],
+            vault: vec![71; 16],
+            attempt: vec![72; 16],
+        };
+        let request = GrantRequest {
+            operation: vec![73; 16],
+            public_key: key.verifying_key().to_bytes().to_vec(),
+            credential: vec![41],
+            purpose: GrantPurpose::CancelCreation {
+                job: vec![74; 16],
+                target: target.clone(),
+            },
+            generations: vec![],
+        };
+        assert_eq!(
+            list_unfinished_vaults(&env).unwrap()[0].namespace,
+            Some(target.namespace.clone())
+        );
+        for bad in [
+            PendingCreation {
+                namespace: vec![50; 32],
+                ..target.clone()
+            },
+            PendingCreation {
+                attempt: vec![70; 16],
+                ..target.clone()
+            },
+            PendingCreation {
+                vault: vec![1; 16],
+                ..target.clone()
+            },
+        ] {
+            let mut r = request.clone();
+            r.purpose = GrantPurpose::CancelCreation {
+                job: vec![74; 16],
+                target: bad,
+            };
+            assert!(cleanup::begin(&env, r).is_err());
+        }
+        env.transaction(|db| {
+            let mut a = authorization::authorities(db)?;
+            a.credentials[0].scope = CredentialScope::Instances(vec![]);
+            store::save(db, "authorities", &a)
+        })
+        .unwrap();
+        assert!(cleanup::begin(&env, request.clone()).is_err());
+        env.transaction(|db| {
+            let mut a = authorization::authorities(db)?;
+            a.credentials[0].scope = CredentialScope::Global;
+            store::save(db, "authorities", &a)
+        })
+        .unwrap();
+        let challenge = cleanup::begin(&env, request.clone()).unwrap();
+        let grant = cleanup::finish(
+            &env,
+            request.operation,
+            passkey_assertion(&env, &passkey, &challenge),
+        )
+        .unwrap();
+        for action in [
+            CleanupAction::Purge,
+            CleanupAction::CancelSetup {
+                attempt: vec![70; 16],
+            },
+        ] {
+            assert!(
+                signed_call(
+                    &env,
+                    &key,
+                    &grant,
+                    0,
+                    MutationOperation::Cleanup {
+                        job: vec![74; 16],
+                        cursor: 0,
+                        action
+                    }
+                )
+                .is_err()
+            );
+        }
+        let mut operation = MutationOperation::Cleanup {
+            job: vec![74; 16],
+            cursor: 0,
+            action: CleanupAction::CancelSetup {
+                attempt: target.attempt.clone(),
+            },
+        };
+        env.cleanup_settled.set(false);
+        assert!(matches!(
+            signed_call(&env, &key, &grant, 0, operation.clone()),
+            Ok(MutationResult::Cleanup(CleanupProgress {
+                complete: false,
+                ..
+            }))
+        ));
+        env.funded.set(true);
+        assert!(
+            signed_call(
+                &env,
+                &key,
+                &creation,
+                1,
+                MutationOperation::Create(Reserve {
+                    vault: target.vault.clone(),
+                    operation: target.attempt.clone()
+                })
+            )
+            .is_err()
+        );
+        env.funded.set(false);
+        env.cleanup_settled.set(true);
+        if let MutationOperation::Cleanup { cursor, .. } = &mut operation {
+            *cursor = 1;
+        }
+        assert!(matches!(
+            signed_call(&env, &key, &grant, 1, operation.clone()),
+            Ok(MutationResult::Cleanup(CleanupProgress {
+                complete: true,
+                ..
+            }))
+        ));
+        assert!(signed_call(&env, &key, &grant, 1, operation.clone()).is_ok());
+        assert!(
+            env.transaction(|db| store::header(db, &target.vault))
+                .is_err()
+        );
+        assert!(env.transaction(|db| store::header(db, &[1; 16])).is_ok());
+        assert!(
+            env.transaction(|db| Ok(control(db)?.random.is_none()))
+                .unwrap()
+        );
+        env.transaction(|db| {
+            store::reserve(
+                db,
+                env.owner(),
+                Reserve {
+                    vault: target.vault.clone(),
+                    operation: vec![75; 16],
+                },
+                now,
+            )
+        })
+        .unwrap();
+        assert_eq!(
+            signed_call(&env, &key, &grant, 1, operation).unwrap_err(),
+            Error::Unauthorized
+        );
+    }
+}
+
+#[test]
+fn review_cancel_pending_creation_survives_nonce_publication_at_every_proof_boundary() {
+    for publication in 0..3 {
+        let (env, key, original) = signed_fixture(GrantPurpose::Normal);
+        let passkey = install_test_passkey(&env);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        env.time.set(now);
+        env.transaction(|db| {
+            store::reserve(
+                db,
+                env.owner(),
+                Reserve {
+                    vault: vec![71; 16],
+                    operation: vec![72; 16],
+                },
+                now,
+            )
+        })
+        .unwrap();
+        env.funded.set(false);
+        let publish = || {
+            env.transaction(|db| {
+                let mut h = store::header(db, &[71; 16])?;
+                let mut g = original.generations[0].clone();
+                g.vault = h.id.clone();
+                g.nonce = vec![73; 32];
+                h.generation = Some(g);
+                store::put_header(db, &h)
+            })
+            .unwrap()
+        };
+        let request = GrantRequest {
+            operation: vec![74; 16],
+            public_key: key.verifying_key().to_bytes().to_vec(),
+            credential: vec![41],
+            purpose: GrantPurpose::CancelCreation {
+                job: vec![75; 16],
+                target: PendingCreation {
+                    namespace: vec![51; 32],
+                    vault: vec![71; 16],
+                    attempt: vec![72; 16],
+                },
+            },
+            generations: vec![],
+        };
+        if publication == 0 {
+            publish();
+        }
+        let challenge = cleanup::begin(&env, request.clone()).unwrap();
+        if publication == 1 {
+            publish();
+        }
+        let grant = cleanup::finish(
+            &env,
+            request.operation,
+            passkey_assertion(&env, &passkey, &challenge),
+        )
+        .unwrap();
+        if publication == 2 {
+            publish();
+        }
+        // Even an erroneous phase rollback must not relabel a previously activated Vault as setup.
+        env.transaction(|db| {
+            let mut h = store::header(db, &[71; 16])?;
+            h.sequence = 1;
+            store::put_header(db, &h)
+        })
+        .unwrap();
+        let op = MutationOperation::Cleanup {
+            job: vec![75; 16],
+            cursor: 0,
+            action: CleanupAction::CancelSetup {
+                attempt: vec![72; 16],
+            },
+        };
+        assert_eq!(
+            signed_call(&env, &key, &grant, 0, op.clone()).unwrap_err(),
+            Error::Unauthorized
+        );
+        env.transaction(|db| {
+            let mut h = store::header(db, &[71; 16])?;
+            h.sequence = 0;
+            store::put_header(db, &h)
+        })
+        .unwrap();
+        assert!(matches!(
+            signed_call(&env, &key, &grant, 0, op.clone()),
+            Ok(MutationResult::Cleanup(CleanupProgress {
+                complete: true,
+                ..
+            }))
+        ));
+        assert!(signed_call(&env, &key, &grant, 0, op).is_ok());
+    }
 }

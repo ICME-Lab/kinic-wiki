@@ -990,3 +990,56 @@ fn offline_owner_expired_receipts_are_reclaimed_globally_without_touching_live_s
     );
     assert_eq!(pending(&db, &[31; 16], DAY + 2).unwrap().id, vec![31; 16]);
 }
+
+#[test]
+fn v2_empty_target_restore_validates_generation_seed_and_rejects_v1_zero_root() {
+    for valid in [true, false] {
+        let db = fixture();
+        let owner = config(&db).unwrap().owner;
+        let g = Generation {
+            version: 2,
+            owner,
+            canister: Principal::from_slice(&[1]),
+            vault: vec![11; 16],
+            epoch: 1,
+            nonce: vec![12; 32],
+            key_name: "test_key_1".into(),
+        };
+        let e = Envelope {
+            version: 2,
+            nonce: vec![1; 12],
+            ciphertext: vec![2; 48],
+        };
+        let h = Header {
+            generation: Some(g.clone()),
+            recovery_verifier: vec![3; 32],
+            id: g.vault.clone(),
+            epoch: 1,
+            state: VaultState::Active,
+            normal: Some(e.clone()),
+            recovery: Some(e),
+            sequence: 0,
+            backup_sequence: None,
+            backup_at: None,
+            key_name: g.key_name.clone(),
+        };
+        let root = if valid {
+            restore::target_seed(&g).unwrap()
+        } else {
+            vec![0; 32]
+        };
+        restore::begin(
+            &db,
+            BeginRestore {
+                header: h,
+                operation: vec![13; 16],
+                count: 0,
+                root,
+                reserved_bytes: 30000,
+            },
+            1,
+        )
+        .unwrap();
+        assert_eq!(restore::ready(&db, &g.vault, 1).is_ok(), valid);
+    }
+}

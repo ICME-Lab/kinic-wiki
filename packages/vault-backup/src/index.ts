@@ -1,4 +1,10 @@
-import { generationBytes, generationAAD, openV2, type Generation, type PortableGeneration } from "../../vault-crypto/src/generation.ts";
+import {
+  generationBytes,
+  generationAAD,
+  openV2,
+  type Generation,
+  type PortableGeneration,
+} from "../../vault-crypto/src/generation.ts";
 import { recoveryVerifier } from "../../vault-crypto/src/recovery.ts";
 import { strictJSON } from "../../vault-crypto/src/strict-json.ts";
 import {
@@ -46,10 +52,18 @@ export type PortableRecord = {
 };
 const MAGIC = utf8.encode("KVLT0001");
 const MAGIC_V2 = utf8.encode("KVLT0002");
-export function headerGeneration(h:PortableHeader):Generation|undefined {
- if(h.version===1)return undefined;
- const g=h.generation;if(!g)throw Error("InvalidGeneration");
- const result={...g,vault:unb64(g.vault),nonce:unb64(g.nonce),epoch:decimal(g.epoch)};generationBytes(result);return result;
+export function headerGeneration(h: PortableHeader): Generation | undefined {
+  if (h.version === 1) return undefined;
+  const g = h.generation;
+  if (!g) throw Error("InvalidGeneration");
+  const result = {
+    ...g,
+    vault: unb64(g.vault),
+    nonce: unb64(g.nonce),
+    epoch: decimal(g.epoch),
+  };
+  generationBytes(result);
+  return result;
 }
 const ZERO = new Uint8Array(16);
 const MAX = 256 * 1024 * 1024;
@@ -85,6 +99,23 @@ export async function restoreRoot(records: PortableRecord[]) {
     root = new Uint8Array(await hash(concat(root, await restoreLeaf(r))));
   return root;
 }
+/** V2 target commitment, including an empty or tombstone-only archive. V1 source stays zero-seeded. */
+export async function targetRestoreRoot(
+  generation: Generation,
+  records: PortableRecord[],
+) {
+  let root = new Uint8Array(
+    await hash(
+      concat(
+        utf8.encode("kinic-vault/restore-root/v2\0"),
+        generationBytes(generation),
+      ),
+    ),
+  );
+  for (const record of records)
+    root = new Uint8Array(await hash(concat(root, await restoreLeaf(record))));
+  return root;
+}
 function decimal(s: string, max = 9223372036854775807n) {
   if (typeof s !== "string" || !/^(0|[1-9][0-9]*)$/.test(s))
     throw Error("InvalidBackup");
@@ -94,13 +125,23 @@ function decimal(s: string, max = 9223372036854775807n) {
 }
 function validateHeader(h: PortableHeader) {
   if (
-    ![1,2].includes(h.version) ||
+    ![1, 2].includes(h.version) ||
     unb64(h.vault).length !== 16 ||
     decimal(h.epoch) < 0 ||
     decimal(h.sequence) < 0
   )
     throw Error("InvalidBackup");
-  if(h.version===2){const g=headerGeneration(h)!;if(b64(g.vault)!==h.vault||g.epoch!==BigInt(h.epoch)||g.key_name!==h.key_name||!h.recovery_verifier||unb64(h.recovery_verifier).length!==32)throw Error("InvalidBackup");}
+  if (h.version === 2) {
+    const g = headerGeneration(h)!;
+    if (
+      b64(g.vault) !== h.vault ||
+      g.epoch !== BigInt(h.epoch) ||
+      g.key_name !== h.key_name ||
+      !h.recovery_verifier ||
+      unb64(h.recovery_verifier).length !== 32
+    )
+      throw Error("InvalidBackup");
+  }
   u64(BigInt(h.epoch));
   u64(BigInt(h.sequence));
   for (const e of [h.normal, h.recovery]) {
@@ -170,7 +211,7 @@ export async function makeArchive(
   if (records.length > 10000) throw Error("SizeLimit");
   validateRecords(header, records);
   const parts: Uint8Array[] = [
-    header.version===2 ? MAGIC_V2 : MAGIC,
+    header.version === 2 ? MAGIC_V2 : MAGIC,
     frame(json({ header, count: records.length })),
   ];
   let total = parts.reduce((n, p) => n + p.length, 0);
@@ -205,7 +246,10 @@ export async function openArchive(
   data: Uint8Array,
   recoverySecret: Uint8Array,
 ) {
-  if (data.length > MAX || (!eq(data.subarray(0, 8), MAGIC) && !eq(data.subarray(0,8),MAGIC_V2)))
+  if (
+    data.length > MAX ||
+    (!eq(data.subarray(0, 8), MAGIC) && !eq(data.subarray(0, 8), MAGIC_V2))
+  )
     throw Error("InvalidBackup");
   let offset = 8;
   const take = (max: number) => {
@@ -224,12 +268,29 @@ export async function openArchive(
   const start = parse<{ header: PortableHeader; count: number }>(take(65536));
   const { header, count } = start;
   validateHeader(header);
-  if(!eq(data.subarray(0,8),header.version===2?MAGIC_V2:MAGIC))throw Error("InvalidBackup");
+  if (!eq(data.subarray(0, 8), header.version === 2 ? MAGIC_V2 : MAGIC))
+    throw Error("InvalidBackup");
   if (!Number.isSafeInteger(count) || count < 0 || count > 10000)
     throw Error("InvalidBackup");
-  const generation=headerGeneration(header);
-  const recovered = generation ? await openV2(await deriveKey(recoverySecret,"recovery"),unpack(header.recovery),generationAAD(generation,ZERO,generation.epoch,"recovery")) : await open(await deriveKey(recoverySecret,"recovery"),unpack(header.recovery),aad(unb64(header.vault),ZERO,BigInt(header.epoch),"recovery"));
-  if(generation && b64(await recoveryVerifier(recoverySecret))!==header.recovery_verifier){recovered.fill(0);throw Error("InvalidRecoveryVerifier");}
+  const generation = headerGeneration(header);
+  const recovered = generation
+    ? await openV2(
+        await deriveKey(recoverySecret, "recovery"),
+        unpack(header.recovery),
+        generationAAD(generation, ZERO, generation.epoch, "recovery"),
+      )
+    : await open(
+        await deriveKey(recoverySecret, "recovery"),
+        unpack(header.recovery),
+        aad(unb64(header.vault), ZERO, BigInt(header.epoch), "recovery"),
+      );
+  if (
+    generation &&
+    b64(await recoveryVerifier(recoverySecret)) !== header.recovery_verifier
+  ) {
+    recovered.fill(0);
+    throw Error("InvalidRecoveryVerifier");
+  }
   const root = await importKey(recovered);
   const records: PortableRecord[] = [],
     chunks: Uint8Array[][] = [];
@@ -290,7 +351,10 @@ export async function openArchive(
       chunks,
       root,
       rootRaw: recovered,
-      restoreRoot: await restoreRoot(records),
+      restoreRoot:
+        header.version === 2
+          ? await targetRestoreRoot(headerGeneration(header)!, records)
+          : await restoreRoot(records),
     };
   } catch (e) {
     recovered.fill(0);
@@ -299,21 +363,101 @@ export async function openArchive(
 }
 
 /** Full source verification precedes any target data. Source envelopes are never activation material. */
-export async function transformArchive(data:Uint8Array,sourceSecret:Uint8Array,target:Generation,targetKEK:CryptoKey){
-  const source=await openArchive(data,sourceSecret);
-  const { randomBytes,sealV2 }=await import("../../vault-crypto/src/index.ts");
-  const { rewrapManifest }=await import("../../vault-crypto/src/documents.ts");
-  const rootRaw=randomBytes(32),recoverySecret=randomBytes(32);
-  try{
-    if(b64(target.vault)!==source.header.vault||target.epoch!==BigInt(source.header.epoch)+1n||target.epoch>9223372036854775807n)throw Error("InvalidTarget");
-    const old=headerGeneration(source.header);if(old&&b64(old.nonce)===b64(target.nonce))throw Error("InvalidTarget");
-    const root=await importKey(rootRaw),records:PortableRecord[]=[];
-    for(const r of source.records){records.push(r.deleted?{...r}:{...r,manifest:b64(await rewrapManifest(source.root,root,unb64(r.vault),unb64(r.object),BigInt(r.revision),unb64(r.manifest),target,old))});}
-    const normal=await sealV2(targetKEK,rootRaw,generationAAD(target,ZERO,target.epoch,"normal"));
-    const recovery=await sealV2(await deriveKey(recoverySecret,"recovery"),rootRaw,generationAAD(target,ZERO,target.epoch,"recovery"));
-    const header:PortableHeader={...source.header,version:2,epoch:target.epoch.toString(),key_name:target.key_name,generation:{...target,vault:b64(target.vault),nonce:b64(target.nonce),epoch:target.epoch.toString()},normal:pack(normal),recovery:pack(recovery),recovery_verifier:b64(await recoveryVerifier(recoverySecret))};
-    const archive=await makeArchive(header,records,async(r,i)=>source.chunks[records.indexOf(r)][i],rootRaw);
-    const verified=await openArchive(archive,recoverySecret);verified.rootRaw.fill(0);
-    return {header,records,chunks:source.chunks,archive,recoverySecret,rootRaw,root,sourceRestoreRoot:source.restoreRoot,targetRestoreRoot:await restoreRoot(records)};
-  }catch(error){rootRaw.fill(0);recoverySecret.fill(0);throw error;}finally{source.rootRaw.fill(0);}
+export async function transformArchive(
+  data: Uint8Array,
+  sourceSecret: Uint8Array,
+  target: Generation,
+  targetKEK: CryptoKey,
+) {
+  const source = await openArchive(data, sourceSecret);
+  const { randomBytes, sealV2 } =
+    await import("../../vault-crypto/src/index.ts");
+  const { rewrapManifest } =
+    await import("../../vault-crypto/src/documents.ts");
+  const rootRaw = randomBytes(32),
+    recoverySecret = randomBytes(32);
+  try {
+    if (
+      b64(target.vault) !== source.header.vault ||
+      target.epoch !== BigInt(source.header.epoch) + 1n ||
+      target.epoch > 9223372036854775807n
+    )
+      throw Error("InvalidTarget");
+    const old = headerGeneration(source.header);
+    if (old && b64(old.nonce) === b64(target.nonce))
+      throw Error("InvalidTarget");
+    const root = await importKey(rootRaw),
+      records: PortableRecord[] = [];
+    for (const r of source.records) {
+      records.push(
+        r.deleted
+          ? { ...r }
+          : {
+              ...r,
+              manifest: b64(
+                await rewrapManifest(
+                  source.root,
+                  root,
+                  unb64(r.vault),
+                  unb64(r.object),
+                  BigInt(r.revision),
+                  unb64(r.manifest),
+                  target,
+                  old,
+                ),
+              ),
+            },
+      );
+    }
+    const normal = await sealV2(
+      targetKEK,
+      rootRaw,
+      generationAAD(target, ZERO, target.epoch, "normal"),
+    );
+    const recovery = await sealV2(
+      await deriveKey(recoverySecret, "recovery"),
+      rootRaw,
+      generationAAD(target, ZERO, target.epoch, "recovery"),
+    );
+    const header: PortableHeader = {
+      ...source.header,
+      version: 2,
+      epoch: target.epoch.toString(),
+      key_name: target.key_name,
+      generation: {
+        ...target,
+        vault: b64(target.vault),
+        nonce: b64(target.nonce),
+        epoch: target.epoch.toString(),
+      },
+      normal: pack(normal),
+      recovery: pack(recovery),
+      recovery_verifier: b64(await recoveryVerifier(recoverySecret)),
+    };
+    const archive = await makeArchive(
+      header,
+      records,
+      async (r, i) => source.chunks[records.indexOf(r)][i],
+      rootRaw,
+    );
+    const verified = await openArchive(archive, recoverySecret);
+    verified.rootRaw.fill(0);
+    return {
+      header,
+      records,
+      chunks: source.chunks,
+      archive,
+      recoverySecret,
+      rootRaw,
+      root,
+      sourceRestoreRoot: source.restoreRoot,
+      targetRestoreRoot: await targetRestoreRoot(target, records),
+    };
+  } catch (error) {
+    rootRaw.fill(0);
+    recoverySecret.fill(0);
+    throw error;
+  } finally {
+    source.rootRaw.fill(0);
+  }
 }

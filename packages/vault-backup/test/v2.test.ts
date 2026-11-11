@@ -1,20 +1,175 @@
-import {test,expect} from 'vitest';
-import {randomBytes,importKey,deriveKey,sealV2,generationAAD,recoveryVerifier,type Generation} from '../../vault-crypto/src/index.ts';
-import {encryptDocument,pack,b64,rewrapManifest} from '../../vault-crypto/src/documents.ts';
-import {makeArchive,openArchive,restoreRoot,type PortableHeader} from '../src/index.ts';
-test('v2 portable recovery verifies transformed wrapper, keeps ciphertext and changes target commitment',async()=>{
- const g:Generation={version:2,canister:'rrkah-fqaaa-aaaaa-aaaaq-cai',owner:'ryjl3-tyaaa-aaaaa-aaaba-cai',vault:new Uint8Array(16).fill(3),epoch:1n,nonce:randomBytes(32),key_name:'key_1'};
- const raw=randomBytes(32),root=await importKey(raw),secret=randomBytes(32),object=new Uint8Array(16).fill(4);
- const d=await encryptDocument(root,g.vault,object,1n,{kind:'note',title:'v2'},new TextEncoder().encode('history'),g);
- const recovery=await sealV2(await deriveKey(secret,'recovery'),raw,generationAAD(g,new Uint8Array(16),g.epoch,'recovery'));
- const h={version:2,vault:b64(g.vault),epoch:'1',sequence:'1',key_name:g.key_name,generation:{...g,vault:b64(g.vault),nonce:b64(g.nonce),epoch:'1'},recovery_verifier:b64(await recoveryVerifier(secret)),record_count:1,chunk_count:1,plain_bytes:'7',normal:pack(recovery),recovery:pack(recovery)} as PortableHeader;
- const records=[{vault:h.vault,object:b64(object),revision:'1',sequence:'1',plain_size:'7',manifest:b64(d.manifest),hashes:d.hashes.map(b64),deleted:false}];
- const archive=await makeArchive(h,records,async()=>d.chunks[0],raw);
- expect(new TextDecoder().decode(archive.subarray(0,8))).toBe('KVLT0002');
- const opened=await openArchive(archive,secret);expect(opened.records).toEqual(records);
- const next={...g,epoch:2n,nonce:randomBytes(32)},nextRoot=await importKey(randomBytes(32));
- const transformed=await rewrapManifest(root,nextRoot,g.vault,object,1n,d.manifest,next,g);
- expect(await restoreRoot([{...records[0],manifest:b64(transformed)}])).not.toEqual(await restoreRoot(records));
- await expect(openArchive(archive,randomBytes(32))).rejects.toThrow();
- opened.rootRaw.fill(0);raw.fill(0);
+import { test, expect } from "vitest";
+import {
+  randomBytes,
+  importKey,
+  deriveKey,
+  sealV2,
+  generationAAD,
+  recoveryVerifier,
+  type Generation,
+} from "../../vault-crypto/src/index.ts";
+import {
+  encryptDocument,
+  pack,
+  b64,
+  rewrapManifest,
+} from "../../vault-crypto/src/documents.ts";
+import {
+  makeArchive,
+  openArchive,
+  restoreRoot,
+  type PortableHeader,
+} from "../src/index.ts";
+test("v2 portable recovery verifies transformed wrapper, keeps ciphertext and changes target commitment", async () => {
+  const g: Generation = {
+    version: 2,
+    canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+    owner: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+    vault: new Uint8Array(16).fill(3),
+    epoch: 1n,
+    nonce: randomBytes(32),
+    key_name: "key_1",
+  };
+  const raw = randomBytes(32),
+    root = await importKey(raw),
+    secret = randomBytes(32),
+    object = new Uint8Array(16).fill(4);
+  const d = await encryptDocument(
+    root,
+    g.vault,
+    object,
+    1n,
+    { kind: "note", title: "v2" },
+    new TextEncoder().encode("history"),
+    g,
+  );
+  const recovery = await sealV2(
+    await deriveKey(secret, "recovery"),
+    raw,
+    generationAAD(g, new Uint8Array(16), g.epoch, "recovery"),
+  );
+  const h = {
+    version: 2,
+    vault: b64(g.vault),
+    epoch: "1",
+    sequence: "1",
+    key_name: g.key_name,
+    generation: { ...g, vault: b64(g.vault), nonce: b64(g.nonce), epoch: "1" },
+    recovery_verifier: b64(await recoveryVerifier(secret)),
+    record_count: 1,
+    chunk_count: 1,
+    plain_bytes: "7",
+    normal: pack(recovery),
+    recovery: pack(recovery),
+  } as PortableHeader;
+  const records = [
+    {
+      vault: h.vault,
+      object: b64(object),
+      revision: "1",
+      sequence: "1",
+      plain_size: "7",
+      manifest: b64(d.manifest),
+      hashes: d.hashes.map(b64),
+      deleted: false,
+    },
+  ];
+  const archive = await makeArchive(h, records, async () => d.chunks[0], raw);
+  expect(new TextDecoder().decode(archive.subarray(0, 8))).toBe("KVLT0002");
+  const opened = await openArchive(archive, secret);
+  expect(opened.records).toEqual(records);
+  const next = { ...g, epoch: 2n, nonce: randomBytes(32) },
+    nextRoot = await importKey(randomBytes(32));
+  const transformed = await rewrapManifest(
+    root,
+    nextRoot,
+    g.vault,
+    object,
+    1n,
+    d.manifest,
+    next,
+    g,
+  );
+  expect(
+    await restoreRoot([{ ...records[0], manifest: b64(transformed) }]),
+  ).not.toEqual(await restoreRoot(records));
+  await expect(openArchive(archive, randomBytes(32))).rejects.toThrow();
+  opened.rootRaw.fill(0);
+  raw.fill(0);
+});
+
+test("review: empty and tombstone-only transformed archives bind a distinct target identity", async () => {
+  const { aad, seal } = await import("../../vault-crypto/src/index.ts");
+  const { transformArchive } = await import("../src/index.ts");
+  for (const tombstone of [false, true]) {
+    const vault = randomBytes(16),
+      raw = randomBytes(32),
+      secret = randomBytes(32),
+      root = await importKey(raw);
+    const e = pack(
+      await seal(
+        await deriveKey(secret, "recovery"),
+        raw,
+        aad(vault, new Uint8Array(16), 0n, "recovery"),
+      ),
+    );
+    const h: PortableHeader = {
+      version: 1,
+      vault: b64(vault),
+      epoch: "0",
+      sequence: tombstone ? "1" : "0",
+      key_name: "key_1",
+      record_count: tombstone ? 1 : 0,
+      chunk_count: 0,
+      plain_bytes: "0",
+      normal: e,
+      recovery: e,
+    };
+    const records = tombstone
+      ? [
+          {
+            vault: h.vault,
+            object: b64(randomBytes(16)),
+            revision: "1",
+            sequence: "1",
+            plain_size: "0",
+            manifest: "",
+            hashes: [],
+            deleted: true,
+          },
+        ]
+      : [];
+    const source = await makeArchive(
+      h,
+      records,
+      async () => {
+        throw Error("UnexpectedChunk");
+      },
+      raw,
+    );
+    const generation: Generation = {
+      version: 2,
+      canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+      owner: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+      vault,
+      epoch: 1n,
+      nonce: randomBytes(32),
+      key_name: "key_1",
+    };
+    const a = await transformArchive(source, secret, generation, root);
+    const b = await transformArchive(
+      source,
+      secret,
+      { ...generation, nonce: randomBytes(32) },
+      root,
+    );
+    expect(a.targetRestoreRoot).not.toEqual(a.sourceRestoreRoot);
+    expect(a.targetRestoreRoot).not.toEqual(b.targetRestoreRoot);
+    for (const t of [a, b]) {
+      t.rootRaw.fill(0);
+      t.recoverySecret.fill(0);
+    }
+    raw.fill(0);
+    secret.fill(0);
+  }
 });

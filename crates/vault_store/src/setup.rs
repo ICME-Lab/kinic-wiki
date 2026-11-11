@@ -49,6 +49,7 @@ pub fn list(db: &Connection, now: u64) -> Result<Vec<UnfinishedVault>> {
         .map(|(raw, attempt, expires)| {
             let header: Header = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
             Ok(UnfinishedVault {
+                namespace: None,
                 vault: header.id,
                 attempt,
                 state: header.state,

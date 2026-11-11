@@ -87,6 +87,7 @@ impl State {
     ) -> Result<(), String> {
         self.write_index(|tx| settle_reservation(tx, owner, token, actual, now, true, true))
     }
+    #[cfg(test)]
     pub fn vault_cancel_reserved_cycles(
         &self,
         owner: &str,
@@ -317,36 +318,6 @@ impl State {
     }
 }
 
-impl State {
-    pub fn vault_cancel_pending_key_flight(
-        &self,
-        context: vault_store::OwnerContext,
-        now: u64,
-    ) -> vault_types::Result<Option<(u64, u64, bool)>> {
-        self.vault_raw_transaction(|db| {
-            context.run(db, |db| {
-                let result = vault_store::keys::cancel_pending(db, now)?;
-                if let Some((token, _, _)) = result {
-                    if let Some(mut control) =
-                        vault_store::load::<serde_json::Value>(db, "control")?
-                    {
-                        if control
-                            .get("derive")
-                            .and_then(|f| f.get("token"))
-                            .and_then(|t| t.as_u64())
-                            == Some(token)
-                        {
-                            control["derive"] = serde_json::Value::Null;
-                            vault_store::save(db, "control", &control)?;
-                        }
-                    }
-                }
-                Ok(result)
-            })
-        })
-    }
-}
-
 fn settle_reservation(
     tx: &Connection,
     owner: &str,
@@ -405,6 +376,7 @@ impl State {
     ) -> Result<(), String> {
         self.write_index(|tx| finish_reserved_execution(tx, owner, token, cycles, now))
     }
+    #[cfg(test)]
     pub fn vault_recover_orphan_execution(
         &self,
         owner: &str,
@@ -430,28 +402,6 @@ impl State {
     fn vault_current_generation(&self) -> vault_types::Result<i64> {
         self.vault_raw_transaction(|db|db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage))
     }
-    pub fn vault_clear_orphan_challenges(
-        &self,
-        context: vault_store::OwnerContext,
-        tokens: &[u64],
-    ) -> vault_types::Result<()> {
-        self.vault_raw_transaction(|db| {
-            context.run(db, |db| {
-                if let Some(mut control) = vault_store::load::<serde_json::Value>(db, "control")? {
-                    if control
-                        .get("random")
-                        .and_then(|f| f.get("token"))
-                        .and_then(|t| t.as_u64())
-                        .is_some_and(|t| tokens.contains(&t))
-                    {
-                        control["random"] = serde_json::Value::Null;
-                        vault_store::save(db, "control", &control)?;
-                    }
-                }
-                Ok(())
-            })
-        })
-    }
 }
 fn finish_reserved_execution(
     tx: &Connection,
@@ -473,43 +423,6 @@ fn finish_reserved_execution(
         tx.execute("UPDATE vault_cycle_reservations SET execution_billed=?3,execution_checkpoint=max(execution_checkpoint,?3) WHERE owner=?1 AND token=?2",params![owner,token,total]).map_err(sql_error)?;
     }
     Ok(())
-}
-
-impl State {
-    /// Run owner recovery without relying on a funded account or enabled Vault configuration.
-    pub fn vault_recover_pending_work(
-        &self,
-        context: vault_store::OwnerContext,
-        now: u64,
-    ) -> Result<(), String> {
-        let owner = context.owner().to_text();
-        let millis =
-            i64::try_from(now.saturating_mul(1000)).map_err(|_| "recovery timestamp overflow")?;
-        let key_result = (|| {
-            let flight = self
-                .vault_cancel_pending_key_flight(context, now)
-                .map_err(|_| "Vault key recovery failed")?;
-            if let Some((token, actual, orphan)) = flight {
-                self.vault_cancel_reserved_cycles(
-                    &owner,
-                    &format!("derive:{token}"),
-                    actual,
-                    orphan,
-                    millis,
-                )?;
-                self.vault_raw_transaction(|db| {
-                    context.run(db, |db| vault_store::keys::acknowledge_cancel(db, token))
-                })
-                .map_err(|_| "Vault cancellation acknowledgement failed")?;
-            }
-            Ok(())
-        })();
-        // Challenge recovery is independent of key-journal reconciliation/compaction.
-        let challenges = self.vault_recover_orphan_execution(&owner, millis)?;
-        self.vault_clear_orphan_challenges(context, &challenges)
-            .map_err(|_| "Vault challenge recovery failed")?;
-        key_result
-    }
 }
 
 impl State {

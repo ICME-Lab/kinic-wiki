@@ -45,6 +45,8 @@ struct Control {
     day: u64,
     derives: u64,
     challenges: u64,
+    #[serde(default)]
+    cleanup_budget: cleanup::Budget,
 }
 #[derive(Serialize, Deserialize)]
 struct Candidate {
@@ -174,7 +176,12 @@ pub fn reserve_vault(env: &impl Environment, request: Reserve) -> Result<Header>
 pub fn list_unfinished_vaults(env: &impl Environment) -> Result<Vec<UnfinishedVault>> {
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
-        store::setup::list(db, env.now())
+        let identity = store::load::<cleanup::Namespace>(db, "cleanup")?.map(|n| n.identity);
+        let mut unfinished = store::setup::list(db, env.now())?;
+        for item in &mut unfinished {
+            item.namespace = identity.clone();
+        }
+        Ok(unfinished)
     })
 }
 

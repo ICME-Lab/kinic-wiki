@@ -57,8 +57,17 @@ export const idlFactory = ({ IDL }) => {
     'operation' : IDL.Vec(IDL.Nat8),
     'recovery' : Envelope,
   });
+  const PendingCreation = IDL.Record({
+    'attempt' : IDL.Vec(IDL.Nat8),
+    'vault' : IDL.Vec(IDL.Nat8),
+    'namespace' : IDL.Vec(IDL.Nat8),
+  });
   const GrantPurpose = IDL.Variant({
     'Restore' : IDL.Record({ 'job' : IDL.Vec(IDL.Nat8) }),
+    'CancelCreation' : IDL.Record({
+      'job' : IDL.Vec(IDL.Nat8),
+      'target' : PendingCreation,
+    }),
     'Credentials' : IDL.Null,
     'Normal' : IDL.Null,
     'Cleanup' : IDL.Record({ 'job' : IDL.Vec(IDL.Nat8) }),
@@ -276,6 +285,7 @@ export const idlFactory = ({ IDL }) => {
     'attempt' : IDL.Vec(IDL.Nat8),
     'vault' : IDL.Vec(IDL.Nat8),
     'state' : VaultState,
+    'namespace' : IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
   const Result_21 = IDL.Variant({
     'Ok' : IDL.Vec(UnfinishedVault),

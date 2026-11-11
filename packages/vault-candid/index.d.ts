@@ -113,6 +113,12 @@ export interface GrantInfo {
   'purpose' : GrantPurpose,
 }
 export type GrantPurpose = { 'Restore' : { 'job' : Uint8Array | number[] } } |
+  {
+    'CancelCreation' : {
+      'job' : Uint8Array | number[],
+      'target' : PendingCreation,
+    }
+  } |
   { 'Credentials' : null } |
   { 'Normal' : null } |
   { 'Cleanup' : { 'job' : Uint8Array | number[] } } |
@@ -186,6 +192,14 @@ export interface Payment {
   'wallet' : Principal,
   'created_at_time' : bigint,
   'config' : FundingConfig,
+}
+/**
+ * Public namespace identity and immutable creation attempt; never a generation or secret.
+ */
+export interface PendingCreation {
+  'attempt' : Uint8Array | number[],
+  'vault' : Uint8Array | number[],
+  'namespace' : Uint8Array | number[],
 }
 export interface PurchaseRequest {
   'beneficiary' : Principal,
@@ -288,6 +302,7 @@ export interface UnfinishedVault {
   'attempt' : Uint8Array | number[],
   'vault' : Uint8Array | number[],
   'state' : VaultState,
+  'namespace' : [] | [Uint8Array | number[]],
 }
 export interface Upload {
   'id' : Uint8Array | number[],

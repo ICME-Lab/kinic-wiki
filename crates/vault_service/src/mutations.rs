@@ -144,6 +144,13 @@ fn ordinary(
             if g.info.purpose != GrantPurpose::Create || a.scope != CredentialScope::Global {
                 return Err(Error::Unauthorized);
             }
+            if store::load::<cleanup::Namespace>(db, "cleanup")?.is_some_and(|n| {
+                n.cancelled
+                    .as_ref()
+                    .is_some_and(|target| target.vault == r.vault && target.attempt == r.operation)
+            }) {
+                return Err(Error::Conflict);
+            }
             let h = store::reserve(db, env.owner(), r.clone(), env.now())?;
             if h.generation.is_some() {
                 return Ok(MutationResult::Header(h));
@@ -467,9 +474,23 @@ fn cleanup_operation(
     else {
         return Err(Error::Unauthorized);
     };
-    if g.info.purpose != (GrantPurpose::Cleanup { job: job.clone() }) {
-        return Err(Error::Unauthorized);
-    }
+    let pending = match &g.info.purpose {
+        GrantPurpose::Cleanup { job: authorized } if authorized == job => None,
+        GrantPurpose::CancelCreation {
+            job: authorized,
+            target,
+        } if authorized == job => {
+            if action
+                != &(CleanupAction::CancelSetup {
+                    attempt: target.attempt.clone(),
+                })
+            {
+                return Err(Error::Unauthorized);
+            }
+            Some(target)
+        }
+        _ => return Err(Error::Unauthorized),
+    };
     let mut progress = n.job.clone().unwrap_or(CleanupProgress {
         job: job.clone(),
         cursor: 0,
@@ -478,7 +499,9 @@ fn cleanup_operation(
     if progress.job != *job || progress.cursor != *cursor || progress.complete {
         return Err(Error::Conflict);
     }
-    let targets: Vec<Id> = g.info.generations.iter().map(|g| g.vault.clone()).collect();
+    let targets: Vec<Id> = pending
+        .map(|p| vec![p.vault.clone()])
+        .unwrap_or_else(|| g.info.generations.iter().map(|g| g.vault.clone()).collect());
     // Immutable job identity includes the action; each grant renewal continues the same job.
     let digest = hash(&(job, action, &targets))?;
     if !n.action.is_empty() && n.action != digest {
@@ -506,8 +529,19 @@ fn cleanup_operation(
             if targets.len() != 1 {
                 return Err(Error::InvalidInput);
             }
-            store::setup::cancel(db, &targets[0], attempt, env.now())?;
-            true
+            let mut c = control(db)?;
+            if c.random
+                .as_ref()
+                .is_some_and(|f| f.vault == targets[0] && f.attempt.as_ref() == Some(attempt))
+            {
+                c.random = None;
+                store::save(db, "control", &c)?;
+            }
+            n.cancelled = pending.cloned();
+            if settled {
+                store::setup::cancel(db, &targets[0], attempt, env.now())?;
+            }
+            settled
         }
         CleanupAction::AbortExport { export } => {
             let e = store::content::active_export(db, env.now())?.ok_or(Error::NotFound)?;

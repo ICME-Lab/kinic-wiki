@@ -25,6 +25,12 @@ pub(crate) fn validate_request(
     if a.revoked {
         return Err(Error::Unauthorized);
     }
+    if let GrantPurpose::CancelCreation { target, .. } = &r.purpose {
+        if a.scope != CredentialScope::Global || !r.generations.is_empty() {
+            return Err(Error::Unauthorized);
+        }
+        return cleanup::pending_creation(db, target, None);
+    }
     if matches!(r.purpose, GrantPurpose::Create | GrantPurpose::Credentials)
         && a.scope != CredentialScope::Global
     {

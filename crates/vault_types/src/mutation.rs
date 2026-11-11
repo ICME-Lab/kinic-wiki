@@ -23,6 +23,14 @@ pub enum GrantPurpose {
     Restore { job: Id },
     Incident { job: Id },
     Cleanup { job: Id },
+    CancelCreation { job: Id, target: PendingCreation },
+}
+/// Public namespace identity and immutable creation attempt; never a generation or secret.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PendingCreation {
+    pub namespace: Vec<u8>,
+    pub vault: Id,
+    pub attempt: Id,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct GrantRequest {
