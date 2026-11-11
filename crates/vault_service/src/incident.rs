@@ -415,9 +415,10 @@ pub(crate) fn reset(
         return Err(Error::Conflict);
     }
     let mut j = load(db, env)?;
-    if j.targets
-        .iter()
-        .any(|t| t.phase == PreparationPhase::Cancelling)
+    if cancellation_cleanup_pending(db, &j)?
+        || j.targets
+            .iter()
+            .any(|t| t.phase == PreparationPhase::Cancelling)
     {
         return Err(Error::Busy);
     }
@@ -520,6 +521,9 @@ pub(crate) fn cancel(
         return Err(Error::Unauthorized);
     }
     if j.cancel_digest.as_deref() != Some(digest) {
+        if cancellation_cleanup_pending(db, &j)? {
+            return Err(Error::Busy);
+        }
         if j.vector_digest != digest
             || j.targets
                 .iter()
@@ -562,4 +566,28 @@ pub(crate) fn cancel(
         .any(|t| t.phase == PreparationPhase::Cancelling);
     save(db, &mut j)?;
     Ok(complete)
+}
+
+/// Cancelled targets can still owe financial settlement to an unfinished cleanup cursor.
+/// Preserve that cursor's exact action binding until it completes; unrelated cleanup actions
+/// do not acquire a new incident lock. No transient grant/expiry is used as durable authority.
+fn cancellation_cleanup_pending(db: &Connection, j: &IncidentStatus) -> Result<bool> {
+    let Some(vector_digest) = j.cancel_digest.as_ref() else {
+        return Ok(false);
+    };
+    let n = cleanup::namespace(db)?;
+    let Some(progress) = n.job.as_ref().filter(|p| !p.complete) else {
+        return Ok(false);
+    };
+    let targets: Vec<Id> = j
+        .targets
+        .iter()
+        .filter(|t| !terminal(t))
+        .map(|t| t.source.id.clone())
+        .collect();
+    let action = CleanupAction::CancelIncident {
+        incident: j.job.clone(),
+        vector_digest: vector_digest.clone(),
+    };
+    Ok(n.action == hash(&(&progress.job, &action, &targets))?)
 }

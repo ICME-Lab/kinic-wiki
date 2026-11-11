@@ -1347,3 +1347,184 @@ fn incident_existing_v2_vectors_and_missing_optional_cancel_state_survive_upgrad
     })
     .unwrap();
 }
+
+#[test]
+fn incident_pending_cancel_settlement_blocks_paid_restart_without_stranding_cleanup() {
+    for restart_with_cancel in [false, true] {
+        let (env, key, pre, r) = fixture(1);
+        let j = allocate(&env, &key, &pre, &r);
+        let passkey = install_test_passkey(&env);
+        env.time.set(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+        let pg = post(&env, &key, &pre, &j);
+        let cg = cleanup_grant_for(&env, &key, &pre, r.sources.clone(), 90);
+        let action = CleanupAction::CancelIncident {
+            incident: j.job.clone(),
+            vector_digest: j.vector_digest.clone(),
+        };
+        let first = MutationOperation::Cleanup {
+            job: vec![90; 16],
+            cursor: 0,
+            action: action.clone(),
+        };
+        let hook_key = key.clone();
+        let hook_passkey = passkey.clone();
+        let hook_request = r.clone();
+        let hook_grant = cg.clone();
+        *env.derive_hook.borrow_mut() = Some(Box::new(move |env| {
+            env.cleanup_settled.set(false);
+            env.funded.set(false);
+            assert!(matches!(
+                signed_call(env, &hook_key, &hook_grant, 0, first.clone()).unwrap(),
+                MutationResult::Cleanup(CleanupProgress {
+                    complete: false,
+                    ..
+                })
+            ));
+            assert!(signed_call(env, &hook_key, &hook_grant, 0, first).is_ok());
+            let cancelled = incident::status(env).unwrap().unwrap();
+            assert_eq!(cancelled.targets[0].phase, PreparationPhase::Cancelled);
+            env.funded.set(true);
+            let mut preparation = hook_request;
+            preparation.targets[0].attempt = cancelled.targets[0].attempt.clone();
+            let request = GrantRequest {
+                operation: vec![88; 16],
+                public_key: hook_key.verifying_key().to_bytes().to_vec(),
+                credential: vec![41],
+                purpose: GrantPurpose::IncidentPrepare(preparation.clone()),
+                generations: preparation.sources.clone(),
+            };
+            let challenge =
+                futures::executor::block_on(ceremonies::begin(env, request.clone())).unwrap();
+            let fresh = ceremonies::finish(
+                env,
+                request.operation,
+                passkey_assertion(env, &hook_passkey, &challenge),
+            )
+            .unwrap();
+            let op = if restart_with_cancel {
+                MutationOperation::IncidentCancel
+            } else {
+                MutationOperation::IncidentReset {
+                    vault: vec![1; 16],
+                    attempt: cancelled.targets[0].attempt.clone(),
+                    next_attempt: vec![99; 16],
+                }
+            };
+            assert!(matches!(
+                signed_call(env, &hook_key, &fresh, 0, op),
+                Err(Error::Busy)
+            ));
+            let retained = incident::status(env).unwrap().unwrap();
+            assert_eq!(retained.cancel_digest, cancelled.cancel_digest);
+            assert_eq!(retained.vector_digest, cancelled.vector_digest);
+            assert_eq!(retained.targets[0].attempt, cancelled.targets[0].attempt);
+        }));
+        signed_call(
+            &env,
+            &key,
+            &pg,
+            0,
+            MutationOperation::IncidentDerive(IncidentDerive {
+                job: j.job,
+                attempt: vec![71; 16],
+                role: IncidentRole::Target,
+                generation: j.targets[0].target.clone().unwrap(),
+                transport: transport(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(env.settled.get(), Some(30_000_000_000));
+        env.transaction(|db| {
+            let live: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM key_flights WHERE in_flight=1",
+                    params![],
+                    |r| kinic_sqlite_compat::row_get(r, 0),
+                )
+                .unwrap();
+            assert_eq!(live, 0);
+            assert!(!cleanup::namespace(db)?.job.unwrap().complete);
+            Ok(())
+        })
+        .unwrap();
+        env.cleanup_settled.set(true);
+        env.funded.set(false);
+        env.db
+            .borrow()
+            .execute(
+                "INSERT INTO global_settings VALUES('generation','1')",
+                params![],
+            )
+            .unwrap();
+        let continuation = MutationOperation::Cleanup {
+            job: vec![90; 16],
+            cursor: 1,
+            action,
+        };
+        assert!(signed_call(&env, &key, &cg, 1, continuation.clone()).is_err());
+        let request = GrantRequest {
+            operation: vec![87; 16],
+            public_key: key.verifying_key().to_bytes().to_vec(),
+            credential: vec![41],
+            purpose: cg.purpose.clone(),
+            generations: r.sources.clone(),
+        };
+        let challenge = cleanup::begin(&env, request.clone()).unwrap();
+        let renewed = cleanup::finish(
+            &env,
+            request.operation,
+            passkey_assertion(&env, &passkey, &challenge),
+        )
+        .unwrap();
+        assert!(matches!(
+            signed_call(&env, &key, &renewed, 0, continuation.clone()).unwrap(),
+            MutationResult::Cleanup(CleanupProgress { complete: true, .. })
+        ));
+        assert!(signed_call(&env, &key, &renewed, 0, continuation).is_ok());
+        let next = GrantRequest {
+            operation: vec![86; 16],
+            public_key: key.verifying_key().to_bytes().to_vec(),
+            credential: vec![41],
+            purpose: GrantPurpose::Cleanup { job: vec![91; 16] },
+            generations: r.sources.clone(),
+        };
+        let challenge = cleanup::begin(&env, next.clone()).unwrap();
+        let next = cleanup::finish(
+            &env,
+            next.operation,
+            passkey_assertion(&env, &passkey, &challenge),
+        )
+        .unwrap();
+        assert!(matches!(
+            signed_call(
+                &env,
+                &key,
+                &next,
+                0,
+                MutationOperation::Cleanup {
+                    job: vec![91; 16],
+                    cursor: 0,
+                    action: CleanupAction::Expired
+                }
+            )
+            .unwrap(),
+            MutationResult::Cleanup(CleanupProgress { complete: true, .. })
+        ));
+        env.transaction(|db| {
+            let status = incident::load(db, &env)?;
+            incident::reset(db, &env, &[1; 16], &status.targets[0].attempt, &[99; 16])?;
+            assert!(store::incident::pinned(db, &[1; 16])?);
+            assert_eq!(
+                store::header(db, &[1; 16])?.state,
+                VaultState::IncidentRequired
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+}
