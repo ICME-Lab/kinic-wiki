@@ -10,6 +10,11 @@ crate-type = ["cdylib", "rlib"]
 canbench-rs = ["dep:canbench-rs"]
 
 [dependencies]
+vault-service = { path = "../vault_service" }
+vault-store = { path = "../vault_store" }
+vault-types = { path = "../vault_types" }
+kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }
+ic-cdk-management-canister = "=0.1.1"
 canbench-rs = { version = "0.4.1", optional = true }
 candid = "0.10.26"
 ic-cdk = "0.20.0"

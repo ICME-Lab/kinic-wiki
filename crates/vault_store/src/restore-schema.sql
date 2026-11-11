@@ -1,0 +1,1 @@
+CREATE TABLE restores(owner BLOB NOT NULL,vault BLOB NOT NULL, operation BLOB NOT NULL, expires INTEGER NOT NULL, expected_count INTEGER NOT NULL, expected_root BLOB NOT NULL, chain BLOB NOT NULL, count INTEGER NOT NULL, last_seq INTEGER NOT NULL, reserved INTEGER NOT NULL, pending TEXT NOT NULL, digest BLOB NOT NULL,PRIMARY KEY(owner,vault));

@@ -623,6 +623,7 @@ impl VfsService {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         self.require_maintenance_open(database_id)?;
         self.require_no_pending_cycles_operations(database_id)?;
+        self.require_no_vault_payer_references(database_id)?;
         let status = self.read_index(|conn| load_database_status(conn, database_id))?;
         if !matches!(status, DatabaseStatus::Pending | DatabaseStatus::Active) {
             return Err(format!(
@@ -1340,6 +1341,7 @@ pub(crate) fn allocate_mount_id(conn: &Connection) -> Result<u16, String> {
         .prepare(
             "SELECT mount_id AS used_mount_id
              FROM database_mount_history
+             UNION SELECT mount_id AS used_mount_id FROM internal_mounts
              ORDER BY used_mount_id ASC",
         )
         .map_err(|error| error.to_string())?;

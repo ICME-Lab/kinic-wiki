@@ -1,4 +1,7 @@
+import { vaultTypes, vaultTypeAliases, vaultMethods } from "./vault-shapes.mjs";
+
 export const expectedTypes = {
+  ...vaultTypes,
   BekkoRefillAttempt: {"kind": "record", "fields": {"id": "nat64", "observed_bekko_cycles": "opt nat", "config_revision": "nat64", "amount_cycles": "nat", "outcome": "BekkoRefillOutcome", "started_ns": "nat64", "finished_ns": "opt nat64"}},
   BekkoRefillConfig: {"kind": "record", "fields": {"target_cycles": "nat", "max_transfer_cycles": "nat", "enabled": "bool", "threshold_cycles": "nat", "wiki_reserve_cycles": "nat", "max_daily_cycles": "nat"}},
   BekkoRefillOutcome: {"kind": "variant", "cases": {"Depositing": "null", "Failed": "text", "Reconciled": "BekkoRefillReconciliation", "Interrupted": "null", "Sufficient": "null", "DailyLimit": "null", "WikiReserve": "null", "Checking": "null", "Succeeded": "null", "Unknown": "text", "ConfigChanged": "null"}},
@@ -800,6 +803,7 @@ export const expectedTypes = {
 };
 
 export const didTypeAliases = {
+  ...vaultTypeAliases,
   ResultBekkoRefill: "Result_2",
   ResultEvidenceRebuild: "Result_9",
   ResultNodeRevision: "Result_6",
@@ -847,14 +851,15 @@ export const didTypeAliases = {
   ResultSourceEvidence: "Result_54",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteNodes: "Result_58",
+  ResultWriteNodes: "Result_77",
   ResultDatabaseMetadata: "Result_55",
-  ResultWikiMetrics: "Result_56",
-  ResultWikiMetricsSeries: "Result_57",
-  ResultWriteSourceForGeneration: "Result_59"
+  ResultWikiMetrics: "Result_75",
+  ResultWikiMetricsSeries: "Result_76",
+  ResultWriteSourceForGeneration: "Result_78"
 };
 
 export const expectedMethods = {
+  ...vaultMethods,
   get_bekko_refill_state: {"input": [], "output": "ResultBekkoRefill", "mode": "query"},
   configure_bekko_refill: {"input": ["BekkoRefillConfig"], "output": "ResultUnit", "mode": "update"},
   check_bekko_refill: {"input": [], "output": "ResultBekkoRefill", "mode": "update"},

@@ -24,6 +24,7 @@ pub use publications::{
 mod sessions;
 pub(crate) use cycles::PendingCyclesLedgerDetails;
 mod sqlite;
+pub mod vault;
 pub use market::{MarketPurchaseStart, MarketPurchaseValidation};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,6 +73,7 @@ const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:003_publication_mutat
 const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:004_iap_cycle_grants";
 const INDEX_SCHEMA_VERSION_VOICE: &str = "database_index:005_voice_billing";
 const INDEX_SCHEMA_VERSION_MAINTENANCE: &str = "database_index:006_database_maintenance";
+const INDEX_SCHEMA_VERSION_VAULT: &str = "database_index:007_private_vault";
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_INITIAL,
     INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
@@ -79,6 +81,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
     INDEX_SCHEMA_VERSION_VOICE,
     INDEX_SCHEMA_VERSION_MAINTENANCE,
+    INDEX_SCHEMA_VERSION_VAULT,
 ];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -252,6 +255,8 @@ impl VfsService {
                 SQL_JSON_PROGRESS_OP_INTERVAL,
                 SQL_JSON_PROGRESS_CALLBACK_BUDGET,
             );
+            let _authorizer = crate::sqlite::install_read_authorizer(conn, INDEX_SCHEMA_TABLES)
+                .map_err(map_index_sql_json_execution_error)?;
             let mut json_object_stmt = conn
                 .prepare("SELECT CASE WHEN json_valid(?1) THEN json_type(?1) = 'object' ELSE 0 END")
                 .map_err(map_index_sql_json_execution_error)?;

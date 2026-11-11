@@ -1,3 +1,12 @@
+type Activate = record {
+  normal : Envelope;
+  attempt : opt blob;
+  vault : blob;
+  registration : opt text;
+  assertion : opt text;
+  operation : blob;
+  recovery : Envelope;
+};
 type AppendNodeItem = record {
   content : text;
   separator : opt text;
@@ -14,6 +23,30 @@ type AppendNodeRequest = record {
   expected_etag : opt text;
   metadata_json : opt text;
   database_id : text;
+};
+type BeginRestore = record {
+  count : nat64;
+  root : blob;
+  operation : blob;
+  reserved_bytes : nat64;
+  header : Header;
+};
+type BeginRevision = record {
+  object : blob;
+  vault : blob;
+  chunk_hashes : vec blob;
+  operation : blob;
+  manifest : blob;
+  plain_size : nat64;
+  expected_revision : nat64;
+};
+type BeginUnlock = record {
+  attempt : opt blob;
+  vault : blob;
+  transport : blob;
+  epoch : nat64;
+  target : blob;
+  purpose : Purpose;
 };
 type BekkoRefillAttempt = record {
   id : nat64;
@@ -63,6 +96,12 @@ type CanonicalRole = record {
   path_pattern : text;
   purpose : text;
 };
+type Challenge = record {
+  expires : nat64;
+  registration : bool;
+  credential_ids : vec blob;
+  bytes : blob;
+};
 type ChildNode = record {
   updated_at : opt int64;
   etag : opt text;
@@ -81,6 +120,7 @@ type CreateDatabaseResult = record {
   initial_free_grant_applied : bool;
   database_id : text;
 };
+type CredentialInfo = record { id : blob };
 type CyclesBillingConfig = record {
   billing_authority_id : text;
   iap_authority_id : opt text;
@@ -210,6 +250,13 @@ type DeleteNodeRequest = record {
   expected_folder_index_etag : opt text;
 };
 type DeleteNodeResult = record { path : text };
+type Derive = record {
+  attempt : opt blob;
+  vault : blob;
+  transport : blob;
+  epoch : nat64;
+  assertion : opt text;
+};
 type EditNodeItem = record {
   path : text;
   old_text : text;
@@ -228,6 +275,20 @@ type EditNodeRequest = record {
 type EditNodeResult = record {
   node : NodeMutationAck;
   replacement_count : nat32;
+};
+type Envelope = record { ciphertext : blob; version : nat8; nonce : blob };
+type Error = variant {
+  Storage;
+  InvalidInput;
+  Busy;
+  InvalidProof;
+  KeyService;
+  NotFound;
+  ExportInProgress;
+  Unauthorized;
+  Expired;
+  QuotaExceeded;
+  Conflict;
 };
 type EvidenceRebuildControlRequest = record {
   expected_state_hash : text;
@@ -264,6 +325,18 @@ type EvidenceRebuildStepRequest = record {
   max_bytes : nat32;
   migration_id : text;
 };
+type Export = record {
+  id : blob;
+  expires : nat64;
+  vault : blob;
+  plain_bytes : nat64;
+  state : text;
+  chunk_count : nat64;
+  sequence : nat64;
+  record_count : nat64;
+  header : Header;
+};
+type ExportPage = record { next : opt nat64; entries : vec Revision };
 type ExportSnapshotRequest = record {
   snapshot_revision : opt text;
   cursor : opt text;
@@ -314,6 +387,17 @@ type GraphNeighborhoodRequest = record {
   limit : nat32;
   database_id : text;
   depth : nat32;
+};
+type Header = record {
+  id : blob;
+  normal : opt Envelope;
+  epoch : nat64;
+  backup_sequence : opt nat64;
+  state : VaultState;
+  key_name : text;
+  recovery : opt Envelope;
+  sequence : nat64;
+  backup_at : opt nat64;
 };
 type HttpRequest = record {
   url : text;
@@ -376,6 +460,7 @@ type InitialFreeDatabaseGrantStatus = record {
   created_at_ms : opt int64;
   database_id : opt text;
 };
+type KeyReply = record { encrypted_key : blob; public_key : blob };
 type LearningPublicationRequest = record {
   operation_id : text;
   targets : vec WriteNodeItem;
@@ -402,6 +487,12 @@ type ListNodesRequest = record {
   limit : nat32;
   database_id : text;
   prefix : text;
+};
+type ManageCredential = record {
+  remove : opt blob;
+  vault : blob;
+  registration : opt text;
+  assertion : text;
 };
 type MarketCategoryGraph = record {
   edges : vec MarketCategoryGraphEdge;
@@ -658,6 +749,7 @@ type NodeRevision = record {
   revision : nat64;
 };
 type NodeRevisionRequest = record { path : text; database_id : text };
+type ObjectPage = record { next : opt blob; entries : vec Revision };
 type OpsAnswerSessionCheckResult = record { "principal" : text };
 type OpsAnswerSessionRequest = record {
   session_nonce : text;
@@ -669,6 +761,7 @@ type PublicNode = record {
   published_at_ms : int64;
 };
 type PublishNodeRequest = record { path : text; database_id : text };
+type Purpose = variant { Unlock; Activate; AddCredential; RemoveCredential };
 type QueryContext = record {
   truncated : bool;
   task : text;
@@ -687,7 +780,15 @@ type QueryContextRequest = record {
   depth : nat32;
   namespace : opt text;
 };
+type Quota = record {
+  "reserved" : nat64;
+  limit : nat64;
+  current : nat64;
+  charged : nat64;
+};
 type RenameDatabaseRequest = record { name : text; database_id : text };
+type Reserve = record { vault : blob; operation : blob };
+type RestoreProgress = record { count : nat64; root : blob; sequence : nat64 };
 type Result = variant { Ok : WriteNodeResult; Err : NodeMutationError };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : ExportSnapshotResponse; Err : text };
@@ -746,18 +847,47 @@ type Result_52 = variant { Ok : vec RetrievalSearchHit; Err : text };
 type Result_53 = variant { Ok : StorageBillingBatchResult; Err : text };
 type Result_54 = variant { Ok : SourceEvidence; Err : text };
 type Result_55 = variant { Ok : DatabaseMetadata; Err : text };
-type Result_56 = variant { Ok : WikiMetrics; Err : text };
-type Result_57 = variant { Ok : vec WikiMetricsPoint; Err : text };
-type Result_58 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
-type Result_59 = variant {
+type Result_56 = variant { Ok : Header; Err : Error };
+type Result_57 = variant { Ok : Export; Err : Error };
+type Result_58 = variant { Ok; Err : Error };
+type Result_59 = variant { Ok : Upload; Err : Error };
+type Result_6 = variant { Ok : opt NodeRevision; Err : text };
+type Result_60 = variant { Ok : Challenge; Err : Error };
+type Result_61 = variant { Ok : nat64; Err : Error };
+type Result_62 = variant { Ok : RestoreProgress; Err : Error };
+type Result_63 = variant { Ok : Revision; Err : Error };
+type Result_64 = variant { Ok : KeyReply; Err : Error };
+type Result_65 = variant { Ok : ExportPage; Err : Error };
+type Result_66 = variant { Ok : opt Export; Err : Error };
+type Result_67 = variant { Ok : blob; Err : Error };
+type Result_68 = variant { Ok : opt VaultConfig; Err : Error };
+type Result_69 = variant { Ok : opt text; Err : Error };
+type Result_7 = variant { Ok : DeleteNodeResult; Err : NodeMutationError };
+type Result_70 = variant { Ok : Quota; Err : Error };
+type Result_71 = variant { Ok : vec CredentialInfo; Err : Error };
+type Result_72 = variant { Ok : ObjectPage; Err : Error };
+type Result_73 = variant { Ok : vec UnfinishedVault; Err : Error };
+type Result_74 = variant { Ok : vec Header; Err : Error };
+type Result_75 = variant { Ok : WikiMetrics; Err : text };
+type Result_76 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_77 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
+type Result_78 = variant {
   Ok : WriteSourceForGenerationResult;
   Err : NodeMutationError;
 };
-type Result_6 = variant { Ok : opt NodeRevision; Err : text };
-type Result_7 = variant { Ok : DeleteNodeResult; Err : NodeMutationError };
 type Result_8 = variant { Ok : EditNodeResult; Err : NodeMutationError };
 type Result_9 = variant { Ok : EvidenceRebuildStatus; Err : text };
 type RetrievalSearchHit = record { hit : SearchNodeHit; rerank_excerpt : text };
+type Revision = record {
+  deleted : bool;
+  object : blob;
+  vault : blob;
+  chunk_hashes : vec blob;
+  revision : nat64;
+  manifest : blob;
+  plain_size : nat64;
+  sequence : nat64;
+};
 type RevisionRef = record {
   node_id : text;
   etag : text;
@@ -839,6 +969,13 @@ type StorageBillingBatchResult = record {
   charged_databases : nat32;
   processed_databases : nat32;
 };
+type UnfinishedVault = record {
+  expires : nat64;
+  cleaning : bool;
+  attempt : blob;
+  vault : blob;
+  state : VaultState;
+};
 type UpdateDatabaseMetadataRequest = record {
   llm_summary : opt text;
   name : text;
@@ -846,6 +983,15 @@ type UpdateDatabaseMetadataRequest = record {
   database_id : text;
   tags_json : text;
 };
+type Upload = record { id : blob; expires : nat64; revision : nat64 };
+// Exact WebAuthn deployment configuration, independent from II derivation origin.
+type VaultConfig = record {
+  minimum_cycles : nat64;
+  origin : text;
+  key_name : text;
+  rp_id : text;
+};
+type VaultState = variant { Active; Restoring; Pending };
 type VoiceAccess = record {
   balance_cycles : nat64;
   rate : VoiceRate;
@@ -1064,11 +1210,50 @@ service : (CyclesBillingConfig) -> {
   unpublish_node : (PublishNodeRequest) -> (Result_1);
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
   update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_55);
-  wiki_metrics : () -> (Result_56) query;
-  wiki_metrics_series : (nat32) -> (Result_57) query;
+  vault_abort_export : (blob) -> (Result_56);
+  vault_activate_vault : (Activate) -> (Result_56);
+  vault_begin_export : (blob, blob) -> (Result_57);
+  vault_begin_restore : (BeginRestore) -> (Result_56);
+  vault_begin_restore_revision : (blob, Revision, opt blob) -> (Result_58);
+  vault_begin_revision : (BeginRevision) -> (Result_59);
+  vault_begin_unlock : (BeginUnlock) -> (Result_60);
+  vault_cancel_pending_key_derivation : () -> (Result_58);
+  vault_cancel_vault_setup : (blob, blob) -> (Result_58);
+  vault_collect_garbage : () -> (Result_61);
+  vault_commit_restore : (Activate) -> (Result_56);
+  vault_commit_restore_revision : (blob, nat64, opt blob) -> (Result_62);
+  vault_commit_revision : (blob) -> (Result_63);
+  vault_delete_object : (blob, blob, nat64, blob) -> (Result_63);
+  vault_derive_vault_key : (Derive) -> (Result_64);
+  vault_export_index : (blob, nat64) -> (Result_65);
+  vault_finish_export : (blob, bool) -> (Result_56);
+  vault_get_active_export : () -> (Result_66);
+  vault_get_active_export_for_vault : (blob) -> (Result_66);
+  vault_get_chunk : (blob, blob, nat64, nat32) -> (Result_67);
+  vault_get_config : () -> (Result_68);
+  vault_get_export_chunk : (blob, blob, nat64, nat32) -> (Result_67);
+  vault_get_manifest : (blob, blob, nat64) -> (Result_63);
+  vault_get_payer : () -> (Result_69);
+  vault_get_quota : (blob) -> (Result_70);
+  vault_get_vault_header : (blob) -> (Result_56);
+  vault_list_credentials : () -> (Result_71);
+  vault_list_history : (blob, blob, nat64) -> (Result_65);
+  vault_list_objects : (blob, blob) -> (Result_72);
+  vault_list_unfinished_vaults : () -> (Result_73);
+  vault_list_vaults : () -> (Result_74);
+  vault_manage_unlock_credential : (ManageCredential) -> (Result_58);
+  vault_prepare_unlock_credential : (blob, text) -> (Result_67);
+  vault_purge_object : (blob, blob) -> (Result_58);
+  vault_put_chunk : (blob, nat32, blob) -> (Result_58);
+  vault_put_restore_chunk : (blob, nat32, blob, opt blob) -> (Result_58);
+  vault_reserve_vault : (Reserve) -> (Result_56);
+  vault_set_config : (opt VaultConfig) -> (Result_58);
+  vault_set_payer : (text) -> (Result_58);
+  wiki_metrics : () -> (Result_75) query;
+  wiki_metrics_series : (nat32) -> (Result_76) query;
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_58);
+  write_nodes : (WriteNodesRequest) -> (Result_77);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_59,
+      Result_78,
     );
 }

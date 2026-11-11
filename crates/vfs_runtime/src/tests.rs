@@ -117,6 +117,7 @@ fn index_migrations_create_current_schema_once() {
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
             INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
+            INDEX_SCHEMA_VERSION_VAULT.to_string(),
         ]
     );
     assert_eq!(
@@ -145,7 +146,7 @@ fn index_migrations_apply_node_publications_once() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version != 'database_index:001_initial';",
@@ -169,6 +170,7 @@ fn index_migrations_apply_node_publications_once() {
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
             INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
+            INDEX_SCHEMA_VERSION_VAULT.to_string(),
         ]
     );
 }
@@ -197,7 +199,7 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version IN ('database_index:003_publication_mutation_recovery',
@@ -222,6 +224,7 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
             INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
+            INDEX_SCHEMA_VERSION_VAULT.to_string(),
         ]
     );
 }
@@ -246,7 +249,7 @@ fn index_migrations_roll_back_all_pending_steps_when_004_fails() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version != 'database_index:001_initial';
@@ -314,7 +317,7 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -337,7 +340,8 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
             INDEX_SCHEMA_VERSION_CURRENT,
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
             INDEX_SCHEMA_VERSION_VOICE,
-            INDEX_SCHEMA_VERSION_MAINTENANCE
+            INDEX_SCHEMA_VERSION_MAINTENANCE,
+            INDEX_SCHEMA_VERSION_VAULT
         ]
     );
     assert_eq!(
@@ -366,7 +370,7 @@ fn index_migration_004_allows_unconfigured_iap_authority() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -390,7 +394,7 @@ fn index_migration_004_allows_unconfigured_iap_authority() {
     );
     assert_eq!(
         index_versions(&index_path).last().map(String::as_str),
-        Some(INDEX_SCHEMA_VERSION_MAINTENANCE)
+        Some(INDEX_SCHEMA_VERSION_VAULT)
     );
 }
 
@@ -411,7 +415,7 @@ fn index_migration_004_requires_upgrade_config() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -1671,4 +1675,294 @@ fn seed_storage_billing_index_database(
             Ok(())
         })
         .expect("storage billing index database should insert");
+}
+
+#[test]
+fn internal_mounts_share_historical_allocator_and_are_not_sql_visible() {
+    let dir = tempdir().unwrap();
+    let index_path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    let conn = Connection::open(&index_path).unwrap();
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS internal_mounts(name TEXT PRIMARY KEY,mount_id INTEGER UNIQUE NOT NULL); INSERT INTO internal_mounts VALUES('vault',11);").unwrap();
+    assert!(
+        service
+            .query_index_sql_json("SELECT json_object('id',mount_id) FROM internal_mounts", 10)
+            .is_err()
+    );
+    assert_eq!(allocate_mount_id(&conn).unwrap(), 12);
+}
+
+#[test]
+fn vault_bound_payer_cannot_be_deleted_or_exposed_through_index_sql() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    let db = service.create_database("payer", "owner", 1).unwrap();
+    Connection::open(path).unwrap().execute("INSERT INTO vault_payers(owner,database_id,storage_charged_at_ms) VALUES('owner',?1,1)",params![db.database_id]).unwrap();
+    assert!(
+        service
+            .delete_database(
+                DeleteDatabaseRequest {
+                    database_id: db.database_id.clone()
+                },
+                "owner",
+                2
+            )
+            .is_err()
+    );
+    for table in [
+        "vault_payers",
+        "vault_cycle_reservations",
+        "internal_mounts",
+    ] {
+        assert!(
+            service
+                .query_index_sql_json(&format!("SELECT json_object('x',1) FROM {table}"), 1)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn vault_payer_reservations_survive_reopen_rollover_and_ownership_loss() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let dbdir = dir.path().join("databases");
+    let service = VfsService::new(path.clone(), dbdir.clone());
+    service.run_index_migrations().unwrap();
+    service.create_database("payer", "owner", 1).unwrap();
+    service.create_database("next", "owner", 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer("owner", "payer", 1).unwrap();
+    assert!(service.vault_set_payer("other", "payer", 1).is_err());
+    assert_eq!(service.vault_payer("other").unwrap(), None);
+    service
+        .vault_reserve_cycles("owner", "derive:1", 30_000_000_000, 2)
+        .unwrap();
+    service
+        .vault_reserve_cycles("owner", "derive:1", 30_000_000_000, 3)
+        .unwrap();
+    assert!(service.vault_set_payer("owner", "next", 3).is_err());
+    drop(service);
+    let service = VfsService::new(path.clone(), dbdir);
+    service.run_index_migrations_for_upgrade(None).unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "DELETE FROM database_members WHERE database_id='payer' AND principal='owner'",
+            params![],
+        )
+        .unwrap();
+    assert!(service.vault_require_spending("owner", DAY_MS + 3).is_err());
+    service
+        .vault_settle_cycles("owner", "derive:1", 20_000_000_000, DAY_MS + 3)
+        .unwrap();
+    service
+        .vault_settle_cycles("owner", "derive:1", 20_000_000_000, DAY_MS + 4)
+        .unwrap();
+    assert!(
+        service
+            .vault_settle_cycles("owner", "derive:1", 0, DAY_MS + 4)
+            .is_err()
+    );
+    let db = Connection::open(&path).unwrap();
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(balance, 80_000_000_000);
+    let methods:Vec<String>=crate::sqlite::query_map(&mut db.prepare("SELECT method FROM database_cycle_ledger WHERE database_id='payer' AND method IS NOT NULL").unwrap(),params![],|r|crate::sqlite::row_get(r,0)).unwrap();
+    assert_eq!(methods, vec!["vault", "vault"]);
+    service
+        .vault_set_payer("owner", "next", DAY_MS + 4)
+        .unwrap();
+}
+
+#[test]
+fn private_vault_database_survives_reopen_and_ordinary_mount_lifecycle() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let dbdir = dir.path().join("databases");
+    let service = VfsService::new(path.clone(), dbdir.clone());
+    service.run_index_migrations().unwrap();
+    assert_eq!(service.vault_config().unwrap(), None);
+    let first = service.vault_mount_id().unwrap();
+    let ordinary = service.create_database("ordinary", "owner", 1).unwrap();
+    assert_ne!(first, ordinary.mount_id);
+    let config = vault_types::VaultConfig {
+        origin: "http://localhost:5173".into(),
+        rp_id: "localhost".into(),
+        key_name: "test_key_1".into(),
+        minimum_cycles: 100_000_000_000,
+    };
+    service.vault_set_config(Some(config.clone())).unwrap();
+    let owner = Principal::self_authenticating([9; 32]);
+    let context = vault_store::OwnerContext::authenticated(owner).unwrap();
+    service
+        .vault_transaction(context, |db| {
+            vault_store::reserve(
+                db,
+                owner,
+                vault_types::Reserve {
+                    vault: vec![1; 16],
+                    operation: vec![2; 16],
+                },
+                1,
+            )
+        })
+        .unwrap();
+    drop(service);
+    let service = VfsService::new(path, dbdir);
+    service.run_index_migrations_for_upgrade(None).unwrap();
+    assert_eq!(service.vault_mount_id().unwrap(), first);
+    assert_eq!(service.vault_config().unwrap(), Some(config));
+    assert_eq!(
+        service
+            .vault_transaction(context, |db| vault_store::header(db, &[1; 16]))
+            .unwrap()
+            .id,
+        vec![1; 16]
+    );
+    let other =
+        vault_store::OwnerContext::authenticated(Principal::self_authenticating([8; 32])).unwrap();
+    assert_eq!(
+        service
+            .vault_transaction(other, |db| vault_store::header(db, &[1; 16]))
+            .unwrap_err(),
+        vault_types::Error::NotFound
+    );
+}
+
+#[test]
+fn interrupted_sent_key_flight_recovers_exact_payment_after_upgrade_and_disable() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let dbdir = dir.path().join("databases");
+    let owner = Principal::self_authenticating([9; 32]);
+    let owner_text = owner.to_text();
+    let context = vault_store::OwnerContext::authenticated(owner).unwrap();
+    let service = VfsService::new(path.clone(), dbdir.clone());
+    service.run_index_migrations().unwrap();
+    service.vault_start_generation().unwrap();
+    service.create_database("payer", &owner_text, 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer(&owner_text, "payer", 1).unwrap();
+    service
+        .vault_set_config(Some(vault_types::VaultConfig {
+            origin: "http://localhost:5173".into(),
+            rp_id: "localhost".into(),
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    service
+        .vault_transaction(context, |db| {
+            vault_store::keys::reserve(db, 1, 1, 10_000_000_000)?;
+            vault_store::keys::mark_sent(db, 1, 10_000_000_000)
+        })
+        .unwrap();
+    service
+        .vault_reserve_cycles(&owner_text, "derive:1", 30_020_000_000, 1)
+        .unwrap();
+    drop(service);
+    let service = VfsService::new(path.clone(), dbdir);
+    service.run_index_migrations_for_upgrade(None).unwrap();
+    service.vault_start_generation().unwrap();
+    service.vault_set_config(None).unwrap();
+    for _ in 0..2 {
+        let (token, actual, orphan) = service
+            .vault_cancel_pending_key_flight(context, 86401)
+            .unwrap()
+            .unwrap();
+        assert_eq!((token, actual), (1, 10_000_000_000));
+        assert!(orphan);
+        service
+            .vault_settle_cycles(&owner_text, &format!("derive:{token}"), actual, 86_401_000)
+            .unwrap();
+    }
+    let db = Connection::open(path).unwrap();
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(balance, 90_000_000_000);
+}
+
+#[test]
+fn vault_offline_storage_is_billed_by_timer_at_existing_storage_rate() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    service.create_database("payer", "owner", 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer("owner", "payer", 1).unwrap();
+    service
+        .vault_track_storage("owner", 1024 * 1024, 1)
+        .unwrap();
+    service
+        .vault_settle_storage_timer_batch(DAY_MS + 1)
+        .unwrap();
+    service
+        .vault_settle_storage_timer_batch(DAY_MS + 1)
+        .unwrap();
+    let cost = compute_storage_charge_cycles(1024 * 1024, DAY_MS).unwrap() as i64;
+    let db = Connection::open(path).unwrap();
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(balance, 100_000_000_000 - cost);
+}
+
+#[test]
+fn cancelled_live_cycle_reservation_blocks_rebind_until_exact_callback_refund() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    service.create_database("payer", "owner", 1).unwrap();
+    service.create_database("next", "owner", 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer("owner", "payer", 1).unwrap();
+    service
+        .vault_reserve_cycles("owner", "derive:1", 30_020_000_000, 1)
+        .unwrap();
+    service
+        .vault_cancel_reserved_cycles("owner", "derive:1", 10_000_000_000, false, 2)
+        .unwrap();
+    assert!(
+        service
+            .vault_set_payer("owner", "next", DAY_MS * 3)
+            .is_err()
+    );
+    service
+        .vault_reconcile_refunded_cycles("owner", "derive:1", 3_000_000_000, DAY_MS * 3)
+        .unwrap();
+    service
+        .vault_reconcile_refunded_cycles("owner", "derive:1", 3_000_000_000, DAY_MS * 3)
+        .unwrap();
+    let db = Connection::open(path).unwrap();
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(balance, 97_000_000_000);
+    service
+        .vault_set_payer("owner", "next", DAY_MS * 3)
+        .unwrap();
 }
