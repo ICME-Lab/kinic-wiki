@@ -200,6 +200,7 @@ export interface IncidentPreparation {
 }
 export interface IncidentStatus {
   'job' : Uint8Array | number[],
+  'cancel_digest' : [] | [Uint8Array | number[]],
   'vector_digest' : Uint8Array | number[],
   'complete' : boolean,
   'targets' : Array<IncidentTarget>,
@@ -273,7 +274,11 @@ export interface PendingCreation {
 export type PreparationPhase = { 'PendingNonce' : null } |
   { 'Resetting' : null } |
   { 'EnvelopesStaged' : null } |
+  { 'Purged' : null } |
   { 'KitConfirmed' : null } |
+  { 'Purging' : null } |
+  { 'Cancelling' : null } |
+  { 'Cancelled' : null } |
   { 'Allocated' : null };
 export interface PurchaseRequest {
   'beneficiary' : Principal,

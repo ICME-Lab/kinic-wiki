@@ -169,6 +169,7 @@ type IncidentPreparation = record {
 };
 type IncidentStatus = record {
   job : blob;
+  cancel_digest : opt blob;
   vector_digest : blob;
   complete : bool;
   targets : vec IncidentTarget;
@@ -234,7 +235,11 @@ type PreparationPhase = variant {
   PendingNonce;
   Resetting;
   EnvelopesStaged;
+  Purged;
   KitConfirmed;
+  Purging;
+  Cancelling;
+  Cancelled;
   Allocated;
 };
 type PurchaseRequest = record {

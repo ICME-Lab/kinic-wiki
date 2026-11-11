@@ -24,6 +24,9 @@ pub(crate) fn load(db: &Connection, env: &impl Environment) -> Result<IncidentSt
         return Err(Error::Conflict);
     }
     for t in &j.targets {
+        if terminal(t) {
+            continue;
+        }
         let h = store::header(db, &t.source.id)?;
         if h.state != VaultState::IncidentRequired
             || h.generation != t.source.generation
@@ -48,6 +51,15 @@ pub(crate) fn vector(j: &IncidentStatus) -> Result<Vec<u8>> {
                 .bytes()?,
         );
         sized(&mut bytes, &t.attempt);
+        // Preserve existing v2 vectors for ordinary preparation phases. Tag 2 cannot
+        // alias the legacy target Option tags (0/1); terminal/discard states add identity.
+        match t.phase {
+            PreparationPhase::Purging => bytes.extend_from_slice(&[2, 1]),
+            PreparationPhase::Purged => bytes.extend_from_slice(&[2, 2]),
+            PreparationPhase::Cancelling => bytes.extend_from_slice(&[2, 3]),
+            PreparationPhase::Cancelled => bytes.extend_from_slice(&[2, 4]),
+            _ => {}
+        }
         match &t.target {
             Some(g) => {
                 bytes.push(1);
@@ -77,9 +89,16 @@ fn safe_authority(
     }
     Ok(())
 }
-fn sources(j: &IncidentStatus) -> Result<Vec<Generation>> {
+pub(crate) fn terminal(t: &IncidentTarget) -> bool {
+    matches!(
+        t.phase,
+        PreparationPhase::Purging | PreparationPhase::Purged
+    )
+}
+pub(crate) fn sources(j: &IncidentStatus) -> Result<Vec<Generation>> {
     j.targets
         .iter()
+        .filter(|t| !terminal(t))
         .map(|t| t.source.generation.clone().ok_or(Error::Storage))
         .collect()
 }
@@ -123,6 +142,7 @@ pub(crate) fn validate(
                     || sources(&j)? != r.sources
                     || j.targets
                         .iter()
+                        .filter(|t| !terminal(t))
                         .zip(&r.targets)
                         .any(|(a, b)| a.attempt != b.attempt)
                 {
@@ -178,7 +198,13 @@ pub(crate) fn validate(
             if &j.job != job
                 || &j.vector_digest != vector_digest
                 || sources(&j)? != generations
-                || j.targets.iter().any(|t| t.target.is_none())
+                || j.targets.iter().filter(|t| !terminal(t)).any(|t| {
+                    t.target.is_none()
+                        || matches!(
+                            t.phase,
+                            PreparationPhase::Cancelling | PreparationPhase::Cancelled
+                        )
+                })
             {
                 return Err(Error::Unauthorized);
             }
@@ -246,6 +272,7 @@ pub(crate) fn start(
         targets,
         vector_digest: vec![],
         complete: false,
+        cancel_digest: None,
     };
     // Enforce the prepaid bound before the irreversible effects (same transaction).
     save(db, &mut j)?;
@@ -289,7 +316,7 @@ pub(crate) fn target<'a>(
 ) -> Result<&'a mut IncidentTarget> {
     j.targets
         .iter_mut()
-        .find(|t| t.source.id == vault && t.attempt == attempt)
+        .find(|t| !terminal(t) && t.source.id == vault && t.attempt == attempt)
         .ok_or(Error::Unauthorized)
 }
 pub(crate) fn role(
@@ -310,7 +337,12 @@ pub(crate) fn role(
     if actual != &r.generation
         || matches!(
             t.phase,
-            PreparationPhase::PendingNonce | PreparationPhase::Resetting
+            PreparationPhase::PendingNonce
+                | PreparationPhase::Resetting
+                | PreparationPhase::Cancelling
+                | PreparationPhase::Cancelled
+                | PreparationPhase::Purging
+                | PreparationPhase::Purged
         )
     {
         return Err(Error::Unauthorized);
@@ -383,6 +415,13 @@ pub(crate) fn reset(
         return Err(Error::Conflict);
     }
     let mut j = load(db, env)?;
+    if j.targets
+        .iter()
+        .any(|t| t.phase == PreparationPhase::Cancelling)
+    {
+        return Err(Error::Busy);
+    }
+    j.cancel_digest = None;
     let t = target(&mut j, vault, attempt)?;
     // Task 8 cannot stage wrappers. Future stages must first perform bounded inactive cleanup.
     let inactive = 1 - t.source.published_slot.unwrap_or(1);
@@ -431,4 +470,96 @@ pub fn context_in(db: &Connection) -> Result<Option<IncidentContext>> {
             })
             .collect(),
     }))
+}
+
+fn discard(t: &mut IncidentTarget) {
+    t.target = None;
+    t.normal = None;
+    t.recovery = None;
+    t.recovery_verifier.clear();
+    t.envelope_digest.clear();
+    t.kit_ack = None;
+    t.reset_attempt = None;
+}
+/// Fence selected terminal targets before the first bounded deletion. The fixed audit
+/// identities remain in the vector; only surviving sources authorize further preparation.
+pub(crate) fn purge(db: &Connection, targets: &[Id], complete: bool) -> Result<()> {
+    let Some(mut j) = store::incident::status(db)?.filter(|j| !j.complete) else {
+        return Ok(());
+    };
+    for t in &mut j.targets {
+        if targets.contains(&t.source.id) {
+            discard(t);
+            t.source.normal = None;
+            t.source.recovery = None;
+            t.source.recovery_verifier.clear();
+            t.phase = if complete {
+                PreparationPhase::Purged
+            } else {
+                PreparationPhase::Purging
+            };
+        }
+    }
+    j.complete = j
+        .targets
+        .iter()
+        .all(|t| t.phase == PreparationPhase::Purged);
+    save(db, &mut j)
+}
+/// An exact job/vector authorizes only discard. One batch clears at most one target's
+/// bounded inactive overlay; all attempts are fenced atomically before any callback runs.
+pub(crate) fn cancel(
+    db: &Connection,
+    env: &impl Environment,
+    job: &[u8],
+    digest: &[u8],
+    generations: &[Generation],
+) -> Result<bool> {
+    let mut j = load(db, env)?;
+    if j.job != job || sources(&j)? != generations {
+        return Err(Error::Unauthorized);
+    }
+    if j.cancel_digest.as_deref() != Some(digest) {
+        if j.vector_digest != digest
+            || j.targets
+                .iter()
+                .any(|t| t.phase == PreparationPhase::Cancelling)
+        {
+            return Err(Error::Unauthorized);
+        }
+        j.cancel_digest = Some(digest.to_vec());
+        let mut control = control(db)?;
+        if control.random.as_ref().is_some_and(|f| {
+            j.targets.iter().any(|t| {
+                !terminal(t) && f.vault == t.source.id && f.attempt.as_ref() == Some(&t.attempt)
+            })
+        }) {
+            control.random = None;
+            store::save(db, "control", &control)?;
+        }
+        for t in j.targets.iter_mut().filter(|t| !terminal(t)) {
+            // A domain-separated successor fences pre-nonce grants too. Resume must still
+            // explicitly supply another fresh attempt through paid IncidentReset.
+            t.attempt = hash(&("incident-cancel/v1", &j.job, &t.attempt, digest))?[..16].to_vec();
+            t.next_epoch = t.target.as_ref().map_or(t.next_epoch, |g| g.epoch);
+            discard(t);
+            t.phase = PreparationPhase::Cancelling;
+        }
+    }
+    if let Some(t) = j
+        .targets
+        .iter_mut()
+        .find(|t| t.phase == PreparationPhase::Cancelling)
+    {
+        if store::overlays::clear_inactive(db, &t.source, 1 - t.source.published_slot.unwrap_or(1))?
+        {
+            t.phase = PreparationPhase::Cancelled;
+        }
+    }
+    let complete = !j
+        .targets
+        .iter()
+        .any(|t| t.phase == PreparationPhase::Cancelling);
+    save(db, &mut j)?;
+    Ok(complete)
 }

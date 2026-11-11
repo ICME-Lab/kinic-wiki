@@ -313,9 +313,15 @@ try {
       purpose,
       generations,
     };
-    const ch = ok(await actor.begin_grant(request));
+    const cleanup = "Cleanup" in purpose;
+    const ch = ok(
+      await (cleanup ? actor.begin_cleanup : actor.begin_grant)(request),
+    );
     return ok(
-      await actor.finish_grant(request.operation, assertion(ch, passkey)),
+      await (cleanup ? actor.finish_cleanup : actor.finish_grant)(
+        request.operation,
+        assertion(ch, passkey),
+      ),
     );
   }
   const credentials = await fresh({ Credentials: null });
@@ -550,8 +556,78 @@ try {
   const replaced = ok(await actor.incident_status())[0];
   assert.notDeepEqual(replaced.targets[0].target[0].nonce, targetG.nonce);
   assert.ok(replaced.targets[0].target[0].epoch > targetG.epoch);
+  const cancellation = await fresh({ Cleanup: { job: b(93) } });
+  const cancelledRequest = await send(cancellation, {
+    Cleanup: {
+      job: b(93),
+      cursor: 0n,
+      action: {
+        CancelIncident: {
+          incident: replaced.job,
+          vector_digest: replaced.vector_digest,
+        },
+      },
+    },
+  });
+  assert.equal(ok(cancelledRequest.result).Cleanup.complete, true);
+  const cancelled = ok(await actor.incident_status())[0];
+  assert.ok("Cancelled" in cancelled.targets[0].phase);
+  assert.equal(cancelled.targets[0].target.length, 0);
+  assert.equal(cancelled.targets[0].kit_ack.length, 0);
+  assert.notDeepEqual(cancelled.targets[0].attempt, b(72));
+  assert.ok("IncidentRequired" in ok(await actor.get_vault_header(b(1))).state);
+  await pic.upgradeCanister({
+    sender: owner,
+    canisterId,
+    wasm,
+    arg: IDL.encode([], []),
+  });
+  assert.deepEqual(ok(await actor.incident_status())[0], cancelled);
+  assert.ok(
+    "Err" in
+      (
+        await send(retryPre, {
+          IncidentAllocate: { vault: b(1), attempt: b(72) },
+        })
+      ).result,
+  );
+  preparation.targets[0].attempt = cancelled.targets[0].attempt;
+  await pic.advanceTime(500_000);
+  await pic.tick(2);
+  const restart = await fresh({ IncidentPrepare: preparation });
+  ok(
+    (
+      await send(restart, {
+        IncidentReset: {
+          vault: b(1),
+          attempt: cancelled.targets[0].attempt,
+          next_attempt: b(94),
+        },
+      })
+    ).result,
+  );
+  preparation.targets[0].attempt = b(94);
+  await pic.advanceTime(500_000);
+  await pic.tick(2);
+  const restarted = await fresh({ IncidentPrepare: preparation });
+  ok(
+    (
+      await send(restarted, {
+        IncidentAllocate: { vault: b(1), attempt: b(94) },
+      })
+    ).result,
+  );
+  const afterCancel = ok(await actor.incident_status())[0];
+  assert.ok(
+    afterCancel.targets[0].target[0].epoch >
+      replaced.targets[0].target[0].epoch,
+  );
+  assert.notDeepEqual(
+    afterCancel.targets[0].target[0].nonce,
+    replaced.targets[0].target[0].nonce,
+  );
   console.log(
-    "PASS dedicated Task7 upgrade, exact JS signatures, fresh UV, incident freeze, real vetKD Source/Target, encrypted preparation, kit ack, durable upgrade/resume and explicit reset",
+    "PASS dedicated Task7 upgrade, exact JS signatures, fresh UV, incident freeze, real vetKD Source/Target, encrypted preparation, kit ack, durable upgrade/resume, explicit reset, authenticated cancellation and fresh restart",
   );
 } finally {
   await pic?.tearDown();

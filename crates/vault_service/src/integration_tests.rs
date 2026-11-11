@@ -18,6 +18,7 @@ struct TestEnvironment {
     change_config: Cell<bool>,
     public_names: RefCell<Vec<String>>,
     public_hook: RefCell<Option<TestHook>>,
+    random_hook: RefCell<Option<TestHook>>,
     derive_hook: RefCell<Option<TestHook>>,
     derive_calls: Cell<u64>,
     actual_payment: Cell<Option<u64>>,
@@ -55,6 +56,7 @@ impl TestEnvironment {
             change_config: Cell::new(false),
             public_names: RefCell::new(vec![]),
             public_hook: RefCell::new(None),
+            random_hook: RefCell::new(None),
             derive_hook: RefCell::new(None),
             derive_calls: Cell::new(0),
             actual_payment: Cell::new(None),
@@ -144,6 +146,9 @@ impl Environment for TestEnvironment {
             self.checkpoints.get() >= 1,
             "raw_rand must have a durable execution checkpoint"
         );
+        if let Some(hook) = self.random_hook.borrow_mut().take() {
+            hook(self);
+        }
         if self.cancel_random.replace(false) {
             cancel_vault_setup(self, vec![1; 16], vec![2; 16])?;
         }

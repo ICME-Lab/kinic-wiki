@@ -123,8 +123,9 @@ export class IncidentClient {
       keys = await ephemeralSigner();
     this.session.check(ticket);
     const operation = randomBytes(16);
+    const cleanup = "Cleanup" in purpose;
     const challenge = ok(
-      await this.actor.begin_grant({
+      await (cleanup ? this.actor.begin_cleanup : this.actor.begin_grant)({
         operation,
         public_key: keys.publicKey,
         credential,
@@ -139,7 +140,12 @@ export class IncidentClient {
       this.session.signal,
     );
     this.session.check(ticket);
-    const grant = ok(await this.actor.finish_grant(operation, proof));
+    const grant = ok(
+      await (cleanup ? this.actor.finish_cleanup : this.actor.finish_grant)(
+        operation,
+        proof,
+      ),
+    );
     this.session.check(ticket);
     this.signer?.destroy();
     this.signer = new SignedMutations(
@@ -173,6 +179,57 @@ export class IncidentClient {
     return this.signed().send({
       IncidentReset: { vault, attempt, next_attempt: randomBytes(16) },
     });
+  }
+  /** One bounded discard batch. Keep the same cleanup job ID when status is incomplete.
+   * Lock first so outstanding preparation replies cannot publish roots or acknowledge a kit.
+   * Fresh cleanup proof works at zero balance and cannot allocate or derive a key.
+   */
+  async cancel(credential: Uint8Array, job: Uint8Array) {
+    this.session.lock();
+    const ticket = this.session.capture();
+    try {
+      const j = await this.status();
+      this.session.check(ticket);
+      const generations = j.targets
+        .filter((t) => !("Purging" in t.phase) && !("Purged" in t.phase))
+        .map((t) => t.source.generation[0]!);
+      await this.authenticate(credential, { Cleanup: { job } }, generations);
+      this.session.check(ticket);
+      const progress = ok(await this.actor.cleanup_status())[0];
+      this.session.check(ticket);
+      if (progress && !equal(progress.job, job) && !progress.complete)
+        throw Error("OtherCleanupPending");
+      if (progress && equal(progress.job, job) && progress.complete) {
+        if (
+          !j.cancel_digest[0] ||
+          j.targets.some(
+            (t) =>
+              !("Cancelled" in t.phase) &&
+              !("Purging" in t.phase) &&
+              !("Purged" in t.phase),
+          )
+        )
+          throw Error("CleanupJobAlreadyUsed");
+        return progress;
+      }
+      const result = await this.signed().send({
+        Cleanup: {
+          job,
+          cursor: progress && equal(progress.job, job) ? progress.cursor : 0n,
+          action: {
+            CancelIncident: {
+              incident: j.job,
+              vector_digest: j.cancel_digest[0] ?? j.vector_digest,
+            },
+          },
+        },
+      });
+      this.session.check(ticket);
+      if (!("Cleanup" in result)) throw Error("MissingCleanupProgress");
+      return result.Cleanup;
+    } finally {
+      this.session.lock();
+    }
   }
   private target(j: IncidentStatus, vault: Uint8Array) {
     const t = j.targets.find((t) => equal(t.source.id, vault));

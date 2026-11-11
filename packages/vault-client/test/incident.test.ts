@@ -134,3 +134,97 @@ it("a missing or wrong reselected kit sends no confirmation; lock blocks a late 
     client.session.lock();
   }
 });
+
+it("cancellation locks outstanding preparation before fresh cleanup proof and suppresses late kit acknowledgment", async () => {
+  const { IncidentClient } = await import("../src/incident"),
+    { vi } = await import("vitest");
+  const g = {
+    version: 2,
+    owner: Principal.selfAuthenticating(randomBytes(32)),
+    canister: Principal.selfAuthenticating(randomBytes(32)),
+    vault: randomBytes(16),
+    epoch: 1n,
+    nonce: randomBytes(32),
+    key_name: "key_1",
+  };
+  const t = {
+    target: [g],
+    source: { id: g.vault, generation: [g] },
+    attempt: randomBytes(16),
+    phase: { Allocated: null },
+    envelope_digest: randomBytes(32),
+  } as unknown as IncidentTarget;
+  const j = {
+    targets: [t],
+    job: randomBytes(16),
+    vector_digest: randomBytes(32),
+    cancel_digest: [],
+  };
+  const cleanupJob = randomBytes(16);
+  const client = new IncidentClient(
+    {
+      incident_status: async () => ({ Ok: [j] }),
+      cleanup_status: async () => ({ Ok: [] }),
+    } as never,
+    g.owner,
+    g.canister,
+    "localhost",
+    true,
+  );
+  const send = vi.fn(async (op: any) => {
+    if (op.IncidentStage)
+      Object.assign(t, {
+        normal: [op.IncidentStage.normal],
+        recovery: [op.IncidentStage.recovery],
+        recovery_verifier: op.IncidentStage.recovery_verifier,
+        phase: { EnvelopesStaged: null },
+      });
+    return { Unit: null };
+  });
+  const destroy = vi.fn();
+  Object.assign(client, {
+    kek: async () => importKey(randomBytes(32)),
+    signer: { send, destroy },
+  });
+  let release!: () => void, arrived!: () => void;
+  const saved = new Promise<void>((r) => {
+    arrived = r;
+  });
+  const wait = new Promise<void>((r) => {
+    release = r;
+  });
+  const preparing = client.prepare(
+    g.vault,
+    async () => {
+      arrived();
+      await wait;
+    },
+    async () => {
+      throw Error("must not reselect after cancel");
+    },
+  );
+  const failed = expect(preparing).rejects.toThrow("Locked");
+  await saved;
+  const cleanupSend = vi.fn(async () => ({
+    Cleanup: { job: cleanupJob, cursor: 1n, complete: true },
+  }));
+  Object.assign(client, {
+    authenticate: async () => {
+      expect(destroy).toHaveBeenCalled();
+      Object.assign(client, {
+        signer: { send: cleanupSend, destroy: vi.fn() },
+      });
+    },
+  });
+  const sessionRaw = randomBytes(32);
+  client.session.raw = sessionRaw;
+  await client.cancel(randomBytes(16), cleanupJob);
+  expect(sessionRaw.every((b) => b === 0)).toBe(true);
+  release();
+  await failed;
+  expect(send.mock.calls.some(([op]) => "IncidentConfirmKit" in op)).toBe(
+    false,
+  );
+  expect(cleanupSend.mock.calls).toHaveLength(1);
+  expect((client as any).signer).toBeUndefined();
+});

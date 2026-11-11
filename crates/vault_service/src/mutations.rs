@@ -166,6 +166,14 @@ fn ordinary(
         MutationOperation::IncidentAllocate { vault, attempt } if preparation => {
             let mut j = incident::load(db, env)?;
             let t = incident::target(&mut j, vault, attempt)?;
+            if matches!(
+                t.phase,
+                PreparationPhase::Cancelling
+                    | PreparationPhase::Cancelled
+                    | PreparationPhase::Resetting
+            ) {
+                return Err(Error::Conflict);
+            }
             if t.target.is_some() {
                 return Ok(MutationResult::Unit);
             }
@@ -205,12 +213,13 @@ fn ordinary(
             vault,
             attempt,
             next_attempt,
-        } if incident_grant => {
+        } if incident_grant || preparation => {
             incident::reset(db, env, vault, attempt, next_attempt).map(|_| MutationResult::Unit)
         }
-        // Cancellation ends no source obligation. Durable ciphertext and pins remain resumable.
         MutationOperation::IncidentCancel if incident_grant || preparation => {
-            incident::load(db, env).map(|_| MutationResult::Unit)
+            let j = incident::load(db, env)?;
+            incident::cancel(db, env, &j.job, &j.vector_digest, &g.info.generations)
+                .map(|_| MutationResult::Unit)
         }
         MutationOperation::Create(r) => {
             if g.info.purpose != GrantPurpose::Create || a.scope != CredentialScope::Global {
@@ -603,14 +612,8 @@ fn cleanup_operation(
         return Err(Error::Conflict);
     }
     n.action = digest;
-    if let Some(j) = store::incident::status(db)?.filter(|j| !j.complete) {
-        if matches!(action, CleanupAction::Purge)
-            && j.targets.iter().any(|t| targets.contains(&t.source.id))
-            && (targets.len() != j.targets.len()
-                || j.targets.iter().any(|t| !targets.contains(&t.source.id)))
-        {
-            return Err(Error::Conflict);
-        }
+    if matches!(action, CleanupAction::Purge) {
+        incident::purge(db, &targets, false)?;
     }
     let settled = env.cleanup_existing_flights(
         db,
@@ -629,6 +632,10 @@ fn cleanup_operation(
             }
         }
         CleanupAction::Expired => store::cleanup::expired_batch(db, &targets, env.now())?,
+        CleanupAction::CancelIncident {
+            incident,
+            vector_digest,
+        } => incident::cancel(db, env, incident, vector_digest, &g.info.generations)? && settled,
         CleanupAction::CancelSetup { attempt } => {
             if targets.len() != 1 {
                 return Err(Error::InvalidInput);
@@ -657,12 +664,7 @@ fn cleanup_operation(
         }
     };
     if complete && matches!(action, CleanupAction::Purge) {
-        if let Some(mut j) = store::incident::status(db)?.filter(|j| !j.complete) {
-            if j.targets.iter().all(|t| targets.contains(&t.source.id)) {
-                j.complete = true;
-                store::save(db, "transition", &j)?;
-            }
-        }
+        incident::purge(db, &targets, true)?;
     }
     progress.cursor = progress.cursor.checked_add(1).ok_or(Error::QuotaExceeded)?;
     progress.complete = complete;

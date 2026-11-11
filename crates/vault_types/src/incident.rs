@@ -20,6 +20,10 @@ pub enum PreparationPhase {
     EnvelopesStaged,
     KitConfirmed,
     Resetting,
+    Cancelling,
+    Cancelled,
+    Purging,
+    Purged,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct IncidentTarget {
@@ -46,6 +50,8 @@ pub struct IncidentStatus {
     pub targets: Vec<IncidentTarget>,
     pub vector_digest: Vec<u8>,
     pub complete: bool,
+    #[serde(default)]
+    pub cancel_digest: Option<Vec<u8>>,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct IncidentDerive {

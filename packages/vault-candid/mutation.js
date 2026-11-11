@@ -35,6 +35,10 @@ export const idlFactory = ({ IDL }) => {
   const CleanupAction = IDL.Variant({
     'AbortExport' : IDL.Record({ 'export' : IDL.Vec(IDL.Nat8) }),
     'Purge' : IDL.Null,
+    'CancelIncident' : IDL.Record({
+      'vector_digest' : IDL.Vec(IDL.Nat8),
+      'incident' : IDL.Vec(IDL.Nat8),
+    }),
     'Expired' : IDL.Null,
     'CancelSetup' : IDL.Record({ 'attempt' : IDL.Vec(IDL.Nat8) }),
   });

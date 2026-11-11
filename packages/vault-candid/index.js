@@ -319,7 +319,11 @@ export const idlFactory = ({ IDL }) => {
     'PendingNonce' : IDL.Null,
     'Resetting' : IDL.Null,
     'EnvelopesStaged' : IDL.Null,
+    'Purged' : IDL.Null,
     'KitConfirmed' : IDL.Null,
+    'Purging' : IDL.Null,
+    'Cancelling' : IDL.Null,
+    'Cancelled' : IDL.Null,
     'Allocated' : IDL.Null,
   });
   const IncidentTarget = IDL.Record({
@@ -339,6 +343,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const IncidentStatus = IDL.Record({
     'job' : IDL.Vec(IDL.Nat8),
+    'cancel_digest' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'vector_digest' : IDL.Vec(IDL.Nat8),
     'complete' : IDL.Bool,
     'targets' : IDL.Vec(IncidentTarget),

@@ -87,6 +87,7 @@ test("all generated JS Candid mutation variants and generation bytes match froze
         { Expired: null },
         { CancelSetup: { attempt: op } },
         { AbortExport: { export: op } },
+        { CancelIncident: { incident: op, vector_digest: b(8, 32) } },
       ] as const
     ).map((action) => ({ Cleanup: { job: op, cursor: 0n, action } })),
   ];

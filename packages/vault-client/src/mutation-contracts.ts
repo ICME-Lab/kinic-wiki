@@ -24,6 +24,12 @@ export type CleanupAction = {
     'AbortExport' : { 'export' : Uint8Array | number[] }
   } |
   { 'Purge' : null } |
+  {
+    'CancelIncident' : {
+      'vector_digest' : Uint8Array | number[],
+      'incident' : Uint8Array | number[],
+    }
+  } |
   { 'Expired' : null } |
   { 'CancelSetup' : { 'attempt' : Uint8Array | number[] } };
 export type CredentialScope = { 'Global' : null } |

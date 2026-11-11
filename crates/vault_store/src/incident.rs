@@ -14,10 +14,32 @@ pub fn owner_change_allowed(db: &Connection) -> Result<()> {
     }
 }
 pub fn pinned(db: &Connection, vault: &[u8]) -> Result<bool> {
-    Ok(status(db)?.is_some_and(|j| !j.complete && j.targets.iter().any(|t| t.source.id == vault)))
+    Ok(status(db)?.is_some_and(|j| {
+        !j.complete
+            && j.targets.iter().any(|t| {
+                t.source.id == vault
+                    && !matches!(
+                        t.phase,
+                        PreparationPhase::Purging | PreparationPhase::Purged
+                    )
+            })
+    }))
 }
 pub fn readable(db: &Connection, vault: &[u8]) -> Result<Header> {
     let h = header(db, vault)?;
+    if h.state == VaultState::IncidentRequired
+        && status(db)?.is_some_and(|j| {
+            j.targets.iter().any(|t| {
+                t.source.id == vault
+                    && matches!(
+                        t.phase,
+                        PreparationPhase::Purging | PreparationPhase::Purged
+                    )
+            })
+        })
+    {
+        return Err(Error::Conflict);
+    }
     if matches!(h.state, VaultState::Active | VaultState::IncidentRequired) {
         Ok(h)
     } else {
@@ -31,7 +53,13 @@ pub fn snapshot(db: &Connection, vault: &[u8]) -> Result<(u64, u64)> {
     let t = j
         .targets
         .iter()
-        .find(|t| t.source.id == vault)
+        .find(|t| {
+            t.source.id == vault
+                && !matches!(
+                    t.phase,
+                    PreparationPhase::Purging | PreparationPhase::Purged
+                )
+        })
         .ok_or(Error::NotFound)?;
     Ok((t.snapshot_time, t.snapshot_sequence))
 }

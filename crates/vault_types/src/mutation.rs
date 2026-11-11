@@ -151,8 +151,16 @@ pub enum MutationOperation {
 pub enum CleanupAction {
     Expired,
     Purge,
-    CancelSetup { attempt: Id },
-    AbortExport { export: Id },
+    CancelSetup {
+        attempt: Id,
+    },
+    CancelIncident {
+        incident: Id,
+        vector_digest: Vec<u8>,
+    },
+    AbortExport {
+        export: Id,
+    },
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum MutationResult {
