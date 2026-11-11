@@ -55,6 +55,14 @@ export interface Generation {
   'nonce' : Uint8Array | number[],
   'key_name' : string,
 }
+export interface IncidentBackupAck {
+  'archive_length' : bigint,
+  'archive_hash' : Uint8Array | number[],
+  'descriptor_digest' : Uint8Array | number[],
+  'recovery_verifier' : Uint8Array | number[],
+  'sequence' : bigint,
+  'commitment' : Uint8Array | number[],
+}
 export interface IncidentDerive {
   'job' : Uint8Array | number[],
   'attempt' : Uint8Array | number[],
@@ -64,6 +72,13 @@ export interface IncidentDerive {
 }
 export type IncidentRole = { 'Source' : null } |
   { 'Target' : null };
+export interface IncidentWrapper {
+  'wrapper' : Uint8Array | number[],
+  'object' : Uint8Array | number[],
+  'source_digest' : Uint8Array | number[],
+  'revision' : bigint,
+  'sequence' : bigint,
+}
 export interface Instance {
   'vault' : Uint8Array | number[],
   'nonce' : Uint8Array | number[],
@@ -123,6 +138,13 @@ export type MutationOperation = {
       'scope' : CredentialScope,
     }
   } |
+  {
+    'IncidentPrepareExport' : {
+      'attempt' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+      'export' : Uint8Array | number[],
+    }
+  } |
   { 'IncidentCancel' : null } |
   {
     'Cleanup' : {
@@ -138,6 +160,14 @@ export type MutationOperation = {
       'next_attempt' : Uint8Array | number[],
     }
   } |
+  {
+    'IncidentConfirmBackup' : {
+      'ack' : IncidentBackupAck,
+      'attempt' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+    }
+  } |
+  { 'IncidentCutover' : { 'digest' : Uint8Array | number[] } } |
   { 'Derive' : Derive } |
   { 'Create' : Reserve } |
   {
@@ -154,6 +184,14 @@ export type MutationOperation = {
     }
   } |
   {
+    'IncidentWrap' : {
+      'after' : bigint,
+      'attempt' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+      'rows' : Array<IncidentWrapper>,
+    }
+  } |
+  {
     'PurgeObject' : {
       'object' : Uint8Array | number[],
       'vault' : Uint8Array | number[],
@@ -165,6 +203,7 @@ export type MutationOperation = {
       'vault' : Uint8Array | number[],
     }
   } |
+  { 'ClearInactive' : { 'vault' : Uint8Array | number[] } } |
   { 'BeginRevision' : BeginRevision } |
   { 'RemoveCredential' : { 'credential' : Uint8Array | number[] } } |
   {

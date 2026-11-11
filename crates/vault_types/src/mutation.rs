@@ -23,6 +23,7 @@ pub enum GrantPurpose {
     Restore { job: Id },
     Incident { job: Id, vector_digest: Vec<u8> },
     IncidentPrepare(IncidentPreparation),
+    IncidentCutover { job: Id, digest: Vec<u8> },
     Cleanup { job: Id },
     CancelCreation { job: Id, target: PendingCreation },
 }
@@ -94,6 +95,28 @@ pub enum MutationOperation {
         next_attempt: Id,
     },
     IncidentCancel,
+    IncidentWrap {
+        vault: Id,
+        attempt: Id,
+        after: u64,
+        rows: Vec<IncidentWrapper>,
+    },
+    IncidentPrepareExport {
+        vault: Id,
+        attempt: Id,
+        export: Id,
+    },
+    IncidentConfirmBackup {
+        vault: Id,
+        attempt: Id,
+        ack: IncidentBackupAck,
+    },
+    IncidentCutover {
+        digest: Vec<u8>,
+    },
+    ClearInactive {
+        vault: Id,
+    },
 
     Create(Reserve),
     Activate {
@@ -165,6 +188,7 @@ pub enum CleanupAction {
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum MutationResult {
     Unit,
+    InactiveCleanup { complete: bool },
     Challenge(Challenge),
     Header(Header),
     Upload(Upload),

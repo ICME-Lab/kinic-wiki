@@ -126,6 +126,39 @@ test("all generated JS Candid mutation variants and generation bytes match froze
     },
     { IncidentReset: { vault: v, attempt: op, next_attempt: b(21) } },
     { IncidentCancel: null },
+    {
+      IncidentWrap: {
+        vault: v,
+        attempt: op,
+        after: 0n,
+        rows: [
+          {
+            object: o,
+            revision: 1n,
+            sequence: 1n,
+            source_digest: b(8, 32),
+            wrapper: b(9),
+          },
+        ],
+      },
+    },
+    { IncidentPrepareExport: { vault: v, attempt: op, export: b(9) } },
+    {
+      IncidentConfirmBackup: {
+        vault: v,
+        attempt: op,
+        ack: {
+          descriptor_digest: b(8, 32),
+          commitment: b(9, 32),
+          archive_hash: b(10, 32),
+          archive_length: 1000n,
+          recovery_verifier: b(7, 32),
+          sequence: 2n,
+        },
+      },
+    },
+    { IncidentCutover: { digest: b(8, 32) } },
+    { ClearInactive: { vault: v } },
   );
   const key = Ed25519KeyIdentity.generate(b(15, 32));
   const owner = Principal.fromUint8Array(new Uint8Array([2])),

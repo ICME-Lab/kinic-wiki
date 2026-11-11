@@ -22,6 +22,9 @@ pub fn stage(
     {
         return Err(Error::InvalidInput);
     }
+    if wrapper.len() > 1024 {
+        return Err(Error::QuotaExceeded);
+    }
     let packed: format::PackedEnvelope =
         serde_json::from_slice(wrapper).map_err(|_| Error::InvalidInput)?;
     format::effective(

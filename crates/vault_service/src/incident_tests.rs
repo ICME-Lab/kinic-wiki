@@ -1528,3 +1528,609 @@ fn incident_pending_cancel_settlement_blocks_paid_restart_without_stranding_clea
         .unwrap();
     }
 }
+
+#[test]
+fn incident_cutover_requires_all_verified_targets_and_fresh_digest() {
+    let (env, key, pre, r) = fixture(3);
+    let j = allocate(&env, &key, &pre, &r);
+    assert!(
+        env.transaction(|db| incident_cutover::digest(db, &env))
+            .is_err()
+    );
+    let post = post(&env, &key, &pre, &j);
+    assert!(
+        signed_call(
+            &env,
+            &key,
+            &post,
+            0,
+            MutationOperation::IncidentCutover {
+                digest: vec![0; 32]
+            }
+        )
+        .is_err()
+    );
+    env.transaction(|db| {
+        for t in &j.targets {
+            assert_eq!(
+                store::header(db, &t.source.id)?.state,
+                VaultState::IncidentRequired
+            );
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+fn seed_incident_history(env: &TestEnvironment, vault: u8, count: u64) {
+    env.transaction(|db| {
+        for n in 1..=count {
+            let object = (n as u128).to_be_bytes().to_vec();
+            let deleted = n == count;
+            let manifest = if deleted { vec![] } else { test_manifest() };
+            let hashes = if deleted { "[]".to_string() } else { serde_json::to_string(&vec![vec![7u8;32]]).unwrap() };
+            db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,?3,NULL,0,?4,?5,?6,8192)",params![vec![vault;16],object,n as i64,manifest,hashes,deleted as i64]).unwrap();
+            if !deleted { db.execute("INSERT INTO revision_chunks VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,0,?3)",params![vec![vault;16],object,vec![7u8;16]]).unwrap(); }
+        }
+        let mut h = store::header(db,&[vault;16])?; h.sequence = count; store::put_header(db,&h)
+    }).unwrap();
+}
+fn confirm_target(env: &TestEnvironment, vault: &[u8], attempt: &[u8]) {
+    env.transaction(|db| {
+        let verifier = ed25519_dalek::SigningKey::from_bytes(&[45; 32])
+            .verifying_key()
+            .to_bytes();
+        let j = incident::stage(
+            db,
+            env,
+            vault,
+            attempt,
+            &Envelope {
+                version: 2,
+                nonce: vec![1; 12],
+                ciphertext: vec![2; 48],
+            },
+            &Envelope {
+                version: 2,
+                nonce: vec![3; 12],
+                ciphertext: vec![4; 48],
+            },
+            &verifier,
+        )?;
+        incident::confirm(
+            db,
+            env,
+            vault,
+            attempt,
+            &j.targets
+                .iter()
+                .find(|t| t.source.id == vault)
+                .unwrap()
+                .envelope_digest,
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+fn wrappers(page: &ExportPage, nonce: u8) -> Vec<IncidentWrapper> {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+    page.entries
+        .iter()
+        .map(|r| {
+            let wrapper = if r.deleted {
+                vec![]
+            } else {
+                let mut w = store::format::parse(&r.manifest, r.chunk_hashes.len())
+                    .unwrap()
+                    .dek;
+                w.nonce = B64.encode([nonce; 12]);
+                w.version = 2;
+                serde_json::to_vec(&w).unwrap()
+            };
+            IncidentWrapper {
+                object: r.object.clone(),
+                revision: r.revision,
+                sequence: r.sequence,
+                source_digest: Sha256::digest(&r.manifest).to_vec(),
+                wrapper,
+            }
+        })
+        .collect()
+}
+fn prepare_and_ack(
+    env: &TestEnvironment,
+    vault: &[u8],
+    attempt: &[u8],
+    export: u8,
+) -> IncidentRead {
+    env.transaction(|db| {
+        incident_export::prepare(db, env, vault, attempt, &[export; 16])?;
+        let j = incident::load(db, env)?;
+        let t = j.targets.iter().find(|t| t.source.id == vault).unwrap();
+        let e = t.staged_export.as_ref().unwrap();
+        incident_export::confirm(
+            db,
+            env,
+            vault,
+            attempt,
+            &IncidentBackupAck {
+                descriptor_digest: e.descriptor_digest.clone(),
+                commitment: e.commitment.clone(),
+                archive_hash: vec![9; 32],
+                archive_length: 1000,
+                recovery_verifier: t.recovery_verifier.clone(),
+                sequence: e.export.sequence,
+            },
+        )?;
+        Ok(IncidentRead {
+            descriptor_digest: e.descriptor_digest.clone(),
+            job: j.job,
+            vault: vault.to_vec(),
+            attempt: attempt.to_vec(),
+            export: vec![export; 16],
+        })
+    })
+    .unwrap()
+}
+#[test]
+fn incident_ordered_coverage_staged_reads_and_atomic_fresh_uv_cutover() {
+    let (env, key, pre, r) = fixture(3);
+    env.time.set(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    );
+    let pre = grant(&env, &key, &pre, pre.purpose.clone(), 73);
+
+    seed_incident_history(&env, 1, 101);
+    // Restore the pre-grant generations (sequence is not a generation component).
+    let j = allocate(&env, &key, &pre, &r);
+    let g = post(&env, &key, &pre, &j);
+    let source_export = env
+        .transaction(|db| store::content::begin_export(db, &[1; 16], &[99; 16], env.now()))
+        .unwrap();
+    let read = IncidentRead {
+        descriptor_digest: vec![0; 32],
+        job: j.job.clone(),
+        vault: vec![1; 16],
+        attempt: vec![71; 16],
+        export: vec![98; 16],
+    };
+    assert!(incident_export::descriptor(&env, read.clone()).is_err());
+    let before = env.transaction(store::content::usage).unwrap();
+    for t in &j.targets {
+        confirm_target(&env, &t.source.id, &t.attempt);
+    }
+    let page =
+        incident_wrapping::source_index(&env, j.job.clone(), vec![1; 16], vec![71; 16], 0).unwrap();
+    assert_eq!(page.entries.len(), 100);
+    let rows = wrappers(&page, 13);
+    let mut wrong = rows.clone();
+    wrong[0].source_digest[0] ^= 1;
+    assert!(
+        signed_call(
+            &env,
+            &key,
+            &g,
+            0,
+            MutationOperation::IncidentWrap {
+                vault: vec![1; 16],
+                attempt: vec![71; 16],
+                after: 0,
+                rows: wrong
+            }
+        )
+        .is_err()
+    );
+    let op = MutationOperation::IncidentWrap {
+        vault: vec![1; 16],
+        attempt: vec![71; 16],
+        after: 0,
+        rows: rows.clone(),
+    };
+    signed_call(&env, &key, &g, 0, op.clone()).unwrap();
+    signed_call(&env, &key, &g, 0, op.clone()).unwrap();
+    signed_call(&env, &key, &g, 1, op).unwrap(); // exact batch retry with a renewed counter
+    assert!(
+        env.transaction(|db| incident_export::prepare(db, &env, &[1; 16], &[71; 16], &[98; 16]))
+            .is_err()
+    );
+    let last = incident_wrapping::source_index(&env, j.job.clone(), vec![1; 16], vec![71; 16], 100)
+        .unwrap();
+    assert!(last.entries[0].deleted);
+    signed_call(
+        &env,
+        &key,
+        &g,
+        2,
+        MutationOperation::IncidentWrap {
+            vault: vec![1; 16],
+            attempt: vec![71; 16],
+            after: 100,
+            rows: wrappers(&last, 13),
+        },
+    )
+    .unwrap();
+    let read = prepare_and_ack(&env, &[1; 16], &[71; 16], 98);
+    let staged = incident_export::descriptor(&env, read.clone()).unwrap();
+    assert_eq!(staged.export.record_count, 101);
+    assert_eq!(staged.export.sequence, 102);
+    assert_eq!(
+        incident_export::chunk(&env, read.clone(), vec![0; 16], 1, 0).unwrap_err(),
+        Error::NotFound
+    );
+    assert_eq!(
+        incident_export::chunk(&env, read.clone(), 1u128.to_be_bytes().to_vec(), 1, 0).unwrap(),
+        vec![7; 16]
+    );
+    assert!(incident_cutover::ready_digest(&env).is_err());
+    for t in &j.targets[1..] {
+        env.transaction(|db| incident_wrapping::wrap(db, &env, &t.source.id, &t.attempt, 0, &[]))
+            .unwrap();
+        prepare_and_ack(&env, &t.source.id, &t.attempt, t.source.id[0] + 90);
+    }
+    assert_eq!(env.transaction(store::content::usage).unwrap(), before);
+    let digest = incident_cutover::ready_digest(&env).unwrap();
+    let bound = env
+        .transaction(|db| {
+            let mut bound = grants::load(db, &pre.id)?;
+            bound.info.purpose = GrantPurpose::IncidentCutover {
+                job: j.job.clone(),
+                digest: digest.clone(),
+            };
+            Ok(bound)
+        })
+        .unwrap();
+    env.transaction(|db| {
+        let original = incident::load(db, &env)?.targets[0]
+            .backup_ack
+            .clone()
+            .unwrap();
+        let mut changed = original.clone();
+        changed.archive_hash[0] ^= 1;
+        incident_export::confirm(db, &env, &[1; 16], &[71; 16], &changed)?;
+        assert!(grants::current(db, &env, &bound).is_err());
+        assert!(incident_cutover::publish(db, &env, &digest).is_err());
+        incident_export::confirm(db, &env, &[1; 16], &[71; 16], &original)
+    })
+    .unwrap();
+
+    assert!(
+        signed_call(
+            &env,
+            &key,
+            &g,
+            3,
+            MutationOperation::IncidentCutover {
+                digest: digest.clone()
+            }
+        )
+        .is_err()
+    );
+    // Real fresh final WebAuthn ceremony; scoped surviving authority is carried exactly.
+    env.transaction(|db| {
+        let mut a = authorization::authorities(db)?;
+        a.credentials[0].scope = CredentialScope::Instances(
+            r.sources
+                .iter()
+                .map(|g| Instance {
+                    vault: g.vault.clone(),
+                    nonce: g.nonce.clone(),
+                })
+                .collect(),
+        );
+        store::save(db, "authorities", &a)
+    })
+    .unwrap();
+    let passkey = install_test_passkey(&env);
+    env.time.set(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    );
+    let request = GrantRequest {
+        operation: vec![97; 16],
+        public_key: key.verifying_key().to_bytes().to_vec(),
+        credential: vec![41],
+        purpose: GrantPurpose::IncidentCutover {
+            job: j.job.clone(),
+            digest: digest.clone(),
+        },
+        generations: r.sources.clone(),
+    };
+    let ch = futures::executor::block_on(ceremonies::begin(&env, request.clone())).unwrap();
+    let final_grant = ceremonies::finish(
+        &env,
+        request.operation,
+        passkey_assertion(&env, &passkey, &ch),
+    )
+    .unwrap();
+    signed_call(
+        &env,
+        &key,
+        &final_grant,
+        0,
+        MutationOperation::IncidentCutover {
+            digest: digest.clone(),
+        },
+    )
+    .unwrap();
+    let completed = incident::status(&env).unwrap().unwrap();
+    assert!(completed.complete);
+    assert_eq!(completed.completed_digest, Some(digest));
+    env.transaction(|db| {
+        assert!(grants::load(db, &final_grant.id)?.revoked);
+        assert!(grants::load(db, &g.id)?.revoked);
+        grants::admission(db, env.now())
+    })
+    .unwrap();
+    assert!(incident_export::index(&env, read, 0).is_err());
+    env.transaction(|db| {
+        assert!(store::content::export_index(db, &source_export.id, 0, env.now()).is_err());
+        for t in &completed.targets {
+            let h = store::header(db, &t.source.id)?;
+            assert_eq!(h.state, VaultState::Active);
+            assert_eq!(h.generation, t.target);
+            assert_eq!(h.backup_sequence, Some(h.sequence));
+            assert!(authorization::covers(
+                &authorization::authority(db, &[41])?.scope,
+                h.generation.as_ref().unwrap()
+            ));
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(signed_call(&env, &key, &g, 3, MutationOperation::IncidentCancel).is_err());
+}
+
+#[test]
+fn incident_reset_cancel_and_partial_purge_fence_staged_exports() {
+    for mode in 0..3 {
+        let (env, key, pre, r) = fixture(3);
+        seed_incident_history(&env, 1, 102);
+        let j = allocate(&env, &key, &pre, &r);
+        for t in &j.targets {
+            confirm_target(&env, &t.source.id, &t.attempt);
+            let mut cursor = 0;
+            loop {
+                let page = incident_wrapping::source_index(
+                    &env,
+                    j.job.clone(),
+                    t.source.id.clone(),
+                    t.attempt.clone(),
+                    cursor,
+                )
+                .unwrap();
+                env.transaction(|db| {
+                    incident_wrapping::wrap(
+                        db,
+                        &env,
+                        &t.source.id,
+                        &t.attempt,
+                        cursor,
+                        &wrappers(&page, 33),
+                    )
+                })
+                .unwrap();
+                if let Some(next) = page.next {
+                    cursor = next;
+                } else {
+                    break;
+                }
+            }
+        }
+        let read = prepare_and_ack(&env, &[1; 16], &[71; 16], 98);
+        assert!(incident_export::descriptor(&env, read.clone()).is_ok());
+        env.transaction(|db| {
+            match mode {
+                0 => {
+                    incident::reset(db, &env, &[1; 16], &[71; 16], &[91; 16])?;
+                }
+                1 => {
+                    incident::cancel(db, &env, &j.job, &j.vector_digest, &r.sources)?;
+                }
+                _ => {
+                    incident::purge(db, &[vec![1; 16]], false)?;
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert!(incident_export::descriptor(&env, read.clone()).is_err());
+        let pending = incident::status(&env).unwrap().unwrap();
+        assert!(pending.targets[0].coverage.is_none());
+        assert!(pending.targets[0].backup_ack.is_none());
+        assert!(pending.targets[0].staged_export.is_none());
+        assert!(incident_cutover::ready_digest(&env).is_err());
+        env.transaction(|db| {
+            assert_eq!(
+                store::header(db, &[2; 16])?.state,
+                VaultState::IncidentRequired
+            );
+            Ok(())
+        })
+        .unwrap();
+        if mode == 2 {
+            env.transaction(|db| {
+                while !store::cleanup::purge_batch(db, &[vec![1; 16]])? {}
+                incident::purge(db, &[vec![1; 16]], true)
+            })
+            .unwrap();
+            for t in &j.targets[1..] {
+                prepare_and_ack(&env, &t.source.id, &t.attempt, t.source.id[0] + 90);
+            }
+            let digest = incident_cutover::ready_digest(&env).unwrap();
+            env.transaction(|db| incident_cutover::publish(db, &env, &digest))
+                .unwrap();
+            let done = incident::status(&env).unwrap().unwrap();
+            assert_eq!(done.targets[0].phase, PreparationPhase::Purged);
+            assert!(env.transaction(|db| store::header(db, &[1; 16])).is_err());
+        }
+    }
+}
+
+#[test]
+fn incident_second_rotation_uses_published_effective_source_and_prepaid_slots() {
+    let (env, key, pre, r) = fixture(1);
+    seed_incident_history(&env, 1, 102);
+    let j = allocate(&env, &key, &pre, &r);
+    for round in 0..2 {
+        let j = incident::status(&env).unwrap().unwrap();
+        let t = &j.targets[0];
+        confirm_target(&env, &t.source.id, &t.attempt);
+        let before = env.transaction(store::content::global_usage).unwrap();
+        let mut cursor = 0;
+        loop {
+            let page = incident_wrapping::source_index(
+                &env,
+                j.job.clone(),
+                t.source.id.clone(),
+                t.attempt.clone(),
+                cursor,
+            )
+            .unwrap();
+            if round == 1 && cursor == 0 {
+                assert_ne!(
+                    page.entries[0].manifest,
+                    store::format::effective(&test_manifest(), 1, None).unwrap()
+                );
+                let mut bad = wrappers(&page, 44);
+                bad[0].source_digest =
+                    Sha256::digest(store::format::effective(&test_manifest(), 1, None).unwrap())
+                        .to_vec();
+                assert!(
+                    env.transaction(|db| incident_wrapping::wrap(
+                        db,
+                        &env,
+                        &t.source.id,
+                        &t.attempt,
+                        cursor,
+                        &bad
+                    ))
+                    .is_err()
+                );
+            }
+            env.transaction(|db| {
+                incident_wrapping::wrap(
+                    db,
+                    &env,
+                    &t.source.id,
+                    &t.attempt,
+                    cursor,
+                    &wrappers(&page, 40 + round),
+                )
+            })
+            .unwrap();
+            if let Some(next) = page.next {
+                cursor = next;
+            } else {
+                break;
+            }
+        }
+        prepare_and_ack(&env, &t.source.id, &t.attempt, 98);
+        assert_eq!(
+            env.transaction(store::content::global_usage).unwrap(),
+            before
+        );
+        let digest = incident_cutover::ready_digest(&env).unwrap();
+        env.transaction(|db| incident_cutover::publish(db, &env, &digest))
+            .unwrap();
+        let h = env.transaction(|db| store::header(db, &[1; 16])).unwrap();
+        assert_eq!(h.published_slot, Some(round));
+        if round == 0 {
+            // A new compromised registration is scoped to the current instance; no globals minted.
+            env.transaction(|db| {
+                let mut a = authorization::authorities(db)?;
+                a.credentials.push(authorization::Authority {
+                    id: vec![43],
+                    version: 1,
+                    revoked: false,
+                    scope: CredentialScope::Instances(vec![Instance {
+                        vault: h.id.clone(),
+                        nonce: h.generation.as_ref().unwrap().nonce.clone(),
+                    }]),
+                });
+                store::save(db, "authorities", &a)
+            })
+            .unwrap();
+            let request = IncidentPreparation {
+                job: vec![75; 16],
+                namespace: j.namespace,
+                compromised: vec![CredentialRevocation {
+                    credential: vec![43],
+                    version: 1,
+                }],
+                sources: vec![h.generation.clone().unwrap()],
+                targets: vec![PendingCreation {
+                    namespace: vec![51; 32],
+                    vault: h.id.clone(),
+                    attempt: vec![76; 16],
+                }],
+            };
+            let pre2 = grant(
+                &env,
+                &key,
+                &pre,
+                GrantPurpose::IncidentPrepare(request.clone()),
+                77,
+            );
+            allocate(&env, &key, &pre2, &request);
+        }
+    }
+    // Old slot still exists, and the next rotation must reclaim it in bounded batches.
+    let h = env.transaction(|db| store::header(db, &[1; 16])).unwrap();
+    assert!(
+        !env.transaction(|db| store::overlays::clear_inactive(db, &h, 0))
+            .unwrap()
+    );
+    assert!(
+        env.transaction(|db| store::overlays::clear_inactive(db, &h, 0))
+            .unwrap()
+    );
+    assert!(
+        env.transaction(|db| store::overlays::clear_inactive(db, &h, 0))
+            .unwrap()
+    );
+    assert!(incident::status(&env).unwrap().unwrap().complete);
+    assert_eq!(j.targets[0].source.id, vec![1; 16]);
+}
+
+#[test]
+fn incident_prepared_expiry_and_source_saved_flag_preserve_freeze() {
+    let (env, key, pre, r) = fixture(1);
+    let j = allocate(&env, &key, &pre, &r);
+    confirm_target(&env, &[1; 16], &[71; 16]);
+    env.transaction(|db| incident_wrapping::wrap(db, &env, &[1; 16], &[71; 16], 0, &[]))
+        .unwrap();
+    let read = prepare_and_ack(&env, &[1; 16], &[71; 16], 98);
+    let before = incident::status(&env).unwrap().unwrap();
+    env.transaction(|db| {
+        let e = store::content::begin_export(db, &[1; 16], &[97; 16], env.now())?;
+        let h = store::content::finish_export(db, &e.id, true, env.now())?;
+        assert_eq!(h.state, VaultState::IncidentRequired);
+        assert!(store::incident::pinned(db, &[1; 16])?);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&before).unwrap(),
+        serde_json::to_vec(&incident::status(&env).unwrap().unwrap()).unwrap()
+    );
+    env.time.set(env.now() + DAY + 1);
+    assert_eq!(
+        incident_export::descriptor(&env, read.clone()).unwrap_err(),
+        Error::Expired
+    );
+    assert!(incident_cutover::ready_digest(&env).is_ok()); // already-verified saved archive is durable evidence
+    env.transaction(|db| incident_export::prepare(db, &env, &[1; 16], &[71; 16], &[96; 16]))
+        .unwrap();
+    assert!(incident_export::descriptor(&env, read.clone()).is_err());
+    env.time.set(env.now() + DAY + 1);
+    env.transaction(|db| incident_export::prepare(db, &env, &[1; 16], &[71; 16], &[98; 16]))
+        .unwrap();
+    assert!(incident_export::descriptor(&env, read).is_err()); // reused export ID cannot revive an expired descriptor
+    assert!(incident_cutover::ready_digest(&env).is_err()); // changed descriptor needs a new acknowledgment
+    assert_eq!(incident::status(&env).unwrap().unwrap().job, j.job);
+}

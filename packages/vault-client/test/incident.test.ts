@@ -228,3 +228,50 @@ it("cancellation locks outstanding preparation before fresh cleanup proof and su
   expect(cleanupSend.mock.calls).toHaveLength(1);
   expect((client as any).signer).toBeUndefined();
 });
+
+it("continues bounded reset with the server's existing next attempt", async () => {
+  const { IncidentClient } = await import("../src/incident"),
+    { vi } = await import("vitest");
+  const vault = randomBytes(16),
+    attempt = randomBytes(16),
+    next = randomBytes(16),
+    principal = Principal.selfAuthenticating(randomBytes(32));
+  const target = { source: { id: vault }, attempt, reset_attempt: [next] };
+  const client = new IncidentClient(
+    { incident_status: async () => ({ Ok: [{ targets: [target] }] }) } as never,
+    principal,
+    principal,
+    "localhost",
+    true,
+  );
+  const send = vi.fn(async () => ({ Unit: null }));
+  Object.assign(client, { signer: { send, destroy: () => {} } });
+  await client.reset(vault, attempt);
+  await client.reset(vault, attempt);
+  expect(send.mock.calls).toHaveLength(2);
+  expect((send.mock.calls[0] as any)[0].IncidentReset.next_attempt).toEqual(
+    next,
+  );
+  expect((send.mock.calls[1] as any)[0].IncidentReset.next_attempt).toEqual(
+    next,
+  );
+});
+
+it("does not report terminal all-source purge as successful cutover", async () => {
+  const { IncidentClient } = await import("../src/incident");
+  const principal = Principal.selfAuthenticating(randomBytes(32));
+  const client = new IncidentClient(
+    {
+      incident_status: async () => ({
+        Ok: [{ complete: true, completed_digest: [] }],
+      }),
+    } as never,
+    principal,
+    principal,
+    "localhost",
+    true,
+  );
+  await expect(client.cutover(randomBytes(16))).rejects.toThrow(
+    "IncidentPurged",
+  );
+});

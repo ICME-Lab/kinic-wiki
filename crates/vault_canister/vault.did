@@ -114,6 +114,7 @@ type GrantPurpose = variant {
   Normal;
   Cleanup : record { job : blob };
   Incident : record { job : blob; vector_digest : blob };
+  IncidentCutover : record { job : blob; digest : blob };
   Create;
   IncidentPrepare : IncidentPreparation;
 };
@@ -151,9 +152,28 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
+type IncidentBackupAck = record {
+  archive_length : nat64;
+  archive_hash : blob;
+  descriptor_digest : blob;
+  recovery_verifier : blob;
+  sequence : nat64;
+  commitment : blob;
+};
 type IncidentContext = record {
   credentials : vec IncidentCredential;
   namespace : blob;
+};
+// Constant-size ordered coverage; the frozen source owns membership.
+type IncidentCoverage = record {
+  records : nat64;
+  cursor : nat64;
+  last_batch : blob;
+  plain_bytes : nat64;
+  complete : bool;
+  source_root : blob;
+  chunks : nat64;
+  target_root : blob;
 };
 type IncidentCredential = record {
   credential : blob;
@@ -167,10 +187,18 @@ type IncidentPreparation = record {
   namespace : blob;
   compromised : vec CredentialRevocation;
 };
+type IncidentRead = record {
+  job : blob;
+  attempt : blob;
+  vault : blob;
+  descriptor_digest : blob;
+  export : blob;
+};
 type IncidentStatus = record {
   job : blob;
   cancel_digest : opt blob;
   vector_digest : blob;
+  completed_digest : opt blob;
   complete : bool;
   targets : vec IncidentTarget;
   semantic_config : blob;
@@ -178,6 +206,7 @@ type IncidentStatus = record {
   compromised : vec CredentialRevocation;
 };
 type IncidentTarget = record {
+  staged_export : opt StagedExport;
   normal : opt Envelope;
   attempt : blob;
   source : Header;
@@ -185,10 +214,12 @@ type IncidentTarget = record {
   snapshot_sequence : nat64;
   kit_ack : opt blob;
   target : opt Generation;
+  backup_ack : opt IncidentBackupAck;
   recovery_verifier : blob;
   recovery : opt Envelope;
   reset_attempt : opt blob;
   phase : PreparationPhase;
+  coverage : opt IncidentCoverage;
   next_epoch : nat64;
   snapshot_time : nat64;
 };
@@ -205,6 +236,7 @@ type MutationResult = variant {
   Header : Header;
   Unit;
   Cleanup : CleanupProgress;
+  InactiveCleanup : record { complete : bool };
   Revision : Revision;
   Upload : Upload;
   Challenge : Challenge;
@@ -232,9 +264,11 @@ type PendingCreation = record {
   namespace : blob;
 };
 type PreparationPhase = variant {
+  BackupVerified;
   PendingNonce;
   Resetting;
   EnvelopesStaged;
+  Wrapping;
   Purged;
   KitConfirmed;
   Purging;
@@ -271,14 +305,15 @@ type Result_17 = variant { Ok : Quota; Err : Error };
 type Result_18 = variant { Ok : GlobalCapacity; Err : Error };
 type Result_19 = variant { Ok : opt IncidentContext; Err : Error };
 type Result_2 = variant { Ok : Challenge; Err : Error };
-type Result_20 = variant { Ok : opt IncidentStatus; Err : Error };
-type Result_21 = variant { Ok : vec CredentialInfo; Err : Error };
-type Result_22 = variant { Ok : ObjectPage; Err : Error };
-type Result_23 = variant { Ok : vec Payment; Err : Error };
-type Result_24 = variant { Ok : vec UnfinishedVault; Err : Error };
-type Result_25 = variant { Ok : vec Header; Err : Error };
-type Result_26 = variant { Ok : MutationResult; Err : Error };
-type Result_27 = variant { Ok : opt Payment; Err : Error };
+type Result_20 = variant { Ok : StagedExport; Err : Error };
+type Result_21 = variant { Ok : opt IncidentStatus; Err : Error };
+type Result_22 = variant { Ok : vec CredentialInfo; Err : Error };
+type Result_23 = variant { Ok : ObjectPage; Err : Error };
+type Result_24 = variant { Ok : vec Payment; Err : Error };
+type Result_25 = variant { Ok : vec UnfinishedVault; Err : Error };
+type Result_26 = variant { Ok : vec Header; Err : Error };
+type Result_27 = variant { Ok : MutationResult; Err : Error };
+type Result_28 = variant { Ok : opt Payment; Err : Error };
 type Result_3 = variant { Ok : Export; Err : Error };
 type Result_4 = variant { Ok; Err : Error };
 type Result_5 = variant { Ok : Upload; Err : Error };
@@ -295,6 +330,11 @@ type Revision = record {
   manifest : blob;
   plain_size : nat64;
   sequence : nat64;
+};
+type StagedExport = record {
+  descriptor_digest : blob;
+  export : Export;
+  commitment : blob;
 };
 type Status = variant {
   Quoted;
@@ -368,18 +408,25 @@ service : () -> {
   global_capacity : () -> (Result_18) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
   incident_context : () -> (Result_19) query;
+  incident_cutover_digest : () -> (Result_15) query;
+  incident_source_index : (blob, blob, blob, nat64) -> (Result_12) query;
+  incident_staged_chunk : (IncidentRead, blob, nat64, nat32) -> (
+      Result_15,
+    ) query;
+  incident_staged_export : (IncidentRead) -> (Result_20) query;
+  incident_staged_index : (IncidentRead, nat64) -> (Result_12) query;
   // Owner-only encrypted status remains available when configuration is absent or incompatible.
-  incident_status : () -> (Result_20) query;
-  list_credentials : () -> (Result_21);
+  incident_status : () -> (Result_21) query;
+  list_credentials : () -> (Result_22);
   list_history : (blob, blob, nat64) -> (Result_12);
-  list_objects : (blob, blob) -> (Result_22);
-  list_payments : () -> (Result_23) query;
-  list_unfinished_vaults : () -> (Result_24);
-  list_vaults : () -> (Result_25);
+  list_objects : (blob, blob) -> (Result_23);
+  list_payments : () -> (Result_24) query;
+  list_unfinished_vaults : () -> (Result_25);
+  list_vaults : () -> (Result_26);
   manage_unlock_credential : (ManageCredential) -> (Result_4);
-  mutate : (blob, blob) -> (Result_26);
+  mutate : (blob, blob) -> (Result_27);
   pay_purchase : (blob) -> (Result_7);
-  payment_status : (blob) -> (Result_27) query;
+  payment_status : (blob) -> (Result_28) query;
   prepare_unlock_credential : (blob, text) -> (Result_15);
   purge_object : (blob, blob) -> (Result_4);
   put_chunk : (blob, nat32, blob) -> (Result_4);

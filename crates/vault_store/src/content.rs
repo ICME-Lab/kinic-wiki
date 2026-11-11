@@ -827,13 +827,21 @@ pub fn get_export(db: &Connection, id: &[u8], now: u64) -> Result<Export> {
 }
 pub fn export_index(db: &Connection, export: &[u8], after: u64, now: u64) -> Result<ExportPage> {
     let e = get_export(db, export, now)?;
+    snapshot_index(db, &e.header, e.sequence, after)
+}
+pub fn snapshot_index(
+    db: &Connection,
+    header: &Header,
+    sequence: u64,
+    after: u64,
+) -> Result<ExportPage> {
     if after > i64::MAX as u64 {
         return Err(Error::InvalidInput);
     }
     let mut stmt=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.born<=?2 AND (r.retired IS NULL OR r.retired>?2) AND r.born>?3 ORDER BY r.born LIMIT 101")).map_err(db_error)?;
     let rows = sql::query_map(
         &mut stmt,
-        params![e.vault, e.sequence as i64, after as i64],
+        params![header.id, sequence as i64, after as i64],
         row,
     )
     .map_err(db_error)?;
@@ -841,7 +849,7 @@ pub fn export_index(db: &Connection, export: &[u8], after: u64, now: u64) -> Res
     let mut bytes = 0;
     let mut more = false;
     for r in rows {
-        let r = overlays::effective(db, &e.header, r)?;
+        let r = overlays::effective(db, header, r)?;
         let len = r.manifest.len() + r.chunk_hashes.len() * 32 + 512;
         if entries.len() >= 100 || bytes + len > 800_000 {
             more = true;
@@ -866,17 +874,27 @@ pub fn export_chunk(
     now: u64,
 ) -> Result<Vec<u8>> {
     let e = get_export(db, export, now)?;
+    snapshot_chunk(db, &e.vault, e.sequence, object, revision, index)
+}
+pub fn snapshot_chunk(
+    db: &Connection,
+    vault: &[u8],
+    sequence: u64,
+    object: &[u8],
+    revision: u64,
+    index: u32,
+) -> Result<Vec<u8>> {
     id(object)?;
     if revision > i64::MAX as u64 || index > 10 {
         return Err(Error::InvalidInput);
     }
-    let yes:Option<i64>=db.query_row("SELECT 1 FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND object=?2 AND revision=?3 AND born<=?4 AND (retired IS NULL OR retired>?4)",params![e.vault,object,revision as i64,e.sequence as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
+    let yes:Option<i64>=db.query_row("SELECT 1 FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND object=?2 AND revision=?3 AND born<=?4 AND (retired IS NULL OR retired>?4)",params![vault,object,revision as i64,sequence as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
     if yes.is_none() {
         return Err(Error::NotFound);
     }
     db.query_row(
         "SELECT data FROM (SELECT * FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND object=?2 AND revision=?3 AND idx=?4",
-        params![e.vault, object, revision as i64, index as i64],
+        params![vault, object, revision as i64, index as i64],
         |r| sql::row_get(r, 0),
     )
     .optional()
@@ -896,10 +914,10 @@ pub fn finish_export(db: &Connection, export: &[u8], saved: bool, now: u64) -> R
         .ok_or(Error::NotFound)?;
     let e: Export = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
     if state == "Finished" && saved {
-        return active(db, &e.vault);
+        return incident::readable(db, &e.vault);
     }
     if state == "Aborted" && !saved {
-        return active(db, &e.vault);
+        return incident::readable(db, &e.vault);
     }
     if e.expires <= now {
         return Err(Error::Expired);
@@ -907,7 +925,7 @@ pub fn finish_export(db: &Connection, export: &[u8], saved: bool, now: u64) -> R
     if state != "Active" {
         return Err(Error::Conflict);
     }
-    let mut h = active(db, &e.vault)?;
+    let mut h = incident::readable(db, &e.vault)?;
     if saved {
         h.backup_sequence = Some(e.sequence);
         h.backup_at = Some(now);

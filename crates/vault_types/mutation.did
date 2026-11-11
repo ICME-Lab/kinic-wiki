@@ -41,6 +41,14 @@ type Generation = record {
   nonce : blob;
   key_name : text;
 };
+type IncidentBackupAck = record {
+  archive_length : nat64;
+  archive_hash : blob;
+  descriptor_digest : blob;
+  recovery_verifier : blob;
+  sequence : nat64;
+  commitment : blob;
+};
 type IncidentDerive = record {
   job : blob;
   attempt : blob;
@@ -49,6 +57,13 @@ type IncidentDerive = record {
   generation : Generation;
 };
 type IncidentRole = variant { Source; Target };
+type IncidentWrapper = record {
+  wrapper : blob;
+  object : blob;
+  source_digest : blob;
+  revision : nat64;
+  sequence : nat64;
+};
 type Instance = record { vault : blob; nonce : blob };
 type Mutation = record {
   counter : nat64;
@@ -83,9 +98,20 @@ type MutationOperation = variant {
     registration : text;
     scope : CredentialScope;
   };
+  IncidentPrepareExport : record {
+    attempt : blob;
+    vault : blob;
+    export : blob;
+  };
   IncidentCancel;
   Cleanup : record { job : blob; action : CleanupAction; cursor : nat64 };
   IncidentReset : record { attempt : blob; vault : blob; next_attempt : blob };
+  IncidentConfirmBackup : record {
+    ack : IncidentBackupAck;
+    attempt : blob;
+    vault : blob;
+  };
+  IncidentCutover : record { digest : blob };
   Derive : Derive;
   Create : Reserve;
   IncidentConfirmKit : record {
@@ -94,8 +120,15 @@ type MutationOperation = variant {
     envelope_digest : blob;
   };
   Activate : record { request : Activate; recovery_verifier : blob };
+  IncidentWrap : record {
+    after : nat64;
+    attempt : blob;
+    vault : blob;
+    rows : vec IncidentWrapper;
+  };
   PurgeObject : record { object : blob; vault : blob };
   IncidentAllocate : record { attempt : blob; vault : blob };
+  ClearInactive : record { vault : blob };
   BeginRevision : BeginRevision;
   RemoveCredential : record { credential : blob };
   CancelSetup : record { attempt : blob; vault : blob };

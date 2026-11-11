@@ -42,6 +42,14 @@ export const idlFactory = ({ IDL }) => {
     'Expired' : IDL.Null,
     'CancelSetup' : IDL.Record({ 'attempt' : IDL.Vec(IDL.Nat8) }),
   });
+  const IncidentBackupAck = IDL.Record({
+    'archive_length' : IDL.Nat64,
+    'archive_hash' : IDL.Vec(IDL.Nat8),
+    'descriptor_digest' : IDL.Vec(IDL.Nat8),
+    'recovery_verifier' : IDL.Vec(IDL.Nat8),
+    'sequence' : IDL.Nat64,
+    'commitment' : IDL.Vec(IDL.Nat8),
+  });
   const Derive = IDL.Record({
     'attempt' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'vault' : IDL.Vec(IDL.Nat8),
@@ -61,6 +69,13 @@ export const idlFactory = ({ IDL }) => {
     'assertion' : IDL.Opt(IDL.Text),
     'operation' : IDL.Vec(IDL.Nat8),
     'recovery' : Envelope,
+  });
+  const IncidentWrapper = IDL.Record({
+    'wrapper' : IDL.Vec(IDL.Nat8),
+    'object' : IDL.Vec(IDL.Nat8),
+    'source_digest' : IDL.Vec(IDL.Nat8),
+    'revision' : IDL.Nat64,
+    'sequence' : IDL.Nat64,
   });
   const BeginRevision = IDL.Record({
     'object' : IDL.Vec(IDL.Nat8),
@@ -107,6 +122,11 @@ export const idlFactory = ({ IDL }) => {
       'registration' : IDL.Text,
       'scope' : CredentialScope,
     }),
+    'IncidentPrepareExport' : IDL.Record({
+      'attempt' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+      'export' : IDL.Vec(IDL.Nat8),
+    }),
     'IncidentCancel' : IDL.Null,
     'Cleanup' : IDL.Record({
       'job' : IDL.Vec(IDL.Nat8),
@@ -118,6 +138,12 @@ export const idlFactory = ({ IDL }) => {
       'vault' : IDL.Vec(IDL.Nat8),
       'next_attempt' : IDL.Vec(IDL.Nat8),
     }),
+    'IncidentConfirmBackup' : IDL.Record({
+      'ack' : IncidentBackupAck,
+      'attempt' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+    }),
+    'IncidentCutover' : IDL.Record({ 'digest' : IDL.Vec(IDL.Nat8) }),
     'Derive' : Derive,
     'Create' : Reserve,
     'IncidentConfirmKit' : IDL.Record({
@@ -129,6 +155,12 @@ export const idlFactory = ({ IDL }) => {
       'request' : Activate,
       'recovery_verifier' : IDL.Vec(IDL.Nat8),
     }),
+    'IncidentWrap' : IDL.Record({
+      'after' : IDL.Nat64,
+      'attempt' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+      'rows' : IDL.Vec(IncidentWrapper),
+    }),
     'PurgeObject' : IDL.Record({
       'object' : IDL.Vec(IDL.Nat8),
       'vault' : IDL.Vec(IDL.Nat8),
@@ -137,6 +169,7 @@ export const idlFactory = ({ IDL }) => {
       'attempt' : IDL.Vec(IDL.Nat8),
       'vault' : IDL.Vec(IDL.Nat8),
     }),
+    'ClearInactive' : IDL.Record({ 'vault' : IDL.Vec(IDL.Nat8) }),
     'BeginRevision' : BeginRevision,
     'RemoveCredential' : IDL.Record({ 'credential' : IDL.Vec(IDL.Nat8) }),
     'CancelSetup' : IDL.Record({

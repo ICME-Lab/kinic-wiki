@@ -1,4 +1,5 @@
-/** Incident preparation only. Every resumed session uses fresh WebAuthn and separate role derives. */
+/** Incident preparation and completion. Every resumed session uses fresh WebAuthn and separate role derives. */
+import { wrapNext, saveAndVerify } from "./incident-backup";
 import { Principal } from "@icp-sdk/core/principal";
 import type {
   VaultActor,
@@ -30,7 +31,7 @@ import {
 const zero = new Uint8Array(16);
 const equal = (a: Uint8Array | number[], b: Uint8Array | number[]) =>
   b64(bytes(a)) === b64(bytes(b));
-const cryptoGeneration = (g: Generation) => ({
+export const cryptoGeneration = (g: Generation) => ({
   ...g,
   version: 2 as const,
   canister: g.canister.toText(),
@@ -99,7 +100,7 @@ export async function verifyIncidentKit(
 }
 export class IncidentClient {
   private signer?: SignedMutations;
-  private roots?: { source: CryptoKey; target: CryptoKey };
+  private roots?: { source: CryptoKey; target: CryptoKey; binding: string };
   constructor(
     private actor: VaultActor,
     private owner: Principal,
@@ -169,6 +170,12 @@ export class IncidentClient {
   async retry() {
     return this.signed().retry();
   }
+  /** One bounded cleanup call under a freshly authenticated Normal grant. */
+  async clearInactive(vault: Uint8Array) {
+    const result = await this.signed().send({ ClearInactive: { vault } });
+    if (!("InactiveCleanup" in result)) throw Error("MissingCleanupProgress");
+    return result.InactiveCleanup.complete;
+  }
   async start() {
     return this.signed().send({ IncidentStart: null });
   }
@@ -176,8 +183,20 @@ export class IncidentClient {
     return this.signed().send({ IncidentAllocate: { vault, attempt } });
   }
   async reset(vault: Uint8Array, attempt: Uint8Array) {
+    this.roots = undefined;
+    const ticket = this.session.capture(),
+      j = await this.status();
+    this.session.check(ticket);
+    const t = j.targets.find(
+      (t) => equal(t.source.id, vault) && equal(t.attempt, attempt),
+    );
+    if (!t) throw Error("TargetChanged");
     return this.signed().send({
-      IncidentReset: { vault, attempt, next_attempt: randomBytes(16) },
+      IncidentReset: {
+        vault,
+        attempt,
+        next_attempt: t.reset_attempt[0] ?? randomBytes(16),
+      },
     });
   }
   /** One bounded discard batch. Keep the same cleanup job ID when status is incomplete.
@@ -366,7 +385,12 @@ export class IncidentClient {
       j = await this.status();
     this.session.check(ticket);
     const t = this.target(j, vault);
-    if (!("KitConfirmed" in t.phase) && !("EnvelopesStaged" in t.phase))
+    if (
+      !("KitConfirmed" in t.phase) &&
+      !("EnvelopesStaged" in t.phase) &&
+      !("Wrapping" in t.phase) &&
+      !("BackupVerified" in t.phase)
+    )
       throw Error("NewKitConfirmationRequired");
     const sourceKEK = await this.kek(j, t, { Source: null }),
       targetKEK = await this.kek(j, t, { Target: null });
@@ -404,6 +428,7 @@ export class IncidentClient {
         this.session.check(ticket);
       }
       const roots = {
+        binding: this.binding(j, t),
         source: await importKey(source),
         target: await importKey(target),
       };
@@ -414,6 +439,75 @@ export class IncidentClient {
       source?.fill(0);
       target?.fill(0);
       kit?.fill(0);
+    }
+  }
+  private binding(j: IncidentStatus, t: IncidentTarget) {
+    return [
+      b64(bytes(j.job)),
+      b64(bytes(j.vector_digest)),
+      b64(bytes(t.attempt)),
+      b64(generationBytes(cryptoGeneration(t.target[0]!))),
+    ].join(":");
+  }
+  async wrapNext(vault: Uint8Array) {
+    const ticket = this.session.capture(),
+      j = await this.status();
+    this.session.check(ticket);
+    const t = this.target(j, vault);
+    if (!this.roots || this.roots.binding !== this.binding(j, t))
+      throw Error("ResumeWithNewKitRequired");
+    return wrapNext(this.actor, this.signed(), this.session, j, t, this.roots);
+  }
+  async saveBackup(
+    vault: Uint8Array,
+    save: (file: Uint8Array) => Promise<void>,
+    reselectArchive: () => Promise<Uint8Array>,
+    reselectKit: () => Promise<Uint8Array>,
+  ) {
+    const ticket = this.session.capture(),
+      j = await this.status();
+    this.session.check(ticket);
+    const t = this.target(j, vault),
+      kek = await this.kek(j, t, { Target: null });
+    this.session.check(ticket);
+    return saveAndVerify(
+      this.actor,
+      this.signed(),
+      this.session,
+      j,
+      t,
+      kek,
+      save,
+      reselectArchive,
+      reselectKit,
+    );
+  }
+  async cutover(credential: Uint8Array) {
+    this.session.lock();
+    const ticket = this.session.capture();
+    try {
+      const j = await this.status();
+      this.session.check(ticket);
+      if (j.complete) {
+        if (!j.completed_digest[0]) throw Error("IncidentPurged");
+        return j;
+      }
+      const digest = ok(await this.actor.incident_cutover_digest());
+      this.session.check(ticket);
+      const generations = j.targets
+        .filter((t) => !("Purged" in t.phase))
+        .map((t) => t.source.generation[0]!);
+      await this.authenticate(
+        credential,
+        { IncidentCutover: { job: j.job, digest } },
+        generations,
+      );
+      this.session.check(ticket);
+      await this.signed().send({ IncidentCutover: { digest } });
+      this.session.check(ticket);
+      return await this.status();
+    } finally {
+      this.session.lock();
     }
   }
 }

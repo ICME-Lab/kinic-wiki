@@ -190,8 +190,22 @@ pub(crate) fn validate(
                     return Err(Error::Unauthorized);
                 }
                 next_epoch(g.epoch)?;
+                h.sequence
+                    .checked_add(1)
+                    .filter(|n| *n <= i64::MAX as u64)
+                    .ok_or(Error::QuotaExceeded)?;
             }
             Ok(())
+        }
+        GrantPurpose::IncidentCutover { job, digest } => {
+            let j = load(db, env)?;
+            if &j.job != job
+                || sources(&j)? != generations
+                || &incident_cutover::digest(db, env)? != digest
+            {
+                return Err(Error::Unauthorized);
+            }
+            safe_authority(db, credential, &j.compromised, generations)
         }
         GrantPurpose::Incident { job, vector_digest } => {
             let j = load(db, env)?;
@@ -262,6 +276,9 @@ pub(crate) fn start(
             recovery_verifier: vec![],
             envelope_digest: vec![],
             kit_ack: None,
+            coverage: None,
+            staged_export: None,
+            backup_ack: None,
         });
     }
     let mut j = IncidentStatus {
@@ -273,6 +290,7 @@ pub(crate) fn start(
         vector_digest: vec![],
         complete: false,
         cancel_digest: None,
+        completed_digest: None,
     };
     // Enforce the prepaid bound before the irreversible effects (same transaction).
     save(db, &mut j)?;
@@ -424,7 +442,7 @@ pub(crate) fn reset(
     }
     j.cancel_digest = None;
     let t = target(&mut j, vault, attempt)?;
-    // Task 8 cannot stage wrappers. Future stages must first perform bounded inactive cleanup.
+    // Reusing a target attempt requires bounded inactive cleanup; source pins stay intact.
     let inactive = 1 - t.source.published_slot.unwrap_or(1);
     if t.reset_attempt
         .as_deref()
@@ -432,6 +450,9 @@ pub(crate) fn reset(
     {
         return Err(Error::Conflict);
     }
+    t.coverage = None;
+    t.staged_export = None;
+    t.backup_ack = None;
     t.reset_attempt = Some(next.to_vec());
     t.phase = PreparationPhase::Resetting;
     if !store::overlays::clear_inactive(db, &t.source, inactive)? {
@@ -474,6 +495,9 @@ pub fn context_in(db: &Connection) -> Result<Option<IncidentContext>> {
 }
 
 fn discard(t: &mut IncidentTarget) {
+    t.coverage = None;
+    t.staged_export = None;
+    t.backup_ack = None;
     t.target = None;
     t.normal = None;
     t.recovery = None;

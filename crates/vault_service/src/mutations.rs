@@ -160,6 +160,48 @@ fn ordinary(
     let incident_grant = matches!(g.info.purpose, GrantPurpose::Incident { .. });
     let preparation = matches!(g.info.purpose, GrantPurpose::IncidentPrepare(_));
     match op {
+        MutationOperation::IncidentWrap {
+            vault,
+            attempt,
+            after,
+            rows,
+        } if incident_grant => incident_wrapping::wrap(db, env, vault, attempt, *after, rows)
+            .map(|_| MutationResult::Unit),
+        MutationOperation::IncidentPrepareExport {
+            vault,
+            attempt,
+            export,
+        } if incident_grant => {
+            incident_export::prepare(db, env, vault, attempt, export).map(|_| MutationResult::Unit)
+        }
+        MutationOperation::IncidentConfirmBackup {
+            vault,
+            attempt,
+            ack,
+        } if incident_grant => {
+            incident_export::confirm(db, env, vault, attempt, ack).map(|_| MutationResult::Unit)
+        }
+        MutationOperation::IncidentCutover { digest } => {
+            let GrantPurpose::IncidentCutover {
+                digest: authorized, ..
+            } = &g.info.purpose
+            else {
+                return Err(Error::Unauthorized);
+            };
+            if digest != authorized {
+                return Err(Error::Unauthorized);
+            }
+            incident_cutover::publish(db, env, digest)?;
+            g.revoked = true; // receipt save must not overwrite the transaction's revocation
+            Ok(MutationResult::Unit)
+        }
+        MutationOperation::ClearInactive { vault } if normal => {
+            generation(db, g, vault, true)?;
+            let h = store::active(db, vault)?;
+            let complete =
+                store::overlays::clear_inactive(db, &h, 1 - h.published_slot.unwrap_or(1))?;
+            Ok(MutationResult::InactiveCleanup { complete })
+        }
         MutationOperation::IncidentStart if preparation => {
             incident::start(db, env, g).map(|_| MutationResult::Unit)
         }

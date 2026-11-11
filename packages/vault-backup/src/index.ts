@@ -29,6 +29,8 @@ import {
 export type PortableHeader = {
   version: 1 | 2;
   generation?: PortableGeneration;
+  /** Absent in legacy v2 archives means epoch; new root envelopes use revision zero. */
+  envelope_revision?: string;
   recovery_verifier?: string;
   vault: string;
   epoch: string;
@@ -123,7 +125,20 @@ function decimal(s: string, max = 9223372036854775807n) {
   if (n > max) throw Error("InvalidBackup");
   return n;
 }
+export function rootEnvelopeRevision(h: PortableHeader): bigint {
+  if (h.version === 1) {
+    if (h.envelope_revision !== undefined)
+      throw Error("InvalidEnvelopeRevision");
+    return BigInt(h.epoch);
+  }
+  const epoch = decimal(h.epoch);
+  if (h.envelope_revision === undefined) return epoch;
+  if (h.envelope_revision !== "0" && h.envelope_revision !== epoch.toString())
+    throw Error("InvalidEnvelopeRevision");
+  return decimal(h.envelope_revision);
+}
 function validateHeader(h: PortableHeader) {
+  rootEnvelopeRevision(h);
   if (
     ![1, 2].includes(h.version) ||
     unb64(h.vault).length !== 16 ||
@@ -277,7 +292,12 @@ export async function openArchive(
     ? await openV2(
         await deriveKey(recoverySecret, "recovery"),
         unpack(header.recovery),
-        generationAAD(generation, ZERO, generation.epoch, "recovery"),
+        generationAAD(
+          generation,
+          ZERO,
+          rootEnvelopeRevision(header),
+          "recovery",
+        ),
       )
     : await open(
         await deriveKey(recoverySecret, "recovery"),
@@ -412,16 +432,17 @@ export async function transformArchive(
     const normal = await sealV2(
       targetKEK,
       rootRaw,
-      generationAAD(target, ZERO, target.epoch, "normal"),
+      generationAAD(target, ZERO, 0n, "normal"),
     );
     const recovery = await sealV2(
       await deriveKey(recoverySecret, "recovery"),
       rootRaw,
-      generationAAD(target, ZERO, target.epoch, "recovery"),
+      generationAAD(target, ZERO, 0n, "recovery"),
     );
     const header: PortableHeader = {
       ...source.header,
       version: 2,
+      envelope_revision: "0",
       epoch: target.epoch.toString(),
       key_name: target.key_name,
       generation: {

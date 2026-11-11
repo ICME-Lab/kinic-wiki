@@ -27,7 +27,9 @@ pub(crate) fn validate_request(
     }
     if matches!(
         r.purpose,
-        GrantPurpose::Incident { .. } | GrantPurpose::IncidentPrepare(_)
+        GrantPurpose::Incident { .. }
+            | GrantPurpose::IncidentPrepare(_)
+            | GrantPurpose::IncidentCutover { .. }
     ) {
         return incident::validate(db, env, &r.credential, &r.purpose, &r.generations);
     }

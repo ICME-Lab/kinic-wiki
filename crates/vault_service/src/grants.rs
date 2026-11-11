@@ -181,7 +181,9 @@ pub(crate) fn current(db: &Connection, env: &impl Environment, g: &Grant) -> Res
     }
     if matches!(
         g.info.purpose,
-        GrantPurpose::Incident { .. } | GrantPurpose::IncidentPrepare(_)
+        GrantPurpose::Incident { .. }
+            | GrantPurpose::IncidentPrepare(_)
+            | GrantPurpose::IncidentCutover { .. }
     ) {
         return incident::validate(db, env, &g.credential, &g.info.purpose, &g.info.generations);
     }

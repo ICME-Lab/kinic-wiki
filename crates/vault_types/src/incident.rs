@@ -19,6 +19,8 @@ pub enum PreparationPhase {
     Allocated,
     EnvelopesStaged,
     KitConfirmed,
+    Wrapping,
+    BackupVerified,
     Resetting,
     Cancelling,
     Cancelled,
@@ -40,6 +42,12 @@ pub struct IncidentTarget {
     pub recovery_verifier: Vec<u8>,
     pub envelope_digest: Vec<u8>,
     pub kit_ack: Option<Vec<u8>>,
+    #[serde(default)]
+    pub coverage: Option<IncidentCoverage>,
+    #[serde(default)]
+    pub staged_export: Option<StagedExport>,
+    #[serde(default)]
+    pub backup_ack: Option<IncidentBackupAck>,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct IncidentStatus {
@@ -52,6 +60,8 @@ pub struct IncidentStatus {
     pub complete: bool,
     #[serde(default)]
     pub cancel_digest: Option<Vec<u8>>,
+    #[serde(default)]
+    pub completed_digest: Option<Vec<u8>>,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct IncidentDerive {
@@ -77,4 +87,49 @@ pub struct IncidentCredential {
 pub struct IncidentContext {
     pub namespace: Vec<u8>,
     pub credentials: Vec<IncidentCredential>,
+}
+
+/// Constant-size ordered coverage; the frozen source owns membership.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct IncidentCoverage {
+    pub cursor: u64,
+    pub records: u64,
+    pub chunks: u64,
+    pub plain_bytes: u64,
+    pub source_root: Vec<u8>,
+    pub target_root: Vec<u8>,
+    pub complete: bool,
+    pub last_batch: Vec<u8>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct IncidentWrapper {
+    pub object: Id,
+    pub revision: u64,
+    pub sequence: u64,
+    pub source_digest: Vec<u8>,
+    /// Empty only for a tombstone.
+    pub wrapper: Vec<u8>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct StagedExport {
+    pub export: Export,
+    pub commitment: Vec<u8>,
+    pub descriptor_digest: Vec<u8>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct IncidentBackupAck {
+    pub descriptor_digest: Vec<u8>,
+    pub commitment: Vec<u8>,
+    pub archive_hash: Vec<u8>,
+    pub archive_length: u64,
+    pub recovery_verifier: Vec<u8>,
+    pub sequence: u64,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct IncidentRead {
+    pub descriptor_digest: Vec<u8>,
+    pub job: Id,
+    pub vault: Id,
+    pub attempt: Id,
+    pub export: Id,
 }

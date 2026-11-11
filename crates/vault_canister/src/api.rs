@@ -11,6 +11,7 @@ struct Vault {
     owner: OwnerContext,
     started: u64,
     maintenance: bool,
+    readonly: bool,
     derive_payment: std::cell::Cell<Option<u64>>,
     operation: std::cell::Cell<Option<(u64, bool)>>,
 }
@@ -21,9 +22,15 @@ impl Vault {
             owner,
             started: meter(),
             maintenance: true,
+            readonly: false,
             derive_payment: std::cell::Cell::new(None),
             operation: std::cell::Cell::new(None),
         })
+    }
+    fn capture_read() -> Result<Self> {
+        let mut env = Self::capture_cleanup()?;
+        env.readonly = true;
+        Ok(env)
     }
     fn capture_cleanup() -> Result<Self> {
         let mut env = Self::capture()?;
@@ -110,6 +117,9 @@ impl Environment for Vault {
             self.owner.run(db, |db| {
                 vault_store::config(db)?;
                 let value = f(db)?;
+                if self.readonly {
+                    return Ok(value);
+                }
                 crate::accounting::track_storage_in(
                     db,
                     &self.owner().to_text(),
@@ -650,4 +660,45 @@ fn incident_status() -> vault_types::Result<Option<vault_types::IncidentStatus>>
 fn incident_context() -> vault_types::Result<Option<vault_types::IncidentContext>> {
     let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
     crate::state::transaction(|db| owner.run(db, vault_service::incident::context_in))
+}
+
+#[ic_cdk::query]
+fn incident_source_index(
+    job: vault_types::Id,
+    vault: vault_types::Id,
+    attempt: vault_types::Id,
+    after: u64,
+) -> vault_types::Result<vault_types::ExportPage> {
+    let env = Vault::capture_read()?;
+    vault_service::incident_wrapping::source_index(&env, job, vault, attempt, after)
+}
+#[ic_cdk::query]
+fn incident_staged_export(
+    request: vault_types::IncidentRead,
+) -> vault_types::Result<vault_types::StagedExport> {
+    let env = Vault::capture_read()?;
+    vault_service::incident_export::descriptor(&env, request)
+}
+#[ic_cdk::query]
+fn incident_staged_index(
+    request: vault_types::IncidentRead,
+    after: u64,
+) -> vault_types::Result<vault_types::ExportPage> {
+    let env = Vault::capture_read()?;
+    vault_service::incident_export::index(&env, request, after)
+}
+#[ic_cdk::query]
+fn incident_staged_chunk(
+    request: vault_types::IncidentRead,
+    object: vault_types::Id,
+    revision: u64,
+    index: u32,
+) -> vault_types::Result<Vec<u8>> {
+    let env = Vault::capture_read()?;
+    vault_service::incident_export::chunk(&env, request, object, revision, index)
+}
+#[ic_cdk::query]
+fn incident_cutover_digest() -> vault_types::Result<Vec<u8>> {
+    let env = Vault::capture_read()?;
+    vault_service::incident_cutover::ready_digest(&env)
 }
