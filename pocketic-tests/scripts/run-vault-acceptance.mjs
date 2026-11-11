@@ -2,6 +2,15 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
+const binary = process.env.POCKET_IC_BIN;
+if (!binary) {
+  throw Error("Vault acceptance requires POCKET_IC_BIN pointing to PocketIC 16.1.0");
+}
+const version = execFileSync(binary, ["--version"], { encoding: "utf8" }).trim();
+if (version !== "pocket-ic-server 16.1.0") {
+  throw Error(`Vault acceptance requires PocketIC 16.1.0; ${binary} reports ${version}`);
+}
+console.log(`Vault acceptance runtime: ${version} (${binary})`);
 const cases = [
   ["physical-isolation"],
   ["certification"],

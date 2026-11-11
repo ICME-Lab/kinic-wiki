@@ -25,12 +25,18 @@ node pocketic-tests/scripts/build-vault-baselines.mjs
 node pocketic-tests/scripts/build-vault-capacity-baseline.mjs
 node pocketic-tests/scripts/build-vault-restore-baseline.mjs
 VAULT_RESTORE_BASE=97dc47e2280ea207139b6704d0333985ebf73a82 VAULT_RESTORE_OUTPUT=vault-restore-task12-quota node pocketic-tests/scripts/build-vault-restore-baseline.mjs
-POCKET_IC_BIN="$PWD/target/tools/pocket-ic" pnpm --dir pocketic-tests test:vault
+export POCKET_IC_BIN="/absolute/path/to/pocket-ic-16.1.0"
+test "$("$POCKET_IC_BIN" --version)" = "pocket-ic-server 16.1.0"
+pnpm --dir pocketic-tests test:vault
 ```
 
 Current funding acceptance uses the explicitly NONDEPLOYABLE `synthetic-funding-test-only` feature and separate `target/vault-synthetic-funding-build` artifact/provenance. Its certified configuration says `fundingMode: "synthetic-test-only"`, even when testing production-origin policy. Default production Wasm remains in `target/wasm32-unknown-unknown/release` with `fundingMode: "unavailable"`; actual certification tests execute it, and the isolation suite upgrades a synthetic journal into it to verify no fee/transfer calls, no controller override, and preserved balances/unknown holds. The browser acceptance build enables the same test-only feature and records nondeployable provenance. None of these synthetic results demonstrate production funding availability.
 
 CI pins PocketIC 16.1.0. Each acceptance process owns and stops its own server and unique port file. `pocketic-tests/fixtures/vault-baselines.json` pins reachable historical backend commits. The builders use `git archive` under `target`, not worktrees or ignored machine binaries. Each output records source commit, archive/Wasm/lock hashes and toolchain. Historical backends embed current assets intentionally: these are backend upgrade fixtures, not historical-browser evidence or a claim of identical Wasm bytes across machines. The current quota seeder uses backend source `8070858eb6c7168264b18f4a115de4e4f14490cf`, injects unrelated-owner logical occupancy only into a separate test Wasm, and never installs a production seeding hook. The older quota fixture is used only for historical-to-current migration. Installing a pre-integration binary over a current transition row is an unsupported downgrade, not a recovery procedure.
+
+The backend aggregate runner requires an explicit `POCKET_IC_BIN`, checks and logs its exact 16.1.0 version before starting any acceptance process, and rejects other versions instead of falling back to the SDK binary. Use the same verified binary for direct integration-test commands. Capacity upgrade fixtures drain the pinned runtime's install-code instruction budget with scheduler rounds, asserting less than 1ms of virtual-clock movement so quotes, billing and retained snapshots do not age during pacing.
+
+The scoped empty-creation key-rotation case opts into an additional real `TestThresholdKeys` subnet, which supplies `test_key_1` alongside the fiduciary subnet's `key_1`. A test-only adapter extends the locked `@dfinity/pic` 0.21.0 instance request through PocketIC 16.1's REST API; it checks the actual topology and retains the SDK's real transport, canister calls and teardown. Other restore fixtures keep their existing topology. The case verifies distinct real public keys and both source/target encrypted roots.
 
 For actual browser acceptance, install **icp-cli 1.0.2** and Chromium (`pnpm --dir wikibrowser exec playwright install chromium`), leave local ports 8044 and 3100 free, then run:
 

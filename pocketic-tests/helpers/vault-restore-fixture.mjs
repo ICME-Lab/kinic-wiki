@@ -1,4 +1,5 @@
 import { startVaultPocketIc } from "./vault-pocketic-server.mjs";
+import { createVaultPocketIcWithTestKeys } from "./vault-pocketic-test-keys.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -126,15 +127,18 @@ const {
 export async function restoreFixture(
   baseline = process.env.VAULT_RESTORE_WASM ??
     "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
-  { priorCanisters = 0, credits = 2_000_000_000_000n } = {},
+  { priorCanisters = 0, credits = 2_000_000_000_000n, testThresholdKeys = false } = {},
 ) {
   const server = await startVaultPocketIc(PocketIcServer.getBinPath());
   let pic;
   try {
-    pic = await PocketIc.create(server.getUrl(), {
+    const options = {
       fiduciary: { state: { type: "new" } },
       icpConfig: { betaFeatures: "Enabled" },
-    });
+    };
+    pic = testThresholdKeys
+      ? await createVaultPocketIcWithTestKeys(server.getUrl(), options)
+      : await PocketIc.create(server.getUrl(), options);
     const wasm = resolve(
       root,
       "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",

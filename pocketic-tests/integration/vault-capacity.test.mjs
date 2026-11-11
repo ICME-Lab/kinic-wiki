@@ -80,13 +80,23 @@ try {
     v.actor.setPrincipal(owner);
     return v;
   };
-  const upgrade = async (v, path = wasm) =>
-    pic.upgradeCanister({
+  const upgrade = async (v, path = wasm) => {
+    // PocketIC 16.1: an application install uses at most 300B instructions,
+    // and its install-code debit drains by 2B per scheduler round. Drain the
+    // full budget without aging quotes, billing, or retained export snapshots.
+    const before = await pic.getTime();
+    await pic.tick(150);
+    assert.ok(
+      (await pic.getTime()) - before < 1,
+      "install-code budget pacing advanced the financial clock",
+    );
+    return pic.upgradeCanister({
       sender: owner,
       canisterId: v.canisterId,
       wasm: path,
       arg: IDL.encode([], []),
     });
+  };
   const configure = async (v) =>
     ok(
       await v.actor.set_funding_config([

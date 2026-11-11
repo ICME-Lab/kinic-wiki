@@ -70,7 +70,7 @@ async function allocate(f, r) {
   r.j = ok(await f.actor.create_empty_status())[0];
   return r.j.generation[0];
 }
-async function derive(f, grant, j, normal = false) {
+async function derive(f, grant, j, normal = false, publicKeys) {
   const g = j.generation[0],
     transport = TransportSecretKey.random();
   const operation = normal
@@ -94,6 +94,7 @@ async function derive(f, grant, j, normal = false) {
       };
   const handle = ok((await f.send(grant, operation)).result).Handle;
   const reply = ok((await f.send(grant, { KeyResult: { handle } })).result).Key;
+  publicKeys?.set(g.key_name, new Uint8Array(reply.public_key));
   return verifiedGenerationKEK(
     new Uint8Array(reply.encrypted_key),
     transport,
@@ -101,9 +102,9 @@ async function derive(f, grant, j, normal = false) {
     true,
   );
 }
-async function stage(f, r) {
+async function stage(f, r, publicKeys) {
   const g = r.j.generation[0],
-    kek = await derive(f, r.grant, r.j),
+    kek = await derive(f, r.grant, r.j, false, publicKeys),
     raw = randomBytes(32),
     secret = randomBytes(32);
   const normal = await sealV2(
@@ -164,11 +165,12 @@ console.log(
     .digest("hex"),
 );
 {
-  const f = await restoreFixture();
+  const f = await restoreFixture(undefined, { testThresholdKeys: true });
   try {
     const c = await scoped(f);
     await f.pic.advanceTime(421000);
     const defaultA = ok(await f.actor.get_config())[0];
+    assert.equal(defaultA.key_name, "key_1");
     assert.equal(f.sourceG.key_name, defaultA.key_name);
     const defaultB = { ...defaultA, key_name: "test_key_1" };
     ok(await f.actor.set_config([defaultB]));
@@ -261,7 +263,8 @@ console.log(
       "Err" in (await f.send(r.grant, { CreateEmptyActivate: null })).result,
     );
     r.grant = await f.fresh(r.purpose, [f.sourceG], c);
-    const keys = await stage(f, r);
+    const publicKeys = new Map();
+    const keys = await stage(f, r, publicKeys);
     ok((await f.send(r.grant, { CreateEmptyActivate: null })).result);
     r.j = ok(await f.actor.create_empty_status())[0];
     assert.ok("Active" in r.j.phase);
@@ -296,7 +299,11 @@ console.log(
       sourceGrant,
       { generation: [f.sourceG] },
       true,
+      publicKeys,
     );
+    assert.ok(publicKeys.get("key_1")?.length > 0);
+    assert.ok(publicKeys.get("test_key_1")?.length > 0);
+    assert.notDeepEqual(publicKeys.get("key_1"), publicKeys.get("test_key_1"));
     const sourceHeader = ok(await f.actor.get_vault_header(f.sourceG.vault));
     assert.deepEqual(
       await openV2(
