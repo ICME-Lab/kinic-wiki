@@ -22,7 +22,7 @@ fn request(v: u8) -> BeginRestore {
         operation: vec![v + 1; 16],
         count: 1,
         root: vec![0; 32],
-        reserved_bytes: 8194,
+        reserved_bytes: 8192,
     }
 }
 #[test]
@@ -36,7 +36,7 @@ fn prepaid_working_stage_and_commit_do_not_grow_usage_and_legacy_keeps_digest() 
         assert_eq!(content::global_usage(&db).unwrap() - before, 524288);
         let mut request = request(9);
         if !prepaid {
-            request.reserved_bytes += 500;
+            request.reserved_bytes += 502;
         }
         if prepaid {
             restore::begin_prepaid(&db, request.clone(), 1).unwrap();

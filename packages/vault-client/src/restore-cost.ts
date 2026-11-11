@@ -24,13 +24,14 @@ export function restoreRecordCost(r: Revision) {
   const hashes = JSON.stringify(r.chunk_hashes.map((h) => [...h]));
   const pending = `{"vault":${array(r.vault)},"object":${array(r.object)},"revision":${r.revision},"plain_size":${r.plain_size},"manifest":${array(r.manifest)},"chunk_hashes":${hashes},"deleted":${r.deleted},"sequence":${r.sequence}}`;
   return {
-    charge:
-      (r.deleted ? 0n : 4096n) +
-      r.plain_size +
-      BigInt(r.chunk_hashes.length) * 4112n +
-      BigInt(r.manifest.length) +
-      BigInt(hashes.length) +
-      4096n,
+    charge: r.deleted
+      ? 4096n
+      : 4096n +
+        r.plain_size +
+        BigInt(r.chunk_hashes.length) * 4112n +
+        BigInt(r.manifest.length) +
+        BigInt(hashes.length) +
+        4096n,
     pending: BigInt(pending.length),
   };
 }

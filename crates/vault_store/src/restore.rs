@@ -212,16 +212,20 @@ pub fn stage(db: &Connection, v: &[u8], r: Revision, now: u64) -> Result<()> {
     {
         return Err(Error::InvalidInput);
     }
-    let charge = if r.deleted { 0 } else { WRAPPER_HEADROOM }
-        + r.plain_size
-        + r.chunk_hashes.len() as u64 * (16 + 4096)
-        + r.manifest.len() as u64
-        + serde_json::to_string(&r.chunk_hashes)
-            .map_err(|_| Error::Storage)?
-            .len() as u64
-        + 4096;
-    let encoded = serde_json::to_string(&r).map_err(|_| Error::Storage)?;
     let prepaid = restore_working::mode(db, v)?;
+    let charge = if prepaid && r.deleted {
+        4096
+    } else {
+        (if r.deleted { 0 } else { WRAPPER_HEADROOM })
+            + r.plain_size
+            + r.chunk_hashes.len() as u64 * (16 + 4096)
+            + r.manifest.len() as u64
+            + serde_json::to_string(&r.chunk_hashes)
+                .map_err(|_| Error::Storage)?
+                .len() as u64
+            + 4096
+    };
+    let encoded = serde_json::to_string(&r).map_err(|_| Error::Storage)?;
     if prepaid && encoded.len() > restore_working::PENDING_MAX {
         return Err(Error::QuotaExceeded);
     }

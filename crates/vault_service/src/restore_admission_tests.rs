@@ -1384,21 +1384,22 @@ fn restore_pipeline_underclaimed_cost_rolls_back_record_without_growing_reservat
         },
     )
     .unwrap();
-    let r = Revision {
-        vault: target.vault.clone(),
-        object: vec![4; 16],
-        revision: 1,
-        sequence: 1,
-        plain_size: 0,
-        manifest: vec![],
-        chunk_hashes: vec![],
-        deleted: true,
-    };
+    let raw: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../packages/vault-backup/test/fixtures/restore-cost-vectors.json"
+    ))
+    .unwrap();
+    let mut record = raw[1]["record"].clone();
+    for k in ["revision", "plain_size", "sequence"] {
+        record[k] = serde_json::json!(record[k].as_str().unwrap().parse::<u64>().unwrap());
+    }
+    let mut r: Revision = serde_json::from_value(record).unwrap();
+    r.sequence = 1;
     let mut f = empty_preflight(&env, &target);
     f.records = 1;
     f.objects = 1;
     f.revision_bytes = 4096;
-    f.peak_pending_bytes = 400;
+    f.chunks = 1;
+    f.peak_pending_bytes = 400000;
     f.sequence = 1;
     f.target_commitment =
         Sha256::digest([f.target_commitment, store::restore::leaf(&r)].concat()).to_vec();
@@ -1725,7 +1726,7 @@ fn restore_pipeline_current_replacement_at_exact_global_quota() {
     let key = admit_pipeline(&env, 1);
     let (_, _, target) = allocated_pipeline(&env, 1, &key);
     let mut f = empty_preflight(&env, &target);
-    // One canonical retained tombstone: 4096 revision bytes + JSON hashes "[]".
+    // One canonical retained tombstone: the normal delete path charges 4096 bytes.
     let record = Revision {
         vault: vec![1; 16],
         object: vec![20; 16],
@@ -1739,11 +1740,11 @@ fn restore_pipeline_current_replacement_at_exact_global_quota() {
     f.records = 1;
     f.objects = 1;
     f.sequence = 1;
-    f.revision_bytes = 4098;
+    f.revision_bytes = 4096;
     f.peak_pending_bytes = serde_json::to_vec(&record).unwrap().len() as u64;
     env.transaction(|db| {
         db.execute("INSERT INTO objects VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)", params![record.vault,record.object]).unwrap();
-        db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,X'','[]',1,4098)", params![record.vault,record.object]).unwrap();
+        db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,X'','[]',1,4096)", params![record.vault,record.object]).unwrap();
         let used=store::content::global_usage(db)?;
         let filler_owner=Principal::self_authenticating([219;32]);
         db.execute("INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,X'','[]',1,?4)", params![filler_owner.as_slice(),vec![218u8;16],vec![217u8;16],(TOTAL_MAX-used) as i64]).unwrap();
