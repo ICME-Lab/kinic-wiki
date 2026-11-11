@@ -1,0 +1,27 @@
+{
+  "name": "@kinic/vault-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/api.ts",
+    "./contracts": "./src/contracts.ts",
+    "./session": "./src/session.ts"
+  },
+  "dependencies": {
+    "@icp-sdk/core": "5.4.0",
+    "@kinic/vault-crypto": "workspace:*",
+    "@kinic/vault-backup": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "4.1.12",
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2"
+  },
+  "scripts": {
+    "contracts:check": "node scripts/generate-contracts.mjs --check",
+    "contracts:generate": "node scripts/generate-contracts.mjs",
+    "test": "vitest run --root ../.. packages/vault-client packages/vault-crypto packages/vault-backup",
+    "typecheck": "tsc --project tsconfig.json"
+  }
+}

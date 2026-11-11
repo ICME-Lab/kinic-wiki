@@ -9,111 +9,52 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SupportRouteImport } from './routes/support'
-import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
-import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
-import { Route as ProfileRouteImport } from './routes/profile'
-import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
-import { Route as MetricsRouteImport } from './routes/metrics'
-import { Route as MarketplaceRouteImport } from './routes/marketplace'
-import { Route as IosShareRouteImport } from './routes/ios-share'
-import { Route as IosAuthCallbackRouteImport } from './routes/ios-auth-callback'
-import { Route as IosRouteImport } from './routes/ios'
-import { Route as FaviconDoticoRouteImport } from './routes/favicon[.]ico'
-import { Route as DocsRouteImport } from './routes/docs'
-import { Route as DashboardRouteImport } from './routes/dashboard'
-import { Route as CyclesRouteImport } from './routes/cycles'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as MarketplaceIndexRouteImport } from './routes/marketplace.index'
-import { Route as DocsIndexRouteImport } from './routes/docs.index'
-import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
-import { Route as SkillsDatabaseIdRouteImport } from './routes/skills.$databaseId'
-import { Route as PPublicIdRouteImport } from './routes/p.$publicId'
-import { Route as MarketplaceListingIdRouteImport } from './routes/marketplace.$listingId'
-import { Route as DocsSkillsRouteImport } from './routes/docs.skills'
-import { Route as DocsIosRouteImport } from './routes/docs.ios'
-import { Route as DocsClipperRouteImport } from './routes/docs.clipper'
-import { Route as DocsCliRouteImport } from './routes/docs.cli'
-import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
-import { Route as DbDatabaseIdRouteImport } from './routes/db.$databaseId'
-import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
+import { Route as CyclesRouteImport } from './routes/cycles'
+import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as DocsRouteImport } from './routes/docs'
+import { Route as FaviconDoticoRouteImport } from './routes/favicon[.]ico'
+import { Route as IosRouteImport } from './routes/ios'
+import { Route as IosAuthCallbackRouteImport } from './routes/ios-auth-callback'
+import { Route as IosShareRouteImport } from './routes/ios-share'
+import { Route as MarketplaceRouteImport } from './routes/marketplace'
+import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
+import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as SupportRouteImport } from './routes/support'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known.apple-app-site-association'
-import { Route as DocsSkillsIndexRouteImport } from './routes/docs.skills.index'
-import { Route as DbDatabaseIdIndexRouteImport } from './routes/db.$databaseId.index'
-import { Route as MarketplaceSellerPrincipalRouteImport } from './routes/marketplace.seller.$principal'
-import { Route as DocsSkillsSlugRouteImport } from './routes/docs.skills.$slug'
-import { Route as DbDatabaseIdTwitterImageRouteImport } from './routes/db.$databaseId.twitter-image'
-import { Route as DbDatabaseIdOpengraphImageRouteImport } from './routes/db.$databaseId.opengraph-image'
-import { Route as DbDatabaseIdSplatRouteImport } from './routes/db.$databaseId.$'
-import { Route as DashboardProjectDatabaseIdRouteImport } from './routes/dashboard.project.$databaseId'
-import { Route as ApiSourceRunRouteImport } from './routes/api.source.run'
-import { Route as ApiSourceCaptureTriggerRouteImport } from './routes/api.source-capture.trigger'
-import { Route as ApiRecallRerankRouteImport } from './routes/api.recall.rerank'
+import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
+import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as DashboardVaultRouteImport } from './routes/dashboard.vault'
+import { Route as DbDatabaseIdRouteImport } from './routes/db.$databaseId'
+import { Route as DocsIndexRouteImport } from './routes/docs.index'
+import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
+import { Route as DocsCliRouteImport } from './routes/docs.cli'
+import { Route as DocsClipperRouteImport } from './routes/docs.clipper'
+import { Route as DocsIosRouteImport } from './routes/docs.ios'
+import { Route as DocsSkillsRouteImport } from './routes/docs.skills'
+import { Route as MarketplaceIndexRouteImport } from './routes/marketplace.index'
+import { Route as MarketplaceListingIdRouteImport } from './routes/marketplace.$listingId'
+import { Route as PPublicIdRouteImport } from './routes/p.$publicId'
+import { Route as SkillsDatabaseIdRouteImport } from './routes/skills.$databaseId'
 import { Route as ApiQueryAnswerRouteImport } from './routes/api.query.answer'
+import { Route as ApiRecallRerankRouteImport } from './routes/api.recall.rerank'
+import { Route as ApiSourceCaptureTriggerRouteImport } from './routes/api.source-capture.trigger'
+import { Route as ApiSourceRunRouteImport } from './routes/api.source.run'
+import { Route as DashboardProjectDatabaseIdRouteImport } from './routes/dashboard.project.$databaseId'
+import { Route as DbDatabaseIdIndexRouteImport } from './routes/db.$databaseId.index'
+import { Route as DbDatabaseIdSplatRouteImport } from './routes/db.$databaseId.$'
+import { Route as DbDatabaseIdOpengraphImageRouteImport } from './routes/db.$databaseId.opengraph-image'
+import { Route as DbDatabaseIdTwitterImageRouteImport } from './routes/db.$databaseId.twitter-image'
+import { Route as DocsSkillsIndexRouteImport } from './routes/docs.skills.index'
+import { Route as DocsSkillsSlugRouteImport } from './routes/docs.skills.$slug'
+import { Route as MarketplaceSellerPrincipalRouteImport } from './routes/marketplace.seller.$principal'
 
-const SupportRoute = SupportRouteImport.update({
-  id: '/support',
-  path: '/support',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
-  id: '/sitemap.xml',
-  path: '/sitemap.xml',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
-  id: '/robots.txt',
-  path: '/robots.txt',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProfileRoute = ProfileRouteImport.update({
-  id: '/profile',
-  path: '/profile',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
-  id: '/privacy-policy',
-  path: '/privacy-policy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MetricsRoute = MetricsRouteImport.update({
-  id: '/metrics',
-  path: '/metrics',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MarketplaceRoute = MarketplaceRouteImport.update({
-  id: '/marketplace',
-  path: '/marketplace',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IosShareRoute = IosShareRouteImport.update({
-  id: '/ios-share',
-  path: '/ios-share',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IosAuthCallbackRoute = IosAuthCallbackRouteImport.update({
-  id: '/ios-auth-callback',
-  path: '/ios-auth-callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IosRoute = IosRouteImport.update({
-  id: '/ios',
-  path: '/ios',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FaviconDoticoRoute = FaviconDoticoRouteImport.update({
-  id: '/favicon.ico',
-  path: '/favicon.ico',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DocsRoute = DocsRouteImport.update({
-  id: '/docs',
-  path: '/docs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DashboardRoute = DashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CyclesRoute = CyclesRouteImport.update({
@@ -121,59 +62,101 @@ const CyclesRoute = CyclesRouteImport.update({
   path: '/cycles',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MarketplaceIndexRoute = MarketplaceIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => MarketplaceRoute,
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const DocsIndexRoute = DocsIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => DocsRoute,
+const FaviconDoticoRoute = FaviconDoticoRouteImport.update({
+  id: '/favicon.ico',
+  path: '/favicon.ico',
+  getParentRoute: () => rootRouteImport,
 } as any)
+const IosRoute = IosRouteImport.update({
+  id: '/ios',
+  path: '/ios',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IosAuthCallbackRoute = IosAuthCallbackRouteImport.update({
+  id: '/ios-auth-callback',
+  path: '/ios-auth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IosShareRoute = IosShareRouteImport.update({
+  id: '/ios-share',
+  path: '/ios-share',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketplaceRoute = MarketplaceRouteImport.update({
+  id: '/marketplace',
+  path: '/marketplace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetricsRoute = MetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
+  id: '/privacy-policy',
+  path: '/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
+  id: '/robots.txt',
+  path: '/robots.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SupportRoute = SupportRouteImport.update({
+  id: '/support',
+  path: '/support',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DotwellKnownAppleAppSiteAssociationRoute =
+  DotwellKnownAppleAppSiteAssociationRouteImport.update({
+    id: '/.well-known/apple-app-site-association',
+    path: '/.well-known/apple-app-site-association',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DotwellKnownIiAuthCallbacksRoute =
+  DotwellKnownIiAuthCallbacksRouteImport.update({
+    id: '/.well-known/ii-auth-callbacks',
+    path: '/.well-known/ii-auth-callbacks',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => DashboardRoute,
 } as any)
-const SkillsDatabaseIdRoute = SkillsDatabaseIdRouteImport.update({
-  id: '/skills/$databaseId',
-  path: '/skills/$databaseId',
+const DashboardVaultRoute = DashboardVaultRouteImport.update({
+  id: '/vault',
+  path: '/vault',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DbDatabaseIdRoute = DbDatabaseIdRouteImport.update({
+  id: '/db/$databaseId',
+  path: '/db/$databaseId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PPublicIdRoute = PPublicIdRouteImport.update({
-  id: '/p/$publicId',
-  path: '/p/$publicId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MarketplaceListingIdRoute = MarketplaceListingIdRouteImport.update({
-  id: '/$listingId',
-  path: '/$listingId',
-  getParentRoute: () => MarketplaceRoute,
-} as any)
-const DocsSkillsRoute = DocsSkillsRouteImport.update({
-  id: '/skills',
-  path: '/skills',
-  getParentRoute: () => DocsRoute,
-} as any)
-const DocsIosRoute = DocsIosRouteImport.update({
-  id: '/ios',
-  path: '/ios',
-  getParentRoute: () => DocsRoute,
-} as any)
-const DocsClipperRoute = DocsClipperRouteImport.update({
-  id: '/clipper',
-  path: '/clipper',
-  getParentRoute: () => DocsRoute,
-} as any)
-const DocsCliRoute = DocsCliRouteImport.update({
-  id: '/cli',
-  path: '/cli',
+const DocsIndexRoute = DocsIndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsCanisterApiRoute = DocsCanisterApiRouteImport.update({
@@ -181,80 +164,44 @@ const DocsCanisterApiRoute = DocsCanisterApiRouteImport.update({
   path: '/canister-api',
   getParentRoute: () => DocsRoute,
 } as any)
-const DbDatabaseIdRoute = DbDatabaseIdRouteImport.update({
-  id: '/db/$databaseId',
-  path: '/db/$databaseId',
-  getParentRoute: () => rootRouteImport,
+const DocsCliRoute = DocsCliRouteImport.update({
+  id: '/cli',
+  path: '/cli',
+  getParentRoute: () => DocsRoute,
 } as any)
-const DotwellKnownIiAuthCallbacksRoute =
-  DotwellKnownIiAuthCallbacksRouteImport.update({
-    id: '/.well-known/ii-auth-callbacks',
-    path: '/.well-known/ii-auth-callbacks',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const DotwellKnownAppleAppSiteAssociationRoute =
-  DotwellKnownAppleAppSiteAssociationRouteImport.update({
-    id: '/.well-known/apple-app-site-association',
-    path: '/.well-known/apple-app-site-association',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const DocsSkillsIndexRoute = DocsSkillsIndexRouteImport.update({
+const DocsClipperRoute = DocsClipperRouteImport.update({
+  id: '/clipper',
+  path: '/clipper',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsIosRoute = DocsIosRouteImport.update({
+  id: '/ios',
+  path: '/ios',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSkillsRoute = DocsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => DocsRoute,
+} as any)
+const MarketplaceIndexRoute = MarketplaceIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => DocsSkillsRoute,
+  getParentRoute: () => MarketplaceRoute,
 } as any)
-const DbDatabaseIdIndexRoute = DbDatabaseIdIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => DbDatabaseIdRoute,
+const MarketplaceListingIdRoute = MarketplaceListingIdRouteImport.update({
+  id: '/$listingId',
+  path: '/$listingId',
+  getParentRoute: () => MarketplaceRoute,
 } as any)
-const MarketplaceSellerPrincipalRoute =
-  MarketplaceSellerPrincipalRouteImport.update({
-    id: '/seller/$principal',
-    path: '/seller/$principal',
-    getParentRoute: () => MarketplaceRoute,
-  } as any)
-const DocsSkillsSlugRoute = DocsSkillsSlugRouteImport.update({
-  id: '/$slug',
-  path: '/$slug',
-  getParentRoute: () => DocsSkillsRoute,
-} as any)
-const DbDatabaseIdTwitterImageRoute =
-  DbDatabaseIdTwitterImageRouteImport.update({
-    id: '/twitter-image',
-    path: '/twitter-image',
-    getParentRoute: () => DbDatabaseIdRoute,
-  } as any)
-const DbDatabaseIdOpengraphImageRoute =
-  DbDatabaseIdOpengraphImageRouteImport.update({
-    id: '/opengraph-image',
-    path: '/opengraph-image',
-    getParentRoute: () => DbDatabaseIdRoute,
-  } as any)
-const DbDatabaseIdSplatRoute = DbDatabaseIdSplatRouteImport.update({
-  id: '/$',
-  path: '/$',
-  getParentRoute: () => DbDatabaseIdRoute,
-} as any)
-const DashboardProjectDatabaseIdRoute =
-  DashboardProjectDatabaseIdRouteImport.update({
-    id: '/project/$databaseId',
-    path: '/project/$databaseId',
-    getParentRoute: () => DashboardRoute,
-  } as any)
-const ApiSourceRunRoute = ApiSourceRunRouteImport.update({
-  id: '/api/source/run',
-  path: '/api/source/run',
+const PPublicIdRoute = PPublicIdRouteImport.update({
+  id: '/p/$publicId',
+  path: '/p/$publicId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiSourceCaptureTriggerRoute = ApiSourceCaptureTriggerRouteImport.update({
-  id: '/api/source-capture/trigger',
-  path: '/api/source-capture/trigger',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiRecallRerankRoute = ApiRecallRerankRouteImport.update({
-  id: '/api/recall/rerank',
-  path: '/api/recall/rerank',
+const SkillsDatabaseIdRoute = SkillsDatabaseIdRouteImport.update({
+  id: '/skills/$databaseId',
+  path: '/skills/$databaseId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiQueryAnswerRoute = ApiQueryAnswerRouteImport.update({
@@ -262,6 +209,65 @@ const ApiQueryAnswerRoute = ApiQueryAnswerRouteImport.update({
   path: '/api/query/answer',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiRecallRerankRoute = ApiRecallRerankRouteImport.update({
+  id: '/api/recall/rerank',
+  path: '/api/recall/rerank',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSourceCaptureTriggerRoute = ApiSourceCaptureTriggerRouteImport.update({
+  id: '/api/source-capture/trigger',
+  path: '/api/source-capture/trigger',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSourceRunRoute = ApiSourceRunRouteImport.update({
+  id: '/api/source/run',
+  path: '/api/source/run',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardProjectDatabaseIdRoute =
+  DashboardProjectDatabaseIdRouteImport.update({
+    id: '/project/$databaseId',
+    path: '/project/$databaseId',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DbDatabaseIdIndexRoute = DbDatabaseIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DbDatabaseIdRoute,
+} as any)
+const DbDatabaseIdSplatRoute = DbDatabaseIdSplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => DbDatabaseIdRoute,
+} as any)
+const DbDatabaseIdOpengraphImageRoute =
+  DbDatabaseIdOpengraphImageRouteImport.update({
+    id: '/opengraph-image',
+    path: '/opengraph-image',
+    getParentRoute: () => DbDatabaseIdRoute,
+  } as any)
+const DbDatabaseIdTwitterImageRoute =
+  DbDatabaseIdTwitterImageRouteImport.update({
+    id: '/twitter-image',
+    path: '/twitter-image',
+    getParentRoute: () => DbDatabaseIdRoute,
+  } as any)
+const DocsSkillsIndexRoute = DocsSkillsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DocsSkillsRoute,
+} as any)
+const DocsSkillsSlugRoute = DocsSkillsSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => DocsSkillsRoute,
+} as any)
+const MarketplaceSellerPrincipalRoute =
+  MarketplaceSellerPrincipalRouteImport.update({
+    id: '/seller/$principal',
+    path: '/seller/$principal',
+    getParentRoute: () => MarketplaceRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -281,6 +287,7 @@ export interface FileRoutesByFullPath {
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
+  '/dashboard/vault': typeof DashboardVaultRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -321,6 +328,7 @@ export interface FileRoutesByTo {
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
+  '/dashboard/vault': typeof DashboardVaultRoute
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
@@ -363,6 +371,7 @@ export interface FileRoutesById {
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
+  '/dashboard/vault': typeof DashboardVaultRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -408,6 +417,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
+    | '/dashboard/vault'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -448,6 +458,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
+    | '/dashboard/vault'
     | '/docs/canister-api'
     | '/docs/cli'
     | '/docs/clipper'
@@ -489,6 +500,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
+    | '/dashboard/vault'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -544,95 +556,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/support': {
-      id: '/support'
-      path: '/support'
-      fullPath: '/support'
-      preLoaderRoute: typeof SupportRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/sitemap.xml': {
-      id: '/sitemap.xml'
-      path: '/sitemap.xml'
-      fullPath: '/sitemap.xml'
-      preLoaderRoute: typeof SitemapDotxmlRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/robots.txt': {
-      id: '/robots.txt'
-      path: '/robots.txt'
-      fullPath: '/robots.txt'
-      preLoaderRoute: typeof RobotsDottxtRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/profile': {
-      id: '/profile'
-      path: '/profile'
-      fullPath: '/profile'
-      preLoaderRoute: typeof ProfileRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy-policy': {
-      id: '/privacy-policy'
-      path: '/privacy-policy'
-      fullPath: '/privacy-policy'
-      preLoaderRoute: typeof PrivacyPolicyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/metrics': {
-      id: '/metrics'
-      path: '/metrics'
-      fullPath: '/metrics'
-      preLoaderRoute: typeof MetricsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/marketplace': {
-      id: '/marketplace'
-      path: '/marketplace'
-      fullPath: '/marketplace'
-      preLoaderRoute: typeof MarketplaceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ios-share': {
-      id: '/ios-share'
-      path: '/ios-share'
-      fullPath: '/ios-share'
-      preLoaderRoute: typeof IosShareRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ios-auth-callback': {
-      id: '/ios-auth-callback'
-      path: '/ios-auth-callback'
-      fullPath: '/ios-auth-callback'
-      preLoaderRoute: typeof IosAuthCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ios': {
-      id: '/ios'
-      path: '/ios'
-      fullPath: '/ios'
-      preLoaderRoute: typeof IosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/favicon.ico': {
-      id: '/favicon.ico'
-      path: '/favicon.ico'
-      fullPath: '/favicon.ico'
-      preLoaderRoute: typeof FaviconDoticoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/docs': {
-      id: '/docs'
-      path: '/docs'
-      fullPath: '/docs'
-      preLoaderRoute: typeof DocsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dashboard': {
-      id: '/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof DashboardRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cycles': {
@@ -642,102 +570,95 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CyclesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/marketplace/': {
-      id: '/marketplace/'
-      path: '/'
-      fullPath: '/marketplace/'
-      preLoaderRoute: typeof MarketplaceIndexRouteImport
-      parentRoute: typeof MarketplaceRoute
-    }
-    '/docs/': {
-      id: '/docs/'
-      path: '/'
-      fullPath: '/docs/'
-      preLoaderRoute: typeof DocsIndexRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/dashboard/': {
-      id: '/dashboard/'
-      path: '/'
-      fullPath: '/dashboard/'
-      preLoaderRoute: typeof DashboardIndexRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/skills/$databaseId': {
-      id: '/skills/$databaseId'
-      path: '/skills/$databaseId'
-      fullPath: '/skills/$databaseId'
-      preLoaderRoute: typeof SkillsDatabaseIdRouteImport
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/p/$publicId': {
-      id: '/p/$publicId'
-      path: '/p/$publicId'
-      fullPath: '/p/$publicId'
-      preLoaderRoute: typeof PPublicIdRouteImport
+    '/favicon.ico': {
+      id: '/favicon.ico'
+      path: '/favicon.ico'
+      fullPath: '/favicon.ico'
+      preLoaderRoute: typeof FaviconDoticoRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/marketplace/$listingId': {
-      id: '/marketplace/$listingId'
-      path: '/$listingId'
-      fullPath: '/marketplace/$listingId'
-      preLoaderRoute: typeof MarketplaceListingIdRouteImport
-      parentRoute: typeof MarketplaceRoute
-    }
-    '/docs/skills': {
-      id: '/docs/skills'
-      path: '/skills'
-      fullPath: '/docs/skills'
-      preLoaderRoute: typeof DocsSkillsRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/ios': {
-      id: '/docs/ios'
+    '/ios': {
+      id: '/ios'
       path: '/ios'
-      fullPath: '/docs/ios'
-      preLoaderRoute: typeof DocsIosRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/clipper': {
-      id: '/docs/clipper'
-      path: '/clipper'
-      fullPath: '/docs/clipper'
-      preLoaderRoute: typeof DocsClipperRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/cli': {
-      id: '/docs/cli'
-      path: '/cli'
-      fullPath: '/docs/cli'
-      preLoaderRoute: typeof DocsCliRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/canister-api': {
-      id: '/docs/canister-api'
-      path: '/canister-api'
-      fullPath: '/docs/canister-api'
-      preLoaderRoute: typeof DocsCanisterApiRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/db/$databaseId': {
-      id: '/db/$databaseId'
-      path: '/db/$databaseId'
-      fullPath: '/db/$databaseId'
-      preLoaderRoute: typeof DbDatabaseIdRouteImport
+      fullPath: '/ios'
+      preLoaderRoute: typeof IosRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/.well-known/ii-auth-callbacks': {
-      id: '/.well-known/ii-auth-callbacks'
-      path: '/.well-known/ii-auth-callbacks'
-      fullPath: '/.well-known/ii-auth-callbacks'
-      preLoaderRoute: typeof DotwellKnownIiAuthCallbacksRouteImport
+    '/ios-auth-callback': {
+      id: '/ios-auth-callback'
+      path: '/ios-auth-callback'
+      fullPath: '/ios-auth-callback'
+      preLoaderRoute: typeof IosAuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ios-share': {
+      id: '/ios-share'
+      path: '/ios-share'
+      fullPath: '/ios-share'
+      preLoaderRoute: typeof IosShareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketplace': {
+      id: '/marketplace'
+      path: '/marketplace'
+      fullPath: '/marketplace'
+      preLoaderRoute: typeof MarketplaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metrics': {
+      id: '/metrics'
+      path: '/metrics'
+      fullPath: '/metrics'
+      preLoaderRoute: typeof MetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy-policy': {
+      id: '/privacy-policy'
+      path: '/privacy-policy'
+      fullPath: '/privacy-policy'
+      preLoaderRoute: typeof PrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/robots.txt': {
+      id: '/robots.txt'
+      path: '/robots.txt'
+      fullPath: '/robots.txt'
+      preLoaderRoute: typeof RobotsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/support': {
+      id: '/support'
+      path: '/support'
+      fullPath: '/support'
+      preLoaderRoute: typeof SupportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/.well-known/apple-app-site-association': {
@@ -747,81 +668,102 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DotwellKnownAppleAppSiteAssociationRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/docs/skills/': {
-      id: '/docs/skills/'
+    '/.well-known/ii-auth-callbacks': {
+      id: '/.well-known/ii-auth-callbacks'
+      path: '/.well-known/ii-auth-callbacks'
+      fullPath: '/.well-known/ii-auth-callbacks'
+      preLoaderRoute: typeof DotwellKnownIiAuthCallbacksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/': {
+      id: '/dashboard/'
       path: '/'
-      fullPath: '/docs/skills/'
-      preLoaderRoute: typeof DocsSkillsIndexRouteImport
-      parentRoute: typeof DocsSkillsRoute
-    }
-    '/db/$databaseId/': {
-      id: '/db/$databaseId/'
-      path: '/'
-      fullPath: '/db/$databaseId/'
-      preLoaderRoute: typeof DbDatabaseIdIndexRouteImport
-      parentRoute: typeof DbDatabaseIdRoute
-    }
-    '/marketplace/seller/$principal': {
-      id: '/marketplace/seller/$principal'
-      path: '/seller/$principal'
-      fullPath: '/marketplace/seller/$principal'
-      preLoaderRoute: typeof MarketplaceSellerPrincipalRouteImport
-      parentRoute: typeof MarketplaceRoute
-    }
-    '/docs/skills/$slug': {
-      id: '/docs/skills/$slug'
-      path: '/$slug'
-      fullPath: '/docs/skills/$slug'
-      preLoaderRoute: typeof DocsSkillsSlugRouteImport
-      parentRoute: typeof DocsSkillsRoute
-    }
-    '/db/$databaseId/twitter-image': {
-      id: '/db/$databaseId/twitter-image'
-      path: '/twitter-image'
-      fullPath: '/db/$databaseId/twitter-image'
-      preLoaderRoute: typeof DbDatabaseIdTwitterImageRouteImport
-      parentRoute: typeof DbDatabaseIdRoute
-    }
-    '/db/$databaseId/opengraph-image': {
-      id: '/db/$databaseId/opengraph-image'
-      path: '/opengraph-image'
-      fullPath: '/db/$databaseId/opengraph-image'
-      preLoaderRoute: typeof DbDatabaseIdOpengraphImageRouteImport
-      parentRoute: typeof DbDatabaseIdRoute
-    }
-    '/db/$databaseId/$': {
-      id: '/db/$databaseId/$'
-      path: '/$'
-      fullPath: '/db/$databaseId/$'
-      preLoaderRoute: typeof DbDatabaseIdSplatRouteImport
-      parentRoute: typeof DbDatabaseIdRoute
-    }
-    '/dashboard/project/$databaseId': {
-      id: '/dashboard/project/$databaseId'
-      path: '/project/$databaseId'
-      fullPath: '/dashboard/project/$databaseId'
-      preLoaderRoute: typeof DashboardProjectDatabaseIdRouteImport
+      fullPath: '/dashboard/'
+      preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof DashboardRoute
     }
-    '/api/source/run': {
-      id: '/api/source/run'
-      path: '/api/source/run'
-      fullPath: '/api/source/run'
-      preLoaderRoute: typeof ApiSourceRunRouteImport
+    '/dashboard/vault': {
+      id: '/dashboard/vault'
+      path: '/vault'
+      fullPath: '/dashboard/vault'
+      preLoaderRoute: typeof DashboardVaultRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/db/$databaseId': {
+      id: '/db/$databaseId'
+      path: '/db/$databaseId'
+      fullPath: '/db/$databaseId'
+      preLoaderRoute: typeof DbDatabaseIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/source-capture/trigger': {
-      id: '/api/source-capture/trigger'
-      path: '/api/source-capture/trigger'
-      fullPath: '/api/source-capture/trigger'
-      preLoaderRoute: typeof ApiSourceCaptureTriggerRouteImport
+    '/docs/': {
+      id: '/docs/'
+      path: '/'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof DocsIndexRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/canister-api': {
+      id: '/docs/canister-api'
+      path: '/canister-api'
+      fullPath: '/docs/canister-api'
+      preLoaderRoute: typeof DocsCanisterApiRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/cli': {
+      id: '/docs/cli'
+      path: '/cli'
+      fullPath: '/docs/cli'
+      preLoaderRoute: typeof DocsCliRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/clipper': {
+      id: '/docs/clipper'
+      path: '/clipper'
+      fullPath: '/docs/clipper'
+      preLoaderRoute: typeof DocsClipperRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/ios': {
+      id: '/docs/ios'
+      path: '/ios'
+      fullPath: '/docs/ios'
+      preLoaderRoute: typeof DocsIosRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/skills': {
+      id: '/docs/skills'
+      path: '/skills'
+      fullPath: '/docs/skills'
+      preLoaderRoute: typeof DocsSkillsRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/marketplace/': {
+      id: '/marketplace/'
+      path: '/'
+      fullPath: '/marketplace/'
+      preLoaderRoute: typeof MarketplaceIndexRouteImport
+      parentRoute: typeof MarketplaceRoute
+    }
+    '/marketplace/$listingId': {
+      id: '/marketplace/$listingId'
+      path: '/$listingId'
+      fullPath: '/marketplace/$listingId'
+      preLoaderRoute: typeof MarketplaceListingIdRouteImport
+      parentRoute: typeof MarketplaceRoute
+    }
+    '/p/$publicId': {
+      id: '/p/$publicId'
+      path: '/p/$publicId'
+      fullPath: '/p/$publicId'
+      preLoaderRoute: typeof PPublicIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/recall/rerank': {
-      id: '/api/recall/rerank'
-      path: '/api/recall/rerank'
-      fullPath: '/api/recall/rerank'
-      preLoaderRoute: typeof ApiRecallRerankRouteImport
+    '/skills/$databaseId': {
+      id: '/skills/$databaseId'
+      path: '/skills/$databaseId'
+      fullPath: '/skills/$databaseId'
+      preLoaderRoute: typeof SkillsDatabaseIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/query/answer': {
@@ -831,15 +773,94 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiQueryAnswerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/recall/rerank': {
+      id: '/api/recall/rerank'
+      path: '/api/recall/rerank'
+      fullPath: '/api/recall/rerank'
+      preLoaderRoute: typeof ApiRecallRerankRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/source-capture/trigger': {
+      id: '/api/source-capture/trigger'
+      path: '/api/source-capture/trigger'
+      fullPath: '/api/source-capture/trigger'
+      preLoaderRoute: typeof ApiSourceCaptureTriggerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/source/run': {
+      id: '/api/source/run'
+      path: '/api/source/run'
+      fullPath: '/api/source/run'
+      preLoaderRoute: typeof ApiSourceRunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/project/$databaseId': {
+      id: '/dashboard/project/$databaseId'
+      path: '/project/$databaseId'
+      fullPath: '/dashboard/project/$databaseId'
+      preLoaderRoute: typeof DashboardProjectDatabaseIdRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/db/$databaseId/': {
+      id: '/db/$databaseId/'
+      path: '/'
+      fullPath: '/db/$databaseId/'
+      preLoaderRoute: typeof DbDatabaseIdIndexRouteImport
+      parentRoute: typeof DbDatabaseIdRoute
+    }
+    '/db/$databaseId/$': {
+      id: '/db/$databaseId/$'
+      path: '/$'
+      fullPath: '/db/$databaseId/$'
+      preLoaderRoute: typeof DbDatabaseIdSplatRouteImport
+      parentRoute: typeof DbDatabaseIdRoute
+    }
+    '/db/$databaseId/opengraph-image': {
+      id: '/db/$databaseId/opengraph-image'
+      path: '/opengraph-image'
+      fullPath: '/db/$databaseId/opengraph-image'
+      preLoaderRoute: typeof DbDatabaseIdOpengraphImageRouteImport
+      parentRoute: typeof DbDatabaseIdRoute
+    }
+    '/db/$databaseId/twitter-image': {
+      id: '/db/$databaseId/twitter-image'
+      path: '/twitter-image'
+      fullPath: '/db/$databaseId/twitter-image'
+      preLoaderRoute: typeof DbDatabaseIdTwitterImageRouteImport
+      parentRoute: typeof DbDatabaseIdRoute
+    }
+    '/docs/skills/': {
+      id: '/docs/skills/'
+      path: '/'
+      fullPath: '/docs/skills/'
+      preLoaderRoute: typeof DocsSkillsIndexRouteImport
+      parentRoute: typeof DocsSkillsRoute
+    }
+    '/docs/skills/$slug': {
+      id: '/docs/skills/$slug'
+      path: '/$slug'
+      fullPath: '/docs/skills/$slug'
+      preLoaderRoute: typeof DocsSkillsSlugRouteImport
+      parentRoute: typeof DocsSkillsRoute
+    }
+    '/marketplace/seller/$principal': {
+      id: '/marketplace/seller/$principal'
+      path: '/seller/$principal'
+      fullPath: '/marketplace/seller/$principal'
+      preLoaderRoute: typeof MarketplaceSellerPrincipalRouteImport
+      parentRoute: typeof MarketplaceRoute
+    }
   }
 }
 
 interface DashboardRouteChildren {
+  DashboardVaultRoute: typeof DashboardVaultRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardProjectDatabaseIdRoute: typeof DashboardProjectDatabaseIdRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardVaultRoute: DashboardVaultRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardProjectDatabaseIdRoute: DashboardProjectDatabaseIdRoute,
 }

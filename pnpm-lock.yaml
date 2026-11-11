@@ -107,6 +107,51 @@ importers:
 
   packages/source-contracts: {}
 
+  packages/vault-backup:
+    dependencies:
+      '@kinic/vault-crypto':
+        specifier: workspace:*
+        version: link:../vault-crypto
+    devDependencies:
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
+
+  packages/vault-client:
+    dependencies:
+      '@icp-sdk/core':
+        specifier: 5.4.0
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@kinic/vault-backup':
+        specifier: workspace:*
+        version: link:../vault-backup
+      '@kinic/vault-crypto':
+        specifier: workspace:*
+        version: link:../vault-crypto
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
+
+  packages/vault-crypto:
+    dependencies:
+      '@icp-sdk/core':
+        specifier: 5.4.0
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@icp-sdk/vetkeys':
+        specifier: 0.7.0
+        version: 0.7.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
+    devDependencies:
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
+
   packages/vfs-candid:
     dependencies:
       '@icp-sdk/core':
@@ -231,6 +276,15 @@ importers:
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../packages/source-contracts
+      '@kinic/vault-backup':
+        specifier: workspace:*
+        version: link:../packages/vault-backup
+      '@kinic/vault-client':
+        specifier: workspace:*
+        version: link:../packages/vault-client
+      '@kinic/vault-crypto':
+        specifier: workspace:*
+        version: link:../packages/vault-crypto
       '@kinic/vfs-candid':
         specifier: workspace:*
         version: link:../packages/vfs-candid
@@ -1164,6 +1218,11 @@ packages:
 
   '@icp-sdk/core@6.0.0':
     resolution: {integrity: sha512-z+oHm+MTB/Xo27LQCYXDpVcUyFQwceupoyqkYCW6aaiZ2GJ1BvhRbSMsm7XDHAgCuZmWULPxpiTFUnHZLDEKzw==}
+
+  '@icp-sdk/vetkeys@0.7.0':
+    resolution: {integrity: sha512-Elf5597qanu1KJd6mxZ3Wy7/QGBheErRiz4aGVs/XzFzgUWpOJr7Hvl+Vs6y/1xW/ejaoQDrbDhsjSjEejDaJA==}
+    peerDependencies:
+      '@icp-sdk/core': ^5.0.0 || ^6.0.0
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3413,6 +3472,9 @@ packages:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
     engines: {node: '>=0.10.0'}
 
+  idb-keyval@6.3.0:
+    resolution: {integrity: sha512-um+2dgAWmYsu615EXpWVwSmapJhON0G43t3Ka/EVaohzPQXSMqKEqeDK/oIW3Ow+BXaF2PvSc+oBTFp793A5Ow==}
+
   idb@7.1.1:
     resolution: {integrity: sha512-gchesWBzyvGHRO9W8tzUWFDycow5gwjvFKfyV9FF32Y7F50yZMp7mP+T2mJIWFx49zicqyC4uefHM17o6xKIVQ==}
 
@@ -5439,6 +5501,13 @@ snapshots:
       '@scure/bip32': 2.2.0
       '@scure/bip39': 2.2.0
       asn1js: 3.0.10
+
+  '@icp-sdk/vetkeys@0.7.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))':
+    dependencies:
+      '@icp-sdk/core': 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
+      idb-keyval: 6.3.0
 
   '@img/colour@1.1.0': {}
 
@@ -7686,6 +7755,8 @@ snapshots:
   iconv-lite@0.7.3:
     dependencies:
       safer-buffer: 2.1.2
+
+  idb-keyval@6.3.0: {}
 
   idb@7.1.1: {}
 

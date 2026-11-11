@@ -8,10 +8,11 @@ export type MarkdownComponents = Components;
 
 const safeUrlTransform: UrlTransform = (url) => defaultUrlTransform(url) || undefined;
 
-export function Markdown({ children, components }: { children: string; components?: MarkdownComponents }) {
+export function Markdown({ children, components, skipHtml = false }: { children: string; components?: MarkdownComponents; skipHtml?: boolean }) {
   return (
     <ReactMarkdown
       components={components}
+      skipHtml={skipHtml}
       remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
       urlTransform={safeUrlTransform}
     >

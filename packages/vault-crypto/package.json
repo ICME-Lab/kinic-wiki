@@ -1,0 +1,17 @@
+{
+  "name": "@kinic/vault-crypto",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./documents": "./src/documents.ts"
+  },
+  "dependencies": {
+    "@icp-sdk/core": "5.4.0",
+    "@icp-sdk/vetkeys": "0.7.0"
+  },
+  "devDependencies": {
+    "vitest": "4.1.12"
+  }
+}

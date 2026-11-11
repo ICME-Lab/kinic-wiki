@@ -55,6 +55,7 @@ const editorTheme = EditorView.theme({
 export function MarkdownEditor({
   content,
   disabled,
+  indentWithTab = true,
   lineCount,
   byteCount,
   saveState,
@@ -66,6 +67,7 @@ export function MarkdownEditor({
 }: {
   content: string;
   disabled: boolean;
+  indentWithTab?: boolean;
   lineCount: number;
   byteCount: number;
   saveState: EditorSaveState;
@@ -121,6 +123,7 @@ export function MarkdownEditor({
           }}
           className="h-full"
           editable={!disabled}
+          indentWithTab={indentWithTab}
           extensions={extensions}
           height="100%"
           theme="none"

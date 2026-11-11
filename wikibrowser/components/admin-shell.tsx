@@ -8,7 +8,7 @@ import { AppLink as Link } from "@/components/app-link";
 import { useAppPathname } from "@/lib/app-router";
 import { type ReactNode, useState } from "react";
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { BookOpen, ChevronDown, FileText, LayoutDashboard, PanelLeft, PowerOff, Store, type LucideIcon, UserRound, Wallet } from "lucide-react";
+import { BookOpen, ChevronDown, FileText, LayoutDashboard, LockKeyhole, PanelLeft, PowerOff, Store, type LucideIcon, UserRound, Wallet } from "lucide-react";
 import { useAppSession } from "@/app/app-session-provider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
@@ -24,6 +24,7 @@ type AdminNavItem = AdminNavChild & {
 
 const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard/vault", label: "Private Vault", icon: LockKeyhole },
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/cycles", label: "Cycles", icon: Wallet },
   { href: "/profile", label: "My Profile", icon: UserRound },
@@ -204,7 +205,7 @@ function isDocsPath(pathname: string): boolean {
 }
 
 function isActiveAdminPath(pathname: string, href: string): boolean {
-  if (href === "/dashboard") return pathname === "/dashboard" || pathname.startsWith("/dashboard/");
+  if (href === "/dashboard") return pathname === "/dashboard" || (pathname.startsWith("/dashboard/") && pathname !== "/dashboard/vault");
   if (href === "/metrics") return pathname === "/metrics";
   if (href === "/marketplace") return pathname === "/marketplace" || pathname.startsWith("/marketplace/");
   if (href === "/docs") return pathname === "/docs";
