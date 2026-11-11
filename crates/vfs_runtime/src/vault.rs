@@ -92,19 +92,22 @@ impl VfsService {
         if token.len() > 128 || token.is_empty() {
             return Err("invalid reservation token".into());
         }
+        let generation = self
+            .vault_current_generation()
+            .map_err(|_| "Vault generation unavailable")?;
         self.write_index(|tx|{
             if let Some((reserved,settled))=tx.query_row("SELECT reserved,settled_at_ms FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",params![owner,token],|r|Ok((crate::sqlite::row_get::<i64>(r,0)?,crate::sqlite::row_get::<Option<i64>>(r,1)?))).optional().map_err(sql_error)? {
                 return if reserved==amount as i64 && settled.is_none(){Ok(())}else{Err("reservation replay conflict".into())}
             }
             let database=payer(tx,owner)?; eligible(tx,owner,&database)?;settle_storage(tx,owner,now)?;
-            tx.execute("DELETE FROM vault_cycle_reservations WHERE in_flight=0 AND settled_at_ms IS NOT NULL AND settled_at_ms<=?1",params![now.saturating_sub(DAY_MS)]).map_err(sql_error)?;
+            tx.execute("DELETE FROM vault_cycle_reservations WHERE in_flight=0 AND execution_billed>=execution_checkpoint AND settled_at_ms IS NOT NULL AND settled_at_ms<=?1",params![now.saturating_sub(DAY_MS)]).map_err(sql_error)?;
             let count:i64=tx.query_row("SELECT count(*) FROM vault_cycle_reservations",params![],|r|crate::sqlite::row_get(r,0)).map_err(sql_error)?;
             if count>=10000{return Err("Vault reservation journal full".into())}
             let amount=i64::try_from(amount).map_err(|_|"cycle reservation overflow")?;
             let balance=load_storage_cycle_account(tx,&database)?.balance_cycles;
             if balance<amount{return Err("insufficient Vault payer balance".into())}
             adjust_balance(tx,&database,owner,-amount,now)?;
-            tx.execute("INSERT INTO vault_cycle_reservations(owner,token,database_id,reserved,created_at_ms) VALUES(?1,?2,?3,?4,?5)",params![owner,token,database,amount,now]).map_err(sql_error)?;
+            tx.execute("INSERT INTO vault_cycle_reservations(owner,token,database_id,reserved,created_at_ms,generation) VALUES(?1,?2,?3,?4,?5,?6)",params![owner,token,database,amount,now,generation]).map_err(sql_error)?;
             Ok(())
         })
     }
@@ -465,4 +468,96 @@ impl VfsService {
             Ok(())
         })
     }
+}
+
+impl VfsService {
+    pub fn vault_checkpoint_execution(
+        &self,
+        owner: &str,
+        token: &str,
+        cycles: u64,
+    ) -> Result<(), String> {
+        let cycles = i64::try_from(cycles).map_err(|_| "execution checkpoint overflow")?;
+        self.write_index(|tx|{
+            tx.execute("UPDATE vault_cycle_reservations SET execution_checkpoint=max(execution_checkpoint,?3) WHERE owner=?1 AND token=?2",params![owner,token,cycles]).map_err(sql_error)?;
+            Ok(())
+        })
+    }
+    pub fn vault_finish_execution(
+        &self,
+        owner: &str,
+        token: &str,
+        cycles: u64,
+        now: i64,
+    ) -> Result<(), String> {
+        self.write_index(|tx| finish_reserved_execution(tx, owner, token, cycles, now))
+    }
+    pub fn vault_recover_orphan_execution(
+        &self,
+        owner: &str,
+        now: i64,
+    ) -> Result<Vec<u64>, String> {
+        let generation = self
+            .vault_current_generation()
+            .map_err(|_| "Vault generation unavailable")?;
+        self.write_index(|tx|{
+            let mut stmt=tx.prepare("SELECT token,execution_checkpoint,in_flight FROM vault_cycle_reservations WHERE owner=?1 AND generation<?2 AND (execution_checkpoint>execution_billed OR (token LIKE 'challenge:%' AND in_flight=1)) ORDER BY created_at_ms,token LIMIT 1000").map_err(sql_error)?;
+            let rows:Vec<(String,i64,i64)>=crate::sqlite::query_map(&mut stmt,params![owner,generation],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?,crate::sqlite::row_get(r,2)?))).map_err(sql_error)?;
+            let mut challenges=vec![];
+            for (token,checkpoint,flight) in rows {
+                if let Some(id)=token.strip_prefix("challenge:").and_then(|n|n.parse::<u64>().ok()) {
+                    if flight==1{settle_reservation(tx,owner,&token,0,now,true,false)?;}
+                    challenges.push(id);
+                }
+                finish_reserved_execution(tx,owner,&token,checkpoint as u64,now)?;
+            }
+            Ok(challenges)
+        })
+    }
+    fn vault_current_generation(&self) -> vault_types::Result<i64> {
+        self.vault_raw_transaction(|db|db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|crate::sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage))
+    }
+    pub fn vault_clear_orphan_challenges(
+        &self,
+        context: vault_store::OwnerContext,
+        tokens: &[u64],
+    ) -> vault_types::Result<()> {
+        self.vault_raw_transaction(|db| {
+            context.run(db, |db| {
+                if let Some(mut control) = vault_store::load::<serde_json::Value>(db, "control")? {
+                    if control
+                        .get("random")
+                        .and_then(|f| f.get("token"))
+                        .and_then(|t| t.as_u64())
+                        .is_some_and(|t| tokens.contains(&t))
+                    {
+                        control["random"] = serde_json::Value::Null;
+                        vault_store::save(db, "control", &control)?;
+                    }
+                }
+                Ok(())
+            })
+        })
+    }
+}
+fn finish_reserved_execution(
+    tx: &Transaction<'_>,
+    owner: &str,
+    token: &str,
+    cycles: u64,
+    now: i64,
+) -> Result<(), String> {
+    let (database,checkpoint,billed):(String,i64,i64)=tx.query_row("SELECT database_id,execution_checkpoint,execution_billed FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",params![owner,token],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?,crate::sqlite::row_get(r,2)?))).map_err(sql_error)?;
+    let total = i64::try_from(cycles)
+        .map_err(|_| "execution total overflow")?
+        .max(checkpoint);
+    let due = total.saturating_sub(billed).max(0);
+    if due > 0 {
+        let balance = load_storage_cycle_account(tx, &database)?
+            .balance_cycles
+            .max(0);
+        adjust_balance(tx, &database, owner, -balance.min(due), now)?;
+        tx.execute("UPDATE vault_cycle_reservations SET execution_billed=?3,execution_checkpoint=max(execution_checkpoint,?3) WHERE owner=?1 AND token=?2",params![owner,token,total]).map_err(sql_error)?;
+    }
+    Ok(())
 }

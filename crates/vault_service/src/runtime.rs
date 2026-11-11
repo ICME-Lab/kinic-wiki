@@ -9,6 +9,15 @@ pub trait Environment {
     fn balance(&self) -> u128;
     fn transaction<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T>;
     fn require_spending(&self) -> Result<()>;
+    fn reserve_challenge(&self, _token: u64) -> Result<()> {
+        Ok(())
+    }
+    fn settle_challenge(&self, _token: u64) -> Result<()> {
+        Ok(())
+    }
+    fn checkpoint_execution(&self) -> Result<()> {
+        Ok(())
+    }
     fn reserve_cycles(&self, token: u64, amount: u64) -> Result<()>;
     fn settle_cycles(&self, token: u64, actual: u64) -> Result<()>;
     fn actual_derive_payment(&self, attached: u64) -> u64 {

@@ -276,7 +276,19 @@ pub async fn begin_unlock(env: &impl Environment, request: BeginUnlock) -> Resul
         store::save(db, "control", &c)?;
         Ok(token)
     })?;
+    if let Err(error) = env.reserve_challenge(token) {
+        env.transaction(|db| {
+            let mut c = control(db)?;
+            if c.random.as_ref().is_some_and(|f| f.token == token) {
+                c.random = None;
+            }
+            store::save(db, "control", &c)
+        })?;
+        return Err(error);
+    }
+    env.checkpoint_execution()?;
     let random = env.random().await;
+    env.settle_challenge(token)?;
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
         let mut c = control(db)?;
@@ -398,6 +410,7 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         })?;
         return Err(error);
     }
+    env.checkpoint_execution()?;
     let mut sent = false;
     let result = async {
         let public = env.public_key(&cfg.key_name).await?;
@@ -426,6 +439,7 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         env.require_spending()?;
         payment = env.required_derive_payment(&cfg.key_name);
         env.transaction(|db| store::keys::mark_sent(db, token, payment))?;
+        env.checkpoint_execution()?;
         sent = true;
         let encrypted = env
             .derive_key(
@@ -625,10 +639,10 @@ pub fn prepare_unlock_credential(
     })
 }
 pub fn begin_revision(env: &impl Environment, request: BeginRevision) -> Result<Upload> {
+    let payer_eligible = env.require_spending().is_ok();
     env.transaction(|db| {
         let cfg = store::authorize(db, env.owner())?;
-        let allow_new =
-            env.balance() >= cfg.minimum_cycles as u128 && env.require_spending().is_ok();
+        let allow_new = env.balance() >= cfg.minimum_cycles as u128 && payer_eligible;
         if allow_new {
             store::content::gc(db, env.now())?;
         }

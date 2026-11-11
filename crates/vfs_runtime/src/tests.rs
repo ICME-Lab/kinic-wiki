@@ -118,6 +118,7 @@ fn index_migrations_create_current_schema_once() {
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
             INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
             INDEX_SCHEMA_VERSION_VAULT.to_string(),
+            INDEX_SCHEMA_VERSION_VAULT_EXECUTION.to_string(),
         ]
     );
     assert_eq!(
@@ -146,7 +147,7 @@ fn index_migrations_apply_node_publications_once() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:008_vault_execution_checkpoints'; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version != 'database_index:001_initial';",
@@ -171,6 +172,7 @@ fn index_migrations_apply_node_publications_once() {
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
             INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
             INDEX_SCHEMA_VERSION_VAULT.to_string(),
+            INDEX_SCHEMA_VERSION_VAULT_EXECUTION.to_string(),
         ]
     );
 }
@@ -199,7 +201,7 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:008_vault_execution_checkpoints'; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version IN ('database_index:003_publication_mutation_recovery',
@@ -225,6 +227,7 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
             INDEX_SCHEMA_VERSION_VOICE.to_string(),
             INDEX_SCHEMA_VERSION_MAINTENANCE.to_string(),
             INDEX_SCHEMA_VERSION_VAULT.to_string(),
+            INDEX_SCHEMA_VERSION_VAULT_EXECUTION.to_string(),
         ]
     );
 }
@@ -249,7 +252,7 @@ fn index_migrations_roll_back_all_pending_steps_when_004_fails() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:008_vault_execution_checkpoints'; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations
          WHERE version != 'database_index:001_initial';
@@ -317,7 +320,7 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:008_vault_execution_checkpoints'; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -341,7 +344,8 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
             INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
             INDEX_SCHEMA_VERSION_VOICE,
             INDEX_SCHEMA_VERSION_MAINTENANCE,
-            INDEX_SCHEMA_VERSION_VAULT
+            INDEX_SCHEMA_VERSION_VAULT,
+            INDEX_SCHEMA_VERSION_VAULT_EXECUTION
         ]
     );
     assert_eq!(
@@ -370,7 +374,7 @@ fn index_migration_004_allows_unconfigured_iap_authority() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:008_vault_execution_checkpoints'; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -394,7 +398,7 @@ fn index_migration_004_allows_unconfigured_iap_authority() {
     );
     assert_eq!(
         index_versions(&index_path).last().map(String::as_str),
-        Some(INDEX_SCHEMA_VERSION_VAULT)
+        Some(INDEX_SCHEMA_VERSION_VAULT_EXECUTION)
     );
 }
 
@@ -415,7 +419,7 @@ fn index_migration_004_requires_upgrade_config() {
          DROP TABLE voice_rates;
          DROP TABLE voice_policies;
          DROP TABLE voice_reservations;
-         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
+         DROP TABLE IF EXISTS vault_storage_billing_state; DROP TABLE IF EXISTS internal_mounts; DROP TABLE IF EXISTS vault_payers; DROP TABLE IF EXISTS vault_cycle_reservations; DELETE FROM schema_migrations WHERE version = 'database_index:008_vault_execution_checkpoints'; DELETE FROM schema_migrations WHERE version = 'database_index:007_private_vault'; DROP TABLE IF EXISTS database_maintenance; DELETE FROM schema_migrations WHERE version = 'database_index:006_database_maintenance'; DELETE FROM schema_migrations WHERE version = 'database_index:005_voice_billing';
          DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
          DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
     )
@@ -1965,4 +1969,63 @@ fn cancelled_live_cycle_reservation_blocks_rebind_until_exact_callback_refund() 
     service
         .vault_set_payer("owner", "next", DAY_MS * 3)
         .unwrap();
+}
+
+#[test]
+fn orphan_challenge_execution_checkpoint_is_debited_once_and_live_total_reconciles() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    service.vault_start_generation().unwrap();
+    service.create_database("payer", "owner", 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer("owner", "payer", 1).unwrap();
+    service
+        .vault_reserve_cycles("owner", "challenge:1", 20_000_000, 1)
+        .unwrap();
+    service
+        .vault_checkpoint_execution("owner", "challenge:1", 40_000_000)
+        .unwrap();
+    service.vault_start_generation().unwrap();
+    service.vault_recover_orphan_execution("owner", 2).unwrap();
+    service.vault_recover_orphan_execution("owner", 3).unwrap();
+    let db = Connection::open(&path).unwrap();
+    let balance = || {
+        db.query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get::<i64>(r, 0),
+        )
+        .unwrap()
+    };
+    assert_eq!(balance(), 99_960_000_000);
+    service
+        .vault_finish_execution("owner", "challenge:1", 50_000_000, 4)
+        .unwrap();
+    service
+        .vault_finish_execution("owner", "challenge:1", 50_000_000, 4)
+        .unwrap();
+    assert_eq!(balance(), 99_950_000_000);
+}
+
+#[test]
+fn execution_checkpoint_migration_preserves_existing_private_reservations() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    service.create_database("payer", "owner", 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer("owner", "payer", 1).unwrap();
+    service
+        .vault_reserve_cycles("owner", "derive:1", 30_020_000_000, 1)
+        .unwrap();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("ALTER TABLE vault_cycle_reservations DROP COLUMN generation; ALTER TABLE vault_cycle_reservations DROP COLUMN execution_checkpoint; ALTER TABLE vault_cycle_reservations DROP COLUMN execution_billed; DELETE FROM schema_migrations WHERE version='database_index:008_vault_execution_checkpoints';").unwrap();
+    drop(db);
+    service.run_index_migrations_for_upgrade(None).unwrap();
+    let db = Connection::open(path).unwrap();
+    let row:(i64,i64,i64)=db.query_row("SELECT reserved,in_flight,execution_checkpoint FROM vault_cycle_reservations WHERE owner='owner' AND token='derive:1'",params![],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?,crate::sqlite::row_get(r,2)?))).unwrap();
+    assert_eq!(row, (30_020_000_000, 1, 0));
 }

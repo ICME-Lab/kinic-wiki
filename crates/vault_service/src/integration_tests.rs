@@ -11,6 +11,7 @@ struct TestEnvironment {
     change_config: Cell<bool>,
     public_names: RefCell<Vec<String>>,
     actual_payment: Cell<Option<u64>>,
+    checkpoints: Cell<u64>,
 }
 impl TestEnvironment {
     fn new() -> Self {
@@ -38,6 +39,7 @@ impl TestEnvironment {
             change_config: Cell::new(false),
             public_names: RefCell::new(vec![]),
             actual_payment: Cell::new(None),
+            checkpoints: Cell::new(0),
         }
     }
     fn reserve(&self) {
@@ -69,7 +71,12 @@ impl Environment for TestEnvironment {
         Ok(result)
     }
     fn require_spending(&self) -> Result<()> {
+        let _read_guard = self.db.try_borrow().map_err(|_| Error::Storage)?;
         store::OwnerContext::authenticated(self.owner()).map(|_| ())
+    }
+    fn checkpoint_execution(&self) -> Result<()> {
+        self.checkpoints.set(self.checkpoints.get() + 1);
+        Ok(())
     }
     fn reserve_cycles(&self, _token: u64, _amount: u64) -> Result<()> {
         Ok(())
@@ -85,12 +92,20 @@ impl Environment for TestEnvironment {
         30_000_000_000
     }
     async fn random(&self) -> Result<Vec<u8>> {
+        assert!(
+            self.checkpoints.get() >= 1,
+            "raw_rand must have a durable execution checkpoint"
+        );
         if self.cancel_random.replace(false) {
             cancel_vault_setup(self, vec![1; 16], vec![2; 16])?;
         }
         Ok(vec![9; 32])
     }
     async fn public_key(&self, name: &str) -> Result<Vec<u8>> {
+        assert!(
+            self.checkpoints.get() >= 1,
+            "public-key await must have a durable execution checkpoint"
+        );
         self.public_names.borrow_mut().push(name.into());
         if self.change_config.replace(false) {
             self.db.borrow().execute("UPDATE global_settings SET value=json_set(value,'$.key_name','other_key') WHERE key='config'",params![]).unwrap();
@@ -106,6 +121,10 @@ impl Environment for TestEnvironment {
         _input: Vec<u8>,
         _transport: Vec<u8>,
     ) -> Result<Vec<u8>> {
+        assert!(
+            self.checkpoints.get() >= 2,
+            "derive await must have an updated execution checkpoint"
+        );
         Err(Error::KeyService)
     }
 }
@@ -319,4 +338,35 @@ fn refunded_management_failure_settles_only_the_actual_payment() {
         })
         .unwrap();
     assert_eq!((cost, flight), (0, 0));
+}
+
+#[test]
+fn payer_admission_does_not_reenter_the_vault_sql_transaction() {
+    let env = TestEnvironment::new();
+    env.reserve();
+    env.transaction(|db| {
+        let mut h = store::header(db, &[1; 16])?;
+        h.state = VaultState::Active;
+        store::put_header(db, &h)?;
+        db.execute(
+            "UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
+            params![],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let result = begin_revision(
+        &env,
+        BeginRevision {
+            vault: vec![1; 16],
+            object: vec![2; 16],
+            expected_revision: 0,
+            operation: vec![3; 16],
+            plain_size: 1,
+            manifest: vec![1],
+            chunk_hashes: vec![Sha256::digest(vec![7; 17]).to_vec()],
+        },
+    );
+    assert!(result.is_ok(), "{result:?}");
 }

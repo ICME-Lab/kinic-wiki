@@ -11,6 +11,7 @@ struct WikiVault {
     owner: OwnerContext,
     started: u64,
     derive_payment: std::cell::Cell<Option<u64>>,
+    operation: std::cell::Cell<Option<(u64, bool)>>,
 }
 impl WikiVault {
     fn capture() -> Result<Self> {
@@ -19,19 +20,34 @@ impl WikiVault {
             owner,
             started: meter(),
             derive_payment: std::cell::Cell::new(None),
+            operation: std::cell::Cell::new(None),
+        })
+    }
+    fn execution_cycles(&self) -> u64 {
+        meter().saturating_sub(self.started).saturating_add(
+            (super::UPDATE_EXECUTION_BASE_CYCLES + super::UPDATE_ACCOUNTING_OVERHEAD_CYCLES) as u64,
+        )
+    }
+    fn operation_token(&self) -> Option<String> {
+        self.operation.get().map(|(token, derive)| {
+            format!("{}:{token}", if derive { "derive" } else { "challenge" })
         })
     }
     fn finish<T>(&self, result: Result<T>) -> Result<T> {
-        let amount = meter()
-            .saturating_sub(self.started)
-            .saturating_add(super::UPDATE_EXECUTION_BASE_CYCLES as u64)
-            .saturating_add(super::UPDATE_ACCOUNTING_OVERHEAD_CYCLES as u64);
-        // Insufficient funds never prevent reads, exports or housekeeping.
-        with_service(|s| {
-            s.vault_charge_execution(&self.owner.owner().to_text(), amount, now_millis())
-        })
-        .map_err(|_| Error::Storage)
-        .ok();
+        let amount = self.execution_cycles();
+        // Reserved operations stay bound to their original payer even after ownership loss/rebind.
+        if let Some(token) = self.operation_token() {
+            with_service(|s| {
+                s.vault_finish_execution(&self.owner().to_text(), &token, amount, now_millis())
+            })
+            .ok();
+        } else {
+            with_service(|s| {
+                s.vault_charge_execution(&self.owner().to_text(), amount, now_millis())
+            })
+            .ok();
+        }
+
         result
     }
 }
@@ -86,6 +102,38 @@ impl Environment for WikiVault {
             .map(|_| ())
             .map_err(|_| Error::QuotaExceeded)
     }
+    fn reserve_challenge(&self, token: u64) -> Result<()> {
+        with_service(|s| {
+            s.vault_reserve_cycles(
+                &self.owner().to_text(),
+                &format!("challenge:{token}"),
+                (super::UPDATE_EXECUTION_BASE_CYCLES + super::UPDATE_ACCOUNTING_OVERHEAD_CYCLES)
+                    as u64,
+                now_millis(),
+            )
+        })
+        .map_err(|_| Error::QuotaExceeded)?;
+        self.operation.set(Some((token, false)));
+        Ok(())
+    }
+    fn settle_challenge(&self, token: u64) -> Result<()> {
+        with_service(|s| {
+            s.vault_settle_cycles(
+                &self.owner().to_text(),
+                &format!("challenge:{token}"),
+                0,
+                now_millis(),
+            )
+        })
+        .map_err(|_| Error::Storage)
+    }
+    fn checkpoint_execution(&self) -> Result<()> {
+        let token = self.operation_token().ok_or(Error::Storage)?;
+        with_service(|s| {
+            s.vault_checkpoint_execution(&self.owner().to_text(), &token, self.execution_cycles())
+        })
+        .map_err(|_| Error::Storage)
+    }
     fn reserve_cycles(&self, token: u64, amount: u64) -> Result<()> {
         with_service(|s| {
             s.vault_reserve_cycles(
@@ -98,7 +146,9 @@ impl Environment for WikiVault {
                 now_millis(),
             )
         })
-        .map_err(|_| Error::QuotaExceeded)
+        .map_err(|_| Error::QuotaExceeded)?;
+        self.operation.set(Some((token, true)));
+        Ok(())
     }
     fn settle_cycles(&self, token: u64, actual: u64) -> Result<()> {
         with_service(|s| {
@@ -508,5 +558,10 @@ fn vault_cancel_pending_key_derivation() -> vault_types::Result<()> {
         })
         .map_err(|_| Error::Storage)?;
     }
-    Ok(())
+    let challenges =
+        with_service(|s| s.vault_recover_orphan_execution(&env.owner().to_text(), now_millis()))
+            .map_err(|_| Error::Storage)?;
+    with_service(|s| Ok(s.vault_clear_orphan_challenges(env.owner, &challenges)))
+        .map_err(|_| Error::Storage)??;
+    env.finish(Ok(()))
 }

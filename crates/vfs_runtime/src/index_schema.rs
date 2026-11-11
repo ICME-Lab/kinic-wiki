@@ -74,6 +74,7 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     apply_voice_migration(&tx)?;
     apply_maintenance_migration(&tx)?;
     apply_vault_migration(&tx)?;
+    apply_vault_execution_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -117,6 +118,7 @@ fn run_index_migrations_in_tx(
     apply_voice_migration(conn)?;
     apply_maintenance_migration(conn)?;
     apply_vault_migration(conn)?;
+    apply_vault_execution_migration(conn)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -189,7 +191,11 @@ fn apply_pending_index_migrations(
         return Ok(());
     }
     if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS[..6] {
-        return apply_vault_migration(conn);
+        apply_vault_migration(conn)?;
+        return apply_vault_execution_migration(conn);
+    }
+    if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS[..7] {
+        return apply_vault_execution_migration(conn);
     }
     if versions
         .iter()
@@ -202,7 +208,19 @@ fn apply_pending_index_migrations(
     }
     apply_index_migrations_through_voice(conn, config)?;
     apply_maintenance_migration(conn)?;
-    apply_vault_migration(conn)
+    apply_vault_migration(conn)?;
+    apply_vault_execution_migration(conn)
+}
+fn apply_vault_execution_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!(
+        "../migrations/index_db/008_vault_execution_checkpoints.sql"
+    ))
+    .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_VAULT_EXECUTION)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_VAULT_EXECUTION)?;
+    Ok(())
 }
 fn apply_vault_migration(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(include_str!("../migrations/index_db/007_private_vault.sql"))
