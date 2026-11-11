@@ -855,6 +855,7 @@ fn cancelled_pending_key_reservation_is_recoverable_and_idempotent() {
         Some((1, 0, false))
     );
     keys::settle(&db, 1, DAY + 2, 0).unwrap();
+    assert!(keys::cancel_pending(&db, DAY + 2).unwrap().is_none());
     keys::reserve(&db, 2, DAY + 2, 10_000_000_000).unwrap();
 }
 
@@ -916,4 +917,72 @@ fn cancelling_live_management_call_does_not_release_owner_or_global_flight() {
     // A real callback can reconcile a refund after cancellation, then release the flight.
     keys::settle(&db, 1, DAY * 3, 3_000_000_000).unwrap();
     keys::reserve(&db, 2, DAY * 3, 10_000_000_000).unwrap();
+}
+
+#[test]
+fn offline_owner_expired_receipts_are_reclaimed_globally_without_touching_live_slots() {
+    let db = fixture();
+    let a = config(&db).unwrap();
+    let vault = active_fixture(&db);
+    pending_revision(&db, &vault, 0, 10);
+    db.execute(
+        "UPDATE uploads SET expires=?1 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
+        params![(DAY * 2) as i64],
+    )
+    .unwrap();
+    reserve(
+        &db,
+        a.owner,
+        Reserve {
+            vault: vec![31; 16],
+            operation: vec![32; 16],
+        },
+        DAY / 2,
+    )
+    .unwrap();
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9998) INSERT INTO receipts(owner,operation,digest,result,expires) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(x AS BLOB),x'ff','null',CASE WHEN x=9998 THEN {} ELSE {} END FROM n;",DAY*2,DAY+1)).unwrap();
+    let mut b = a.clone();
+    b.owner = Principal::self_authenticating([42; 32]);
+    select_owner(&db, b.owner).unwrap();
+    save(&db, "config", &b).unwrap();
+    let request = Reserve {
+        vault: vec![51; 16],
+        operation: vec![52; 16],
+    };
+    assert_eq!(
+        reserve(&db, b.owner, request.clone(), DAY).unwrap_err(),
+        Error::QuotaExceeded
+    );
+    let before: i64 = db
+        .query_row("SELECT count(*) FROM receipts", params![], |r| {
+            sql::row_get(r, 0)
+        })
+        .unwrap();
+    assert_eq!(before, 9998);
+    assert_eq!(
+        content::maintain_expired(&db, DAY + 2).unwrap().unwrap().0,
+        a.owner
+    );
+    select_owner(&db, b.owner).unwrap();
+    reserve(&db, b.owner, request, DAY + 2).unwrap();
+    let after: i64 = db
+        .query_row("SELECT count(*) FROM receipts", params![], |r| {
+            sql::row_get(r, 0)
+        })
+        .unwrap();
+    assert!(before - after > 0 && before - after <= 100);
+    let live: i64 = db
+        .query_row(
+            "SELECT count(*) FROM receipts WHERE owner=?1 AND expires>?2",
+            params![a.owner.as_slice(), (DAY + 2) as i64],
+            |r| sql::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(live, 1);
+    select_owner(&db, a.owner).unwrap();
+    assert_eq!(
+        content::commit(&db, &[10; 16], DAY + 2).unwrap().revision,
+        1
+    );
+    assert_eq!(pending(&db, &[31; 16], DAY + 2).unwrap().id, vec![31; 16]);
 }

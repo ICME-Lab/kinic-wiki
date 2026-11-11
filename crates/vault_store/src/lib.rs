@@ -126,7 +126,7 @@ pub fn reserve(db: &Connection, caller: Principal, r: Reserve, now: u64) -> Resu
         pending(db, &r.vault, now)?;
         return Ok(h);
     }
-    content::check_receipt_capacity(db)?;
+    content::check_receipt_capacity(db, now)?;
     let ever: i64 = db
         .query_row("SELECT count(*) FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))", params![], |r| {
             sql::row_get(r, 0)
@@ -242,3 +242,4 @@ fn select_owner(db: &Connection, owner: Principal) -> Result<()> {
     Ok(())
 }
 pub mod keys;
+pub const EXPIRY_SCHEMA: &str = include_str!("expiry-schema.sql");

@@ -75,7 +75,7 @@ impl Environment for WikiVault {
     }
     fn transaction<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         with_service(|s| {
-            let result = s.vault_transaction(self.owner, |db| {
+            let result = s.vault_transaction_at(self.owner, self.now(), |db| {
                 let value = f(db)?;
                 let usage = vault_store::content::usage(db)?;
                 Ok((value, usage))
@@ -544,24 +544,7 @@ fn vault_get_active_export_for_vault(
 #[ic_cdk::update]
 fn vault_cancel_pending_key_derivation() -> vault_types::Result<()> {
     let env = WikiVault::capture()?;
-    let flight = with_service(|s| Ok(s.vault_cancel_pending_key_flight(env.owner, env.now())))
-        .map_err(|_| Error::Storage)??;
-    if let Some((token, actual, orphan)) = flight {
-        with_service(|s| {
-            s.vault_cancel_reserved_cycles(
-                &env.owner().to_text(),
-                &format!("derive:{token}"),
-                actual,
-                orphan,
-                now_millis(),
-            )
-        })
-        .map_err(|_| Error::Storage)?;
-    }
-    let challenges =
-        with_service(|s| s.vault_recover_orphan_execution(&env.owner().to_text(), now_millis()))
-            .map_err(|_| Error::Storage)?;
-    with_service(|s| Ok(s.vault_clear_orphan_challenges(env.owner, &challenges)))
-        .map_err(|_| Error::Storage)??;
-    env.finish(Ok(()))
+    let result = with_service(|s| s.vault_recover_pending_work(env.owner, env.now()))
+        .map_err(|_| Error::Storage);
+    env.finish(result)
 }

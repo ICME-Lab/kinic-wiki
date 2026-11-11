@@ -55,7 +55,7 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     if header(db, &r.header.id).is_ok() {
         return Err(Error::Conflict);
     }
-    content::check_receipt_capacity(db)?;
+    content::check_receipt_capacity(db, now)?;
     let total: i64 = db
         .query_row("SELECT count(*) FROM revisions", params![], |r| {
             sql::row_get(r, 0)

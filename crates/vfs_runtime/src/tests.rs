@@ -2029,3 +2029,323 @@ fn execution_checkpoint_migration_preserves_existing_private_reservations() {
     let row:(i64,i64,i64)=db.query_row("SELECT reserved,in_flight,execution_checkpoint FROM vault_cycle_reservations WHERE owner='owner' AND token='derive:1'",params![],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?,crate::sqlite::row_get(r,2)?))).unwrap();
     assert_eq!(row, (30_020_000_000, 1, 0));
 }
+
+#[test]
+fn vault_former_owner_cannot_charge_new_execution_but_reserved_work_and_reads_survive() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    let principal = Principal::self_authenticating([31; 32]);
+    let owner = principal.to_text();
+    let context = vault_store::OwnerContext::authenticated(principal).unwrap();
+    service.create_database("payer", &owner, 1).unwrap();
+    set_test_database_balance(&service, "payer", 100_000_000_000);
+    service.vault_set_payer(&owner, "payer", 1).unwrap();
+    service
+        .vault_set_config(Some(vault_types::VaultConfig {
+            origin: "http://localhost:5173".into(),
+            rp_id: "localhost".into(),
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    service.vault_transaction(context,|db|{let mut h=vault_store::reserve(db,principal,vault_types::Reserve{vault:vec![1;16],operation:vec![2;16]},1)?;h.state=vault_types::VaultState::Active;vault_store::put_header(db,&h)?;db.execute("UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![]).unwrap();Ok(())}).unwrap();
+    service
+        .vault_reserve_cycles(&owner, "derive:1", 30_020_000_000, 1)
+        .unwrap();
+    service
+        .vault_checkpoint_execution(&owner, "derive:1", 40_000_000)
+        .unwrap();
+    let db = Connection::open(path).unwrap();
+    db.execute(
+        "DELETE FROM database_members WHERE database_id='payer' AND principal=?1",
+        params![owner],
+    )
+    .unwrap();
+    let balance = || {
+        db.query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get::<i64>(r, 0),
+        )
+        .unwrap()
+    };
+    let before = balance();
+    assert!(service.vault_require_spending(&owner, 2).is_err());
+    assert!(
+        service
+            .vault_charge_execution(&owner, 20_000_000, 2)
+            .is_err()
+    );
+    assert_eq!(balance(), before);
+    service
+        .vault_transaction(context, |db| {
+            vault_store::active(db, &[1; 16])?;
+            vault_store::content::begin_export(db, &[1; 16], &[3; 16], 2)?;
+            vault_store::content::finish_export(db, &[3; 16], false, 2)?;
+            vault_store::content::gc(db, 2)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(balance(), before);
+    service
+        .vault_settle_cycles(&owner, "derive:1", 10_000_000_000, 2)
+        .unwrap();
+    service
+        .vault_finish_execution(&owner, "derive:1", 40_000_000, 2)
+        .unwrap();
+    assert_eq!(balance(), 89_960_000_000);
+}
+
+#[test]
+fn vault_recovery_after_receipt_compaction_releases_orphan_challenge_and_allows_disabled_rebind() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    service.vault_start_generation().unwrap();
+    let principal = Principal::self_authenticating([32; 32]);
+    let owner = principal.to_text();
+    let context = vault_store::OwnerContext::authenticated(principal).unwrap();
+    for database in ["payer", "next"] {
+        service.create_database(database, &owner, 1).unwrap();
+        set_test_database_balance(&service, database, 100_000_000_000);
+    }
+    service.vault_set_payer(&owner, "payer", 1).unwrap();
+    service
+        .vault_set_config(Some(vault_types::VaultConfig {
+            origin: "http://localhost:5173".into(),
+            rp_id: "localhost".into(),
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    service
+        .vault_transaction(context, |db| {
+            vault_store::keys::reserve(db, 1, 1, 10_000_000_000)?;
+            vault_store::keys::mark_sent(db, 1, 10_000_000_000)
+        })
+        .unwrap();
+    service
+        .vault_reserve_cycles(&owner, "derive:1", 30_020_000_000, 1000)
+        .unwrap();
+    service
+        .vault_checkpoint_execution(&owner, "derive:1", 40_000_000)
+        .unwrap();
+    let (_, actual, orphan) = service
+        .vault_cancel_pending_key_flight(context, 2)
+        .unwrap()
+        .unwrap();
+    assert!(!orphan);
+    service
+        .vault_cancel_reserved_cycles(&owner, "derive:1", actual, orphan, 2000)
+        .unwrap();
+    service
+        .vault_reconcile_refunded_cycles(&owner, "derive:1", 3_000_000_000, 3000)
+        .unwrap();
+    service
+        .vault_settle_key_flight(context, 1, 3, 3_000_000_000)
+        .unwrap();
+    service
+        .vault_finish_execution(&owner, "derive:1", 40_000_000, 3000)
+        .unwrap();
+    service.vault_transaction(context,|db|{db.execute("UPDATE key_flights SET phase='cancelled' WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND token=1 AND in_flight=0",params![]).unwrap();Ok(())}).unwrap();
+    let late = 86_405;
+    service
+        .vault_reserve_cycles(&owner, "challenge:2", 20_000_000, late * 1000)
+        .unwrap();
+    service
+        .vault_checkpoint_execution(&owner, "challenge:2", 50_000_000)
+        .unwrap();
+    let db = Connection::open(&path).unwrap();
+    let compacted: i64 = db
+        .query_row(
+            "SELECT count(*) FROM vault_cycle_reservations WHERE token='derive:1'",
+            params![],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(compacted, 0);
+    service.vault_start_generation().unwrap();
+    service.vault_set_config(None).unwrap();
+    for _ in 0..2 {
+        service
+            .vault_recover_pending_work(context, (late + 1) as u64)
+            .unwrap();
+    }
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id='payer'",
+            params![],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(balance, 96_910_000_000);
+    service
+        .vault_set_payer(&owner, "next", (late + 2) * 1000)
+        .unwrap();
+    assert_eq!(
+        service.vault_payer(&owner).unwrap().as_deref(),
+        Some("next")
+    );
+}
+
+#[test]
+fn vault_dormant_owner_expired_restore_releases_shared_capacity_and_updates_storage() {
+    use vault_types::{
+        BeginRestore, BeginRevision, DAY, Envelope, Header, Reserve, TOTAL_MAX, VaultState,
+    };
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(path.clone(), dir.path().join("databases"));
+    service.run_index_migrations().unwrap();
+    let a = Principal::self_authenticating([61; 32]);
+    let b = Principal::self_authenticating([62; 32]);
+    let ca = vault_store::OwnerContext::authenticated(a).unwrap();
+    let cb = vault_store::OwnerContext::authenticated(b).unwrap();
+    service.create_database("payer-a", &a.to_text(), 1).unwrap();
+    set_test_database_balance(&service, "payer-a", 100_000_000_000);
+    service.vault_set_payer(&a.to_text(), "payer-a", 1).unwrap();
+    service
+        .vault_set_config(Some(vault_types::VaultConfig {
+            origin: "http://localhost:5173".into(),
+            rp_id: "localhost".into(),
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    let bytes = vec![7; 17];
+    let root = Header {
+        id: vec![1; 16],
+        epoch: 0,
+        state: VaultState::Active,
+        normal: None,
+        recovery: Some(Envelope {
+            version: 1,
+            nonce: vec![1; 12],
+            ciphertext: vec![2; 48],
+        }),
+        sequence: 0,
+        backup_sequence: None,
+        backup_at: None,
+        key_name: "test_key_1".into(),
+    };
+    let old_usage=service.vault_transaction(ca,|db|{
+        let mut active=vault_store::reserve(db,a,Reserve{vault:vec![2;16],operation:vec![3;16]},1)?;active.state=VaultState::Active;vault_store::put_header(db,&active)?;db.execute("UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![]).unwrap();
+        vault_store::content::begin(db,BeginRevision{vault:vec![2;16],object:vec![4;16],expected_revision:0,operation:vec![5;16],plain_size:1,manifest:vec![1],chunk_hashes:vec![Sha256::digest(&bytes).to_vec()]},DAY/2)?;
+        vault_store::content::begin_export(db,&[2;16],&[6;16],DAY/2)?;
+        let reserved=TOTAL_MAX-vault_store::content::global_usage(db)?-12288;
+        vault_store::restore::begin(db,BeginRestore{header:root,operation:vec![7;16],count:0,root:vec![0;32],reserved_bytes:reserved},1)?;
+        vault_store::content::usage(db)
+    }).unwrap();
+    service
+        .vault_track_storage(&a.to_text(), old_usage, 1)
+        .unwrap();
+    assert!(old_usage > 200_000_000);
+    let request = Reserve {
+        vault: vec![11; 16],
+        operation: vec![12; 16],
+    };
+    assert_eq!(
+        service
+            .vault_transaction(cb, |db| vault_store::reserve(db, b, request.clone(), 2))
+            .unwrap_err(),
+        vault_types::Error::QuotaExceeded
+    );
+    let now = DAY + 2;
+    assert_eq!(
+        service
+            .vault_transaction_at(cb, now, |_| Err::<(), _>(vault_types::Error::Conflict))
+            .unwrap_err(),
+        vault_types::Error::Conflict
+    );
+    service
+        .vault_transaction_at(cb, now, |db| {
+            let h = vault_store::reserve(db, b, request, now)?;
+            assert_eq!(h.id, vec![11; 16]);
+            assert_eq!(
+                vault_store::header(db, &[2; 16]).unwrap_err(),
+                vault_types::Error::NotFound
+            );
+            Ok(())
+        })
+        .unwrap();
+    let db = Connection::open(&path).unwrap();
+    let tracked: i64 = db
+        .query_row(
+            "SELECT storage_bytes FROM vault_payers WHERE owner=?1",
+            params![a.to_text()],
+            |r| crate::sqlite::row_get(r, 0),
+        )
+        .unwrap();
+    assert!(tracked < 1_000_000);
+    service
+        .vault_transaction(ca, |db| {
+            assert_eq!(
+                vault_store::header(db, &[1; 16]).unwrap_err(),
+                vault_types::Error::NotFound
+            );
+            assert_eq!(
+                vault_store::content::get_export(db, &[6; 16], now)?.vault,
+                vec![2; 16]
+            );
+            vault_store::content::put(db, &[5; 16], 0, &bytes, now)?;
+            assert_eq!(vault_store::content::commit(db, &[5; 16], now)?.revision, 1);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn vault_expiry_schema_upgrades_existing_v1_without_changing_owner_headers() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.sqlite3");
+    let dbdir = dir.path().join("databases");
+    let service = VfsService::new(path, dbdir.clone());
+    service.run_index_migrations().unwrap();
+    service
+        .vault_set_config(Some(vault_types::VaultConfig {
+            origin: "http://localhost:5173".into(),
+            rp_id: "localhost".into(),
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    let owner = Principal::self_authenticating([63; 32]);
+    let context = vault_store::OwnerContext::authenticated(owner).unwrap();
+    service
+        .vault_transaction(context, |db| {
+            vault_store::reserve(
+                db,
+                owner,
+                vault_types::Reserve {
+                    vault: vec![1; 16],
+                    operation: vec![2; 16],
+                },
+                1,
+            )
+        })
+        .unwrap();
+    let private = Connection::open(dbdir.join(format!(
+        "private-vault-{}.sqlite3",
+        service.vault_mount_id().unwrap()
+    )))
+    .unwrap();
+    private.execute_batch("DROP INDEX receipts_global_expiry; DROP INDEX uploads_global_expiry; DROP INDEX vaults_global_expiry; DROP INDEX exports_global_expiry; DROP INDEX revisions_global_retired; PRAGMA user_version=1;").unwrap();
+    assert_eq!(
+        service
+            .vault_transaction(context, |db| vault_store::header(db, &[1; 16]))
+            .unwrap()
+            .id,
+        vec![1; 16]
+    );
+    let version: i64 = private
+        .query_row("PRAGMA user_version", params![], |r| {
+            crate::sqlite::row_get(r, 0)
+        })
+        .unwrap();
+    assert_eq!(version, 2);
+    let indices:i64=private.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN('receipts_global_expiry','uploads_global_expiry','vaults_global_expiry','exports_global_expiry','revisions_global_retired')",params![],|r|crate::sqlite::row_get(r,0)).unwrap();
+    assert_eq!(indices, 5);
+}

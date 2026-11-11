@@ -119,7 +119,7 @@ pub fn record<T: Serialize>(
     result: &T,
     now: u64,
 ) -> Result<()> {
-    check_receipt_capacity(db)?;
+    check_receipt_capacity(db, now)?;
     let upload: i64 = db
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1)",
@@ -161,7 +161,13 @@ fn global_receipt_slots_used(db: &Connection) -> Result<i64> {
     .map_err(db_error)
 }
 
-pub fn check_receipt_capacity(db: &Connection) -> Result<()> {
+pub fn collect_expired_receipts(db: &Connection, now: u64) -> Result<()> {
+    // Global maintenance selects the owner before binding scope; this pass touches only that owner.
+    db.execute("DELETE FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation IN (SELECT operation FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND expires<=?1 ORDER BY expires,operation LIMIT 100)",params![now as i64]).map_err(db_error)?;
+    Ok(())
+}
+pub fn check_receipt_capacity(db: &Connection, now: u64) -> Result<()> {
+    collect_expired_receipts(db, now)?;
     if receipt_slots_used(db)? >= ROW_MAX || global_receipt_slots_used(db)? >= ROW_MAX {
         return Err(Error::QuotaExceeded);
     }
@@ -222,7 +228,7 @@ pub fn begin_with_budget(
     if !allow_new {
         return Err(Error::QuotaExceeded);
     }
-    check_receipt_capacity(db)?;
+    check_receipt_capacity(db, now)?;
     check_object_capacity(db, &r.vault, &r.object)?;
     if head(db, &r.vault, &r.object)? != r.expected_revision {
         return Err(Error::Conflict);
@@ -691,7 +697,7 @@ fn collect_retired_revision(db: &Connection, now: u64) -> Result<u64> {
 }
 
 pub fn gc(db: &Connection, now: u64) -> Result<u64> {
-    db.execute("DELETE FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (operation IN(SELECT operation FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE expires<=?1 LIMIT 100))",params![now as i64]).map_err(db_error)?;
+    collect_expired_receipts(db, now)?;
     collect_expired_upload(db, now)?;
     db.execute(
         "DELETE FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id IN(SELECT id FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE expires<=?1 LIMIT 100))",
@@ -900,4 +906,23 @@ pub fn active_export_for_vault(db: &Connection, vault: &[u8], now: u64) -> Resul
     active(db, vault)?;
     let id:Option<Id>=db.query_row("SELECT id FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND state='Active' AND expires>?2 LIMIT 1",params![vault,now as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
     id.map(|id| get_export(db, &id, now)).transpose()
+}
+
+/// Select one expired owner's housekeeping work on the server, before binding the request owner.
+/// Each scoped GC pass keeps its existing fixed deletion bounds and preserves live reservations.
+pub fn maintain_expired(db: &Connection, now: u64) -> Result<Option<(Principal, u64)>> {
+    let owner:Option<Vec<u8>>=db.query_row("SELECT owner FROM (
+        SELECT owner,expires FROM receipts WHERE expires<=?1
+        UNION ALL SELECT owner,expires FROM uploads WHERE expires<=?1
+        UNION ALL SELECT owner,expires FROM vaults WHERE expires>0 AND expires<=?1
+        UNION ALL SELECT owner,expires FROM exports WHERE expires<=?1
+        UNION ALL SELECT r.owner,0 AS expires FROM revisions r WHERE r.retired IS NOT NULL AND NOT EXISTS(
+            SELECT 1 FROM exports e WHERE e.owner=r.owner AND e.vault=r.vault AND e.state='Active' AND e.expires>?1)
+        ) ORDER BY expires,owner LIMIT 1",params![now as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
+    let Some(owner) = owner else { return Ok(None) };
+    let owner = Principal::from_slice(&owner);
+    OwnerContext::authenticated(owner)?.run(db, |db| {
+        gc(db, now)?;
+        Ok(Some((owner, usage(db)?)))
+    })
 }

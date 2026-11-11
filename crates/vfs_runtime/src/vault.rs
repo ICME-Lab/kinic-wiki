@@ -138,12 +138,27 @@ impl VfsService {
         orphan: bool,
         now: i64,
     ) -> Result<(), String> {
-        self.write_index(|tx| settle_reservation(tx, owner, token, actual, now, orphan, false))
+        self.write_index(|tx| {
+            let exists: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",
+                    params![owner, token],
+                    |r| crate::sqlite::row_get(r, 0),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            // Outstanding rows are never compacted. Absence leaves no debit to refund/replay.
+            if exists.is_none() {
+                return Ok(());
+            }
+            settle_reservation(tx, owner, token, actual, now, orphan, false)
+        })
     }
     pub fn vault_charge_execution(&self, owner: &str, amount: u64, now: i64) -> Result<(), String> {
         self.write_index(|tx| {
             let database = payer(tx, owner)?;
-            // Work already executed must still be billed after a payer loses ownership.
+            // Unreserved requests need current authority. Reserved completion uses its original payer.
+            eligible(tx, owner, &database)?;
             let balance = load_storage_cycle_account(tx, &database)?.balance_cycles;
             adjust_balance(
                 tx,
@@ -352,7 +367,13 @@ fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()> {
             crate::sqlite::row_get(r, 0)
         })
         .map_err(|_| vault_types::Error::Storage)?;
-    if version != 1 {
+    if version == 1 {
+        db.execute_batch(vault_store::EXPIRY_SCHEMA)
+            .map_err(|_| vault_types::Error::Storage)?;
+        db.execute_batch("PRAGMA user_version=2")
+            .map_err(|_| vault_types::Error::Storage)?;
+    }
+    if !matches!(version, 1 | 2) {
         return Err(vault_types::Error::Storage);
     }
     Ok(())
@@ -380,6 +401,8 @@ pub fn validate_vault_config(config: &vault_types::VaultConfig) -> vault_types::
 impl VfsService {
     /// Bounded, durable round-robin sweep; storage fees continue while owners are offline.
     pub fn vault_settle_storage_timer_batch(&self, now: i64) -> Result<(), String> {
+        self.vault_maintain_expired((now.max(0) as u64) / 1000)
+            .map_err(|_| "Vault expiry maintenance failed")?;
         self.write_index(|tx|{
             let saved:Option<(String,i64)>=tx.query_row("SELECT cursor_owner,billing_now_ms FROM vault_storage_billing_state WHERE slot=1",params![],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?))).optional().map_err(sql_error)?;
             let (cursor,billing_now)=saved.unwrap_or_else(||(String::new(),now));
@@ -560,4 +583,64 @@ fn finish_reserved_execution(
         tx.execute("UPDATE vault_cycle_reservations SET execution_billed=?3,execution_checkpoint=max(execution_checkpoint,?3) WHERE owner=?1 AND token=?2",params![owner,token,total]).map_err(sql_error)?;
     }
     Ok(())
+}
+
+impl VfsService {
+    /// Run owner recovery without relying on a funded payer or enabled Vault configuration.
+    pub fn vault_recover_pending_work(
+        &self,
+        context: vault_store::OwnerContext,
+        now: u64,
+    ) -> Result<(), String> {
+        let owner = context.owner().to_text();
+        let millis =
+            i64::try_from(now.saturating_mul(1000)).map_err(|_| "recovery timestamp overflow")?;
+        let key_result = (|| {
+            let flight = self
+                .vault_cancel_pending_key_flight(context, now)
+                .map_err(|_| "Vault key recovery failed")?;
+            if let Some((token, actual, orphan)) = flight {
+                self.vault_cancel_reserved_cycles(
+                    &owner,
+                    &format!("derive:{token}"),
+                    actual,
+                    orphan,
+                    millis,
+                )?;
+                self.vault_raw_transaction(|db| {
+                    context.run(db, |db| vault_store::keys::acknowledge_cancel(db, token))
+                })
+                .map_err(|_| "Vault cancellation acknowledgement failed")?;
+            }
+            Ok(())
+        })();
+        // Challenge recovery is independent of key-journal reconciliation/compaction.
+        let challenges = self.vault_recover_orphan_execution(&owner, millis)?;
+        self.vault_clear_orphan_challenges(context, &challenges)
+            .map_err(|_| "Vault challenge recovery failed")?;
+        key_result
+    }
+}
+
+impl VfsService {
+    pub fn vault_transaction_at<T>(
+        &self,
+        context: vault_store::OwnerContext,
+        now: u64,
+        f: impl FnOnce(&Connection) -> vault_types::Result<T>,
+    ) -> vault_types::Result<T> {
+        self.vault_maintain_expired(now)?;
+        self.vault_transaction(context, f)
+    }
+    pub fn vault_maintain_expired(&self, now: u64) -> vault_types::Result<()> {
+        let reclaimed =
+            self.vault_raw_transaction(|db| vault_store::content::maintain_expired(db, now))?;
+        if let Some((owner, usage)) = reclaimed {
+            let millis =
+                i64::try_from(now.saturating_mul(1000)).map_err(|_| vault_types::Error::Storage)?;
+            self.vault_track_storage(&owner.to_text(), usage, millis)
+                .map_err(|_| vault_types::Error::Storage)?;
+        }
+        Ok(())
+    }
 }

@@ -26,7 +26,7 @@ pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<(
         return Err(Error::QuotaExceeded);
     }
     db.execute(
-        "DELETE FROM key_flights WHERE in_flight=0 AND settled IS NOT NULL AND settled<=?1 AND day<?2",
+        "DELETE FROM key_flights WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2",
         params![now.saturating_sub(DAY) as i64, (now / DAY) as i64],
     )
     .map_err(|_| Error::Storage)?;
@@ -36,7 +36,8 @@ pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<(
 }
 /// Callback completion may reconcile an earlier cancellation's conservative payment downwards.
 pub fn settle(db: &Connection, token: u64, now: u64, actual: u64) -> Result<()> {
-    settle_inner(db, token, now, actual, true)
+    settle_inner(db, token, now, actual, true)?;
+    acknowledge_cancel(db, token)
 }
 fn settle_inner(db: &Connection, token: u64, now: u64, actual: u64, complete: bool) -> Result<()> {
     if actual > DERIVE_RESERVATION {
@@ -76,4 +77,10 @@ pub fn cancel_pending(db: &Connection, now: u64) -> Result<Option<(u64, u64, boo
     settle_inner(db, token as u64, now, actual as u64, orphan)?;
     db.execute("UPDATE key_flights SET phase='cancelled' WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND token=?1",params![token]).map_err(|_|Error::Storage)?;
     Ok(Some((token as u64, actual as u64, orphan)))
+}
+
+/// A completed tombstone is retained for retries, but is no longer pending financial recovery.
+pub fn acknowledge_cancel(db: &Connection, token: u64) -> Result<()> {
+    db.execute("UPDATE key_flights SET phase='cancelled_done' WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND token=?1 AND in_flight=0 AND phase='cancelled'",params![token as i64]).map_err(|_|Error::Storage)?;
+    Ok(())
 }
