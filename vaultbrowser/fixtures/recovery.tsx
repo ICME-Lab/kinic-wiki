@@ -73,7 +73,7 @@ const incident: IncidentStatus = {
   cancel_digest: [],
   semantic_config: [],
   compromised: [],
-  targets: [source, g(3)].map((generation, i) => ({
+  targets: [source, g(3), g(4)].map((generation, i) => ({
     source: header(generation),
     target: [{ ...generation, nonce: id(i + 30, 32), epoch: 1n }],
     attempt: id(i + 20),
@@ -203,6 +203,21 @@ Object.assign(window, {
   recoveryFixture: {
     operations,
     session: client.session,
+    replaceOriginal: (purged: boolean) => {
+      const original = incident.targets[0];
+      original.phase = purged ? { Purged: null } : { Purging: null };
+      original.backup_ack = [];
+      original.kit_ack = [];
+      original.target = [];
+      original.restore_child = [
+        {
+          job: id(40),
+          attempt: id(41),
+          archive_digest: id(42, 32),
+          target: { ...source, nonce: id(43, 32), epoch: 1n },
+        },
+      ];
+    },
     invalidate: () => {
       incident.targets[1].backup_ack = [];
       incident.targets[1].phase = { Resetting: null };

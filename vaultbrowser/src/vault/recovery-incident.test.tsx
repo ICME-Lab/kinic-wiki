@@ -183,8 +183,8 @@ it("scoped compromised key freezes the exact entire affected vector in one signe
   }
   f.service.destroy();
 });
-it.each(["missing", "reset", "child"])(
-  "blocks whole-incident commit after %s target invalidation",
+it.each(["missing", "reset", "child", "purging", "purged-child"])(
+  "requires all unresolved incident targets to be verified with %s original state",
   async (mode) => {
     const f = await fixture();
     const target = (i: number) =>
@@ -209,10 +209,30 @@ it.each(["missing", "reset", "child"])(
         snapshot_time: 0n,
         next_epoch: 1n,
       }) as unknown as IncidentTarget;
-    const targets = [target(0), target(1)];
+    const targets = [target(0), target(1), target(2)];
     if (mode === "missing") targets[1].backup_ack = [];
     if (mode === "reset") targets[1].phase = { Resetting: null };
-    if (mode === "child") targets[0].restore_child = [{} as never];
+    if (["child", "purging", "purged-child"].includes(mode)) {
+      targets[0].restore_child = [
+        {
+          job: id(40),
+          attempt: id(41),
+          archive_digest: id(42, 32),
+          target: {
+            ...f.headers[0].generation[0]!,
+            nonce: id(43, 32),
+            epoch: 1n,
+          },
+        },
+      ];
+    }
+    if (mode === "purging" || mode === "purged-child") {
+      targets[0].phase =
+        mode === "purging" ? { Purging: null } : { Purged: null };
+      targets[0].backup_ack = [];
+      targets[0].kit_ack = [];
+      targets[0].target = [];
+    }
     f.setStatus({
       job: id(2),
       namespace: id(9, 32),
@@ -240,8 +260,13 @@ it.each(["missing", "reset", "child"])(
     const button = await screen.findByRole("button", {
       name: "Commit all verified targets with fresh passkey proof",
     });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect((button as HTMLButtonElement).disabled).toBe(
+      mode !== "purged-child",
+    );
     expect(screen.queryByText(/All incident targets committed/)).toBeNull();
+    expect(f.operations).toEqual([]);
+    if (mode === "purged-child")
+      expect(targets[0].phase).toEqual({ Purged: null });
     f.service.destroy();
   },
 );

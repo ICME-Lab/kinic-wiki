@@ -96,7 +96,10 @@ export function IncidentRecovery({
     status.targets.length > 0 &&
     status.targets.every(
       (t) =>
-        "BackupVerified" in t.phase && !!t.backup_ack[0] && !t.restore_child[0],
+        "Purged" in t.phase ||
+        ("BackupVerified" in t.phase &&
+          !!t.backup_ack[0] &&
+          !t.restore_child[0]),
     );
   const targetAction = (t: IncidentTarget, f: () => Promise<void>) =>
     act(async () => {

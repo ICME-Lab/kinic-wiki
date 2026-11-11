@@ -76,6 +76,32 @@ try {
   });
   await commit.waitFor();
   assert.equal(await commit.isEnabled(), true);
+  await page.evaluate(() => window.recoveryFixture.replaceOriginal(false));
+  await page
+    .getByRole("button", { name: "Refresh incident", exact: true })
+    .click();
+  assert.equal(
+    await commit.isDisabled(),
+    true,
+    "A purging original cannot be treated as resolved",
+  );
+  await page.evaluate(() => window.recoveryFixture.replaceOriginal(true));
+  await page
+    .getByRole("button", { name: "Refresh incident", exact: true })
+    .click();
+  assert.equal(
+    await commit.isEnabled(),
+    true,
+    "A purged original with child plus verified B/C permits whole-job proof",
+  );
+  assert.equal(
+    await page.getByText(/All incident targets committed/).count(),
+    0,
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.recoveryFixture.operations),
+    ["CreateEmptyStage", "CreateEmptyConfirmKit", "CreateEmptyActivate"],
+  );
   await page.evaluate(() => window.recoveryFixture.invalidate());
   await page
     .getByRole("button", { name: "Refresh incident", exact: true })
@@ -117,7 +143,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log(
-    "Synthetic Chromium recovery PASS: actual signed scoped preparation/download/wrong-file rejection/reselection/activation; incident target invalidation; legacy input + pending file lock cleanup; no page errors/external requests/persistent browser storage.",
+    "Synthetic Chromium recovery PASS: actual signed scoped preparation/download/wrong-file rejection/reselection/activation; incident purging/purged-child readiness and remaining-target invalidation; legacy input + pending file lock cleanup; no page errors/external requests/persistent browser storage.",
   );
 } finally {
   await browser.close();
