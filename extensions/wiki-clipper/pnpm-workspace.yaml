@@ -1,5 +1,10 @@
 packages:
-  - ../../packages/*
+  # Keep the standalone extension install scoped to its shared packages.
+  - ../../packages/ii-server
+  - ../../packages/jev-reranker
+  - ../../packages/source-contracts
+  - ../../packages/vfs-candid
+  - ../../packages/vfs-client-core
   - ../../tools/candid
 
 allowBuilds:

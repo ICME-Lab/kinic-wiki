@@ -657,6 +657,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-vault-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Install pinned Candid compiler
+        run: |
+          mkdir -p target/tools
+          curl -fsSL --retry 3 https://github.com/dfinity/candid/releases/download/didc-v0.6.2/didc-x86_64-unknown-linux-gnu.tar.xz -o target/tools/didc.tar.xz
+          echo "9990d2646a2b023df50c8765fd34e43951ba947303d3ce9d06590b2d58e89469  target/tools/didc.tar.xz" | sha256sum -c -
+          tar -xJf target/tools/didc.tar.xz -C target/tools --strip-components=1 didc-x86_64-unknown-linux-gnu/didc
+          test "$(target/tools/didc --version)" = "didc 0.6.2"
+          echo "$GITHUB_WORKSPACE/target/tools" >> "$GITHUB_PATH"
       - name: Contracts and origin boundary
         run: |
           node scripts/check-vault-boundary.mjs
