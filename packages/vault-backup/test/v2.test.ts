@@ -173,3 +173,120 @@ test("review: empty and tombstone-only transformed archives bind a distinct targ
     secret.fill(0);
   }
 });
+
+test("restore from an older archive uses the separate current live epoch and preserves encrypted records", async () => {
+  const { transformArchive } = await import("../src/index.ts");
+  const source: Generation = {
+    version: 2,
+    canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+    owner: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+    vault: randomBytes(16),
+    epoch: 2n,
+    nonce: randomBytes(32),
+    key_name: "key_1",
+  };
+  const raw = randomBytes(32),
+    secret = randomBytes(32),
+    root = await importKey(raw);
+  const object = randomBytes(16);
+  const doc = await encryptDocument(
+    root,
+    source.vault,
+    object,
+    3n,
+    { kind: "note", title: "old snapshot" },
+    new TextEncoder().encode("retained"),
+    source,
+  );
+  const recovery = pack(
+    await sealV2(
+      await deriveKey(secret, "recovery"),
+      raw,
+      generationAAD(source, new Uint8Array(16), 2n, "recovery"),
+    ),
+  );
+  const header: PortableHeader = {
+    version: 2,
+    vault: b64(source.vault),
+    epoch: "2",
+    sequence: "7",
+    key_name: "key_1",
+    generation: {
+      ...source,
+      vault: b64(source.vault),
+      nonce: b64(source.nonce),
+      epoch: "2",
+    },
+    recovery_verifier: b64(await recoveryVerifier(secret)),
+    record_count: 1,
+    chunk_count: 1,
+    plain_bytes: "8",
+    normal: recovery,
+    recovery,
+  };
+  const records = [
+    {
+      vault: header.vault,
+      object: b64(object),
+      revision: "3",
+      sequence: "7",
+      plain_size: "8",
+      manifest: b64(doc.manifest),
+      hashes: doc.hashes.map(b64),
+      deleted: false,
+    },
+  ];
+  const archive = await makeArchive(
+    header,
+    records,
+    async () => doc.chunks[0],
+    raw,
+  );
+  const live = {
+    ...source,
+    owner: source.canister,
+    canister: source.owner,
+    epoch: 9n,
+    nonce: randomBytes(32),
+  };
+  const target = { ...live, epoch: 10n, nonce: randomBytes(32) };
+  const kek = await importKey(randomBytes(32));
+  const restored = await transformArchive(archive, secret, target, kek, live);
+  try {
+    expect(restored.header.epoch).toBe("10");
+    expect(restored.header.envelope_revision).toBe("0");
+    expect(restored.records[0]).toEqual({
+      ...records[0],
+      manifest: expect.any(String),
+    });
+    expect(restored.records[0].manifest).not.toBe(records[0].manifest);
+    expect(restored.chunks[0]).toEqual(doc.chunks);
+    expect(restored.targetRestoreRoot).not.toEqual(restored.sourceRestoreRoot);
+    const opened = await openArchive(restored.archive, restored.recoverySecret);
+    opened.rootRaw.fill(0);
+    await expect(openArchive(restored.archive, secret)).rejects.toThrow();
+    for (const invalid of [
+      { ...target, epoch: 3n },
+      { ...target, epoch: 11n },
+      { ...target, nonce: live.nonce },
+      { ...target, owner: source.owner },
+    ])
+      await expect(
+        transformArchive(archive, secret, invalid, kek, live),
+      ).rejects.toThrow("InvalidTarget");
+    await expect(
+      transformArchive(
+        archive,
+        secret,
+        { ...target, epoch: 9223372036854775808n },
+        kek,
+        { ...live, epoch: 9223372036854775807n },
+      ),
+    ).rejects.toThrow("InvalidTarget");
+  } finally {
+    restored.rootRaw.fill(0);
+    restored.recoverySecret.fill(0);
+    raw.fill(0);
+    secret.fill(0);
+  }
+});

@@ -388,6 +388,7 @@ export async function transformArchive(
   sourceSecret: Uint8Array,
   target: Generation,
   targetKEK: CryptoKey,
+  currentLive?: Generation,
 ) {
   const source = await openArchive(data, sourceSecret);
   const { randomBytes, sealV2 } =
@@ -397,9 +398,26 @@ export async function transformArchive(
   const rootRaw = randomBytes(32),
     recoverySecret = randomBytes(32);
   try {
+    // This is only local format validation. Current-live identity must come from the
+    // separately authorized server job; archive possession is not overwrite authority.
+    const sourceEpoch = BigInt(source.header.epoch);
+    const previousEpoch =
+      currentLive && currentLive.epoch > sourceEpoch
+        ? currentLive.epoch
+        : sourceEpoch;
+    if (
+      currentLive &&
+      (currentLive.owner !== target.owner ||
+        currentLive.canister !== target.canister ||
+        b64(currentLive.vault) !== b64(target.vault) ||
+        b64(currentLive.nonce) === b64(target.nonce) ||
+        currentLive.epoch < 0n ||
+        currentLive.epoch > 9223372036854775807n)
+    )
+      throw Error("InvalidTarget");
     if (
       b64(target.vault) !== source.header.vault ||
-      target.epoch !== BigInt(source.header.epoch) + 1n ||
+      target.epoch !== previousEpoch + 1n ||
       target.epoch > 9223372036854775807n
     )
       throw Error("InvalidTarget");
