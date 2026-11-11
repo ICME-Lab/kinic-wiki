@@ -2,6 +2,8 @@ mod auth;
 mod authorization;
 pub mod ceremonies;
 pub mod cleanup;
+pub mod create_empty;
+mod create_empty_flights;
 pub mod generation;
 mod grants;
 pub mod mutations;
@@ -76,6 +78,9 @@ fn epoch(h: &Header, e: u64) -> Result<()> {
     }
 }
 fn live(db: &Connection, v: &[u8], t: u64) -> Result<Header> {
+    if store::transition::creation_target(db, v)? {
+        return Err(Error::Unauthorized);
+    }
     let h = store::header(db, v)?;
     if h.state != VaultState::Active {
         store::pending(db, v, t)?;
@@ -195,6 +200,9 @@ pub fn list_unfinished_vaults(env: &impl Environment) -> Result<Vec<UnfinishedVa
 
 pub fn cancel_vault_setup(env: &impl Environment, vault: Id, attempt: Id) -> Result<()> {
     env.transaction(|db| {
+        if store::transition::creation_target(db, &vault)? {
+            return Err(Error::Unauthorized);
+        }
         store::authorize(db, env.owner())?;
         if !env.mutation_authorized() {
             let h = store::header(db, &vault)?;
@@ -551,6 +559,7 @@ pub fn activate_vault(env: &impl Environment, request: Activate) -> Result<Heade
 }
 fn activate_inner(env: &impl Environment, request: Activate, restoring: bool) -> Result<Header> {
     env.transaction(|db| {
+        if store::transition::creation_target(db,&request.vault)? { return Err(Error::Unauthorized); }
         let cfg = store::authorize(db, env.owner())?;
         id(&request.operation)?;
         envelope(&request.normal)?;

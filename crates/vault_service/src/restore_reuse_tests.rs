@@ -735,3 +735,6 @@ fn restore_reuse_pending_target_scope_cannot_be_pruned_to_admit_fourth_tuple() {
     })
     .unwrap();
 }
+
+#[path = "create_empty_tests.rs"]
+mod create_empty_tests;

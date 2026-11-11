@@ -120,6 +120,7 @@ export type MutationOperation = {
       'scope' : CredentialScope,
     }
   } |
+  { 'CreateEmptyDerive' : IncidentDerive } |
   {
     'CommitRevision' : {
       'vault' : Uint8Array | number[],
@@ -144,6 +145,14 @@ export type MutationOperation = {
     }
   } |
   { 'RestoreDerive' : IncidentDerive } |
+  {
+    'CreateEmptyStage' : {
+      'normal' : Envelope,
+      'recovery_verifier' : Uint8Array | number[],
+      'recovery' : Envelope,
+    }
+  } |
+  { 'CreateEmptyAllocate' : null } |
   { 'RestoreChunk' : { 'data' : Uint8Array | number[], 'index' : number } } |
   { 'RestorePreflight' : RestorePreflight } |
   {
@@ -178,6 +187,7 @@ export type MutationOperation = {
     }
   } |
   { 'IncidentCutover' : { 'digest' : Uint8Array | number[] } } |
+  { 'CreateEmptyConfirmKit' : { 'envelope_digest' : Uint8Array | number[] } } |
   { 'Derive' : Derive } |
   {
     'RestoreStage' : {
@@ -194,6 +204,7 @@ export type MutationOperation = {
       'envelope_digest' : Uint8Array | number[],
     }
   } |
+  { 'CreateEmptyActivate' : null } |
   {
     'Activate' : {
       'request' : Activate,

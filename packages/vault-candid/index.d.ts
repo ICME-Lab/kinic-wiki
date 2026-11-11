@@ -51,6 +51,32 @@ export interface CleanupProgress {
   'cursor' : bigint,
   'complete' : boolean,
 }
+/**
+ * A new-empty job has no archive, imported record, or unregistered candidate authority.
+ */
+export type CreateEmptyPhase = { 'Admitted' : null } |
+  { 'Active' : null } |
+  { 'EnvelopesStaged' : null } |
+  { 'KitConfirmed' : null } |
+  { 'Cancelling' : null } |
+  { 'Cancelled' : null } |
+  { 'Allocated' : null };
+export interface CreateEmptyStatus {
+  'job' : Uint8Array | number[],
+  'creator' : RestoreExistingCandidate,
+  'normal' : [] | [Envelope],
+  'cleanup_cursor' : bigint,
+  'envelope_digest' : Uint8Array | number[],
+  'generation' : [] | [Generation],
+  'allocation_token' : [] | [bigint],
+  'kit_ack' : [] | [Uint8Array | number[]],
+  'target' : PendingCreation,
+  'recovery_verifier' : Uint8Array | number[],
+  'recovery' : [] | [Envelope],
+  'phase' : CreateEmptyPhase,
+  'key_digest' : Uint8Array | number[],
+  'authorizer_instance' : Generation,
+}
 export interface CredentialInfo { 'id' : Uint8Array | number[] }
 export interface CredentialRevocation {
   'credential' : Uint8Array | number[],
@@ -155,6 +181,13 @@ export type GrantPurpose = {
     'Incident' : {
       'job' : Uint8Array | number[],
       'vector_digest' : Uint8Array | number[],
+    }
+  } |
+  {
+    'CreateEmpty' : {
+      'job' : Uint8Array | number[],
+      'target' : PendingCreation,
+      'authorizer_instance' : Generation,
     }
   } |
   {
@@ -472,51 +505,55 @@ export type Result = { 'Ok' : Header } |
   { 'Err' : Error };
 export type Result_1 = { 'Ok' : bigint } |
   { 'Err' : Error };
-export type Result_10 = { 'Ok' : Revision } |
+export type Result_10 = { 'Ok' : RestoreProgress } |
   { 'Err' : Error };
-export type Result_11 = { 'Ok' : KeyReply } |
+export type Result_11 = { 'Ok' : Revision } |
   { 'Err' : Error };
-export type Result_12 = { 'Ok' : ExportPage } |
+export type Result_12 = { 'Ok' : [] | [CreateEmptyStatus] } |
   { 'Err' : Error };
-export type Result_13 = { 'Ok' : GrantInfo } |
+export type Result_13 = { 'Ok' : KeyReply } |
   { 'Err' : Error };
-export type Result_14 = { 'Ok' : [] | [Export] } |
+export type Result_14 = { 'Ok' : ExportPage } |
   { 'Err' : Error };
-export type Result_15 = { 'Ok' : Uint8Array | number[] } |
+export type Result_15 = { 'Ok' : GrantInfo } |
   { 'Err' : Error };
-export type Result_16 = { 'Ok' : [] | [VaultConfig] } |
+export type Result_16 = { 'Ok' : [] | [Export] } |
   { 'Err' : Error };
-export type Result_17 = { 'Ok' : Quota } |
+export type Result_17 = { 'Ok' : Uint8Array | number[] } |
   { 'Err' : Error };
-export type Result_18 = { 'Ok' : GlobalCapacity } |
+export type Result_18 = { 'Ok' : [] | [VaultConfig] } |
   { 'Err' : Error };
-export type Result_19 = { 'Ok' : [] | [IncidentContext] } |
+export type Result_19 = { 'Ok' : Quota } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : Challenge } |
   { 'Err' : Error };
-export type Result_20 = { 'Ok' : StagedExport } |
+export type Result_20 = { 'Ok' : GlobalCapacity } |
   { 'Err' : Error };
-export type Result_21 = { 'Ok' : [] | [IncidentStatus] } |
+export type Result_21 = { 'Ok' : [] | [IncidentContext] } |
   { 'Err' : Error };
-export type Result_22 = { 'Ok' : Array<CredentialInfo> } |
+export type Result_22 = { 'Ok' : StagedExport } |
   { 'Err' : Error };
-export type Result_23 = { 'Ok' : ObjectPage } |
+export type Result_23 = { 'Ok' : [] | [IncidentStatus] } |
   { 'Err' : Error };
-export type Result_24 = { 'Ok' : Array<Payment> } |
+export type Result_24 = { 'Ok' : Array<CredentialInfo> } |
   { 'Err' : Error };
-export type Result_25 = { 'Ok' : Array<UnfinishedVault> } |
+export type Result_25 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_26 = { 'Ok' : Array<Header> } |
+export type Result_26 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_27 = { 'Ok' : MutationResult } |
+export type Result_27 = { 'Ok' : Array<UnfinishedVault> } |
   { 'Err' : Error };
-export type Result_28 = { 'Ok' : [] | [Payment] } |
+export type Result_28 = { 'Ok' : Array<Header> } |
   { 'Err' : Error };
-export type Result_29 = { 'Ok' : RestoreAdmissionStatus } |
+export type Result_29 = { 'Ok' : MutationResult } |
   { 'Err' : Error };
 export type Result_3 = { 'Ok' : Export } |
   { 'Err' : Error };
-export type Result_30 = { 'Ok' : [] | [RestoreAdmissionStatus] } |
+export type Result_30 = { 'Ok' : [] | [Payment] } |
+  { 'Err' : Error };
+export type Result_31 = { 'Ok' : RestoreAdmissionStatus } |
+  { 'Err' : Error };
+export type Result_32 = { 'Ok' : [] | [RestoreAdmissionStatus] } |
   { 'Err' : Error };
 export type Result_4 = { 'Ok' : null } |
   { 'Err' : Error };
@@ -524,11 +561,11 @@ export type Result_5 = { 'Ok' : Upload } |
   { 'Err' : Error };
 export type Result_6 = { 'Ok' : BootstrapReply } |
   { 'Err' : Error };
-export type Result_7 = { 'Ok' : Payment } |
+export type Result_7 = { 'Ok' : CleanupProgress } |
   { 'Err' : Error };
-export type Result_8 = { 'Ok' : [] | [CleanupProgress] } |
+export type Result_8 = { 'Ok' : Payment } |
   { 'Err' : Error };
-export type Result_9 = { 'Ok' : RestoreProgress } |
+export type Result_9 = { 'Ok' : [] | [CleanupProgress] } |
   { 'Err' : Error };
 export interface Revision {
   'deleted' : boolean,
@@ -601,20 +638,28 @@ export interface _SERVICE {
   'begin_revision' : ActorMethod<[BeginRevision], Result_5>,
   'begin_unlock' : ActorMethod<[BeginUnlock], Result_2>,
   'bootstrap' : ActorMethod<[Bootstrap], Result_6>,
+  'cancel_create_empty' : ActorMethod<
+    [Uint8Array | number[], PendingCreation, [] | [Generation], bigint],
+    Result_7
+  >,
   'cancel_pending_key_derivation' : ActorMethod<[], Result_4>,
-  'cancel_quote' : ActorMethod<[Uint8Array | number[]], Result_7>,
+  'cancel_quote' : ActorMethod<[Uint8Array | number[]], Result_8>,
   'cancel_vault_setup' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
     Result_4
   >,
-  'cleanup_status' : ActorMethod<[], Result_8>,
+  'cleanup_status' : ActorMethod<[], Result_9>,
   'collect_garbage' : ActorMethod<[], Result_1>,
   'commit_restore' : ActorMethod<[Activate], Result>,
   'commit_restore_revision' : ActorMethod<
     [Uint8Array | number[], bigint, [] | [Uint8Array | number[]]],
-    Result_9
+    Result_10
   >,
-  'commit_revision' : ActorMethod<[Uint8Array | number[]], Result_10>,
+  'commit_revision' : ActorMethod<[Uint8Array | number[]], Result_11>,
+  /**
+   * Read-only status resolves activation whose old grant has intentionally been invalidated.
+   */
+  'create_empty_status' : ActorMethod<[], Result_12>,
   'delete_object' : ActorMethod<
     [
       Uint8Array | number[],
@@ -622,44 +667,44 @@ export interface _SERVICE {
       bigint,
       Uint8Array | number[],
     ],
-    Result_10
+    Result_11
   >,
-  'derive_vault_key' : ActorMethod<[Derive], Result_11>,
-  'export_index' : ActorMethod<[Uint8Array | number[], bigint], Result_12>,
-  'finish_cleanup' : ActorMethod<[Uint8Array | number[], string], Result_13>,
+  'derive_vault_key' : ActorMethod<[Derive], Result_13>,
+  'export_index' : ActorMethod<[Uint8Array | number[], bigint], Result_14>,
+  'finish_cleanup' : ActorMethod<[Uint8Array | number[], string], Result_15>,
   'finish_export' : ActorMethod<[Uint8Array | number[], boolean], Result>,
-  'finish_grant' : ActorMethod<[Uint8Array | number[], string], Result_13>,
+  'finish_grant' : ActorMethod<[Uint8Array | number[], string], Result_15>,
   'finish_restore_grant' : ActorMethod<
     [Uint8Array | number[], string, boolean],
-    Result_13
+    Result_15
   >,
-  'get_active_export' : ActorMethod<[], Result_14>,
+  'get_active_export' : ActorMethod<[], Result_16>,
   'get_active_export_for_vault' : ActorMethod<
     [Uint8Array | number[]],
-    Result_14
+    Result_16
   >,
   'get_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
-    Result_15
+    Result_17
   >,
-  'get_config' : ActorMethod<[], Result_16>,
+  'get_config' : ActorMethod<[], Result_18>,
   'get_export_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
-    Result_15
+    Result_17
   >,
   'get_manifest' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_10
+    Result_11
   >,
-  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_17>,
+  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_19>,
   'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result>,
   /**
    * Aggregate capacity is public metadata; it never allocates an owner or account.
    */
-  'global_capacity' : ActorMethod<[], Result_18>,
+  'global_capacity' : ActorMethod<[], Result_20>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
-  'incident_context' : ActorMethod<[], Result_19>,
-  'incident_cutover_digest' : ActorMethod<[], Result_15>,
+  'incident_context' : ActorMethod<[], Result_21>,
+  'incident_cutover_digest' : ActorMethod<[], Result_17>,
   'incident_source_index' : ActorMethod<
     [
       Uint8Array | number[],
@@ -667,52 +712,52 @@ export interface _SERVICE {
       Uint8Array | number[],
       bigint,
     ],
-    Result_12
+    Result_14
   >,
   'incident_staged_chunk' : ActorMethod<
     [IncidentRead, Uint8Array | number[], bigint, number],
-    Result_15
+    Result_17
   >,
-  'incident_staged_export' : ActorMethod<[IncidentRead], Result_20>,
-  'incident_staged_index' : ActorMethod<[IncidentRead, bigint], Result_12>,
+  'incident_staged_export' : ActorMethod<[IncidentRead], Result_22>,
+  'incident_staged_index' : ActorMethod<[IncidentRead, bigint], Result_14>,
   /**
    * Owner-only encrypted status remains available when configuration is absent or incompatible.
    */
-  'incident_status' : ActorMethod<[], Result_21>,
+  'incident_status' : ActorMethod<[], Result_23>,
   'initialize_restore_namespace' : ActorMethod<
     [Uint8Array | number[]],
-    Result_15
+    Result_17
   >,
-  'list_credentials' : ActorMethod<[], Result_22>,
+  'list_credentials' : ActorMethod<[], Result_24>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_12
+    Result_14
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_23
+    Result_25
   >,
-  'list_payments' : ActorMethod<[], Result_24>,
-  'list_unfinished_vaults' : ActorMethod<[], Result_25>,
-  'list_vaults' : ActorMethod<[], Result_26>,
+  'list_payments' : ActorMethod<[], Result_26>,
+  'list_unfinished_vaults' : ActorMethod<[], Result_27>,
+  'list_vaults' : ActorMethod<[], Result_28>,
   'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_4>,
   'mutate' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_27
+    Result_29
   >,
-  'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_7>,
-  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_28>,
+  'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_8>,
+  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_30>,
   'prepare_unlock_credential' : ActorMethod<
     [Uint8Array | number[], string],
-    Result_15
+    Result_17
   >,
   'prove_restore_candidate' : ActorMethod<
     [Uint8Array | number[], string],
-    Result_29
+    Result_31
   >,
   'prove_restore_current' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_29
+    Result_31
   >,
   'purge_object' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
@@ -731,32 +776,32 @@ export interface _SERVICE {
     ],
     Result_4
   >,
-  'quote_purchase' : ActorMethod<[PurchaseRequest], Result_7>,
+  'quote_purchase' : ActorMethod<[PurchaseRequest], Result_8>,
   'register_bootstrap' : ActorMethod<
     [Uint8Array | number[], string],
-    Result_13
+    Result_15
   >,
   'register_restore_candidate' : ActorMethod<
     [Uint8Array | number[], string],
     Result_2
   >,
   'reserve_vault' : ActorMethod<[Reserve], Result>,
-  'restore_admission_status' : ActorMethod<[], Result_30>,
+  'restore_admission_status' : ActorMethod<[], Result_32>,
   'restore_target_chunk' : ActorMethod<
     [Uint8Array | number[], Generation, Uint8Array | number[], bigint, number],
-    Result_15
+    Result_17
   >,
   'restore_target_descriptor' : ActorMethod<
     [Uint8Array | number[], Generation],
-    Result_20
+    Result_22
   >,
   'restore_target_index' : ActorMethod<
     [Uint8Array | number[], Generation, bigint],
-    Result_12
+    Result_14
   >,
   'restore_target_progress' : ActorMethod<
     [Uint8Array | number[], Generation],
-    Result_9
+    Result_10
   >,
   'resume_restore_admission' : ActorMethod<[Uint8Array | number[]], Result_2>,
   'set_config' : ActorMethod<[[] | [VaultConfig]], Result_4>,

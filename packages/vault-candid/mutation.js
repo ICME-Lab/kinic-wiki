@@ -134,6 +134,7 @@ export const idlFactory = ({ IDL }) => {
       'vault' : IDL.Vec(IDL.Nat8),
       'scope' : CredentialScope,
     }),
+    'CreateEmptyDerive' : IncidentDerive,
     'CommitRevision' : IDL.Record({
       'vault' : IDL.Vec(IDL.Nat8),
       'upload' : IDL.Vec(IDL.Nat8),
@@ -155,6 +156,12 @@ export const idlFactory = ({ IDL }) => {
       'scope' : CredentialScope,
     }),
     'RestoreDerive' : IncidentDerive,
+    'CreateEmptyStage' : IDL.Record({
+      'normal' : Envelope,
+      'recovery_verifier' : IDL.Vec(IDL.Nat8),
+      'recovery' : Envelope,
+    }),
+    'CreateEmptyAllocate' : IDL.Null,
     'RestoreChunk' : IDL.Record({
       'data' : IDL.Vec(IDL.Nat8),
       'index' : IDL.Nat32,
@@ -184,6 +191,9 @@ export const idlFactory = ({ IDL }) => {
       'vault' : IDL.Vec(IDL.Nat8),
     }),
     'IncidentCutover' : IDL.Record({ 'digest' : IDL.Vec(IDL.Nat8) }),
+    'CreateEmptyConfirmKit' : IDL.Record({
+      'envelope_digest' : IDL.Vec(IDL.Nat8),
+    }),
     'Derive' : Derive,
     'RestoreStage' : IDL.Record({
       'normal' : Envelope,
@@ -196,6 +206,7 @@ export const idlFactory = ({ IDL }) => {
       'vault' : IDL.Vec(IDL.Nat8),
       'envelope_digest' : IDL.Vec(IDL.Nat8),
     }),
+    'CreateEmptyActivate' : IDL.Null,
     'Activate' : IDL.Record({
       'request' : Activate,
       'recovery_verifier' : IDL.Vec(IDL.Nat8),

@@ -87,6 +87,7 @@ type MutationOperation = variant {
   IncidentStart;
   IncidentDerive : IncidentDerive;
   BeginRegistration : record { vault : blob; scope : CredentialScope };
+  CreateEmptyDerive : IncidentDerive;
   CommitRevision : record { vault : blob; upload : blob };
   RestoreDiscard : record { cursor : nat64; current : Generation };
   KeyResult : record { handle : blob };
@@ -102,6 +103,12 @@ type MutationOperation = variant {
     scope : CredentialScope;
   };
   RestoreDerive : IncidentDerive;
+  CreateEmptyStage : record {
+    normal : Envelope;
+    recovery_verifier : blob;
+    recovery : Envelope;
+  };
+  CreateEmptyAllocate;
   RestoreChunk : record { data : blob; index : nat32 };
   RestorePreflight : RestorePreflight;
   IncidentPrepareExport : record {
@@ -120,6 +127,7 @@ type MutationOperation = variant {
     vault : blob;
   };
   IncidentCutover : record { digest : blob };
+  CreateEmptyConfirmKit : record { envelope_digest : blob };
   Derive : Derive;
   RestoreStage : record {
     normal : Envelope;
@@ -132,6 +140,7 @@ type MutationOperation = variant {
     vault : blob;
     envelope_digest : blob;
   };
+  CreateEmptyActivate;
   Activate : record { request : Activate; recovery_verifier : blob };
   IncidentWrap : record {
     after : nat64;

@@ -80,6 +80,8 @@ pub struct TransitionState {
     pub incident: Option<IncidentStatus>,
     pub restore: Option<RestoreAdmissionStatus>,
     pub namespace_flight: Option<RestoreNamespaceFlight>,
+    #[serde(default)]
+    pub creation: Option<CreateEmptyStatus>,
 }
 impl Default for TransitionState {
     fn default() -> Self {
@@ -88,6 +90,7 @@ impl Default for TransitionState {
             incident: None,
             restore: None,
             namespace_flight: None,
+            creation: None,
         }
     }
 }
@@ -138,4 +141,34 @@ pub struct RestorePipeline {
     pub discard_started: bool,
     pub cleanup_cursor: u64,
     pub backup_ack: Option<IncidentBackupAck>,
+}
+
+/// A new-empty job has no archive, imported record, or unregistered candidate authority.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum CreateEmptyPhase {
+    Admitted,
+    Allocated,
+    EnvelopesStaged,
+    KitConfirmed,
+    Active,
+    Cancelling,
+    Cancelled,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEmptyStatus {
+    pub job: Id,
+    pub target: PendingCreation,
+    pub authorizer_instance: Generation,
+    pub creator: RestoreExistingCandidate,
+    pub key_digest: Vec<u8>,
+    pub phase: CreateEmptyPhase,
+    pub generation: Option<Generation>,
+    pub normal: Option<Envelope>,
+    pub recovery: Option<Envelope>,
+    pub recovery_verifier: Vec<u8>,
+    pub envelope_digest: Vec<u8>,
+    pub kit_ack: Option<Vec<u8>>,
+    pub allocation_token: Option<u64>,
+    pub cleanup_cursor: u64,
 }

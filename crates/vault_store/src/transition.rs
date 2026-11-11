@@ -193,6 +193,74 @@ pub fn decode(raw: &str) -> Result<TransitionState> {
             }
         }
     }
+    if let Some(j) = &state.creation {
+        if j.job.len() != 16
+            || j.target.namespace.len() != 32
+            || j.target.vault.len() != 16
+            || j.target.attempt.len() != 16
+            || j.creator.credential.is_empty()
+            || j.creator.credential.len() > 1024
+            || j.creator.version == 0
+            || j.creator.version > i64::MAX as u64
+            || j.creator.scope_digest.len() != 32
+            || j.key_digest.len() != 32
+            || j.authorizer_instance.vault == j.target.vault
+            || creation_unfinished(j)
+                && (state.namespace_flight.is_some()
+                    || state.restore.as_ref().is_some_and(restore_unfinished)
+                    || state.incident.as_ref().is_some_and(|p| !p.complete))
+        {
+            return Err(Error::Storage);
+        }
+        j.authorizer_instance.bytes().map_err(|_| Error::Storage)?;
+        if let Some(g) = &j.generation {
+            g.bytes().map_err(|_| Error::Storage)?;
+            if g.vault != j.target.vault
+                || g.owner != j.authorizer_instance.owner
+                || g.canister != j.authorizer_instance.canister
+                || g.epoch != 0
+                || g.nonce == j.authorizer_instance.nonce
+            {
+                return Err(Error::Storage);
+            }
+        }
+        if j.phase == CreateEmptyPhase::Admitted && j.generation.is_some()
+            || matches!(
+                j.phase,
+                CreateEmptyPhase::Allocated
+                    | CreateEmptyPhase::EnvelopesStaged
+                    | CreateEmptyPhase::KitConfirmed
+                    | CreateEmptyPhase::Active
+            ) && j.generation.is_none()
+            || j.envelope_digest.len() > 32
+            || j.recovery_verifier.len() > 32
+            || [&j.normal, &j.recovery]
+                .into_iter()
+                .flatten()
+                .any(|e| e.version != 2 || e.nonce.len() != 12 || e.ciphertext.len() != 48)
+        {
+            return Err(Error::Storage);
+        }
+        if matches!(
+            j.phase,
+            CreateEmptyPhase::EnvelopesStaged
+                | CreateEmptyPhase::KitConfirmed
+                | CreateEmptyPhase::Active
+        ) && (j.normal.is_none()
+            || j.recovery.is_none()
+            || j.envelope_digest.len() != 32
+            || j.recovery_verifier.len() != 32)
+        {
+            return Err(Error::Storage);
+        }
+        if matches!(
+            j.phase,
+            CreateEmptyPhase::KitConfirmed | CreateEmptyPhase::Active
+        ) && j.kit_ack.as_ref() != Some(&j.envelope_digest)
+        {
+            return Err(Error::Storage);
+        }
+    }
     Ok(state)
 }
 pub fn load_state(db: &Connection) -> Result<TransitionState> {
@@ -211,7 +279,8 @@ pub fn save_state(db: &Connection, s: &TransitionState) -> Result<()> {
     save(db, "transition", s)
 }
 pub fn pending_state(s: &TransitionState) -> bool {
-    s.restore.as_ref().is_some_and(restore_unfinished)
+    s.creation.as_ref().is_some_and(creation_unfinished)
+        || s.restore.as_ref().is_some_and(restore_unfinished)
         || s.namespace_flight.is_some()
         || s.incident.as_ref().is_some_and(|j| !j.complete)
 }
@@ -232,7 +301,9 @@ pub fn any_pending(db: &Connection) -> Result<bool> {
 }
 pub fn restore_pending(db: &Connection) -> Result<bool> {
     let s = load_state(db)?;
-    Ok(s.restore.as_ref().is_some_and(restore_unfinished) || s.namespace_flight.is_some())
+    Ok(s.creation.as_ref().is_some_and(creation_unfinished)
+        || s.restore.as_ref().is_some_and(restore_unfinished)
+        || s.namespace_flight.is_some())
 }
 pub fn pinned(db: &Connection, v: &[u8]) -> Result<bool> {
     let s = load_state(db)?;
@@ -241,7 +312,9 @@ pub fn pinned(db: &Connection, v: &[u8]) -> Result<bool> {
         Err(Error::NotFound) => None,
         Err(e) => return Err(e),
     };
-    Ok(s.restore.as_ref().is_some_and(|j| {
+    Ok(s.creation.as_ref().is_some_and(|j| {
+        creation_unfinished(j) && (j.target.vault == v || j.authorizer_instance.vault == v)
+    }) || s.restore.as_ref().is_some_and(|j| {
         restore_unfinished(j)
             && j.request.target.vault == v
             && (live == j.current_live
@@ -266,4 +339,42 @@ pub fn restore_unfinished(j: &RestoreAdmissionStatus) -> bool {
         && j.pipeline
             .as_ref()
             .is_none_or(|p| !matches!(p.phase, RestorePhase::Active | RestorePhase::Cancelled))
+}
+
+pub fn creation_unfinished(j: &CreateEmptyStatus) -> bool {
+    !matches!(
+        j.phase,
+        CreateEmptyPhase::Active | CreateEmptyPhase::Cancelled
+    )
+}
+pub fn creation_target(db: &Connection, vault: &[u8]) -> Result<bool> {
+    Ok(load_state(db)?
+        .creation
+        .is_some_and(|j| creation_unfinished(&j) && j.target.vault == vault))
+}
+/// Prune a concrete tuple only when no live header and no unfinished job still names it.
+pub fn instance_referenced(db: &Connection, s: &TransitionState, x: &Instance) -> Result<bool> {
+    let matches = |g: &Generation| g.vault == x.vault && g.nonce == x.nonce;
+    let live = match header(db, &x.vault) {
+        Ok(h) => h.generation.as_ref().is_some_and(matches),
+        Err(Error::NotFound) => false,
+        Err(e) => return Err(e),
+    };
+    Ok(live
+        || s.incident.as_ref().is_some_and(|p| {
+            !p.complete
+                && p.targets.iter().any(|t| {
+                    t.source.generation.as_ref().is_some_and(matches)
+                        || t.target.as_ref().is_some_and(matches)
+                })
+        })
+        || s.restore.as_ref().is_some_and(|r| {
+            restore_unfinished(r)
+                && (r.current_live.as_ref().is_some_and(matches)
+                    || r.pipeline.as_ref().is_some_and(|p| matches(&p.target)))
+        })
+        || s.creation.as_ref().is_some_and(|j| {
+            creation_unfinished(j)
+                && (matches(&j.authorizer_instance) || j.generation.as_ref().is_some_and(matches))
+        }))
 }

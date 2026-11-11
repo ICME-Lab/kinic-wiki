@@ -71,6 +71,12 @@ fn check_request(
     if s.namespace_flight.as_ref().is_some_and(|f| !f.ready) {
         return Err(Error::Busy);
     }
+    if s.creation
+        .as_ref()
+        .is_some_and(store::transition::creation_unfinished)
+    {
+        return Err(Error::Busy);
+    }
     let parent = if let Some(p) = s.incident.filter(|p| !p.complete) {
         let h = h.as_ref().ok_or(Error::Busy)?;
         if h.state != VaultState::IncidentRequired

@@ -129,6 +129,25 @@ pub fn active(db: &Connection, vault: &[u8]) -> Result<Header> {
 }
 pub fn reserve(db: &Connection, caller: Principal, r: Reserve, now: u64) -> Result<Header> {
     incident::owner_change_allowed(db)?;
+    reserve_inner(db, caller, r, now)
+}
+/// Only the exact shared-slot creation may bypass the generic owner-job guard.
+pub fn reserve_empty(db: &Connection, caller: Principal, job: &[u8], now: u64) -> Result<Header> {
+    let j = transition::load_state(db)?
+        .creation
+        .filter(|j| j.job == job && j.phase == CreateEmptyPhase::Admitted)
+        .ok_or(Error::Unauthorized)?;
+    reserve_inner(
+        db,
+        caller,
+        Reserve {
+            vault: j.target.vault,
+            operation: j.target.attempt,
+        },
+        now,
+    )
+}
+fn reserve_inner(db: &Connection, caller: Principal, r: Reserve, now: u64) -> Result<Header> {
     let c = authorize(db, caller)?;
     id(&r.vault)?;
     id(&r.operation)?;

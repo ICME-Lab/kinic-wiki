@@ -113,6 +113,14 @@ pub async fn mutate(
                     .await
                     .map(|_| MutationResult::Unit)
             }
+            WorkRequest::CreateEmptyAllocate { job } => {
+                create_empty_flights::allocate(&authorized, job)
+                    .await
+                    .map(|_| MutationResult::Unit)
+            }
+            WorkRequest::CreateEmptyDerive(r) => create_empty_flights::derive(&authorized, r)
+                .await
+                .map(MutationResult::Key),
             WorkRequest::RestoreAllocate { job } => restore_flights::allocate(&authorized, job)
                 .await
                 .map(|_| MutationResult::Unit),
@@ -171,6 +179,31 @@ fn ordinary(
     g: &mut Grant,
     op: &MutationOperation,
 ) -> Result<MutationResult> {
+    if matches!(g.info.purpose, GrantPurpose::CreateEmpty { .. }) {
+        match op {
+            MutationOperation::CreateEmptyAllocate => {
+                return work(
+                    g,
+                    env,
+                    WorkRequest::CreateEmptyAllocate {
+                        job: create_empty::job(&g.info.purpose)?.clone(),
+                    },
+                );
+            }
+            MutationOperation::CreateEmptyDerive(r) => {
+                if &r.job != create_empty::job(&g.info.purpose)? {
+                    return Err(Error::Unauthorized);
+                }
+                create_empty::role(db, env, r)?;
+                if !valid_transport(&r.transport) {
+                    return Err(Error::InvalidInput);
+                }
+                return work(g, env, WorkRequest::CreateEmptyDerive(r.clone()));
+            }
+            MutationOperation::KeyResult { .. } => {}
+            _ => return create_empty::apply(db, env, g, op),
+        }
+    }
     if restore_grants::is_restore(&g.info.purpose) {
         match op {
             MutationOperation::RestoreAllocate

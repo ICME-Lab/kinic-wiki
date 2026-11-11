@@ -1,6 +1,6 @@
 //! Existing physical passkeys: immutable admission identity, live shared counter and scope merge.
 use super::*;
-fn credential(db: &Connection, id: &[u8]) -> Result<passkey_auth::PasskeyCredential> {
+pub(crate) fn credential(db: &Connection, id: &[u8]) -> Result<passkey_auth::PasskeyCredential> {
     let raw: Option<String> = db.query_row(
         "SELECT value FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",
         params![id], |r| kinic_sqlite_compat::row_get(r, 0),
@@ -12,7 +12,7 @@ fn credential(db: &Connection, id: &[u8]) -> Result<passkey_auth::PasskeyCredent
     }
     Ok(c)
 }
-fn instances(a: &authorization::Authority) -> Result<&Vec<Instance>> {
+pub(crate) fn instances(a: &authorization::Authority) -> Result<&Vec<Instance>> {
     match &a.scope {
         CredentialScope::Instances(xs)
             if !a.revoked
@@ -119,23 +119,8 @@ fn merged_scope(
         if j.current_live.as_ref().is_some_and(|g| matches(x, g)) {
             continue;
         }
-        let live = match store::header(db, &x.vault) {
-            Ok(h) => h.generation.as_ref().is_some_and(|g| matches(x, g)),
-            Err(Error::NotFound) => false,
-            Err(e) => return Err(e),
-        };
-        let pending = s.incident.as_ref().is_some_and(|p| {
-            !p.complete
-                && p.targets.iter().any(|t| {
-                    t.source.generation.as_ref().is_some_and(|g| matches(x, g))
-                        || t.target.as_ref().is_some_and(|g| matches(x, g))
-                })
-        }) || s.restore.as_ref().is_some_and(|r| {
-            store::transition::restore_unfinished(r)
-                && (r.current_live.as_ref().is_some_and(|g| matches(x, g))
-                    || r.pipeline.as_ref().is_some_and(|p| matches(x, &p.target)))
-        });
-        if live || pending {
+        let retained = store::transition::instance_referenced(db, &s, x)?;
+        if retained {
             xs.push(x.clone());
         }
     }

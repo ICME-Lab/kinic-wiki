@@ -270,6 +270,9 @@ pub(crate) fn pending_creation(
     target: &PendingCreation,
     replay_job: Option<&Id>,
 ) -> Result<()> {
+    if store::transition::creation_target(db, &target.vault)? {
+        return Err(Error::Unauthorized);
+    }
     id(&target.vault)?;
     id(&target.attempt)?;
     let n = namespace(db)?;
@@ -299,6 +302,9 @@ pub(crate) fn pending_creation(
 /// operation, not a client epoch or the current phase, so an old Normal grant cannot
 /// revive the cancelling attempt. A new namespace/attempt and unrelated Vault stay usable.
 pub(crate) fn normal_allowed(db: &Connection, h: &Header) -> Result<()> {
+    if store::transition::creation_target(db, &h.id)? {
+        return Err(Error::Unauthorized);
+    }
     let Some(n) = store::load::<Namespace>(db, "cleanup")? else {
         return Ok(());
     };

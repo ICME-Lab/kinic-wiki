@@ -102,6 +102,25 @@ test("all generated JS Candid mutation variants and generation bytes match froze
   };
   operations.push(
     { IncidentStart: null },
+    { CreateEmptyAllocate: null },
+    {
+      CreateEmptyDerive: {
+        job: op,
+        attempt: op,
+        role: { Target: null },
+        generation,
+        transport: b(8, 48),
+      },
+    },
+    {
+      CreateEmptyStage: {
+        normal: env,
+        recovery: env,
+        recovery_verifier: b(7, 32),
+      },
+    },
+    { CreateEmptyConfirmKit: { envelope_digest: b(8, 32) } },
+    { CreateEmptyActivate: null },
     { IncidentAllocate: { vault: v, attempt: op } },
     ...([{ Source: null }, { Target: null }] as const).map((role) => ({
       IncidentDerive: {

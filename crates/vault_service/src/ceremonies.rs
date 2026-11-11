@@ -22,6 +22,9 @@ pub(crate) fn validate_request(
     )
     .map_err(|_| Error::InvalidInput)?;
     let a = authorization::authority(db, &r.credential)?;
+    if matches!(r.purpose, GrantPurpose::CreateEmpty { .. }) {
+        return create_empty::validate(db, env, r);
+    }
     if a.revoked {
         return Err(Error::Unauthorized);
     }
@@ -245,6 +248,9 @@ pub fn finish(env: &impl Environment, operation: Id, proof: String) -> Result<Gr
             return Err(Error::Unauthorized);
         }
         authorization::assertion(db, &as_ceremony(&p), &p.request.credential, &proof)?;
+        if matches!(p.request.purpose, GrantPurpose::CreateEmpty { .. }) {
+            create_empty::admit(db, env, &p.request)?;
+        }
         let id =
             Sha256::digest([b"kinic-vault/grant-id/v2".as_slice(), &p.challenge.bytes].concat())
                 .to_vec();

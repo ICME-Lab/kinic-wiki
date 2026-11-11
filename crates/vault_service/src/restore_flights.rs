@@ -1,13 +1,19 @@
 //! Paid target-only key flights, with settlement outside publication authority.
 use super::*;
 pub(crate) async fn derive(env: &impl Environment, r: IncidentDerive) -> Result<KeyReply> {
+    derive_target(env, r, false).await
+}
+pub(crate) async fn derive_empty(env: &impl Environment, r: IncidentDerive) -> Result<KeyReply> {
+    derive_target(env, r, true).await
+}
+async fn derive_target(env: &impl Environment, r: IncidentDerive, empty: bool) -> Result<KeyReply> {
     env.require_spending()?;
     env.transaction(|db| {
-        role(db, env, &r)?;
+        target_role(db, env, &r, empty)?;
         runtime::collect_completed_key_rows(db, env)
     })?;
     let (token, flight) = env.transaction(|db| {
-        let generation = role(db, env, &r)?;
+        let generation = target_role(db, env, &r, empty)?;
         if !valid_transport(&r.transport) {
             return Err(Error::InvalidInput);
         }
@@ -43,7 +49,11 @@ pub(crate) async fn derive(env: &impl Environment, r: IncidentDerive) -> Result<
             token: c.serial,
             vault: generation.vault,
             epoch: generation.epoch,
-            state: VaultState::Restoring,
+            state: if empty {
+                VaultState::Pending
+            } else {
+                VaultState::Restoring
+            },
             attempt: Some(r.attempt.clone()),
             expires: env.now() + 120,
             key_name: generation.key_name,
@@ -62,11 +72,11 @@ pub(crate) async fn derive(env: &impl Environment, r: IncidentDerive) -> Result<
     let result = async {
         env.checkpoint_execution()?;
         let public = env.public_key(&flight.key_name).await?;
-        env.transaction(|db| check(db, env, &r, &flight, true))?;
+        env.transaction(|db| check(db, env, &r, &flight, true, empty))?;
         env.require_spending()?;
         payment = env.required_derive_payment(&flight.key_name);
         env.transaction(|db| {
-            check(db, env, &r, &flight, true)?;
+            check(db, env, &r, &flight, true, empty)?;
             store::keys::mark_sent(db, token, payment)
         })?;
         env.checkpoint_execution()?;
@@ -78,7 +88,7 @@ pub(crate) async fn derive(env: &impl Environment, r: IncidentDerive) -> Result<
                 r.transport.clone(),
             )
             .await?;
-        env.transaction(|db| check(db, env, &r, &flight, true))?;
+        env.transaction(|db| check(db, env, &r, &flight, true, empty))?;
         runtime::validate_key_reply(KeyReply {
             encrypted_key: encrypted,
             public_key: public,
@@ -96,7 +106,7 @@ pub(crate) async fn derive(env: &impl Environment, r: IncidentDerive) -> Result<
         if !current {
             return Err(Error::Expired);
         }
-        check(db, env, &r, &flight, false)?;
+        check(db, env, &r, &flight, false, empty)?;
         result
     })
 }
@@ -106,8 +116,9 @@ fn check(
     r: &IncidentDerive,
     f: &Flight,
     require_flight: bool,
+    empty: bool,
 ) -> Result<()> {
-    role(db, env, r)?;
+    target_role(db, env, r, empty)?;
     if f.expires <= env.now()
         || f.configuration != grants::fence(db)?
         || require_flight
@@ -120,6 +131,18 @@ fn check(
     Ok(())
 }
 
+fn target_role(
+    db: &Connection,
+    env: &impl Environment,
+    r: &IncidentDerive,
+    empty: bool,
+) -> Result<Generation> {
+    if empty {
+        create_empty::role(db, env, r)
+    } else {
+        role(db, env, r)
+    }
+}
 pub(crate) fn role(
     db: &Connection,
     env: &impl Environment,

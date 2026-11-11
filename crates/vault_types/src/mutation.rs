@@ -20,15 +20,42 @@ pub enum GrantPurpose {
     Normal,
     Credentials,
     Create,
-    Restore { job: Id },
-    RestorePrepare { job: Id, target: PendingCreation },
-    RestoreTarget { job: Id, generation: Generation },
-    RestoreCleanup { job: Id, target: PendingCreation },
-    Incident { job: Id, vector_digest: Vec<u8> },
+    CreateEmpty {
+        job: Id,
+        target: PendingCreation,
+        authorizer_instance: Generation,
+    },
+    Restore {
+        job: Id,
+    },
+    RestorePrepare {
+        job: Id,
+        target: PendingCreation,
+    },
+    RestoreTarget {
+        job: Id,
+        generation: Generation,
+    },
+    RestoreCleanup {
+        job: Id,
+        target: PendingCreation,
+    },
+    Incident {
+        job: Id,
+        vector_digest: Vec<u8>,
+    },
     IncidentPrepare(IncidentPreparation),
-    IncidentCutover { job: Id, digest: Vec<u8> },
-    Cleanup { job: Id },
-    CancelCreation { job: Id, target: PendingCreation },
+    IncidentCutover {
+        job: Id,
+        digest: Vec<u8>,
+    },
+    Cleanup {
+        job: Id,
+    },
+    CancelCreation {
+        job: Id,
+        target: PendingCreation,
+    },
 }
 /// Public namespace identity and immutable creation attempt; never a generation or secret.
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -74,6 +101,17 @@ pub struct Mutation {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum MutationOperation {
+    CreateEmptyAllocate,
+    CreateEmptyDerive(IncidentDerive),
+    CreateEmptyStage {
+        normal: Envelope,
+        recovery: Envelope,
+        recovery_verifier: Vec<u8>,
+    },
+    CreateEmptyConfirmKit {
+        envelope_digest: Vec<u8>,
+    },
+    CreateEmptyActivate,
     RestoreAllocate,
     RestoreDerive(IncidentDerive),
     RestoreStage {

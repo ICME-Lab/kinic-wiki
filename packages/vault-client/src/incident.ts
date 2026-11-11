@@ -56,7 +56,10 @@ export function encodeIncidentKit(g: Generation, secret: Uint8Array) {
 }
 /** Returns a temporary raw root for immediate import; caller must wipe it in finally. */
 export async function verifyIncidentKit(
-  t: IncidentTarget,
+  t: Pick<
+    IncidentTarget,
+    "target" | "normal" | "recovery" | "recovery_verifier"
+  >,
   kek: CryptoKey,
   data: Uint8Array,
 ) {

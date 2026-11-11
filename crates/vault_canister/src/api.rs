@@ -813,3 +813,25 @@ fn restore_target_progress(
     let env = Vault::capture_read()?;
     vault_service::restore_pipeline::progress(&env, job, target)
 }
+
+/// Read-only status resolves activation whose old grant has intentionally been invalidated.
+#[ic_cdk::query]
+fn create_empty_status() -> vault_types::Result<Option<vault_types::CreateEmptyStatus>> {
+    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
+    crate::state::transaction(|db| {
+        owner.run(db, |db| {
+            Ok(vault_store::transition::load_state(db)?.creation)
+        })
+    })
+}
+#[ic_cdk::update]
+fn cancel_create_empty(
+    job: vault_types::Id,
+    target: vault_types::PendingCreation,
+    generation: Option<vault_types::Generation>,
+    cursor: u64,
+) -> vault_types::Result<vault_types::CleanupProgress> {
+    let env = Vault::capture_cleanup()?;
+    let result = vault_service::create_empty::cancel(&env, job, target, generation, cursor);
+    env.finish(result)
+}

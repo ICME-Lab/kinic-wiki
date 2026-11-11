@@ -33,6 +33,8 @@ pub(crate) enum WorkRequest {
     IncidentAllocate { vault: Id, attempt: Id },
     IncidentDerive(IncidentDerive),
     RestoreAllocate { job: Id },
+    CreateEmptyAllocate { job: Id },
+    CreateEmptyDerive(IncidentDerive),
     RestoreDerive(IncidentDerive),
 }
 pub(crate) fn key(id: &[u8]) -> String {
@@ -193,6 +195,21 @@ pub(crate) fn current(db: &Connection, env: &impl Environment, g: &Grant) -> Res
     let authority = crate::authorization::authority(db, &g.credential)?;
     if authority.revoked || authority.version != g.credential_version {
         return Err(Error::Unauthorized);
+    }
+    if matches!(g.info.purpose, GrantPurpose::CreateEmpty { .. }) {
+        let j = create_empty::load(db, create_empty::job(&g.info.purpose)?)?;
+        create_empty::validate(
+            db,
+            env,
+            &GrantRequest {
+                operation: vec![0; 16],
+                public_key: g.public_key.clone(),
+                credential: g.credential.clone(),
+                purpose: g.info.purpose.clone(),
+                generations: g.info.generations.clone(),
+            },
+        )?;
+        return create_empty::current(db, env, &j);
     }
     if matches!(
         g.info.purpose,
