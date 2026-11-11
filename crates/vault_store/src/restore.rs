@@ -34,6 +34,15 @@ pub fn target_seed(generation: &Generation) -> Result<Vec<u8>> {
     .to_vec())
 }
 pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
+    begin_inner(db, r, now, false)
+}
+pub fn begin_prepaid(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
+    if !restore_working::available(db)? {
+        return Err(Error::QuotaExceeded);
+    }
+    begin_inner(db, r, now, true)
+}
+fn begin_inner(db: &Connection, r: BeginRestore, now: u64, prepaid: bool) -> Result<Header> {
     id(&r.header.id)?;
     id(&r.operation)?;
     setup::reject_discarded(db, &r.header.id, &r.operation, now)?;
@@ -89,7 +98,7 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     }
     let unfinished: i64 = db
         .query_row(
-            "SELECT count(*) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) v ON v.id=r.vault WHERE v.expires>0",
+            "SELECT count(*) FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
             params![],
             |row| sql::row_get(row, 0),
         )
@@ -97,7 +106,7 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     if unfinished > 0 {
         return Err(Error::Busy);
     }
-    content::check_capacity(db, r.reserved_bytes + 12288)?;
+    content::check_capacity(db, r.reserved_bytes + if prepaid { 8192 } else { 12288 })?;
     let mut h = r.header;
     h.state = VaultState::Restoring;
     h.normal = None;
@@ -138,7 +147,7 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     )
     .map_err(err)?;
     db.execute(
-        "INSERT INTO restores VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,0,0,?7,'',?8)",
+        "INSERT INTO restores VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,0,0,?7,'',?8,?9)",
         params![
             h.id,
             r.operation,
@@ -147,7 +156,8 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
             r.root,
             seed,
             r.reserved_bytes as i64,
-            digest
+            digest,
+            i64::from(prepaid)
         ],
     )
     .map_err(err)?;
@@ -211,7 +221,12 @@ pub fn stage(db: &Connection, v: &[u8], r: Revision, now: u64) -> Result<()> {
             .len() as u64
         + 4096;
     let encoded = serde_json::to_string(&r).map_err(|_| Error::Storage)?;
-    if charge + encoded.len() as u64 > reserved {
+    let prepaid = restore_working::mode(db, v)?;
+    if prepaid && encoded.len() > restore_working::PENDING_MAX {
+        return Err(Error::QuotaExceeded);
+    }
+    let pending_charge = if prepaid { 0 } else { encoded.len() as u64 };
+    if charge + pending_charge > reserved {
         return Err(Error::QuotaExceeded);
     }
     let old: Option<i64> = db
@@ -254,7 +269,7 @@ pub fn stage(db: &Connection, v: &[u8], r: Revision, now: u64) -> Result<()> {
     .map_err(err)?;
     db.execute(
         "UPDATE restores SET reserved=reserved-?2,pending=?3 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1)",
-        params![v, (charge + encoded.len() as u64) as i64, encoded],
+        params![v, (charge + pending_charge) as i64, encoded],
     )
     .map_err(err)?;
     Ok(())
@@ -322,7 +337,12 @@ pub fn finish_record(
         )
         .map_err(err)?;
     let head_charge = if existing == 0 { 4096 } else { 0 };
-    if reserved + (raw.len() as u64) < head_charge {
+    let pending_charge = if restore_working::mode(db, v)? {
+        0
+    } else {
+        raw.len() as u64
+    };
+    if reserved + pending_charge < head_charge {
         return Err(Error::QuotaExceeded);
     }
     db.execute("INSERT INTO objects VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3) ON CONFLICT(owner,vault,object) DO UPDATE SET head=excluded.head",params![v,r.object,r.revision as i64]).map_err(err)?;
@@ -330,8 +350,8 @@ pub fn finish_record(
     p.count += 1;
     p.sequence = r.sequence;
     db.execute(
-        "UPDATE restores SET chain=?2,count=?3,last_seq=?4,reserved=reserved+length(CAST(pending AS BLOB))-?5,pending='' WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1)",
-        params![v, p.root, p.count as i64, p.sequence as i64, head_charge as i64],
+        "UPDATE restores SET chain=?2,count=?3,last_seq=?4,reserved=reserved+?6-?5,pending='' WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1)",
+        params![v, p.root, p.count as i64, p.sequence as i64, head_charge as i64, pending_charge as i64],
     )
     .map_err(err)?;
     Ok(p)

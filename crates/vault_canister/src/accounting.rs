@@ -633,3 +633,28 @@ pub(crate) fn challenge_pending_in(
     let n:i64=db.query_row("SELECT count(*) FROM vault_cycle_reservations WHERE owner=?1 AND token=?2 AND (in_flight=1 OR execution_checkpoint>execution_billed)",params![owner.to_text(),format!("challenge:{token}")],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
     Ok(n != 0)
 }
+
+/// Upgrade-only reservation migration. Settle cached pre-upgrade storage at the
+/// boundary, then track the larger reservation forward. Never reject overcommit.
+pub(crate) fn migrate_restore_working(db: &Connection, now: i64) -> vault_types::Result<()> {
+    let mut statement=db.prepare("SELECT owner FROM settings s WHERE key='cleanup' AND NOT EXISTS(SELECT 1 FROM settings w WHERE w.owner=s.owner AND w.key='restore-working')").map_err(|_|Error::Storage)?;
+    let owners: Vec<Vec<u8>> =
+        sqlite::query_map(&mut statement, params![], |r| sqlite::row_get(r, 0))
+            .map_err(|_| Error::Storage)?;
+    drop(statement);
+    for bytes in owners {
+        let owner = candid::Principal::try_from_slice(&bytes).map_err(|_| Error::Storage)?;
+        settle_storage(db, &owner.to_text(), now).map_err(|_| Error::Storage)?;
+        db.execute(
+            "INSERT INTO settings VALUES(?1,'restore-working','null')",
+            params![bytes],
+        )
+        .map_err(|_| Error::Storage)?;
+        vault_store::OwnerContext::authenticated(owner)?.run(db,|db| {
+            let usage=vault_store::content::usage(db)?;
+            db.execute("UPDATE accounts SET storage_bytes=?2,storage_charged_at_ms=max(storage_charged_at_ms,?3) WHERE owner=?1",params![owner.to_text(),usage as i64,now]).map_err(|_|Error::Storage)?;
+            Ok(())
+        })?;
+    }
+    Ok(())
+}

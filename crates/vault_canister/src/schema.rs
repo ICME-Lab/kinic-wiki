@@ -32,7 +32,26 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
         // reservation makes an intermediate namespace overcommitted.
         db.execute_batch("INSERT OR IGNORE INTO settings(owner,key,value) SELECT owner,'transition','null' FROM settings WHERE key='cleanup'; PRAGMA user_version=4;").map_err(|_| vault_types::Error::Storage)?;
     }
-    if !matches!(version, 1 | 2 | 3 | 4) {
+    if matches!(version, 1 | 2 | 3 | 4) {
+        let columns: i64 = db
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('restores') WHERE name='working_prepaid'",
+                params![],
+                |r| sqlite::row_get(r, 0),
+            )
+            .map_err(|_| vault_types::Error::Storage)?;
+        if columns == 0 {
+            db.execute_batch(
+                "ALTER TABLE restores ADD COLUMN working_prepaid INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(|_| vault_types::Error::Storage)?;
+        }
+        db.execute_batch("PRAGMA user_version=5;")
+            .map_err(|_| vault_types::Error::Storage)?;
+    }
+    db.execute_batch(vault_store::RESTORE_WORKING_SCHEMA)
+        .map_err(|_| vault_types::Error::Storage)?;
+    if !matches!(version, 1 | 2 | 3 | 4 | 5) {
         return Err(vault_types::Error::Storage);
     }
     db.execute_batch(vault_store::KEY_CAPACITY_SCHEMA)

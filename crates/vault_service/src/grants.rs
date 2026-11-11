@@ -89,6 +89,7 @@ pub(crate) fn save(db: &Connection, grant: &Grant) -> Result<()> {
     store::save(db, &key(&grant.info.id), grant)
 }
 pub(crate) fn prepay(db: &Connection) -> Result<()> {
+    store::restore_working::prepay(db)?;
     for n in 0..6 {
         store::save(db, &format!("grant-slot:{n}"), &())?;
     }

@@ -45,7 +45,13 @@ pub fn save<T: Serialize>(db: &Connection, key: &str, value: &T) -> Result<()> {
     ) || key.starts_with("grant:")
         || key.starts_with("grant-slot:")
         || key.starts_with("credential-slot:");
-    let extra = if reserved {
+    let extra = if key == restore_working::KEY {
+        if existing.is_some() {
+            0
+        } else {
+            restore_working::BYTES
+        }
+    } else if reserved {
         if existing.is_some() { 0 } else { 65536 }
     } else {
         text.len()
@@ -230,7 +236,11 @@ pub mod content;
 mod tests;
 pub const CONTENT_SCHEMA: &str = include_str!("content-schema.sql");
 pub mod restore;
-pub const RESTORE_SCHEMA: &str = include_str!("restore-schema.sql");
+pub const RESTORE_WORKING_SCHEMA: &str = include_str!("restore-working-schema.sql");
+pub const RESTORE_SCHEMA: &str = concat!(
+    include_str!("restore-schema.sql"),
+    include_str!("restore-working-schema.sql")
+);
 
 pub mod setup;
 
@@ -278,3 +288,5 @@ pub mod incident;
 pub const KEY_CAPACITY_SCHEMA: &str = include_str!("key-capacity-schema.sql");
 
 pub mod transition;
+
+pub mod restore_working;

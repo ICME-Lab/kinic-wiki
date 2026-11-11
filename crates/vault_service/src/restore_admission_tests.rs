@@ -939,7 +939,7 @@ fn restore_pipeline_preflight_rejects_capacity_and_unsaved_source_before_discard
         )
         .is_err()
     );
-    env.transaction(|db|{let used=store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,X'','[]',1,?3)",params![vec![3u8;16],vec![4u8;16],(TOTAL_MAX-used-300) as i64]).map_err(|_|Error::Storage)?;Ok(())}).unwrap();
+    env.transaction(|db|{let used=store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,X'','[]',1,?3)",params![vec![3u8;16],vec![4u8;16],(TOTAL_MAX-used+300) as i64]).map_err(|_|Error::Storage)?;Ok(())}).unwrap();
     let current = restore_admission::status(&env)
         .unwrap()
         .unwrap()
@@ -1716,3 +1716,43 @@ fn restore_reuse_at_ten_starts_possession_without_new_registration() {
 
 #[path = "restore_reuse_tests.rs"]
 mod reuse_tests;
+
+// Regression: an equal-size current-v2 replacement must reuse prepaid working
+// capacity at full GLOBAL quota. Unrelated owner filler cannot be reclaimed.
+#[test]
+fn restore_pipeline_current_replacement_at_exact_global_quota() {
+    let env = fixture();
+    let key = admit_pipeline(&env, 1);
+    let (_, _, target) = allocated_pipeline(&env, 1, &key);
+    let mut f = empty_preflight(&env, &target);
+    // One canonical retained tombstone: 4096 revision bytes + JSON hashes "[]".
+    let record = Revision {
+        vault: vec![1; 16],
+        object: vec![20; 16],
+        revision: 1,
+        sequence: 1,
+        plain_size: 0,
+        manifest: vec![],
+        chunk_hashes: vec![],
+        deleted: true,
+    };
+    f.records = 1;
+    f.objects = 1;
+    f.sequence = 1;
+    f.revision_bytes = 4098;
+    f.peak_pending_bytes = serde_json::to_vec(&record).unwrap().len() as u64;
+    env.transaction(|db| {
+        db.execute("INSERT INTO objects VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)", params![record.vault,record.object]).unwrap();
+        db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,X'','[]',1,4098)", params![record.vault,record.object]).unwrap();
+        let used=store::content::global_usage(db)?;
+        let filler_owner=Principal::self_authenticating([219;32]);
+        db.execute("INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,X'','[]',1,?4)", params![filler_owner.as_slice(),vec![218u8;16],vec![217u8;16],(TOTAL_MAX-used) as i64]).unwrap();
+        assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
+        let j=restore_admission::load(db,&request(1).job)?;
+        let result=restore_pipeline::projected(db,&j,&f);
+        assert_eq!(store::header(db,&[1;16])?.state,VaultState::Active);
+        assert_eq!(store::content::global_usage(db)?,TOTAL_MAX);
+        assert_eq!(result,Ok(()),"equal-size current replacement needs prepaid scratch; peak={}",f.peak_pending_bytes);
+        Ok(())
+    }).unwrap();
+}

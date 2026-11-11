@@ -281,7 +281,8 @@ it("requires new kit and exact saved prepared backup, preserves encrypted conten
   expect(o.records[0].sequence).toBe("7");
   expect(o.records[0].manifest).not.toBe(b64(f.d.manifest));
   const cost = restorePreflight(f.j, o.records, o.restoreRoot, 7n);
-  expect(restoreReservation(cost)).toBeGreaterThan(cost.revision_bytes);
+  expect(restoreReservation(cost)).toBe(cost.revision_bytes + 4096n);
+  expect(cost.peak_pending_bytes).toBeGreaterThan(0n);
   o.rootRaw.fill(0);
   await expect(
     f.client.importPrepared(

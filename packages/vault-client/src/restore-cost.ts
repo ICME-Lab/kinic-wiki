@@ -85,5 +85,5 @@ export function restorePreflight(
   return f;
 }
 export function restoreReservation(f: RestorePreflight) {
-  return f.revision_bytes + f.objects * 4096n + f.peak_pending_bytes;
+  return f.revision_bytes + f.objects * 4096n;
 }

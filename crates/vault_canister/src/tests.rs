@@ -671,3 +671,38 @@ fn restore_challenge_completion_waits_for_exact_owner_token_and_checkpoint() {
     .unwrap();
     assert_eq!(s.balance(&owner.to_text()).unwrap(), 973_000_000);
 }
+
+#[test]
+fn restore_working_migration_preserves_old_pending_and_bills_only_forward() {
+    use kinic_sqlite_compat::params;
+    state::initialize().unwrap();
+    state::transaction(|db| {
+        let owner=p(17);
+        db.execute("INSERT INTO settings VALUES(?1,'cleanup','null')",params![owner.as_slice()]).unwrap();
+        db.execute("INSERT INTO accounts VALUES(?1,1000000000,1048576,1000)",params![owner.to_text()]).unwrap();
+        db.execute("INSERT INTO restores VALUES(?1,?2,?3,99999,1,?4,?4,0,0,12345,'legacy-pending',?4,0)",params![owner.as_slice(),vec![1u8;16],vec![2u8;16],vec![3u8;32]]).unwrap();
+        let fill=vault_types::TOTAL_MAX-vault_store::content::global_usage(db)?;
+        db.execute("INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,X'','[]',1,?4)",params![p(18).as_slice(),vec![1u8;16],vec![2u8;16],fill as i64]).unwrap();
+        db.execute("INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms,execution_checkpoint) VALUES(?1,'challenge:77',?1,1234,1000,321)",params![owner.to_text()]).unwrap();
+        crate::accounting::migrate_restore_working(db,11_000)?;
+        let global=vault_store::content::global_capacity(db)?;
+        assert!(global.overcommitted);
+        assert_eq!(global.overage,524288);
+        let protected:(i64,i64,i64)=db.query_row("SELECT reserved,in_flight,execution_checkpoint FROM vault_cycle_reservations",params![],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(protected,(1234,1,321));
+        let row:(i64,i64,i64)=db.query_row("SELECT balance_cycles,storage_bytes,storage_charged_at_ms FROM accounts WHERE owner=?1",params![owner.to_text()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(row.0,999998760); // 1 MiB * 10 s at 127000 cycles/GiB/s.
+        assert_eq!(row.2,11_000);
+        vault_store::OwnerContext::authenticated(owner)?.run(db,|db| {
+            assert_eq!(row.1 as u64,vault_store::content::usage(db)?);
+            assert!(vault_store::restore_working::available(db)?);
+            let old:(i64,String,Vec<u8>,i64)=db.query_row("SELECT reserved,pending,digest,working_prepaid FROM restores",params![],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+            assert_eq!(old,(12345,"legacy-pending".into(),vec![3u8;32],0));
+            Ok(())
+        })?;
+        crate::accounting::migrate_restore_working(db,21_000)?;
+        let balance:i64=db.query_row("SELECT balance_cycles FROM accounts WHERE owner=?1",params![owner.to_text()],|r|r.get(0)).unwrap();
+        assert_eq!(balance,row.0); // Already migrated: no duplicate boundary charge.
+        Ok(())
+    }).unwrap();
+}

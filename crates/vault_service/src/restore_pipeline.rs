@@ -78,7 +78,6 @@ pub(crate) fn reservation(p: &RestorePreflight) -> Result<u64> {
     }
     p.revision_bytes
         .checked_add(p.objects.checked_mul(4096).ok_or(Error::QuotaExceeded)?)
-        .and_then(|x| x.checked_add(p.peak_pending_bytes))
         .filter(|x| *x <= TOTAL_MAX)
         .ok_or(Error::QuotaExceeded)
 }
@@ -94,6 +93,9 @@ pub(crate) fn projected(
     j: &RestoreAdmissionStatus,
     p: &RestorePreflight,
 ) -> Result<()> {
+    if !store::restore_working::available(db)? {
+        return Err(Error::QuotaExceeded);
+    }
     let v = &j.request.target.vault;
     let reclaim = if j.current_live.is_some() && j.pipeline.as_ref().is_none_or(|p| !p.old_removed)
     {
@@ -106,7 +108,7 @@ pub(crate) fn projected(
         0
     };
     let needed = reservation(p)?
-        .checked_add(12288)
+        .checked_add(8192)
         .ok_or(Error::QuotaExceeded)?;
     for usage in [
         store::content::usage(db)?,
@@ -346,7 +348,7 @@ pub(crate) fn apply(
             }
             projected(db, &j, f)?;
             let h = header(&j, &p)?;
-            store::restore::begin(
+            store::restore::begin_prepaid(
                 db,
                 BeginRestore {
                     header: h.clone(),

@@ -1389,3 +1389,6 @@ fn key_pool_global_bound_counts_all_owners_and_never_expands_accounting_floor() 
     db.execute_batch(KEY_CAPACITY_SCHEMA).unwrap();
     keys::settle(&db, 999, DAY * 10, 0).unwrap();
 }
+
+#[path = "restore_working_tests.rs"]
+mod working;
