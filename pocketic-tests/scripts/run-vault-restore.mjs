@@ -9,6 +9,7 @@ for (const path of [
   "target/wasm32-unknown-unknown/release/vault_canister.wasm",
   "target/vault-restore-quota-baseline.wasm",
   "target/vault-dedicated-task12.wasm",
+  "target/vault-restore-task12-quota.wasm",
 ]) {
   console.log(
     `ARTIFACT ${path} sha256=${createHash("sha256")

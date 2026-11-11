@@ -83,7 +83,9 @@ pub(crate) fn save(db: &Connection, grant: &Grant) -> Result<()> {
     if store::load::<Grant>(db, &key(&grant.info.id))?.is_none() {
         let slot:Option<String>=db.query_row("SELECT key FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key LIKE 'grant-slot:%' ORDER BY key LIMIT 1",params![],|r|kinic_sqlite_compat::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
         if let Some(slot) = slot {
-            db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![slot]).map_err(|_|Error::Storage)?;
+            // Rename the charged slot inside the caller's transaction. save then
+            // bounds/replaces its value without treating this as new quota growth.
+            db.execute("UPDATE settings SET key=?2 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![slot,key(&grant.info.id)]).map_err(|_|Error::Storage)?;
         }
     }
     store::save(db, &key(&grant.info.id), grant)

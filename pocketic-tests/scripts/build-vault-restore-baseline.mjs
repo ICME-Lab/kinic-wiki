@@ -27,6 +27,9 @@ execFileSync("git", [
   commit,
   "HEAD",
 ]);
+const output =
+  process.env.VAULT_RESTORE_OUTPUT ?? "vault-restore-quota-baseline";
+if (!/^[a-z0-9-]+$/.test(output)) throw Error("invalid output basename");
 const dir = join(root, `target/vault-restore-quota-baseline-${commit}`);
 mkdirSync(dir, { recursive: true });
 const archive = join(dir, "source.tar");
@@ -90,7 +93,7 @@ execFileSync(
   },
 );
 writeFileSync(
-  join(root, "target/vault-restore-quota-baseline.wasm"),
+  join(root, `target/${output}.wasm`),
   readFileSync(
     join(
       root,
@@ -99,13 +102,13 @@ writeFileSync(
   ),
 );
 console.log(
-  `Synthetic other-owner quota restore baseline ${commit}: target/vault-restore-quota-baseline.wasm`,
+  `Synthetic other-owner quota restore baseline ${commit}: target/${output}.wasm`,
 );
 
 const digest = (path) =>
   createHash("sha256").update(readFileSync(path)).digest("hex");
 writeFileSync(
-  join(root, "target/vault-restore-quota-baseline.json"),
+  join(root, `target/${output}.json`),
   JSON.stringify(
     {
       source_commit: commit,
@@ -114,9 +117,7 @@ writeFileSync(
       fixture_sha256: digest(
         join(root, "pocketic-tests/fixtures/vault-incident-fill.rs"),
       ),
-      wasm_sha256: digest(
-        join(root, "target/vault-restore-quota-baseline.wasm"),
-      ),
+      wasm_sha256: digest(join(root, `target/${output}.wasm`)),
       cargo_lock_sha256: digest(join(dir, "Cargo.lock")),
       rustc: execFileSync("rustc", ["--version"], {
         cwd: dir,

@@ -1047,6 +1047,17 @@ fn restore_pipeline_cancel_during_random_waits_for_own_settlement_and_blocks_lat
 
 #[test]
 fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
+    cost_vector_pipeline(false, false);
+}
+#[test]
+fn restore_pipeline_legacy_overcommit_consumes_protected_import() {
+    cost_vector_pipeline(true, false);
+}
+#[test]
+fn restore_pipeline_legacy_overcommit_renews_grant_and_promotes_new_candidate() {
+    cost_vector_pipeline(true, true);
+}
+fn cost_vector_pipeline(overcommit: bool, renew: bool) {
     let env = fixture();
     let raw: serde_json::Value = serde_json::from_str(include_str!(
         "../../../packages/vault-backup/test/fixtures/restore-cost-vectors.json"
@@ -1064,7 +1075,7 @@ fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
         let expected = x["charge"].as_str().unwrap().parse::<u64>().unwrap();
         let pending = x["pending"].as_str().unwrap().parse::<u64>().unwrap();
         assert_eq!(serde_json::to_vec(&r).unwrap().len() as u64, pending);
-        charge += expected;
+        charge += expected + if overcommit && r.deleted { 2 } else { 0 };
         peak = peak.max(pending);
         records.push(r);
     }
@@ -1076,7 +1087,7 @@ fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
     })
     .unwrap();
     // The synthetic admitted fixture is updated before the signed grant binds the request.
-    let (signing, g, target) = allocated_pipeline(&env, 2, &key);
+    let (mut signing, mut g, target) = allocated_pipeline(&env, 2, &key);
     let e = Envelope {
         version: 2,
         nonce: vec![3; 12],
@@ -1133,10 +1144,83 @@ fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
     )
     .unwrap();
     signed_call(&env, &signing, &g, 3, MutationOperation::RestoreBeginImport).unwrap();
+    let mut next = 4;
+    let mut legacy_digest = vec![];
+    if overcommit {
+        env.transaction(|db| {
+            // Reconstruct the old store allocation using its public legacy entry point;
+            // the actual old-server creation and migration are covered by the Wasm case.
+            let h = store::header(db, &target.vault)?;
+            db.execute("DELETE FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)", params![]).unwrap();
+            db.execute("DELETE FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1", params![target.vault]).unwrap();
+            db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key='restore-working'", params![]).unwrap();
+            store::restore::begin(db, BeginRestore { header: h.clone(), operation: request(2).target.attempt, count: f.records, root: f.target_commitment.clone(), reserved_bytes: charge + 4096 * f.objects + peak }, env.now())?;
+            store::put_header(db, &h)?;
+            legacy_digest = db.query_row("SELECT digest FROM restores", params![], |r| kinic_sqlite_compat::row_get(r, 0)).unwrap();
+            let fill=TOTAL_MAX-store::content::global_usage(db)?;
+            db.execute("INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,X'','[]',1,?4)", params![Principal::self_authenticating([219;32]).as_slice(),vec![218u8;16],vec![217u8;16],fill as i64]).unwrap();
+            assert_eq!(store::content::global_usage(db)?,TOTAL_MAX);
+            // The accounting migration's old-rate settlement is tested in vault-canister.
+            db.execute("INSERT INTO settings(owner,key,value) VALUES((SELECT owner FROM owner_scope WHERE slot=1),'restore-working','null')",params![]).unwrap();
+            assert_eq!(store::content::global_usage(db)?,TOTAL_MAX+524288);
+            if renew {
+                db.execute("INSERT INTO global_settings(key,value) VALUES('generation','upgrade-overcommit') ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![]).unwrap();
+            }
+            Ok(())
+        }).unwrap();
+        if renew {
+            assert!(matches!(
+                signed_call(
+                    &env,
+                    &signing,
+                    &g,
+                    4,
+                    MutationOperation::RestoreRecord(records[0].clone())
+                ),
+                Err(Error::Expired)
+            ));
+            env.time.set(env.now() + 421);
+            renew_pipeline(&env, &key, 2);
+            (signing, g) = pipeline_grant(
+                &env,
+                &key,
+                GrantPurpose::RestoreTarget {
+                    job: request(2).job,
+                    generation: target.clone(),
+                },
+            );
+            next = 0;
+        }
+    }
+    if overcommit {
+        // Removing the absolute-capacity check must not weaken store reservation
+        // or global row-count guards. Each failed transaction restores its fixture.
+        assert_eq!(
+            env.transaction(|db| {
+                db.execute("UPDATE restores SET reserved=0", params![])
+                    .unwrap();
+                store::restore::stage(db, &target.vault, records[0].clone(), env.now())
+            }),
+            Err(Error::QuotaExceeded)
+        );
+        assert_eq!(env.transaction(|db| {
+            db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO revisions SELECT ?1,?2,CAST(printf('%016d',x) AS BLOB),1,1,NULL,0,X'','[]',1,0 FROM n",params![Principal::self_authenticating([220;32]).as_slice(),vec![221u8;16]]).unwrap();
+            store::restore::stage(db,&target.vault,records[0].clone(),env.now())
+        }),Err(Error::QuotaExceeded));
+    }
     let mut bad = records[0].clone();
     bad.sequence = f.sequence + 1;
-    assert!(signed_call(&env, &signing, &g, 4, MutationOperation::RestoreRecord(bad)).is_err());
-    let mut n = 4;
+    assert!(
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            next,
+            MutationOperation::RestoreRecord(bad)
+        )
+        .is_err()
+    );
+    let mut n = next;
     for r in &records {
         signed_call(
             &env,
@@ -1147,6 +1231,16 @@ fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
         )
         .unwrap();
         n += 1;
+        if overcommit && r.deleted {
+            assert!(matches!(
+                env.transaction(|db| {
+                    db.execute("UPDATE restores SET reserved=0", params![])
+                        .unwrap();
+                    store::restore::finish_record(db, &target.vault, r.sequence, env.now())
+                }),
+                Err(Error::QuotaExceeded)
+            ));
+        }
         if !r.deleted {
             assert!(
                 signed_call(
@@ -1216,7 +1310,7 @@ fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
     );
     env.transaction(|db| {
         let actual: i64 = db
-            .query_row("SELECT sum(charge) FROM revisions", params![], |r| {
+            .query_row("SELECT sum(charge) FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)", params![], |r| {
                 kinic_sqlite_compat::row_get(r, 0)
             })
             .unwrap();
@@ -1224,6 +1318,68 @@ fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
         Ok(())
     })
     .unwrap();
+    if overcommit {
+        env.transaction(|db| {
+            let (digest, mode): (Vec<u8>, i64) = db
+                .query_row(
+                    "SELECT digest,working_prepaid FROM restores",
+                    params![],
+                    |r| {
+                        Ok((
+                            kinic_sqlite_compat::row_get(r, 0)?,
+                            kinic_sqlite_compat::row_get(r, 1)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(digest, legacy_digest);
+            assert_eq!(mode, 0);
+            assert_eq!(store::content::global_usage(db)?, TOTAL_MAX + 524288);
+            assert_eq!(
+                store::save(db, "unreserved-growth", &"x"),
+                Err(Error::QuotaExceeded)
+            );
+            Ok(())
+        })
+        .unwrap();
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            n,
+            MutationOperation::RestoreConfirmBackup(IncidentBackupAck {
+                descriptor_digest: d.descriptor_digest,
+                commitment: d.commitment,
+                archive_hash: vec![1; 32],
+                archive_length: 1000,
+                recovery_verifier: d.export.header.recovery_verifier,
+                sequence: f.sequence,
+            }),
+        )
+        .unwrap();
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            n + 1,
+            MutationOperation::RestoreActivate,
+        )
+        .unwrap();
+        env.transaction(|db| {
+            assert_eq!(store::header(db, &target.vault)?.state, VaultState::Active);
+            assert!(matches!(
+                authorization::authority(db, &[41])?.scope,
+                CredentialScope::Instances(_)
+            ));
+            assert!(store::content::global_capacity(db)?.overcommitted);
+            assert_eq!(
+                store::content::check_capacity(db, 1),
+                Err(Error::QuotaExceeded)
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
 }
 
 #[test]
@@ -1757,3 +1913,6 @@ fn restore_pipeline_current_replacement_at_exact_global_quota() {
         Ok(())
     }).unwrap();
 }
+
+#[path = "restore_overcommit_tests.rs"]
+mod overcommit_tests;

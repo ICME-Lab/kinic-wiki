@@ -557,7 +557,11 @@ fn actual_bounds(
     if exact && (current > VAULT_MAX || current != f.current_plain_bytes) {
         return Err(Error::QuotaExceeded);
     }
-    store::content::check_capacity(db, 0)
+    // stage/finish consume the already charged import reservation, including legacy
+    // pending JSON. Migration may leave global usage overcommitted; completing that
+    // fixed reservation must not require additional absolute capacity. All declared
+    // costs/counts above and store-level reservation/row bounds remain enforced.
+    Ok(())
 }
 fn descriptor_inner(j: &RestoreAdmissionStatus, p: &RestorePipeline) -> Result<StagedExport> {
     let f = p.preflight.as_ref().ok_or(Error::Conflict)?;

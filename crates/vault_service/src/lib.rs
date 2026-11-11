@@ -95,10 +95,15 @@ fn credentials(db: &Connection) -> Result<Vec<passkey_auth::PasskeyCredential>> 
 }
 fn insert_credential(db: &Connection, c: &passkey_auth::PasskeyCredential) -> Result<()> {
     let slot:Option<String>=db.query_row("SELECT key FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key LIKE 'credential-slot:%' ORDER BY key LIMIT 1",params![],|r|kinic_sqlite_compat::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-    if let Some(slot) = slot {
-        db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![slot]).map_err(|_|Error::Storage)?;
+    let encoded = serde_json::to_string(c).map_err(|_| Error::Storage)?;
+    if encoded.len() > 65536 {
+        return Err(Error::QuotaExceeded);
     }
-    store::content::check_capacity(db, 65536)?;
+    // A physical credential replaces its owner's charged slot atomically. Only
+    // insertion without that slot needs new capacity (including after migration).
+    if slot.is_none() {
+        store::content::check_capacity(db, 65536)?;
+    }
     if credentials(db)?.len() >= 10 {
         return Err(Error::QuotaExceeded);
     }
@@ -117,10 +122,13 @@ fn insert_credential(db: &Connection, c: &passkey_auth::PasskeyCredential) -> Re
         "INSERT INTO credentials(owner,id,value) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2)",
         params![
             c.id.0,
-            serde_json::to_string(c).map_err(|_| Error::Storage)?
+            encoded
         ],
     )
     .map_err(|_| Error::Storage)?;
+    if let Some(slot) = slot {
+        db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![slot]).map_err(|_|Error::Storage)?;
+    }
     Ok(())
 }
 fn ceremony(
