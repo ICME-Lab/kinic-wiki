@@ -1,0 +1,2794 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -3,6 +3,8 @@
+ Kinic Vaultは、メモ・認証情報・添付ファイルをブラウザで暗号化して保存する個人用の保管庫です。Internet Computerのcanisterに暗号文と版履歴を保存します。保管庫の解除にはvetKeysとWebAuthnパスキーを使います。
+ 
+ **合成データで動かすローカル開発版です。** 実際のパスワードや機密文書を入れずにお試しください。本番のvetKeys計測と独立セキュリティレビューは未実施です。
++
++利用者ごとに保管庫を分離し、Kinic Wikiと同じ画面・同じcanisterへ組み込む方針です。現在のコードは所有者1人のローカル試作です。 [Wiki統合設計](docs/wiki-integration.md)
+ 
+ ## ローカルで試す
+ 
+@@ -28,7 +30,7 @@
+ 
+ ```sh
+ pnpm build:canister
+-VITE_II_URL='http://<local-II-host>/authorize' node tools/local.mjs --owner '<local-owner-principal>'
++VITE_II_URL='http://<II-canister-id>.localhost:<port>/authorize' node tools/local.mjs --owner '<local-owner-principal>'
+ ```
+ 
+ この経路は公式AuthClientを使い、アプリの認証状態もメモリ内に保持する。II自体を確認する使い捨て試験は `pnpm test:ii`。
+@@ -50,7 +52,7 @@
+ | 履歴 | 現行版を含めて10版 |
+ | 保管庫ごとの同時アップロード | 1件 |
+ 
+-容量不足の更新は既存データを保持して拒否します。PDFは復号ダウンロードで開けます。
++容量不足の更新と低残高時の新規アップロードは拒否し、既存データを保持します。メモ・認証情報の256 KiBはブラウザで検査します。canisterは暗号文から文書種別を判別せず、すべてに10 MiB相当の上限を適用します。PDFは復号ダウンロードで開けます。
+ 
+ ## 検証
+ 
+@@ -69,6 +71,10 @@
+ ```
+ 
+ `test:canister` はschema v3の旧Wasmとv4の現行WasmをbuildしてPocketICで試験する。E2Eは合成Identityと仮想パスキーを使用し、別のII試験は公式AuthClientとローカルIIを実際に接続する。試験サーバー用のlocalhost接続が必要。
++
++作成や復旧を中断した場合は、ログインして保管庫一覧の「中断した処理を確認」を押します。「中断した処理を取り消す」を選び、途中データの回収が完了したら、作成または同じバックアップからの復旧をやり直せます。
++
++容量計測は、Wasmビルド後に `node pocketic-tests/capacity.mjs` で再実行できます。合成データ198 MiBを使うため、通常のテストとは別に実行します。
+ 
+ ## オフライン復旧
+ 
+diff --git a/apps/web/src/api.ts b/apps/web/src/api.ts
+--- a/apps/web/src/api.ts
++++ b/apps/web/src/api.ts
+@@ -1,6 +1,5 @@
+ import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
+ import { AuthClient } from "@icp-sdk/auth/client";
+-import { Principal } from "@icp-sdk/core/principal";
+ import {
+   idlFactory,
+   type _SERVICE,
+@@ -84,6 +83,13 @@
+       } else {
+         const identityProvider = import.meta.env.VITE_II_URL;
+         if (!identityProvider) throw Error("LocalIIConfigurationRequired");
++        const iiHost = new URL(identityProvider).hostname;
++        if (
++          iiHost !== "localhost" &&
++          !iiHost.endsWith(".localhost") &&
++          iiHost !== "127.0.0.1"
++        )
++          throw Error("LocalIIConfigurationRequired");
+         // No persistent session state or shared Wiki derivation origin.
+         const memory = new Map<string, string | CryptoKeyPair>();
+         auth = new AuthClient({
+@@ -100,8 +106,8 @@
+           },
+           idleOptions: { disableIdle: true },
+         });
++        // The PocketIC II preset returns an unscoped delegation.
+         identity = await auth.signIn({
+-          targets: [Principal.fromText(canister)],
+           maxTimeToLive: 30n * 60n * 1000000000n,
+         });
+       }
+@@ -138,6 +144,7 @@
+     purpose: "Activate" | "Unlock" | "AddCredential" | "RemoveCredential",
+     transport: Uint8Array = TRANSPORT,
+     target: Uint8Array = new Uint8Array(),
++    attempt?: Uint8Array,
+   ) {
+     return ok(
+       await this.actor.begin_unlock({
+@@ -146,15 +153,17 @@
+         purpose: { [purpose]: null } as never,
+         transport,
+         target,
++        attempt: attempt ? [attempt] : [],
+       }),
+     );
+   }
+   async createKit() {
+     this.session.lock();
+     const g = this.session.capture(),
+-      vault = randomBytes(16);
++      vault = randomBytes(16),
++      attempt = randomBytes(16);
+     const header = ok(
+-      await this.actor.reserve_vault({ vault, operation: randomBytes(16) }),
++      await this.actor.reserve_vault({ vault, operation: attempt }),
+     );
+     this.session.check(g);
+     this.header = header;
+@@ -167,6 +176,7 @@
+           epoch: 0n,
+           transport: transportPublic,
+           assertion: [],
++          attempt: [attempt],
+         }),
+       );
+       this.session.check(g);
+@@ -195,7 +205,14 @@
+         this.session.check(g);
+         this.session.raw = raw;
+         this.session.root = root;
+-        return { vault, normal, recovery, secret: b64(secret), generation: g };
++        return {
++          vault,
++          attempt,
++          normal,
++          recovery,
++          secret: b64(secret),
++          generation: g,
++        };
+       } catch (e) {
+         raw.fill(0);
+         throw e;
+@@ -215,7 +232,13 @@
+     this.session.check(g);
+     if (confirmation !== kit.secret)
+       throw Error("RecoveryConfirmationMismatch");
+-    const ch = await this.challenge(kit.vault, "Activate");
++    const ch = await this.challenge(
++      kit.vault,
++      "Activate",
++      undefined,
++      undefined,
++      kit.attempt,
++    );
+     this.session.check(g);
+     const registration = ch.registration
+       ? await register(ch, this.identity.getPrincipal().toUint8Array())
+@@ -225,6 +248,7 @@
+     const header = ok(
+       await this.actor.activate_vault({
+         vault: kit.vault,
++        attempt: [kit.attempt],
+         operation: randomBytes(16),
+         normal: kit.normal,
+         recovery: kit.recovery,
+@@ -257,6 +281,7 @@
+           epoch: header.epoch,
+           transport: transportPublic,
+           assertion: [assertion],
++          attempt: [],
+         }),
+       );
+       this.session.check(g);
+@@ -575,11 +600,14 @@
+               .length +
+             4096,
+           0,
+-        ) + 1048576;
++        ) +
++        new Set(archive.records.map((r) => r.object)).size * 4096 +
++        1048576;
++      const attempt = randomBytes(16);
+       const restoring = ok(
+         await this.actor.begin_restore({
+           header: original,
+-          operation: randomBytes(16),
++          operation: attempt,
+           count: BigInt(archive.records.length),
+           root: archive.restoreRoot,
+           reserved_bytes: BigInt(reserved),
+@@ -589,7 +617,11 @@
+       this.header = restoring;
+       for (let i = 0; i < archive.records.length; i++) {
+         const r = archive.records[i];
+-        ok(await this.actor.begin_restore_revision(original.id, wireRecord(r)));
++        ok(
++          await this.actor.begin_restore_revision(original.id, wireRecord(r), [
++            attempt,
++          ]),
++        );
+         this.session.check(g);
+         for (let j = 0; j < archive.chunks[i].length; j++) {
+           ok(
+@@ -597,6 +629,7 @@
+               original.id,
+               j,
+               archive.chunks[i][j],
++              [attempt],
+             ),
+           );
+           this.session.check(g);
+@@ -605,6 +638,7 @@
+           await this.actor.commit_restore_revision(
+             original.id,
+             BigInt(r.sequence),
++            [attempt],
+           ),
+         );
+         this.session.check(g);
+@@ -617,6 +651,7 @@
+           epoch: original.epoch,
+           transport: transportPublic,
+           assertion: [],
++          attempt: [attempt],
+         }),
+       );
+       this.session.check(g);
+@@ -636,7 +671,13 @@
+         aad(bytes(original.id), ZERO, original.epoch, "normal"),
+       );
+       this.session.check(g);
+-      const ch = await this.challenge(bytes(original.id), "Activate");
++      const ch = await this.challenge(
++        bytes(original.id),
++        "Activate",
++        undefined,
++        undefined,
++        attempt,
++      );
+       this.session.check(g);
+       const registration = ch.registration
+         ? await register(ch, this.identity.getPrincipal().toUint8Array())
+@@ -648,6 +689,7 @@
+       const restored = ok(
+         await this.actor.commit_restore({
+           vault: original.id,
++          attempt: [attempt],
+           operation: randomBytes(16),
+           normal,
+           recovery: unpack(h.recovery),
+diff --git a/apps/web/src/main.tsx b/apps/web/src/main.tsx
+--- a/apps/web/src/main.tsx
++++ b/apps/web/src/main.tsx
+@@ -10,6 +10,7 @@
+   Revision,
+   CredentialInfo,
+   Quota,
++  UnfinishedVault,
+ } from "../../../packages/contracts/vault.did.js";
+ import "./style.css";
+ const renderer = new Renderer();
+@@ -50,10 +51,10 @@
+   Conflict:
+     "ほかの更新と競合しました。一覧を更新して、もう一度開いてください。",
+   QuotaExceeded:
+-    "保存容量または操作回数の上限です。バックアップの完了・中止やデータ整理を確認してください。",
++    "保存容量、操作回数、またはcanister残高の制限に達しました。容量表示や運転残高を確認してください。",
+   SizeLimit:
+     "サイズの上限です。添付は10 MiB、メモ・認証情報は256 KiBまでです。",
+-  Busy: "処理中の操作があります。完了または期限切れを待ってください。",
++  Busy: "処理中の操作があります。作成・復旧を中断した場合は、保管庫一覧から取り消せます。",
+   Expired: "操作が期限切れです。もう一度開始してください。",
+   Locked: "ロックしました。もう一度本人確認して解除してください。",
+   RecoveryConfirmationMismatch:
+@@ -71,6 +72,7 @@
+   const client = useRef(new VaultClient()).current;
+   const [logged, setLogged] = useState(false),
+     [vaults, setVaults] = useState<Header[]>([]),
++    [unfinished, setUnfinished] = useState<UnfinishedVault[]>([]),
+     [selected, setSelected] = useState<Header>(),
+     [unlocked, setUnlocked] = useState(false),
+     [items, setItems] = useState<Item[]>([]),
+@@ -146,7 +148,18 @@
+       client.session.lock();
+     };
+   }, [client]);
+-  const work = async (f: () => Promise<void>) => {
++  const refreshSetup = async () => {
++    const g = client.session.capture();
++    for (;;) {
++      const list = ok(await client.actor.list_unfinished_vaults());
++      client.session.check(g);
++      setUnfinished(list);
++      if (!list.some((entry) => entry.cleaning)) return;
++      ok(await client.actor.collect_garbage());
++      client.session.check(g);
++    }
++  };
++  const work = async (f: () => Promise<void>, setupChanged = false) => {
+     if (busy) return;
+     setBusy(true);
+     setError("");
+@@ -160,6 +173,13 @@
+           "処理に失敗しました。本人確認・バックアップ・接続設定を確認して再試行してください。",
+       );
+     } finally {
++      if (setupChanged && logged) {
++        try {
++          await refreshSetup();
++        } catch {
++          // Keep the operation error. The setup list can be refreshed separately.
++        }
++      }
+       setBusy(false);
+     }
+   };
+@@ -233,6 +253,7 @@
+                   client.session.lock();
+                   setLogged(false);
+                   setVaults([]);
++                  setUnfinished([]);
+                   setSelected(undefined);
+                   void client
+                     .logout()
+@@ -288,6 +309,7 @@
+                     const list = await client.login();
+                     setVaults(list);
+                     setLogged(true);
++                    await refreshSetup();
+                   })
+                 }
+               >
+@@ -312,6 +334,57 @@
+             <aside className="sidebar panel">
+               <h2>保管庫</h2>
+               <p className="small">最大3個 · 各100 MiB</p>
++              <button disabled={busy} onClick={() => void work(refreshSetup)}>
++                中断した処理を確認
++              </button>
++              {unfinished.map((entry) => (
++                <section key={b64(bytes(entry.attempt))} className="small">
++                  <p>
++                    {entry.cleaning
++                      ? "途中データを回収中"
++                      : "Restoring" in entry.state
++                        ? "未完了の復旧"
++                        : "未完了の作成"}
++                  </p>
++                  {!entry.cleaning && (
++                    <>
++                      <p>
++                        期限{" "}
++                        {new Date(
++                          Number(entry.expires) * 1000,
++                        ).toLocaleString()}
++                      </p>
++                      <button
++                        disabled={busy}
++                        onClick={() =>
++                          void work(async () => {
++                            if (
++                              "Restoring" in entry.state &&
++                              !window.confirm(
++                                "取り込んだ途中データを破棄します。元のバックアップファイルはそのままです。",
++                              )
++                            )
++                              return;
++                            client.session.lock();
++                            const g = client.session.capture();
++                            ok(
++                              await client.actor.cancel_vault_setup(
++                                entry.vault,
++                                entry.attempt,
++                              ),
++                            );
++                            client.session.check(g);
++                            await refreshSetup();
++                          })
++                        }
++                      >
++                        中断した処理を取り消す
++                      </button>
++                    </>
++                  )}
++                </section>
++              ))}
++
+               <div className="vault-list">
+                 {vaults.map((v, i) => (
+                   <button
+@@ -340,7 +413,7 @@
+                     const kit = await client.createKit();
+                     setSelected(undefined);
+                     setKit(kit);
+-                  })
++                  }, true)
+                 }
+               >
+                 ＋ 保管庫を作成
+@@ -387,7 +460,7 @@
+                       setUnlocked(true);
+                       setRestoreFile(undefined);
+                       await refresh();
+-                    })
++                    }, true)
+                   }
+                 >
+                   検証して復旧
+@@ -439,7 +512,7 @@
+                         setNotice(
+                           "保管庫を作成しました。最初のバックアップを保存してください。",
+                         );
+-                      })
++                      }, true)
+                     }
+                   >
+                     パスキーを登録して作成
+diff --git a/crates/vault-canister/src/lib.rs b/crates/vault-canister/src/lib.rs
+--- a/crates/vault-canister/src/lib.rs
++++ b/crates/vault-canister/src/lib.rs
+@@ -22,6 +22,8 @@
+     vault: Id,
+     epoch: u64,
+     state: VaultState,
++    #[serde(default)]
++    attempt: Option<Id>,
+     expires: u64,
+ }
+ #[derive(Serialize, Deserialize, Default)]
+@@ -131,6 +133,7 @@
+     }
+     let h = live(db, v, now())?;
+     epoch(&h, ch.request.epoch)?;
++    store::setup::check_attempt(db, &h, ch.request.attempt.as_deref())?;
+     store::save(db, "control", &c)?;
+     Ok(ch)
+ }
+@@ -176,6 +179,36 @@
+ fn reserve_vault(request: Reserve) -> Result<Header> {
+     transaction(|db| store::reserve(db, caller(), request, now()))
+ }
++#[ic_cdk::query]
++fn list_unfinished_vaults() -> Result<Vec<UnfinishedVault>> {
++    runtime::read(|db| {
++        store::authorize(db, caller())?;
++        store::setup::list(db, now())
++    })
++}
++
++#[update]
++fn cancel_vault_setup(vault: Id, attempt: Id) -> Result<()> {
++    transaction(|db| {
++        store::authorize(db, caller())?;
++        store::setup::cancel(db, &vault, &attempt, now())?;
++        let mut c = control(db)?;
++        let matches = |f: &Flight| f.vault == vault && f.attempt.as_ref() == Some(&attempt);
++        if c.random.as_ref().is_some_and(matches) {
++            c.random = None;
++        }
++        if c.derive.as_ref().is_some_and(matches) {
++            c.derive = None;
++        }
++        if c.ceremony.as_ref().is_some_and(|ch| {
++            ch.request.vault == vault && ch.request.attempt.as_ref() == Some(&attempt)
++        }) {
++            c.ceremony = None;
++        }
++        store::save(db, "control", &c)
++    })
++}
++
+ #[update]
+ fn get_vault_header(vault: Id) -> Result<Header> {
+     transaction(|db| {
+@@ -207,6 +240,7 @@
+         store::authorize(db, caller())?;
+         let h = live(db, &request.vault, now())?;
+         epoch(&h, request.epoch)?;
++        store::setup::check_attempt(db, &h, request.attempt.as_deref())?;
+         if request.transport.len() != 48 || request.target.len() > 1024 {
+             return Err(Error::InvalidInput);
+         }
+@@ -259,6 +293,7 @@
+             vault: request.vault.clone(),
+             epoch: h.epoch,
+             state: h.state,
++            attempt: request.attempt.clone(),
+             expires: t + 120,
+         });
+         store::save(db, "control", &c)?;
+@@ -278,6 +313,7 @@
+         }
+         let h = live(db, &f.vault, now())?;
+         epoch(&h, f.epoch)?;
++        store::setup::check_attempt(db, &h, f.attempt.as_deref())?;
+         if h.state != f.state {
+             return Err(Error::Conflict);
+         }
+@@ -313,6 +349,7 @@
+         }
+         let h = live(db, &request.vault, now())?;
+         epoch(&h, request.epoch)?;
++        store::setup::check_attempt(db, &h, request.attempt.as_deref())?;
+         if h.state == VaultState::Active {
+             let ch = ceremony(db, &request.vault, Purpose::Unlock, &request.transport, &[])?;
+             assert_proof(
+@@ -345,6 +382,7 @@
+             vault: h.id,
+             epoch: h.epoch,
+             state: h.state,
++            attempt: request.attempt.clone(),
+             expires: t + 120,
+         });
+         store::save(db, "control", &c)?;
+@@ -394,7 +432,13 @@
+             return Ok(Err(Error::Expired));
+         }
+         match live(db, &f.vault, now()) {
+-            Ok(h) if h.epoch == f.epoch && h.state == f.state => Ok(result),
++            Ok(h)
++                if h.epoch == f.epoch
++                    && h.state == f.state
++                    && store::setup::check_attempt(db, &h, f.attempt.as_deref()).is_ok() =>
++            {
++                Ok(result)
++            }
+             _ => Ok(Err(Error::Expired)),
+         }
+     })?
+@@ -433,6 +477,7 @@
+             return serde_json::from_str(&result).map_err(|_| Error::Storage);
+         }
+         let mut h = store::pending(db, &request.vault, now())?;
++        store::setup::check_attempt(db, &h, request.attempt.as_deref())?;
+         if restoring {
+             if h.state != VaultState::Restoring {
+                 return Err(Error::Conflict);
+@@ -470,12 +515,7 @@
+         store::put_header(db, &h)?;
+         db.execute("UPDATE vaults SET expires=0 WHERE id=?1", params![h.id])
+             .map_err(|_| Error::Storage)?;
+-        let result = serde_json::to_string(&h).map_err(|_| Error::Storage)?;
+-        db.execute(
+-            "INSERT INTO receipts(operation,digest,result,expires) VALUES(?1,?2,?3,?4)",
+-            params![request.operation, digest, result, (now() + DAY) as i64],
+-        )
+-        .map_err(|_| Error::Storage)?;
++        store::content::record(db, &request.operation, &digest, &h, now())?;
+         Ok(h)
+     })
+ }
+@@ -546,9 +586,12 @@
+ #[update]
+ fn begin_revision(request: BeginRevision) -> Result<Upload> {
+     transaction(|db| {
+-        store::authorize(db, caller())?;
+-        store::content::gc(db, now())?;
+-        store::content::begin(db, request, now())
++        let cfg = store::authorize(db, caller())?;
++        let allow_new = ic_cdk::api::canister_cycle_balance() >= cfg.minimum_cycles as u128;
++        if allow_new {
++            store::content::gc(db, now())?;
++        }
++        store::content::begin_with_budget(db, request, now(), allow_new)
+     })
+ }
+ #[update]
+@@ -660,25 +703,42 @@
+         store::restore::begin(db, request, now())
+     })
+ }
+-#[update]
+-fn begin_restore_revision(vault: Id, revision: Revision) -> Result<()> {
+-    transaction(|db| {
+-        store::authorize(db, caller())?;
+-        store::restore::stage(db, &vault, revision, now())
+-    })
+-}
+-#[update]
+-fn put_restore_chunk(vault: Id, index: u32, data: Vec<u8>) -> Result<()> {
+-    transaction(|db| {
+-        store::authorize(db, caller())?;
+-        store::restore::put(db, &vault, index, &data, now())
+-    })
+-}
+-#[update]
+-fn commit_restore_revision(vault: Id, sequence: u64) -> Result<RestoreProgress> {
+-    transaction(|db| {
+-        store::authorize(db, caller())?;
+-        store::restore::finish_record(db, &vault, sequence, now())
++fn restore_transaction<T>(
++    vault: &[u8],
++    attempt: Option<&[u8]>,
++    apply: impl FnOnce(&Connection, u64) -> Result<T>,
++) -> Result<T> {
++    transaction(|db| {
++        store::authorize(db, caller())?;
++        let t = now();
++        let h = store::pending(db, vault, t)?;
++        store::setup::check_attempt(db, &h, attempt)?;
++        apply(db, t)
++    })
++}
++
++#[update]
++fn begin_restore_revision(vault: Id, revision: Revision, attempt: Option<Id>) -> Result<()> {
++    restore_transaction(&vault, attempt.as_deref(), |db, t| {
++        store::restore::stage(db, &vault, revision, t)
++    })
++}
++
++#[update]
++fn put_restore_chunk(vault: Id, index: u32, data: Vec<u8>, attempt: Option<Id>) -> Result<()> {
++    restore_transaction(&vault, attempt.as_deref(), |db, t| {
++        store::restore::put(db, &vault, index, &data, t)
++    })
++}
++
++#[update]
++fn commit_restore_revision(
++    vault: Id,
++    sequence: u64,
++    attempt: Option<Id>,
++) -> Result<RestoreProgress> {
++    restore_transaction(&vault, attempt.as_deref(), |db, t| {
++        store::restore::finish_record(db, &vault, sequence, t)
+     })
+ }
+ #[update]
+diff --git a/crates/vault-store/src/content.rs b/crates/vault-store/src/content.rs
+--- a/crates/vault-store/src/content.rs
++++ b/crates/vault-store/src/content.rs
+@@ -69,7 +69,7 @@
+     })
+ }
+ fn usage(db: &Connection) -> Result<u64> {
+-    let n:i64=db.query_row("SELECT 262144+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(length(result)+length(digest)+4096),0) FROM receipts)+(SELECT count(*)*4096 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT count(*)*4096 FROM exports)+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
++    let n:i64=db.query_row("SELECT 262144+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*4096 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT count(*)*4096 FROM exports)+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+     Ok(n as u64)
+ }
+ pub fn check_capacity(db: &Connection, extra: u64) -> Result<()> {
+@@ -103,36 +103,59 @@
+         })
+         .transpose()
+ }
+-fn record<T: Serialize>(
++pub fn record<T: Serialize>(
+     db: &Connection,
+     operation: &[u8],
+     digest: &[u8],
+     result: &T,
+     now: u64,
+ ) -> Result<()> {
+-    let count: i64 = db
+-        .query_row("SELECT count(*) FROM receipts", params![], |r| {
+-            sql::row_get(r, 0)
+-        })
+-        .map_err(db_error)?;
+-    if count >= ROW_MAX {
+-        return Err(Error::QuotaExceeded);
++    check_receipt_capacity(db)?;
++    let upload: i64 = db
++        .query_row(
++            "SELECT EXISTS(SELECT 1 FROM uploads WHERE id=?1)",
++            params![operation],
++            |r| sql::row_get(r, 0),
++        )
++        .map_err(db_error)?;
++    if upload != 0 {
++        return Err(Error::Conflict);
+     }
+     let encoded = serde_json::to_string(result).map_err(|_| Error::Storage)?;
+     check_capacity(db, OVERHEAD + encoded.len() as u64 + digest.len() as u64)?;
+     db.execute(
+         "INSERT INTO receipts VALUES(?1,?2,?3,?4)",
+-        params![
+-            operation,
+-            digest,
+-            serde_json::to_string(result).map_err(|_| Error::Storage)?,
+-            (now + DAY) as i64
+-        ],
++        params![operation, digest, encoded, (now + DAY) as i64],
+     )
+     .map_err(db_error)?;
+     Ok(())
+ }
++fn receipt_slots_used(db: &Connection) -> Result<i64> {
++    db.query_row(
++        "SELECT (SELECT count(*) FROM receipts)
++              + (SELECT count(*) FROM uploads)
++              + (SELECT count(*) FROM vaults WHERE expires>0)",
++        params![],
++        |r| sql::row_get(r, 0),
++    )
++    .map_err(db_error)
++}
++
++pub fn check_receipt_capacity(db: &Connection) -> Result<()> {
++    if receipt_slots_used(db)? >= ROW_MAX {
++        return Err(Error::QuotaExceeded);
++    }
++    Ok(())
++}
+ pub fn begin(db: &Connection, r: BeginRevision, now: u64) -> Result<Upload> {
++    begin_with_budget(db, r, now, true)
++}
++pub fn begin_with_budget(
++    db: &Connection,
++    r: BeginRevision,
++    now: u64,
++    allow_new: bool,
++) -> Result<Upload> {
+     active(db, &r.vault)?;
+     id(&r.object)?;
+     id(&r.operation)?;
+@@ -176,6 +199,10 @@
+             expires: e as u64,
+         });
+     }
++    if !allow_new {
++        return Err(Error::QuotaExceeded);
++    }
++    check_receipt_capacity(db)?;
+     check_object_capacity(db, &r.vault, &r.object)?;
+     if head(db, &r.vault, &r.object)? != r.expected_revision {
+         return Err(Error::Conflict);
+@@ -300,7 +327,11 @@
+         if raw == "\"Expired\"" {
+             return Err(Error::Expired);
+         }
+-        return serde_json::from_str(&raw).map_err(|_| Error::Conflict);
++        let revision: Revision = serde_json::from_str(&raw).map_err(|_| Error::Conflict)?;
++        if revision.deleted {
++            return Err(Error::Conflict);
++        }
++        return Ok(revision);
+     }
+     let (r, d, _) = upload(db, id, now)?;
+     check_object_capacity(db, &r.vault, &r.object)?;
+@@ -555,55 +586,96 @@
+     // Preserve head identity after purge so a stale expected_revision cannot recreate or collide with old AAD.
+     put_header(db, &h)
+ }
++fn collect_expired_upload(db: &Connection, now: u64) -> Result<()> {
++    let upload: Option<(Id, Vec<u8>, i64)> = db
++        .query_row(
++            "SELECT u.id,u.digest,EXISTS(SELECT 1 FROM receipts r WHERE r.operation=u.id)
++         FROM uploads u WHERE u.expires<=?1 LIMIT 1",
++            params![now as i64],
++            |r| {
++                Ok((
++                    sql::row_get(r, 0)?,
++                    sql::row_get(r, 1)?,
++                    sql::row_get(r, 2)?,
++                ))
++            },
++        )
++        .optional()
++        .map_err(db_error)?;
++    let Some((id, digest, has_receipt)) = upload else {
++        return Ok(());
++    };
++    // Removing this upload releases its reserved receipt slot. Legacy state
++    // that already exceeds the limit waits for receipt expiry.
++    if has_receipt == 0 && receipt_slots_used(db)? > ROW_MAX {
++        return Ok(());
++    }
++    db.execute("DELETE FROM chunks WHERE upload=?1", params![id])
++        .map_err(db_error)?;
++    db.execute("DELETE FROM uploads WHERE id=?1", params![id])
++        .map_err(db_error)?;
++    if has_receipt == 0 {
++        record(db, &id, &digest, &"Expired", now)?;
++    }
++    Ok(())
++}
++
++pub(crate) fn remove_revision(
++    db: &Connection,
++    vault: &[u8],
++    object: &[u8],
++    revision: i64,
++) -> Result<()> {
++    db.execute(
++        "DELETE FROM revision_chunks WHERE vault=?1 AND object=?2 AND revision=?3",
++        params![vault, object, revision],
++    )
++    .map_err(db_error)?;
++    db.execute(
++        "DELETE FROM revisions WHERE vault=?1 AND object=?2 AND revision=?3",
++        params![vault, object, revision],
++    )
++    .map_err(db_error)?;
++    Ok(())
++}
++
++fn collect_retired_revision(db: &Connection, now: u64) -> Result<u64> {
++    let revision: Option<(Id, Id, i64)> = db
++        .query_row(
++            "SELECT r.vault,r.object,r.revision FROM revisions r
++         WHERE r.retired IS NOT NULL AND NOT EXISTS(
++           SELECT 1 FROM exports e WHERE e.vault=r.vault AND e.state='Active' AND e.expires>?1
++         ) LIMIT 1",
++            params![now as i64],
++            |r| {
++                Ok((
++                    sql::row_get(r, 0)?,
++                    sql::row_get(r, 1)?,
++                    sql::row_get(r, 2)?,
++                ))
++            },
++        )
++        .optional()
++        .map_err(db_error)?;
++    if let Some((vault, object, revision)) = revision {
++        remove_revision(db, &vault, &object, revision)?;
++        return Ok(1);
++    }
++    Ok(0)
++}
++
+ pub fn gc(db: &Connection, now: u64) -> Result<u64> {
+-    // Strictly bounded work per call. Expired upload payloads are removed in separate calls if necessary.
+-    let mut stmt = db
+-        .prepare("SELECT id FROM uploads WHERE expires<=?1 LIMIT 1")
+-        .map_err(db_error)?;
+-    let ids: Vec<Vec<u8>> =
+-        sql::query_map(&mut stmt, params![now as i64], |r| sql::row_get(r, 0)).map_err(db_error)?;
+-    for id in ids {
+-        let digest: Vec<u8> = db
+-            .query_row("SELECT digest FROM uploads WHERE id=?1", params![id], |r| {
+-                sql::row_get(r, 0)
+-            })
+-            .map_err(db_error)?;
+-        db.execute("DELETE FROM chunks WHERE upload=?1", params![id])
+-            .map_err(db_error)?;
+-        db.execute("DELETE FROM uploads WHERE id=?1", params![id])
+-            .map_err(db_error)?;
+-        record(db, &id, &digest, &"Expired", now)?;
+-    }
+-    db.execute(
+-        "UPDATE exports SET state='Expired' WHERE state='Active' AND expires<=?1",
++    db.execute("DELETE FROM receipts WHERE operation IN(SELECT operation FROM receipts WHERE expires<=?1 LIMIT 100)",params![now as i64]).map_err(db_error)?;
++    collect_expired_upload(db, now)?;
++    db.execute(
++        "DELETE FROM exports WHERE id IN(SELECT id FROM exports WHERE expires<=?1 LIMIT 100)",
+         params![now as i64],
+     )
+     .map_err(db_error)?;
+-    let mut stmt=db.prepare("SELECT r.vault,r.object,r.revision FROM revisions r WHERE (retired IS NOT NULL OR r.vault IN(SELECT vault FROM restores WHERE expires<=?1 AND vault IN(SELECT id FROM vaults WHERE expires>0))) AND NOT EXISTS(SELECT 1 FROM exports e WHERE e.vault=r.vault AND e.state='Active' AND e.expires>?1) LIMIT 1").map_err(db_error)?;
+-    let rows: Vec<(Vec<u8>, Vec<u8>, i64)> = sql::query_map(&mut stmt, params![now as i64], |r| {
+-        Ok((
+-            sql::row_get(r, 0)?,
+-            sql::row_get(r, 1)?,
+-            sql::row_get(r, 2)?,
+-        ))
+-    })
+-    .map_err(db_error)?;
+-    for (v, o, r) in &rows {
+-        db.execute(
+-            "DELETE FROM revision_chunks WHERE vault=?1 AND object=?2 AND revision=?3",
+-            params![v.as_slice(), o.as_slice(), *r],
+-        )
+-        .map_err(db_error)?;
+-        db.execute(
+-            "DELETE FROM revisions WHERE vault=?1 AND object=?2 AND revision=?3",
+-            params![v.as_slice(), o.as_slice(), *r],
+-        )
+-        .map_err(db_error)?;
+-    }
+-    db.execute("UPDATE restores SET reserved=0,pending='' WHERE vault IN(SELECT vault FROM restores WHERE expires<=?1 AND (reserved>0 OR pending!='') AND vault IN(SELECT id FROM vaults WHERE expires>0) LIMIT 1)",params![now as i64]).map_err(db_error)?;
+-    db.execute("DELETE FROM receipts WHERE operation IN(SELECT operation FROM receipts WHERE expires<=?1 LIMIT 100)",params![now as i64]).map_err(db_error)?;
+-    db.execute("DELETE FROM exports WHERE id IN(SELECT id FROM exports WHERE state!='Active' AND expires<=?1 LIMIT 100)",params![now as i64]).map_err(db_error)?;
+-    Ok(rows.len() as u64)
++    match setup::collect_expired(db, now)? {
++        Some(revisions) => Ok(revisions),
++        None => collect_retired_revision(db, now),
++    }
+ }
+ pub fn begin_export(db: &Connection, vault: &[u8], export: &[u8], now: u64) -> Result<Export> {
+     let header = active(db, vault)?;
+@@ -679,11 +751,11 @@
+         .ok_or(Error::NotFound)?;
+     let mut e: Export = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
+     e.state = state;
++    if e.expires <= now {
++        return Err(Error::Expired);
++    }
+     if e.state != "Active" {
+         return Err(Error::Conflict);
+-    }
+-    if e.expires <= now {
+-        return Err(Error::Expired);
+     }
+     Ok(e)
+ }
+@@ -762,11 +834,11 @@
+     if state == "Aborted" && !saved {
+         return active(db, &e.vault);
+     }
++    if e.expires <= now {
++        return Err(Error::Expired);
++    }
+     if state != "Active" {
+         return Err(Error::Conflict);
+-    }
+-    if e.expires <= now {
+-        return Err(Error::Expired);
+     }
+     let mut h = active(db, &e.vault)?;
+     if saved {
+diff --git a/crates/vault-store/src/lib.rs b/crates/vault-store/src/lib.rs
+--- a/crates/vault-store/src/lib.rs
++++ b/crates/vault-store/src/lib.rs
+@@ -66,6 +66,7 @@
+     let c = authorize(db, caller)?;
+     id(&r.vault)?;
+     id(&r.operation)?;
++    setup::reject_discarded(db, &r.vault, &r.operation, now)?;
+     let previous: Option<Vec<u8>> = db
+         .query_row(
+             "SELECT operation FROM vaults WHERE id=?1",
+@@ -85,6 +86,7 @@
+         pending(db, &r.vault, now)?;
+         return Ok(h);
+     }
++    content::check_receipt_capacity(db)?;
+     let ever: i64 = db
+         .query_row("SELECT count(*) FROM vaults", params![], |r| {
+             sql::row_get(r, 0)
+@@ -166,3 +168,5 @@
+ pub const CONTENT_SCHEMA: &str = include_str!("content-schema.sql");
+ pub mod restore;
+ pub const RESTORE_SCHEMA: &str = include_str!("restore-schema.sql");
++
++pub mod setup;
+diff --git a/crates/vault-store/src/restore.rs b/crates/vault-store/src/restore.rs
+--- a/crates/vault-store/src/restore.rs
++++ b/crates/vault-store/src/restore.rs
+@@ -25,6 +25,7 @@
+ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
+     id(&r.header.id)?;
+     id(&r.operation)?;
++    setup::reject_discarded(db, &r.header.id, &r.operation, now)?;
+     if r.count > 10000
+         || r.root.len() != 32
+         || r.reserved_bytes > TOTAL_MAX
+@@ -54,6 +55,7 @@
+     if header(db, &r.header.id).is_ok() {
+         return Err(Error::Conflict);
+     }
++    content::check_receipt_capacity(db)?;
+     let total: i64 = db
+         .query_row("SELECT count(*) FROM revisions", params![], |r| {
+             sql::row_get(r, 0)
+@@ -73,14 +75,14 @@
+     if vaults >= 3 {
+         return Err(Error::QuotaExceeded);
+     }
+-    let reserved: i64 = db
+-        .query_row(
+-            "SELECT COALESCE(sum(reserved),0) FROM restores",
++    let unfinished: i64 = db
++        .query_row(
++            "SELECT count(*) FROM restores r JOIN vaults v ON v.id=r.vault WHERE v.expires>0",
+             params![],
+             |row| sql::row_get(row, 0),
+         )
+         .map_err(err)?;
+-    if reserved > 0 {
++    if unfinished > 0 {
+         return Err(Error::Busy);
+     }
+     content::check_capacity(db, r.reserved_bytes + 8192)?;
+@@ -262,7 +264,7 @@
+     sequence: u64,
+     now: u64,
+ ) -> Result<RestoreProgress> {
+-    let (mut p, _, raw, _) = progress(db, v, now)?;
++    let (mut p, reserved, raw, _) = progress(db, v, now)?;
+     if raw.is_empty() && p.sequence == sequence {
+         return Ok(p);
+     }
+@@ -281,13 +283,24 @@
+         return Err(Error::Conflict);
+     }
+     content::check_object_capacity(db, v, &r.object)?;
++    let existing: i64 = db
++        .query_row(
++            "SELECT EXISTS(SELECT 1 FROM objects WHERE vault=?1 AND object=?2)",
++            params![v, r.object],
++            |row| sql::row_get(row, 0),
++        )
++        .map_err(err)?;
++    let head_charge = if existing == 0 { 4096 } else { 0 };
++    if reserved + (raw.len() as u64) < head_charge {
++        return Err(Error::QuotaExceeded);
++    }
+     db.execute("INSERT INTO objects VALUES(?1,?2,?3) ON CONFLICT(vault,object) DO UPDATE SET head=excluded.head",params![v,r.object,r.revision as i64]).map_err(err)?;
+     p.root = Sha256::digest([p.root, leaf(&r)].concat()).to_vec();
+     p.count += 1;
+     p.sequence = r.sequence;
+     db.execute(
+-        "UPDATE restores SET chain=?2,count=?3,last_seq=?4,reserved=reserved+length(pending),pending='' WHERE vault=?1",
+-        params![v, p.root, p.count as i64, p.sequence as i64],
++        "UPDATE restores SET chain=?2,count=?3,last_seq=?4,reserved=reserved+length(CAST(pending AS BLOB))-?5,pending='' WHERE vault=?1",
++        params![v, p.root, p.count as i64, p.sequence as i64, head_charge as i64],
+     )
+     .map_err(err)?;
+     Ok(p)
+diff --git a/crates/vault-store/src/setup.rs b/crates/vault-store/src/setup.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/vault-store/src/setup.rs
+@@ -0,0 +1,175 @@
++use super::*;
++
++fn err(_: sql::Error) -> Error {
++    Error::Storage
++}
++
++pub fn check_attempt(db: &Connection, h: &Header, attempt: Option<&[u8]>) -> Result<()> {
++    if h.state == VaultState::Active {
++        return if attempt.is_none() {
++            Ok(())
++        } else {
++            Err(Error::Conflict)
++        };
++    }
++    let attempt = attempt.ok_or(Error::InvalidInput)?;
++    id(attempt)?;
++    let current: Vec<u8> = db
++        .query_row(
++            "SELECT operation FROM vaults WHERE id=?1",
++            params![h.id],
++            |r| sql::row_get(r, 0),
++        )
++        .map_err(err)?;
++    if current != attempt {
++        return Err(Error::Conflict);
++    }
++    Ok(())
++}
++
++pub fn list(db: &Connection, now: u64) -> Result<Vec<UnfinishedVault>> {
++    // Expired creations have no payload to clean. Show the current creation
++    // and any unfinished restore, including a restore undergoing cleanup.
++    let mut stmt = db
++        .prepare(
++            "SELECT v.header,v.operation,v.expires FROM vaults v
++         WHERE v.expires>0 AND (v.expires>?1 OR EXISTS(SELECT 1 FROM restores r WHERE r.vault=v.id))
++         ORDER BY v.expires,v.id LIMIT 3",
++        )
++        .map_err(err)?;
++    let rows: Vec<(String, Id, i64)> = sql::query_map(&mut stmt, params![now as i64], |r| {
++        Ok((
++            sql::row_get(r, 0)?,
++            sql::row_get(r, 1)?,
++            sql::row_get(r, 2)?,
++        ))
++    })
++    .map_err(err)?;
++    rows.into_iter()
++        .map(|(raw, attempt, expires)| {
++            let header: Header = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
++            Ok(UnfinishedVault {
++                vault: header.id,
++                attempt,
++                state: header.state,
++                expires: expires as u64,
++                cleaning: expires as u64 <= now,
++            })
++        })
++        .collect()
++}
++
++fn receipt_key(vault: &[u8], attempt: &[u8]) -> Vec<u8> {
++    // Content and activation operation IDs are exactly 16 bytes.
++    [&[0u8][..], vault, attempt].concat()
++}
++
++pub fn reject_discarded(db: &Connection, vault: &[u8], attempt: &[u8], now: u64) -> Result<()> {
++    let discarded: Option<i64> = db
++        .query_row(
++            "SELECT expires FROM receipts WHERE operation=?1 AND result=''",
++            params![receipt_key(vault, attempt)],
++            |r| sql::row_get(r, 0),
++        )
++        .optional()
++        .map_err(err)?;
++    if discarded.is_some_and(|expires| expires as u64 > now) {
++        return Err(Error::Expired);
++    }
++    Ok(())
++}
++
++pub fn cancel(db: &Connection, v: &[u8], attempt: &[u8], now: u64) -> Result<()> {
++    id(v)?;
++    id(attempt)?;
++    let replay: Option<i64> = db
++        .query_row(
++            "SELECT 1 FROM receipts WHERE operation=?1 AND digest=?2 AND result='' AND expires>?3",
++            params![receipt_key(v, attempt), v, now as i64],
++            |r| sql::row_get(r, 0),
++        )
++        .optional()
++        .map_err(err)?;
++    if replay.is_some() {
++        return Ok(());
++    }
++    let h = header(db, v)?;
++    if h.state == VaultState::Active {
++        return Err(Error::Conflict);
++    }
++    check_attempt(db, &h, Some(attempt))?;
++    db.execute(
++        "UPDATE vaults SET expires=min(expires,?2) WHERE id=?1",
++        params![v, now.max(1) as i64],
++    )
++    .map_err(err)?;
++    if h.state == VaultState::Pending {
++        finish_cleanup(db, v, now)?;
++    }
++    Ok(())
++}
++
++pub(crate) fn collect_expired(db: &Connection, now: u64) -> Result<Option<u64>> {
++    let vault: Option<Id> = db
++        .query_row(
++            "SELECT v.id FROM vaults v
++         WHERE v.expires>0 AND v.expires<=?1
++         ORDER BY EXISTS(SELECT 1 FROM restores r WHERE r.vault=v.id) DESC,v.expires,v.id LIMIT 1",
++            params![now as i64],
++            |r| sql::row_get(r, 0),
++        )
++        .optional()
++        .map_err(err)?;
++    let Some(vault) = vault else { return Ok(None) };
++    let revision: Option<(Id, i64)> = db
++        .query_row(
++            "SELECT object,revision FROM revisions WHERE vault=?1 LIMIT 1",
++            params![vault],
++            |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
++        )
++        .optional()
++        .map_err(err)?;
++    let count = if let Some((object, revision)) = revision {
++        content::remove_revision(db, &vault, &object, revision)?;
++        1
++    } else {
++        0
++    };
++    finish_cleanup(db, &vault, now)?;
++    Ok(Some(count))
++}
++
++fn finish_cleanup(db: &Connection, v: &[u8], now: u64) -> Result<()> {
++    db.execute(
++        "DELETE FROM objects WHERE vault=?1 AND object IN
++         (SELECT object FROM objects WHERE vault=?1 ORDER BY object LIMIT 100)",
++        params![v],
++    )
++    .map_err(err)?;
++    let remaining: i64 = db.query_row(
++        "SELECT EXISTS(SELECT 1 FROM revisions WHERE vault=?1) OR EXISTS(SELECT 1 FROM objects WHERE vault=?1)",
++        params![v], |r| sql::row_get(r, 0),
++    ).map_err(err)?;
++    if remaining == 0 {
++        // Replace the charged vault row with an equally charged cancellation
++        // receipt. An empty result is reserved for setup tombstones.
++        let attempt: Id = db
++            .query_row(
++                "SELECT operation FROM vaults WHERE id=?1 AND expires>0",
++                params![v],
++                |r| sql::row_get(r, 0),
++            )
++            .map_err(err)?;
++        db.execute(
++            "INSERT INTO receipts(operation,digest,result,expires) VALUES(?1,?2,'',?3)
++             ON CONFLICT(operation) DO UPDATE SET digest=excluded.digest,expires=excluded.expires",
++            params![receipt_key(v, &attempt), v, (now + DAY) as i64],
++        )
++        .map_err(err)?;
++        db.execute("DELETE FROM restores WHERE vault=?1", params![v])
++            .map_err(err)?;
++        db.execute("DELETE FROM vaults WHERE id=?1 AND expires>0", params![v])
++            .map_err(err)?;
++    }
++    Ok(())
++}
+diff --git a/crates/vault-store/src/tests.rs b/crates/vault-store/src/tests.rs
+--- a/crates/vault-store/src/tests.rs
++++ b/crates/vault-store/src/tests.rs
+@@ -357,3 +357,351 @@
+         assert_eq!(header(&db, &v).unwrap().sequence, 0);
+     }
+ }
++
++#[test]
++fn cancelled_creation_releases_slot_and_rejects_old_attempt() {
++    let db = fixture();
++    let owner = config(&db).unwrap().owner;
++    let request = Reserve {
++        vault: vec![21; 16],
++        operation: vec![22; 16],
++    };
++    let h = reserve(&db, owner, request.clone(), 10).unwrap();
++    assert_eq!(setup::list(&db, 10).unwrap()[0].attempt, request.operation);
++    assert_eq!(
++        setup::cancel(&db, &h.id, &[99; 16], 10),
++        Err(Error::Conflict)
++    );
++    setup::cancel(&db, &h.id, &request.operation, 10).unwrap();
++    setup::cancel(&db, &h.id, &request.operation, 11).unwrap();
++    assert_eq!(
++        reserve(&db, owner, request.clone(), 11).unwrap_err(),
++        Error::Expired
++    );
++    let next = reserve(
++        &db,
++        owner,
++        Reserve {
++            operation: vec![23; 16],
++            ..request.clone()
++        },
++        11,
++    )
++    .unwrap();
++    assert_eq!(
++        setup::check_attempt(&db, &next, Some(&request.operation)),
++        Err(Error::Conflict)
++    );
++    setup::cancel(&db, &h.id, &request.operation, 11).unwrap();
++    assert!(pending(&db, &h.id, 11).is_ok());
++}
++
++#[test]
++fn low_balance_refuses_new_upload_but_preserves_retries() {
++    let db = fixture();
++    let v = active_fixture(&db);
++    let request = BeginRevision {
++        vault: v.clone(),
++        object: vec![2; 16],
++        expected_revision: 0,
++        operation: vec![10; 16],
++        plain_size: 1,
++        manifest: vec![1],
++        chunk_hashes: vec![vec![0; 32]],
++    };
++    assert_eq!(
++        content::begin_with_budget(&db, request.clone(), 1, false).unwrap_err(),
++        Error::QuotaExceeded
++    );
++    assert_eq!(content::quota(&db, &v).unwrap().reserved, 0);
++    let original = content::begin(&db, request.clone(), 1).unwrap();
++    let replay = content::begin_with_budget(&db, request, 2, false).unwrap();
++    assert_eq!(original.expires, replay.expires);
++    assert_eq!(original.id, replay.id);
++}
++
++#[test]
++fn expired_restore_cleanup_is_bounded_and_allows_retry() {
++    let db = fixture();
++    let vault = vec![41; 16];
++    let request = BeginRestore {
++        header: Header {
++            id: vault.clone(),
++            epoch: 0,
++            state: VaultState::Active,
++            normal: None,
++            recovery: Some(Envelope {
++                version: 1,
++                nonce: vec![1; 12],
++                ciphertext: vec![2; 48],
++            }),
++            sequence: 2,
++            backup_sequence: None,
++            backup_at: None,
++            key_name: "test_key_1".into(),
++        },
++        operation: vec![42; 16],
++        count: 2,
++        root: vec![0; 32],
++        reserved_bytes: 2 * 1024 * 1024,
++    };
++    restore::begin(&db, request.clone(), 10).unwrap();
++    for n in 1..=101u8 {
++        db.execute(
++            "INSERT INTO objects VALUES(?1,?2,1)",
++            params![vault, vec![n; 16]],
++        )
++        .unwrap();
++    }
++    for n in 1..=2u8 {
++        db.execute(
++            "INSERT INTO revisions VALUES(?1,?2,1,?3,NULL,0,x'', '[]',1,4096)",
++            params![vault, vec![n; 16], i64::from(n)],
++        )
++        .unwrap();
++    }
++    let now = DAY + 10;
++    assert!(setup::list(&db, now).unwrap()[0].cleaning);
++    assert_eq!(content::gc(&db, now).unwrap(), 1);
++    let heads: i64 = db
++        .query_row(
++            "SELECT count(*) FROM objects WHERE vault=?1",
++            params![vault],
++            |r| sql::row_get(r, 0),
++        )
++        .unwrap();
++    assert_eq!(heads, 1);
++    assert_eq!(content::gc(&db, now).unwrap(), 1);
++    assert!(setup::list(&db, now).unwrap().is_empty());
++    assert_eq!(
++        restore::begin(&db, request.clone(), now).unwrap_err(),
++        Error::Expired
++    );
++    assert!(
++        restore::begin(
++            &db,
++            BeginRestore {
++                operation: vec![43; 16],
++                ..request
++            },
++            now
++        )
++        .is_ok()
++    );
++}
++
++#[test]
++fn quota_reservations_in_two_vaults_meet_the_exact_global_boundary() {
++    for excess in [0, 1] {
++        let db = fixture();
++        let a = active_fixture(&db);
++        let b = vec![61; 16];
++        let mut second = header(&db, &a).unwrap();
++        second.id = b.clone();
++        db.execute(
++            "INSERT INTO vaults VALUES(?1,?2,0,?3)",
++            params![b, vec![62u8; 16], serde_json::to_string(&second).unwrap()],
++        )
++        .unwrap();
++        let request = |vault: Vec<u8>, op: u8| BeginRevision {
++            vault,
++            object: vec![63; 16],
++            operation: vec![op; 16],
++            expected_revision: 0,
++            plain_size: 1,
++            manifest: vec![1],
++            chunk_hashes: vec![vec![2; 32]],
++        };
++        let one = request(a.clone(), 64);
++        let two = request(b.clone(), 65);
++        let base = content::quota(&db, &a).unwrap().charged;
++        content::begin(&db, one.clone(), 10).unwrap();
++        content::begin(&db, two.clone(), 10).unwrap();
++        let reservations = content::quota(&db, &a).unwrap().reserved;
++        db.execute("DELETE FROM uploads", params![]).unwrap();
++        db.execute(
++            "INSERT INTO revisions VALUES(x'ff',x'ff',1,1,NULL,0,x'', '[]',1,?1)",
++            params![(TOTAL_MAX - base - reservations + excess) as i64],
++        )
++        .unwrap();
++        content::begin(&db, one, 10).unwrap();
++        let result = content::begin(&db, two, 10);
++        let quota = content::quota(&db, &a).unwrap();
++        if excess == 0 {
++            result.unwrap();
++            assert_eq!(quota.charged + quota.reserved, TOTAL_MAX);
++        } else {
++            assert_eq!(result.unwrap_err(), Error::QuotaExceeded);
++            assert!(quota.reserved < reservations);
++        }
++    }
++}
++
++#[test]
++fn full_receipt_table_does_not_block_setup_cleanup() {
++    for receipt_expires in [DAY + 1, DAY + 2] {
++        let db = fixture();
++        let vault = active_fixture(&db);
++        pending_revision(&db, &vault, 0, 10);
++        let pending = Reserve {
++            vault: vec![31; 16],
++            operation: vec![32; 16],
++        };
++        reserve(&db, config(&db).unwrap().owner, pending.clone(), 1).unwrap();
++        db.execute(
++            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<10000)
++             INSERT INTO receipts SELECT CAST(x AS BLOB),x'ff','null',?1 FROM n",
++            params![receipt_expires as i64],
++        )
++        .unwrap();
++        let now = DAY + 1;
++        content::gc(&db, now).unwrap();
++        assert_eq!(header(&db, &pending.vault).unwrap_err(), Error::NotFound);
++        let reserved = content::quota(&db, &vault).unwrap().reserved;
++        if receipt_expires == now {
++            assert_eq!(reserved, 0);
++            assert_eq!(
++                content::commit(&db, &[10; 16], now).unwrap_err(),
++                Error::Expired
++            );
++        } else {
++            assert!(reserved > 0);
++            content::gc(&db, receipt_expires).unwrap();
++            assert_eq!(content::quota(&db, &vault).unwrap().reserved, 0);
++        }
++    }
++}
++
++#[test]
++fn upload_commit_does_not_accept_a_deletion_receipt() {
++    let mut db = fixture();
++    let vault = active_fixture(&db);
++    pending_revision(&db, &vault, 0, 10);
++    content::commit(&db, &[10; 16], 1).unwrap();
++    pending_revision(&db, &vault, 1, 11);
++    let tx = db.transaction().unwrap();
++    assert_eq!(
++        content::delete(&tx, &vault, &[2; 16], 1, &[11; 16], 2).unwrap_err(),
++        Error::Conflict
++    );
++    tx.rollback().unwrap();
++    let deletion = content::delete(&db, &vault, &[2; 16], 1, &[12; 16], 2).unwrap();
++    assert!(deletion.deleted);
++    assert_eq!(
++        content::delete(&db, &vault, &[2; 16], 1, &[12; 16], 3)
++            .unwrap()
++            .revision,
++        deletion.revision
++    );
++    assert_eq!(
++        content::commit(&db, &[12; 16], 3).unwrap_err(),
++        Error::Conflict
++    );
++}
++
++#[test]
++fn uploads_reserve_receipt_slots_across_vaults() {
++    let db = fixture();
++    let first = active_fixture(&db);
++    let second = vec![71; 16];
++    let mut h = header(&db, &first).unwrap();
++    h.id = second.clone();
++    db.execute(
++        "INSERT INTO vaults VALUES(?1,?2,0,?3)",
++        params![second, vec![72u8; 16], serde_json::to_string(&h).unwrap()],
++    )
++    .unwrap();
++    db.execute_batch(
++        "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9998)
++         INSERT INTO receipts SELECT CAST(x AS BLOB),x'ff','null',86401 FROM n",
++    )
++    .unwrap();
++    pending_revision(&db, &first, 0, 10);
++    pending_revision(&db, &second, 0, 11);
++    assert_eq!(
++        content::record(&db, &[99; 16], &[0; 32], &(), 1),
++        Err(Error::QuotaExceeded)
++    );
++    assert_eq!(content::commit(&db, &[10; 16], 1).unwrap().revision, 1);
++    assert_eq!(content::commit(&db, &[11; 16], 1).unwrap().revision, 1);
++    assert_eq!(content::commit(&db, &[10; 16], 2).unwrap().revision, 1);
++    let count: i64 = db
++        .query_row("SELECT count(*) FROM receipts", params![], |r| {
++            sql::row_get(r, 0)
++        })
++        .unwrap();
++    assert_eq!(count, 10000);
++}
++
++#[test]
++fn setup_cancellation_cannot_consume_an_upload_receipt_slot() {
++    let db = fixture();
++    let vault = active_fixture(&db);
++    let setup = Reserve {
++        vault: vec![81; 16],
++        operation: vec![82; 16],
++    };
++    reserve(&db, config(&db).unwrap().owner, setup.clone(), 1).unwrap();
++    db.execute_batch(
++        "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9998)
++         INSERT INTO receipts SELECT CAST(x AS BLOB),x'ff','null',86401 FROM n",
++    )
++    .unwrap();
++    pending_revision(&db, &vault, 0, 10);
++    assert_eq!(
++        content::record(&db, &[99; 16], &[0; 32], &(), 1),
++        Err(Error::QuotaExceeded)
++    );
++    setup::cancel(&db, &setup.vault, &setup.operation, 1).unwrap();
++    content::commit(&db, &[10; 16], 1).unwrap();
++    assert_eq!(
++        reserve(
++            &db,
++            config(&db).unwrap().owner,
++            Reserve {
++                vault: vec![83; 16],
++                operation: vec![84; 16],
++            },
++            1
++        )
++        .unwrap_err(),
++        Error::QuotaExceeded
++    );
++}
++
++#[test]
++fn expired_upload_uses_its_reserved_receipt_slot_at_the_limit() {
++    let db = fixture();
++    let vault = active_fixture(&db);
++    db.execute_batch(
++        "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999)
++         INSERT INTO receipts SELECT CAST(x AS BLOB),x'ff','null',86403 FROM n",
++    )
++    .unwrap();
++    pending_revision(&db, &vault, 0, 10);
++    content::gc(&db, DAY + 1).unwrap();
++    assert_eq!(content::quota(&db, &vault).unwrap().reserved, 0);
++    assert_eq!(
++        content::commit(&db, &[10; 16], DAY + 1).unwrap_err(),
++        Error::Expired
++    );
++    let count: i64 = db
++        .query_row("SELECT count(*) FROM receipts", params![], |r| {
++            sql::row_get(r, 0)
++        })
++        .unwrap();
++    assert_eq!(count, 10000);
++    let request = BeginRevision {
++        vault,
++        object: vec![2; 16],
++        expected_revision: 0,
++        operation: vec![11; 16],
++        plain_size: 1,
++        manifest: vec![1],
++        chunk_hashes: vec![vec![0; 32]],
++    };
++    assert_eq!(
++        content::begin(&db, request, DAY + 1).unwrap_err(),
++        Error::QuotaExceeded
++    );
++}
+diff --git a/crates/vault-types/src/lib.rs b/crates/vault-types/src/lib.rs
+--- a/crates/vault-types/src/lib.rs
++++ b/crates/vault-types/src/lib.rs
+@@ -72,6 +72,8 @@
+ #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+ pub struct BeginUnlock {
+     pub vault: Id,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub attempt: Option<Id>,
+     pub epoch: u64,
+     pub purpose: Purpose,
+     pub transport: Vec<u8>,
+@@ -87,6 +89,8 @@
+ #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+ pub struct Derive {
+     pub vault: Id,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub attempt: Option<Id>,
+     pub epoch: u64,
+     pub transport: Vec<u8>,
+     pub assertion: Option<String>,
+@@ -94,6 +98,8 @@
+ #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+ pub struct Activate {
+     pub vault: Id,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub attempt: Option<Id>,
+     pub operation: Id,
+     pub normal: Envelope,
+     pub recovery: Envelope,
+@@ -210,3 +216,12 @@
+     pub sequence: u64,
+     pub root: Vec<u8>,
+ }
++
++#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
++pub struct UnfinishedVault {
++    pub vault: Id,
++    pub attempt: Id,
++    pub state: VaultState,
++    pub expires: u64,
++    pub cleaning: bool,
++}
+diff --git a/docs/api.md b/docs/api.md
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -34,4 +34,15 @@
+ 
+ deleteはtombstone版を追加する。UIでは削除済み文書もタイトルと履歴を表示し、残った版のダウンロードと明示purgeができる。purge後もheadのIDを予約したままにして、古いAADのID/版を再利用しない。過去バックアップや取得済みコピーは消さない。
+ 
+-collect_garbageは期限切れupload最大1件、回収可能なrevision最大1件、期限切れreceipt/export各最大100件を処理する。更新開始・画面一覧更新でも実行する。期限切れrestoreは予約を解放し、後続GCで段階的にchunkを回収する。
++collect_garbageは期限切れupload最大1件、回収可能なrevision最大1件、期限切れreceipt/export各最大100件を処理する。更新開始・画面一覧更新でも実行する。期限切れrestoreの予約は、分割回収が完了した時点で解放する。旧版のデータで受領記録と予約の合計が件数上限を超えている場合は、期限切れuploadの回収だけを保留する。
++
++## 未完了の保管庫
++
++`list_unfinished_vaults` は所有者に保管庫ID、試行ID、状態、期限、回収中かどうかを返す。試行IDには `reserve_vault` または `begin_restore` の `operation` を使う。未完了の鍵取得・有効化・WebAuthn challengeには `attempt` を指定する。復旧の版開始・チャンク送信・版確定も同じ `attempt` を指定する。有効な保管庫の解除とパスキー管理では `attempt` を省略する。アップグレード前の未完了処理は一覧から確認して取り消せる。
++
++`cancel_vault_setup` は保管庫IDと試行IDが一致する未完了処理を失効させる。作成はその呼出しで回収し、復旧は `collect_garbage` が1回につき最大1版と最大100個のheadを回収する。回収完了後、同じバックアップは新しい試行IDで再送できる。取消済みの試行は24時間再開を拒否し、同じ取消を再送できる。
++
++新規アップロードは `minimum_cycles` 未満で `QuotaExceeded` を返す。開始済み操作の再送と確定は継続できる。canisterは暗号化された文書種別に依存せず、1版の平文宣言サイズ10 MiBと対応する暗号文のチャンク長・ハッシュを検査する。メモと認証情報の256 KiB制限はブラウザが適用する。
++
++
++受領記録の件数上限10000件には、保存済み記録に加え、uploadと未完了の保管庫それぞれ1件分の予約を含める。新規受付と記録追加は同じ合計を検査する。upload確定・期限切れ回収ではupload行を記録へ置き換え、保管庫の有効化・取消では未完了の行を記録へ置き換える。これらは単一トランザクションで行い、別の保存や取消が予約枠を使用しない。同じ操作の再送は追加枠を消費しない。
+diff --git a/docs/design.md b/docs/design.md
+--- a/docs/design.md
++++ b/docs/design.md
+@@ -1,6 +1,10 @@
+ # Kinic Vault 仕様案
+ 
+ 作成：2026-11-10 / 改訂：計画レビュー5件、容量縮小、バックアップ状態とorigin固定の指摘を反映。状態：個人用のローカル実装を開始。現状と未検証事項は[local-validation.md](local-validation.md)を参照。
++
++## 現行方針（2026-11-11）
++
++ユーザー指示により、複数ユーザーが利用するKinic Wikiと同じ画面・同じcanisterに「暗号化保管庫」を組み込む方針に変更した。利用者ごとに保管庫を分離する。以下の独立canister・owner1件・専用originの記述は、既存ローカル試作の設計を記録したものである。統合版の要件と実装順序は[Wiki統合設計](wiki-integration.md)を参照する。現在のコードはowner1件の試作であり、複数ユーザー対応とWikiへの組込みは未実装。
+ 
+ ## 1. 要件と判断の出所
+ 
+diff --git a/docs/implementation-plan.md b/docs/implementation-plan.md
+--- a/docs/implementation-plan.md
++++ b/docs/implementation-plan.md
+@@ -1,6 +1,10 @@
+ # Kinic Vault 実装計画
+ 
+ 作成：2026-11-10 / 改訂：同日の計画レビュー5件を反映。状態：ユーザー承認を受けローカル実装に着手。既存 canister の技術引き継ぎ、容量縮小、バックアップ状態とorigin固定を反映。チェック欄は元計画の全条件を満たした段階で更新する。一部実装・ローカル検証済みの項目も、未測定の本番条件を含むため未チェックのまま残す。現状は[local-validation.md](local-validation.md)を参照。
++
++## 現行の実装先
++
++2026-11-11のユーザー決定により、実装先をKinic Wikiの同じ画面・同じcanisterへ変更する。新しい作業は[Wiki統合設計](wiki-integration.md)の順序で進める。以下の5タスクは、独立したローカル試作で実装・検証した範囲と未測定事項を追跡するために保持する。
+ 
+ 目的：Cloudflare frontend と独立した IC canister で、個人用の暗号化 Wiki/文書保管庫を作る。
+ 仕様：[design.md](design.md)。費用・一次資料：[costs-and-sources.md](costs-and-sources.md)。必読の流用資料：[canister-reuse.md](canister-reuse.md)。
+diff --git a/docs/local-validation.md b/docs/local-validation.md
+--- a/docs/local-validation.md
++++ b/docs/local-validation.md
+@@ -35,7 +35,7 @@
+ - Cloudflare配布、DNS、本番canister、本番key_1のlatency/cycles、独立セキュリティレビューは未実施。
+ - 200 MiBに近い実データ、SQLite/VFSの最悪時の割当増幅、1 GiB境界での負荷、長期運用は未測定。容量会計と物理trapは実装したが、候補上限の妥当性は本番前に実測する。
+ - 長期のVRK使用回数・nonce生涯予算・鍵更新の仕様は本番移行前に確定する。DEKは毎版/毎試行新規で、metadata1件+最大10chunksに用途を制限する。
+-- 暗号化ファイルの再作成はget_active_exportで同じ未失効snapshotを再利用できる。restoreの低レベルAPIは再送対応だが、ページ再読込後のインポート再開ウィザードはない。
++- 暗号化ファイルの再作成はget_active_exportで同じ未失効snapshotを再利用できる。復旧を中断した場合は、画面から取り消して回収後にやり直せる。チャンク途中からの再開は対象外。
+ - 復旧先は空の独立canister。既存IDへの上書き/マージはしない。手元ファイルと復旧用秘密が両方必要。
+ - PDFはダウンロード専用。共有、OCR、ブラウザ自動入力、AI連携、自動バックアップは含めない。
+ - 配信コード、controller、OS/ブラウザ拡張を信頼するモデル。ロックはこれらの悪意や取得済みコピーから秘密を守る保証ではない。
+@@ -57,3 +57,30 @@
+ | archive検証が非正規のID・数値や復旧できないrevision順を許す | base64urlと10進数を正規化済み表現に限定し、i64上限・件数・文書ごとのrevision増加を検査 |
+ 
+ 修正後にRust 11件、Vitest 11件、実Wasm/PocketIC 4シナリオ、独立復旧CLI、ブラウザE2E、ローカルIIを再実行し成功。型検査、production build、Rustfmt/Prettier、Candid/binding一致も確認した。本番vetKeysでの実測結果は含まない。
++
++## 中断からのやり直しと容量計測（2026-11-11）
++
++取消・期限切れに対応する分割回収を追加した。ブラウザでは作成と復旧の途中でページを閉じ、再ログインして取り消し、同じcanisterで完了できることを確認した。保存のcommit応答を切断しても、履歴が1版だけになることも確認した。
++
++`node pocketic-tests/capacity.mjs` をローカルPocketIC 12で実行。2保管庫に合成データを100 MiBと98 MiBずつ、計20ファイルで格納した。下記は同時に他のローカル試験も実行していた1回の測定値。
++
++| 計測項目 | 結果 |
++| --- | --- |
++| 保存したデータ | 198 MiB（207,618,048バイト） |
++| アプリ容量会計 | 209,007,986バイト（約199.3 MiB） |
++| stable memory | 約8.4 MiBから208.4 MiBへ増加 |
++| canisterメモリ合計 | 約18.5 MiBから260.5 MiBへ増加 |
++| 保存時間 | 全20ファイル97.1秒、1ファイルあたり2.1〜10.7秒 |
++| 残高差 | 472,532,301,463 cycles |
++
++保管庫100 MiBを1バイト超える更新と、全体200 MiBを超える追加予約が既存データを保持して拒否された。Rust試験では2保管庫の予約で全体上限ちょうどを許可し、1バイト超過を拒否することも確認した。ローカルの上限100/200 MiBと最低残高100,000,000,000 cyclesは維持する。測定は連続した追加保存に限る。大量の更新・復旧・GCを繰り返す負荷、本番の鍵取得と維持費は本番設定を確定する前に別途測定する。
++
++PocketIC付属IIはcanisterを限定した委任を返さないため、localhost限定の試験で、30分の委任をメモリ内に保持する構成を使う。canister側の所有者認可と、保管庫を解除する際のWebAuthn本人確認は別に行う。
++
++Rust 15件、Vitest 11件、オフライン復旧CLI、Chromium E2E、公式ローカルIIからの作成・再解除が成功した。公開済みコミット `a998092` からビルドしたWasmを `VAULT_PREVIOUS_WASM` に指定し、実Wasm試験6シナリオが成功した。旧版で予約したアップロードが、最低残高を下回った状態で新版へupgradeした後も再送・完了でき、新規アップロードは拒否されることを確認した。型検査、ビルド、整形、Candidとバインディングの一致も確認した。
++
++## 受領記録の枠予約
++
++アップロード開始時に完了・期限切れの受領記録1件分を予約するよう修正した。保管庫の作成・復旧も、有効化または取消の記録1件分を予約する。受領記録・アップロード・未完了の保管庫の合計で10000件を判定する。別保管庫の保存や取消が予約枠を使い切ることを防ぐ。
++
++Rust 20件、PocketICの実Wasm標準5シナリオ、公開済みWasmから更新した開始済みアップロードの再送・完了試験1件が成功した。上限ちょうどでの2保管庫の保存、取消との競合、期限切れuploadの回収、満杯時の新規受付拒否を確認した。旧版の状態が既に件数上限を超えている場合は、期限切れ記録の回収を待つ。
+diff --git a/docs/wiki-integration.md b/docs/wiki-integration.md
+new file mode 100644
+--- /dev/null
++++ b/docs/wiki-integration.md
+@@ -0,0 +1,47 @@
++# Kinic Wikiへの暗号化保管庫の統合
++
++2026-11-11。ユーザーが複数ユーザー対応と、Wikiと同じ画面・同じcanisterへの組込みを選択した。現在のVaultコードは所有者1人のローカル試作であり、この文書の統合は未実装。
++
++## 利用者と画面
++
++WikiにInternet Identityでログインした利用者が「暗号化保管庫」を開き、追加のWebAuthn本人確認で解除する。保管庫・パスキー・履歴・アップロード・バックアップ・復旧は所有者ごとに分離する。
++
++WikiのDBへの閲覧・編集権限を、保管庫の復号権限へ自動変換しない。初期の統合版は各利用者の私有保管庫を提供する。暗号化データの共同編集には、メンバーごとの鍵配布と失効を含む追加仕様が必要になる。
++
++Wikiの平文ページ、通常検索、公開ページ、Marketplace、MCP、LLM writer、AI回答生成から、Vaultの平文・鍵・検索索引へ到達する経路を設けない。Vault内の検索は解除中のブラウザで行う。暗号化文書を平文ページへ移す操作を追加する場合は、利用者が明示して選択する操作として別途設計する。
++
++## 既存Wikiの実装を使う箇所
++
++参照したローカルcheckoutは4f15ac1135a0266d303ccf830f3ad6ed93f9986d。ローカルに保存されたorigin/main d497719ecc00522067881fe2fa09a601c3816e07にも、DB作成・権限管理とMemoryManagerの構成があることを確認した。ネットワークからの最新取得は行っていない。
++
++- Wikiの認証済みprincipalを所有者識別に使う。認証originは既存Wikiの導出方針に合わせ、Vault用パスキーのRP IDと許可originを明示する。
++- ユーザー登録・利用資格・cycles残高と会計はWikiのサービス層を参照する。新規ユーザーへどれだけの鍵取得費用を付与するかは、Wikiの初期無料枠と整合させる。
++- 固定版ic-sqlite-vfsと、Wikiの共通MemoryManagerを利用する。現Vaultの独立したMemoryManagerとMemoryId=10の初期化を統合canisterへ持ち込まない。
++- Wikiのindex DBはMemoryId=10を使用する。利用者DBのmount_idは履歴を使って割り当てられるため、Vault用に任意のIDを固定すると衝突し得る。テーブルとメモリ領域の配置は、Wikiの割当履歴・削除・復旧処理と合わせて検証する。
++- 通常のWiki DBのSQLアクセスにより、Vaultの認証情報や所有者を書き換えられない保存境界を設ける。共有DBの一般メンバー権限とVaultの所有権を混同しない。
++
++## 統合の実装順序
++
++1. Wikiの認証・所有者・課金モデルにVaultの所有権を対応付ける。所有者はリクエスト本文から受け取らず、認証済みcallerを使う。1人3保管庫・所有者200 MiBの制限を利用者ごとに適用し、canister全体の制限を別に設定する。現試作の全体200 MiBを人数倍へ自動拡大しない。
++2. Vaultの同期保存処理と鍵・WebAuthnサービスを、埋込み可能なモジュールへ分ける。独立試作のinit/post_upgradeと設定を、Wikiの初期化・migrationへ接続する。所有者別のパスキー、challenge、処理中操作、受領記録、容量予約、日次費用を永続化する。global費用の上限も設ける。
++3. WikiのcanisterへVault専用のAPIを追加する。すべての読出し・更新・鍵取得・再送・取消で所有者を検査する。外部awaitから戻った時にも所有者、試行ID、鍵世代、利用資格を検査する。
++4. Wikiの画面からVaultを操作できるようにする。既存のIIログインを使い、パスキー解除・自動ロック・履歴・バックアップを接続する。identity切替と画面離脱で、鍵・DOM・索引・遅延応答を破棄する。
++5. 合成データの統合Wasmで受け入れ試験を行う。既存WikiとVaultの両方を格納した状態からupgradeし、通常のWiki操作も検査する。コード更新と公開先への配布は別の操作として扱う。
++
++保管庫ID、object ID、版、epoch、sequence、暗号文をバックアップから保持し、通常利用用の保管庫鍵を統合canisterのvetKeysで再ラップする。canister IDが変わるため、独立試作の通常利用用envelopeをそのまま使えるとは扱わない。
++
++## 受け入れ条件
++
++- AとBの2人が同じcanisterで保管庫を作成・解除・保存・バックアップ・復旧できる。
++- BがAのvault、upload、receipt、export、復旧試行のIDを知っていてもアクセスできない。AのWiki共有メンバーやLLM writerも、AのVaultを解除できない。
++- Aの利用上限・処理中challenge・同時deriveが、Bの利用枠を消費しない。全体上限では新規要求を拒否し、開始済み操作の予約を維持する。
++- 一般のWiki検索、公開、AI・MCP経路、SQL APIからVaultの平文と鍵が漏れず、認証状態を変更できない。
++- パスキーの別origin、再送、期限切れ、identity切替、取消後の遅延応答を拒否する。
++- WikiのDB作成・削除・復旧とVaultを交互に実行してもMemoryIdが衝突しない。
++- 既存Wikiを含むupgrade、途中失敗、バックアップからの独立復旧を実Wasmで確認する。
++
++## 同じ画面・同じcanisterにすることで共有する信頼
++
++Wikiの配信JavaScriptとその依存コードは、解除中のVaultへアクセスできる信頼対象になる。Wikiのcanister更新者も、Vaultの認可や鍵配布のコードを変更できる。パスキーによる解除はこれらの更新者からの隔離を提供しない。この信頼関係を利用者へ説明し、通常のWiki表示のXSSと依存更新もVaultのレビュー範囲へ含める。
++
++保存と鍵取得の費用は全利用者で共有する。既存Wikiの費用会計と結び付けるが、認証済みprincipalを増やすだけで無料の鍵取得枠が無制限に増える方式にはしない。
+diff --git a/packages/contracts/vault.did b/packages/contracts/vault.did
+--- a/packages/contracts/vault.did
++++ b/packages/contracts/vault.did
+@@ -1,5 +1,6 @@
+ type Activate = record {
+   normal : Envelope;
++  attempt : opt blob;
+   vault : blob;
+   registration : opt text;
+   assertion : opt text;
+@@ -23,6 +24,7 @@
+   expected_revision : nat64;
+ };
+ type BeginUnlock = record {
++  attempt : opt blob;
+   vault : blob;
+   transport : blob;
+   epoch : nat64;
+@@ -44,6 +46,7 @@
+ };
+ type CredentialInfo = record { id : blob };
+ type Derive = record {
++  attempt : opt blob;
+   vault : blob;
+   transport : blob;
+   epoch : nat64;
+@@ -110,7 +113,8 @@
+ type Result_12 = variant { Ok : Quota; Err : Error };
+ type Result_13 = variant { Ok : vec CredentialInfo; Err : Error };
+ type Result_14 = variant { Ok : ObjectPage; Err : Error };
+-type Result_15 = variant { Ok : vec Header; Err : Error };
++type Result_15 = variant { Ok : vec UnfinishedVault; Err : Error };
++type Result_16 = variant { Ok : vec Header; Err : Error };
+ type Result_2 = variant { Ok; Err : Error };
+ type Result_3 = variant { Ok : Upload; Err : Error };
+ type Result_4 = variant { Ok : Challenge; Err : Error };
+@@ -129,6 +133,13 @@
+   plain_size : nat64;
+   sequence : nat64;
+ };
++type UnfinishedVault = record {
++  expires : nat64;
++  cleaning : bool;
++  attempt : blob;
++  vault : blob;
++  state : VaultState;
++};
+ type Upload = record { id : blob; expires : nat64; revision : nat64 };
+ type VaultState = variant { Active; Restoring; Pending };
+ service : (Config) -> {
+@@ -136,12 +147,13 @@
+   activate_vault : (Activate) -> (Result);
+   begin_export : (blob, blob) -> (Result_1);
+   begin_restore : (BeginRestore) -> (Result);
+-  begin_restore_revision : (blob, Revision) -> (Result_2);
++  begin_restore_revision : (blob, Revision, opt blob) -> (Result_2);
+   begin_revision : (BeginRevision) -> (Result_3);
+   begin_unlock : (BeginUnlock) -> (Result_4);
++  cancel_vault_setup : (blob, blob) -> (Result_2);
+   collect_garbage : () -> (Result_5);
+   commit_restore : (Activate) -> (Result);
+-  commit_restore_revision : (blob, nat64) -> (Result_6);
++  commit_restore_revision : (blob, nat64, opt blob) -> (Result_6);
+   commit_revision : (blob) -> (Result_7);
+   delete_object : (blob, blob, nat64, blob) -> (Result_7);
+   derive_vault_key : (Derive) -> (Result_8);
+@@ -156,11 +168,12 @@
+   list_credentials : () -> (Result_13);
+   list_history : (blob, blob, nat64) -> (Result_9);
+   list_objects : (blob, blob) -> (Result_14);
+-  list_vaults : () -> (Result_15);
++  list_unfinished_vaults : () -> (Result_15) query;
++  list_vaults : () -> (Result_16);
+   manage_unlock_credential : (ManageCredential) -> (Result_2);
+   prepare_unlock_credential : (blob, text) -> (Result_11);
+   purge_object : (blob, blob) -> (Result_2);
+   put_chunk : (blob, nat32, blob) -> (Result_2);
+-  put_restore_chunk : (blob, nat32, blob) -> (Result_2);
++  put_restore_chunk : (blob, nat32, blob, opt blob) -> (Result_2);
+   reserve_vault : (Reserve) -> (Result);
+ }
+\ No newline at end of file
+diff --git a/packages/contracts/vault.did.d.ts b/packages/contracts/vault.did.d.ts
+--- a/packages/contracts/vault.did.d.ts
++++ b/packages/contracts/vault.did.d.ts
+@@ -4,6 +4,7 @@
+ 
+ export interface Activate {
+   'normal' : Envelope,
++  'attempt' : [] | [Uint8Array | number[]],
+   'vault' : Uint8Array | number[],
+   'registration' : [] | [string],
+   'assertion' : [] | [string],
+@@ -27,6 +28,7 @@
+   'expected_revision' : bigint,
+ }
+ export interface BeginUnlock {
++  'attempt' : [] | [Uint8Array | number[]],
+   'vault' : Uint8Array | number[],
+   'transport' : Uint8Array | number[],
+   'epoch' : bigint,
+@@ -48,6 +50,7 @@
+ }
+ export interface CredentialInfo { 'id' : Uint8Array | number[] }
+ export interface Derive {
++  'attempt' : [] | [Uint8Array | number[]],
+   'vault' : Uint8Array | number[],
+   'transport' : Uint8Array | number[],
+   'epoch' : bigint,
+@@ -142,7 +145,9 @@
+   { 'Err' : Error };
+ export type Result_14 = { 'Ok' : ObjectPage } |
+   { 'Err' : Error };
+-export type Result_15 = { 'Ok' : Array<Header> } |
++export type Result_15 = { 'Ok' : Array<UnfinishedVault> } |
++  { 'Err' : Error };
++export type Result_16 = { 'Ok' : Array<Header> } |
+   { 'Err' : Error };
+ export type Result_2 = { 'Ok' : null } |
+   { 'Err' : Error };
+@@ -169,6 +174,13 @@
+   'manifest' : Uint8Array | number[],
+   'plain_size' : bigint,
+   'sequence' : bigint,
++}
++export interface UnfinishedVault {
++  'expires' : bigint,
++  'cleaning' : boolean,
++  'attempt' : Uint8Array | number[],
++  'vault' : Uint8Array | number[],
++  'state' : VaultState,
+ }
+ export interface Upload {
+   'id' : Uint8Array | number[],
+@@ -187,15 +199,19 @@
+   >,
+   'begin_restore' : ActorMethod<[BeginRestore], Result>,
+   'begin_restore_revision' : ActorMethod<
+-    [Uint8Array | number[], Revision],
++    [Uint8Array | number[], Revision, [] | [Uint8Array | number[]]],
+     Result_2
+   >,
+   'begin_revision' : ActorMethod<[BeginRevision], Result_3>,
+   'begin_unlock' : ActorMethod<[BeginUnlock], Result_4>,
++  'cancel_vault_setup' : ActorMethod<
++    [Uint8Array | number[], Uint8Array | number[]],
++    Result_2
++  >,
+   'collect_garbage' : ActorMethod<[], Result_5>,
+   'commit_restore' : ActorMethod<[Activate], Result>,
+   'commit_restore_revision' : ActorMethod<
+-    [Uint8Array | number[], bigint],
++    [Uint8Array | number[], bigint, [] | [Uint8Array | number[]]],
+     Result_6
+   >,
+   'commit_revision' : ActorMethod<[Uint8Array | number[]], Result_7>,
+@@ -235,7 +251,8 @@
+     [Uint8Array | number[], Uint8Array | number[]],
+     Result_14
+   >,
+-  'list_vaults' : ActorMethod<[], Result_15>,
++  'list_unfinished_vaults' : ActorMethod<[], Result_15>,
++  'list_vaults' : ActorMethod<[], Result_16>,
+   'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_2>,
+   'prepare_unlock_credential' : ActorMethod<
+     [Uint8Array | number[], string],
+@@ -250,7 +267,12 @@
+     Result_2
+   >,
+   'put_restore_chunk' : ActorMethod<
+-    [Uint8Array | number[], number, Uint8Array | number[]],
++    [
++      Uint8Array | number[],
++      number,
++      Uint8Array | number[],
++      [] | [Uint8Array | number[]],
++    ],
+     Result_2
+   >,
+   'reserve_vault' : ActorMethod<[Reserve], Result>,
+diff --git a/packages/contracts/vault.did.js b/packages/contracts/vault.did.js
+--- a/packages/contracts/vault.did.js
++++ b/packages/contracts/vault.did.js
+@@ -43,6 +43,7 @@
+   const Result = IDL.Variant({ 'Ok' : Header, 'Err' : Error });
+   const Activate = IDL.Record({
+     'normal' : Envelope,
++    'attempt' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+     'vault' : IDL.Vec(IDL.Nat8),
+     'registration' : IDL.Opt(IDL.Text),
+     'assertion' : IDL.Opt(IDL.Text),
+@@ -101,6 +102,7 @@
+     'RemoveCredential' : IDL.Null,
+   });
+   const BeginUnlock = IDL.Record({
++    'attempt' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+     'vault' : IDL.Vec(IDL.Nat8),
+     'transport' : IDL.Vec(IDL.Nat8),
+     'epoch' : IDL.Nat64,
+@@ -123,6 +125,7 @@
+   const Result_6 = IDL.Variant({ 'Ok' : RestoreProgress, 'Err' : Error });
+   const Result_7 = IDL.Variant({ 'Ok' : Revision, 'Err' : Error });
+   const Derive = IDL.Record({
++    'attempt' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+     'vault' : IDL.Vec(IDL.Nat8),
+     'transport' : IDL.Vec(IDL.Nat8),
+     'epoch' : IDL.Nat64,
+@@ -157,7 +160,18 @@
+     'entries' : IDL.Vec(Revision),
+   });
+   const Result_14 = IDL.Variant({ 'Ok' : ObjectPage, 'Err' : Error });
+-  const Result_15 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
++  const UnfinishedVault = IDL.Record({
++    'expires' : IDL.Nat64,
++    'cleaning' : IDL.Bool,
++    'attempt' : IDL.Vec(IDL.Nat8),
++    'vault' : IDL.Vec(IDL.Nat8),
++    'state' : VaultState,
++  });
++  const Result_15 = IDL.Variant({
++    'Ok' : IDL.Vec(UnfinishedVault),
++    'Err' : Error,
++  });
++  const Result_16 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
+   const ManageCredential = IDL.Record({
+     'remove' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+     'vault' : IDL.Vec(IDL.Nat8),
+@@ -178,16 +192,21 @@
+       ),
+     'begin_restore' : IDL.Func([BeginRestore], [Result], []),
+     'begin_restore_revision' : IDL.Func(
+-        [IDL.Vec(IDL.Nat8), Revision],
++        [IDL.Vec(IDL.Nat8), Revision, IDL.Opt(IDL.Vec(IDL.Nat8))],
+         [Result_2],
+         [],
+       ),
+     'begin_revision' : IDL.Func([BeginRevision], [Result_3], []),
+     'begin_unlock' : IDL.Func([BeginUnlock], [Result_4], []),
++    'cancel_vault_setup' : IDL.Func(
++        [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
++        [Result_2],
++        [],
++      ),
+     'collect_garbage' : IDL.Func([], [Result_5], []),
+     'commit_restore' : IDL.Func([Activate], [Result], []),
+     'commit_restore_revision' : IDL.Func(
+-        [IDL.Vec(IDL.Nat8), IDL.Nat64],
++        [IDL.Vec(IDL.Nat8), IDL.Nat64, IDL.Opt(IDL.Vec(IDL.Nat8))],
+         [Result_6],
+         [],
+       ),
+@@ -229,7 +248,8 @@
+         [Result_14],
+         [],
+       ),
+-    'list_vaults' : IDL.Func([], [Result_15], []),
++    'list_unfinished_vaults' : IDL.Func([], [Result_15], ['query']),
++    'list_vaults' : IDL.Func([], [Result_16], []),
+     'manage_unlock_credential' : IDL.Func([ManageCredential], [Result_2], []),
+     'prepare_unlock_credential' : IDL.Func(
+         [IDL.Vec(IDL.Nat8), IDL.Text],
+@@ -247,7 +267,12 @@
+         [],
+       ),
+     'put_restore_chunk' : IDL.Func(
+-        [IDL.Vec(IDL.Nat8), IDL.Nat32, IDL.Vec(IDL.Nat8)],
++        [
++          IDL.Vec(IDL.Nat8),
++          IDL.Nat32,
++          IDL.Vec(IDL.Nat8),
++          IDL.Opt(IDL.Vec(IDL.Nat8)),
++        ],
+         [Result_2],
+         [],
+       ),
+diff --git a/pocketic-tests/capacity.mjs b/pocketic-tests/capacity.mjs
+new file mode 100644
+--- /dev/null
++++ b/pocketic-tests/capacity.mjs
+@@ -0,0 +1,155 @@
++import assert from "node:assert/strict";
++import { performance } from "node:perf_hooks";
++import { PocketIc, PocketIcServer } from "@dfinity/pic";
++import { IDL } from "@icp-sdk/core/candid";
++import { Principal } from "@icp-sdk/core/principal";
++import { idlFactory, init } from "../packages/contracts/vault.did.js";
++import { id, ok, passkey } from "./fixtures.mjs";
++
++const MiB = 1024 * 1024;
++const owner = Principal.selfAuthenticating(new Uint8Array(32).fill(41));
++const server = await PocketIcServer.start();
++let pic;
++try {
++  pic = await PocketIc.create(server.getUrl(), {
++    fiduciary: { state: { type: "new" } },
++  });
++  const { actor, canisterId } = await pic.setupCanister({
++    sender: owner,
++    idlFactory,
++    wasm: new URL(
++      "../target/wasm32-unknown-unknown/release/vault_canister.wasm",
++      import.meta.url,
++    ).pathname,
++    arg: IDL.encode(init({ IDL }), [
++      {
++        owner,
++        origin: "http://localhost:5173",
++        rp_id: "localhost",
++        key_name: "test_key_1",
++        minimum_cycles: 100_000_000_000n,
++      },
++    ]),
++    cycles: 100_000_000_000_000n,
++  });
++  actor.setPrincipal(owner);
++  const memory = async () => {
++    const response = await pic.updateCall({
++      canisterId: Principal.managementCanister(),
++      method: "canister_status",
++      sender: owner,
++      arg: IDL.encode(
++        [IDL.Record({ canister_id: IDL.Principal })],
++        [{ canister_id: canisterId }],
++      ),
++    });
++    const [result] = IDL.decode(
++      [
++        IDL.Record({
++          memory_size: IDL.Nat,
++          memory_metrics: IDL.Record({ stable_memory_size: IDL.Nat }),
++        }),
++      ],
++      response,
++    );
++    return {
++      total: Number(result.memory_size),
++      stable: Number(result.memory_metrics.stable_memory_size),
++    };
++  };
++  const baseline = await memory();
++  const key = passkey();
++  const create = async (first) => {
++    const vault = id(),
++      attempt = id();
++    ok(await actor.reserve_vault({ vault, operation: attempt }));
++    const ch = ok(
++      await actor.begin_unlock({
++        vault,
++        epoch: 0n,
++        purpose: { Activate: null },
++        transport: new Uint8Array(48),
++        target: [],
++        attempt: [attempt],
++      }),
++    );
++    const envelope = (n) => ({
++      version: 1,
++      nonce: new Uint8Array(12).fill(n),
++      ciphertext: new Uint8Array(48),
++    });
++    ok(
++      await actor.activate_vault({
++        vault,
++        attempt: [attempt],
++        operation: id(),
++        normal: envelope(1),
++        recovery: envelope(2),
++        registration: first ? [key.registration(ch)] : [],
++        assertion: first ? [] : [key.assertion(ch)],
++      }),
++    );
++    return vault;
++  };
++  const a = await create(true),
++    b = await create(false);
++  // Synthetic ciphertext-shaped payload. Measure actual stored BLOBs, not
++  // just reservations or compressed metadata.
++  const chunk = new Uint8Array(MiB + 16).fill(123);
++  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", chunk));
++  const request = (vault, bytes) => ({
++    vault,
++    object: id(),
++    expected_revision: 0n,
++    operation: id(),
++    plain_size: BigInt(bytes),
++    manifest: Uint8Array.of(1),
++    chunk_hashes: Array(Math.max(1, Math.ceil(bytes / MiB))).fill(hash),
++  });
++  const cyclesBefore = BigInt(await pic.getCyclesBalance(canisterId));
++  const start = performance.now();
++  const uploadsMs = [];
++  for (const [vault, sizes] of [
++    [a, Array(10).fill(10)],
++    [b, [...Array(9).fill(10), 8]],
++  ]) {
++    for (const size of sizes) {
++      const begin = performance.now();
++      const r = request(vault, size * MiB);
++      ok(await actor.begin_revision(r));
++      for (let i = 0; i < size; i++)
++        ok(await actor.put_chunk(r.operation, i, chunk));
++      ok(await actor.commit_revision(r.operation));
++      uploadsMs.push(Math.round(performance.now() - begin));
++    }
++  }
++  const elapsedMs = Math.round(performance.now() - start);
++  const cyclesAfter = BigInt(await pic.getCyclesBalance(canisterId));
++  const qa = ok(await actor.get_quota(a)),
++    qb = ok(await actor.get_quota(b));
++  assert.equal(qa.current, BigInt(100 * MiB));
++  assert.equal(qb.current, BigInt(98 * MiB));
++  assert.deepEqual(await actor.begin_revision(request(a, 1)), {
++    Err: { QuotaExceeded: null },
++  });
++  assert.deepEqual(await actor.begin_revision(request(b, 2 * MiB)), {
++    Err: { QuotaExceeded: null },
++  });
++  assert.deepEqual(ok(await actor.get_quota(a)), qa);
++  assert.deepEqual(ok(await actor.get_quota(b)), qb);
++  const after = await memory();
++  console.log(
++    JSON.stringify({
++      plainBytes: Number(qa.current + qb.current),
++      chargedBytes: Number(qa.charged),
++      baseline,
++      after,
++      elapsedMs,
++      uploadsMs,
++      cycles: String(cyclesBefore - cyclesAfter),
++    }),
++  );
++} finally {
++  await pic?.tearDown();
++  await server.stop();
++}
+diff --git a/pocketic-tests/keys.test.mjs b/pocketic-tests/keys.test.mjs
+--- a/pocketic-tests/keys.test.mjs
++++ b/pocketic-tests/keys.test.mjs
+@@ -13,38 +13,38 @@
+ const cfg={owner,origin:'http://localhost:5173',rp_id:'localhost',key_name:'test_key_1',minimum_cycles:100_000_000_000n};
+ const zero=new Uint8Array(48);
+ const envelope=()=>({version:1,nonce:randomBytes(12),ciphertext:randomBytes(48)});
+-async function fixture(f,initialWasm=wasm){const server=await PocketIcServer.start({showCanisterLogs:true});let pic;try{
++async function fixture(f,initialWasm=wasm,config=cfg){const server=await PocketIcServer.start({showCanisterLogs:true});let pic;try{
+  pic=await PocketIc.create(server.getUrl(),{fiduciary:{state:{type:"new"}},icpConfig:{betaFeatures:'Enabled'}});
+- const {actor,canisterId}=await pic.setupCanister({sender:owner,idlFactory,wasm:initialWasm,arg:IDL.encode(init({IDL}),[cfg]),cycles:10_000_000_000_000n});actor.setPrincipal(owner);
++ const {actor,canisterId}=await pic.setupCanister({sender:owner,idlFactory,wasm:initialWasm,arg:IDL.encode(init({IDL}),[config]),cycles:10_000_000_000_000n});actor.setPrincipal(owner);
+  await f({pic,actor,canisterId});
+ }finally{if(pic)await pic.tearDown();await server.stop()}}
+-const begin=(actor,vault,purpose,transport=zero,target=[])=>actor.begin_unlock({vault,epoch:0n,purpose:{[purpose]:null},transport,target});
++const begin=(actor,vault,purpose,transport=zero,target=[],attempt=[])=>actor.begin_unlock({vault,epoch:0n,purpose:{[purpose]:null},transport,target,attempt});
+ test('real Wasm: registration, fresh UV, vetKD, replay, corruption, outsider and upgrade',()=>fixture(async({pic,actor,canisterId})=>{
+  const vault=id(),operation=id(),key=passkey();
+  actor.setPrincipal(outsider);assert.ok('Unauthorized'in (await actor.reserve_vault({vault,operation})).Err);
+- actor.setPrincipal(Principal.anonymous());assert.ok('Err'in await actor.derive_vault_key({vault,epoch:0n,transport:zero,assertion:[]}));
++ actor.setPrincipal(Principal.anonymous());assert.ok('Err'in await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:zero,assertion:[]}));
+  actor.setPrincipal(owner);ok(await actor.reserve_vault({vault,operation}));
+  assert.ok('Err'in await actor.get_vault_header(vault));
+  const transport=TransportSecretKey.random();
+- const first=ok(await actor.derive_vault_key({vault,epoch:0n,transport:transport.publicKeyBytes(),assertion:[]}));
++ const first=ok(await actor.derive_vault_key({vault,attempt:[operation],epoch:0n,transport:transport.publicKeyBytes(),assertion:[]}));
+  const kek=await verifiedKEK(first.encrypted_key,transport,canisterId.toText(),vault,0n,true);
+  const vrk=randomBytes(32),binding=aad(vault,new Uint8Array(16),0n,'normal');
+  const normal=await seal(kek,vrk,binding),recovery=envelope();
+- const ch=ok(await begin(actor,vault,'Activate'));
+- const req={vault,operation:id(),normal,recovery,registration:[key.registration(ch)],assertion:[]};
++ const ch=ok(await begin(actor,vault,'Activate',zero,[],[operation]));
++ const req={vault,attempt:process.env.VAULT_PREVIOUS_WASM?[]:[operation],operation:id(),normal,recovery,registration:[key.registration(ch)],assertion:[]};
+  const header=ok(await actor.activate_vault(req));assert.ok('Active'in header.state);
+  assert.deepEqual(ok(await actor.activate_vault(req)),header);
+  assert.ok('Err'in await actor.activate_vault({...req,recovery:envelope()}));
+- assert.ok('Err'in await actor.derive_vault_key({vault,epoch:0n,transport:transport.publicKeyBytes(),assertion:[]}));
++ assert.ok('Err'in await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:transport.publicKeyBytes(),assertion:[]}));
+  const next=TransportSecretKey.random();const challenge=ok(await begin(actor,vault,'Unlock',next.publicKeyBytes()));
+  for(const bad of [key.assertion(challenge,{flags:1}),key.assertion(challenge,{origin:'http://evil.invalid'}),key.assertion(challenge,{rp:'evil.invalid'}),key.assertion(challenge,{challenge:randomBytes(32)})]){
+-  assert.ok('Err'in await actor.derive_vault_key({vault,epoch:0n,transport:next.publicKeyBytes(),assertion:[bad]}));
++  assert.ok('Err'in await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:next.publicKeyBytes(),assertion:[bad]}));
+  }
+  const assertion=key.assertion(challenge);
+- const derived=ok(await actor.derive_vault_key({vault,epoch:0n,transport:next.publicKeyBytes(),assertion:[assertion]}));
++ const derived=ok(await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:next.publicKeyBytes(),assertion:[assertion]}));
+  const same=await verifiedKEK(derived.encrypted_key,next,canisterId.toText(),vault,0n,true);
+  assert.deepEqual(await open(same,normal,binding),vrk);
+- assert.ok('Err'in await actor.derive_vault_key({vault,epoch:0n,transport:next.publicKeyBytes(),assertion:[assertion]}));
++ assert.ok('Err'in await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:next.publicKeyBytes(),assertion:[assertion]}));
+  assert.throws(()=>verifiedKEK(derived.encrypted_key,next,canisterId.toText(),vault,1n,true));
+  assert.throws(()=>verifiedKEK(derived.encrypted_key,next,canisterId.toText(),new Uint8Array(16),0n,true));
+  assert.throws(()=>verifiedKEK(derived.encrypted_key,next,outsider.toText(),vault,0n,true));
+@@ -55,8 +55,9 @@
+  actor.setPrincipal(outsider);assert.ok('Err'in await actor.get_vault_header(vault));actor.setPrincipal(owner);
+  await pic.upgradeCanister({sender:owner,canisterId,wasm,arg:IDL.encode([],[])});
+  assert.deepEqual(ok(await actor.get_vault_header(vault)),header);
++ assert.deepEqual(ok(await actor.activate_vault(req)),header);
+  // A synced passkey whose counter is always zero remains usable after upgrade.
+- const c=ok(await begin(actor,vault,'Unlock',next.publicKeyBytes()));ok(await actor.derive_vault_key({vault,epoch:0n,transport:next.publicKeyBytes(),assertion:[key.assertion(c)]}));
++ const c=ok(await begin(actor,vault,'Unlock',next.publicKeyBytes()));ok(await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:next.publicKeyBytes(),assertion:[key.assertion(c)]}));
+  const remove=ok(await begin(actor,vault,'RemoveCredential',zero,key.credential));assert.ok('Conflict'in (await actor.manage_unlock_credential({vault,remove:[key.credential],registration:[],assertion:key.assertion(remove)})).Err);
+  await pic.advanceTime(121000);
+  const extra=passkey(),regCh=ok(await begin(actor,vault,'AddCredential')),registration=extra.registration(regCh);
+@@ -64,17 +65,17 @@
+  const addCh=ok(await begin(actor,vault,'AddCredential',zero,target));ok(await actor.manage_unlock_credential({vault,remove:[],registration:[registration],assertion:key.assertion(addCh)}));assert.equal(ok(await actor.list_credentials()).length,2);
+  const delCh=ok(await begin(actor,vault,'RemoveCredential',zero,key.credential));ok(await actor.manage_unlock_credential({vault,remove:[key.credential],registration:[],assertion:key.assertion(delCh)}));assert.equal(ok(await actor.list_credentials()).length,1);
+ 
+-},new URL('../target/vault-schema-v3.wasm',import.meta.url).pathname));
++},process.env.VAULT_PREVIOUS_WASM ?? new URL('../target/vault-schema-v3.wasm',import.meta.url).pathname));
+ test('real Wasm: pending expiry and stale activation preserve state',()=>fixture(async({pic,actor})=>{
+- const vault=id();ok(await actor.reserve_vault({vault,operation:id()}));const key=passkey();const ch=ok(await begin(actor,vault,'Activate'));
++ const vault=id(),operation=id();ok(await actor.reserve_vault({vault,operation}));const key=passkey();const ch=ok(await begin(actor,vault,'Activate',zero,[],[operation]));
+  await pic.advanceTime(121_000);
+- assert.ok('Err'in await actor.activate_vault({vault,operation:id(),normal:envelope(),recovery:envelope(),registration:[key.registration(ch)],assertion:[]}));
++ assert.ok('Err'in await actor.activate_vault({vault,attempt:[operation],operation:id(),normal:envelope(),recovery:envelope(),registration:[key.registration(ch)],assertion:[]}));
+  await pic.advanceTime(86_400_000);
+- assert.ok('Err'in await actor.derive_vault_key({vault,epoch:0n,transport:TransportSecretKey.random().publicKeyBytes(),assertion:[]}));
++ assert.ok('Err'in await actor.derive_vault_key({vault,attempt:[],epoch:0n,transport:TransportSecretKey.random().publicKeyBytes(),assertion:[]}));
+ }));
+ test('real Wasm: chunk retry, atomic commit, export retention, quota and upgrade',()=>fixture(async({pic,actor,canisterId})=>{
+- const vault=id(),key=passkey();ok(await actor.reserve_vault({vault,operation:id()}));const ch=ok(await begin(actor,vault,'Activate'));
+- ok(await actor.activate_vault({vault,operation:id(),normal:envelope(),recovery:envelope(),registration:[key.registration(ch)],assertion:[]}));
++ const vault=id(),setup=id(),key=passkey();ok(await actor.reserve_vault({vault,operation:setup}));const ch=ok(await begin(actor,vault,'Activate',zero,[],[setup]));
++ ok(await actor.activate_vault({vault,attempt:[setup],operation:id(),normal:envelope(),recovery:envelope(),registration:[key.registration(ch)],assertion:[]}));
+  const object=id(),operation=id(),chunks=[randomBytes(1048576+16),randomBytes(1+16)];
+  const hashes=await Promise.all(chunks.map(async c=>new Uint8Array(await crypto.subtle.digest('SHA-256',c))));
+  const request={vault,object,expected_revision:0n,operation,plain_size:1048577n,manifest:new Uint8Array([1,2,3]),chunk_hashes:hashes};
+@@ -102,19 +103,98 @@
+ test('real Wasm: restore to another canister and owner preserves all ciphertext and rejects the old owner',()=>fixture(async({pic,actor,canisterId})=>{
+  const {encryptDocument,pack,b64}=await import('../packages/crypto/src/documents.ts');
+  const {restoreRoot}=await import('../packages/backup/src/index.ts');
+- const vault=id(),object=id(),rootRaw=randomBytes(32),root=await importKey(rootRaw),sourceKey=passkey();
+- ok(await actor.reserve_vault({vault,operation:id()}));const t=TransportSecretKey.random();const derived=ok(await actor.derive_vault_key({vault,epoch:0n,transport:t.publicKeyBytes(),assertion:[]}));const kek=await verifiedKEK(derived.encrypted_key,t,canisterId.toText(),vault,0n,true);
+- const normal=await seal(kek,rootRaw,aad(vault,new Uint8Array(16),0n,'normal')),recovery=envelope();const c=ok(await begin(actor,vault,'Activate'));
+- ok(await actor.activate_vault({vault,operation:id(),normal,recovery,registration:[sourceKey.registration(c)],assertion:[]}));
++ const vault=id(),setup=id(),object=id(),rootRaw=randomBytes(32),root=await importKey(rootRaw),sourceKey=passkey();
++ ok(await actor.reserve_vault({vault,operation:setup}));const t=TransportSecretKey.random();const derived=ok(await actor.derive_vault_key({vault,attempt:[setup],epoch:0n,transport:t.publicKeyBytes(),assertion:[]}));const kek=await verifiedKEK(derived.encrypted_key,t,canisterId.toText(),vault,0n,true);
++ const normal=await seal(kek,rootRaw,aad(vault,new Uint8Array(16),0n,'normal')),recovery=envelope();const c=ok(await begin(actor,vault,'Activate',zero,[],[setup]));
++ ok(await actor.activate_vault({vault,attempt:[setup],operation:id(),normal,recovery,registration:[sourceKey.registration(c)],assertion:[]}));
+  const doc=await encryptDocument(root,vault,object,1n,{kind:'note',title:'Synthetic restore'},new TextEncoder().encode('synthetic portable content'));
+  const op=id();ok(await actor.begin_revision({vault,object,expected_revision:0n,operation:op,plain_size:26n,manifest:doc.manifest,chunk_hashes:doc.hashes}));ok(await actor.put_chunk(op,0,doc.chunks[0]));const rev=ok(await actor.commit_revision(op));const header=ok(await actor.get_vault_header(vault));
+  const portable={vault:b64(vault),object:b64(object),revision:String(rev.revision),sequence:String(rev.sequence),plain_size:String(rev.plain_size),manifest:b64(doc.manifest),hashes:doc.hashes.map(b64),deleted:false};
+  const {actor:dest,canisterId:destId}=await pic.setupCanister({sender:owner,idlFactory,wasm,arg:IDL.encode(init({IDL}),[{...cfg,owner:outsider}]),cycles:10_000_000_000_000n});dest.setPrincipal(outsider);
+- ok(await dest.begin_restore({header,operation:id(),count:1n,root:await restoreRoot([portable]),reserved_bytes:1048576n}));assert.ok('Err'in await dest.get_vault_header(vault));
+- const incomplete={vault,operation:id(),normal:envelope(),recovery,registration:[],assertion:[]};assert.ok('Err'in await dest.activate_vault(incomplete));assert.ok('Err'in await dest.commit_restore(incomplete));
+- ok(await dest.begin_restore_revision(vault,rev));assert.ok('Err'in await dest.commit_restore_revision(vault,rev.sequence));ok(await dest.put_restore_chunk(vault,0,doc.chunks[0]));ok(await dest.commit_restore_revision(vault,rev.sequence));
+- const dt=TransportSecretKey.random();const dr=ok(await dest.derive_vault_key({vault,epoch:0n,transport:dt.publicKeyBytes(),assertion:[]}));const dk=await verifiedKEK(dr.encrypted_key,dt,destId.toText(),vault,0n,true);
+- const nextNormal=await seal(dk,rootRaw,aad(vault,new Uint8Array(16),0n,'normal'));const destKey=passkey(),dch=ok(await begin(dest,vault,'Activate'));const request={vault,operation:id(),normal:nextNormal,recovery,registration:[destKey.registration(dch)],assertion:[]};const restored=ok(await dest.commit_restore(request));assert.equal(restored.backup_sequence.length,0);assert.equal(restored.sequence,header.sequence);assert.deepEqual(ok(await dest.commit_restore(request)),restored);
++ const expired=id(),discarded=id(),restore=id();
++ const requestFor=operation=>({header,operation,count:1n,root:restoreHash,reserved_bytes:1048576n});
++ const restoreHash=await restoreRoot([portable]);
++ ok(await dest.begin_restore(requestFor(expired)));
++ ok(await dest.begin_restore_revision(vault,rev,[expired]));
++ await pic.advanceTime(86_401_000);
++ await pic.tick();
++ assert.equal(ok(await dest.list_unfinished_vaults())[0].cleaning,true);
++ ok(await dest.collect_garbage());
++ assert.deepEqual(await dest.begin_restore(requestFor(expired)),{Err:{Expired:null}});
++
++ ok(await dest.begin_restore(requestFor(discarded)));
++ ok(await dest.begin_restore_revision(vault,rev,[discarded]));
++ ok(await dest.put_restore_chunk(vault,0,doc.chunks[0],[discarded]));
++ ok(await dest.commit_restore_revision(vault,rev.sequence,[discarded]));
++ ok(await dest.cancel_vault_setup(vault,discarded));
++ assert.equal(ok(await dest.list_unfinished_vaults())[0].cleaning,true);
++ assert.deepEqual(await dest.begin_restore(requestFor(restore)),{Err:{Conflict:null}});
++ ok(await dest.collect_garbage());
++ assert.deepEqual(ok(await dest.list_unfinished_vaults()),[]);
++ assert.deepEqual(await dest.begin_restore(requestFor(discarded)),{Err:{Expired:null}});
++ ok(await dest.begin_restore(requestFor(restore)));
++ assert.deepEqual(await dest.begin_restore_revision(vault,rev,[discarded]),{Err:{Conflict:null}});
++ ok(await dest.cancel_vault_setup(vault,discarded));
++ assert.ok('Err'in await dest.get_vault_header(vault));
++ const incomplete={vault,attempt:[restore],operation:id(),normal:envelope(),recovery,registration:[],assertion:[]};assert.ok('Err'in await dest.activate_vault(incomplete));assert.ok('Err'in await dest.commit_restore(incomplete));
++ ok(await dest.begin_restore_revision(vault,rev,[restore]));assert.ok('Err'in await dest.commit_restore_revision(vault,rev.sequence,[restore]));ok(await dest.put_restore_chunk(vault,0,doc.chunks[0],[restore]));ok(await dest.commit_restore_revision(vault,rev.sequence,[restore]));
++ const dt=TransportSecretKey.random();const dr=ok(await dest.derive_vault_key({vault,attempt:[restore],epoch:0n,transport:dt.publicKeyBytes(),assertion:[]}));const dk=await verifiedKEK(dr.encrypted_key,dt,destId.toText(),vault,0n,true);
++ const nextNormal=await seal(dk,rootRaw,aad(vault,new Uint8Array(16),0n,'normal'));const destKey=passkey(),dch=ok(await begin(dest,vault,'Activate',zero,[],[restore]));const request={vault,attempt:[restore],operation:id(),normal:nextNormal,recovery,registration:[destKey.registration(dch)],assertion:[]};const restored=ok(await dest.commit_restore(request));assert.equal(restored.backup_sequence.length,0);assert.equal(restored.sequence,header.sequence);assert.deepEqual(ok(await dest.commit_restore(request)),restored);
+  assert.deepEqual(ok(await dest.get_manifest(vault,object,1n)).manifest,doc.manifest);assert.deepEqual(ok(await dest.get_chunk(vault,object,1n,0)),doc.chunks[0]);assert.notDeepEqual(restored.normal,header.normal);
+- dest.setPrincipal(owner);assert.ok('Err'in await dest.get_vault_header(vault));
++ assert.deepEqual(await dest.cancel_vault_setup(vault,restore),{Err:{Conflict:null}});
++ dest.setPrincipal(owner);assert.deepEqual(await dest.list_unfinished_vaults(),{Err:{Unauthorized:null}});assert.deepEqual(await dest.cancel_vault_setup(vault,restore),{Err:{Unauthorized:null}});assert.ok('Err'in await dest.get_vault_header(vault));
+ }));
++
++test("real Wasm: cancellation fences the old setup and low balance refuses a new upload", () =>
++  fixture(async ({ actor }) => {
++    const vault = id(), discarded = id(), attempt = id();
++    ok(await actor.reserve_vault({ vault, operation: discarded }));
++    const old = ok(await begin(actor, vault, "Activate", zero, [], [discarded]));
++    ok(await actor.cancel_vault_setup(vault, discarded));
++    assert.deepEqual(await actor.reserve_vault({ vault, operation: discarded }), { Err: { Expired: null } });
++    ok(await actor.reserve_vault({ vault, operation: attempt }));
++    const key = passkey();
++    const challenge = ok(await begin(actor, vault, "Activate", zero, [], [attempt]));
++    const activation = { vault, operation: id(), normal: envelope(), recovery: envelope(), assertion: [] };
++    assert.deepEqual(await actor.activate_vault({ ...activation, attempt: [discarded], registration: [key.registration(old)] }), { Err: { Conflict: null } });
++    ok(await actor.activate_vault({ ...activation, attempt: [attempt], registration: [key.registration(challenge)] }));
++    const chunk = new Uint8Array(1048576 + 16).fill(7);
++    const request = {
++      vault, object: id(), expected_revision: 0n, operation: id(), plain_size: 1048576n,
++      manifest: Uint8Array.of(1),
++      chunk_hashes: [new Uint8Array(await crypto.subtle.digest("SHA-256", chunk))],
++    };
++    const before = ok(await actor.get_quota(vault));
++    assert.deepEqual(await actor.begin_revision(request), { Err: { QuotaExceeded: null } });
++    assert.deepEqual(ok(await actor.get_quota(vault)), before);
++
++  }, wasm, { ...cfg, minimum_cycles: 20_000_000_000_000n })
++);
++
++test("previous Wasm: a pending upload can finish after upgrade below the minimum balance", {
++  skip: !process.env.VAULT_PREVIOUS_WASM,
++}, () => fixture(async ({ actor, pic, canisterId }) => {
++  const vault = id(), attempt = id(), key = passkey();
++  ok(await actor.reserve_vault({ vault, operation: attempt }));
++  const challenge = ok(await begin(actor, vault, "Activate"));
++  ok(await actor.activate_vault({
++    vault, attempt: [], operation: id(), normal: envelope(), recovery: envelope(),
++    registration: [key.registration(challenge)], assertion: [],
++  }));
++  const chunk = new Uint8Array(17).fill(7);
++  const request = {
++    vault, object: id(), expected_revision: 0n, operation: id(), plain_size: 1n,
++    manifest: Uint8Array.of(1),
++    chunk_hashes: [new Uint8Array(await crypto.subtle.digest("SHA-256", chunk))],
++  };
++  const upload = ok(await actor.begin_revision(request));
++  await pic.upgradeCanister({ sender: owner, canisterId, wasm, arg: IDL.encode([], []) });
++  assert.deepEqual(ok(await actor.begin_revision(request)), upload);
++  ok(await actor.put_chunk(upload.id, 0, chunk));
++  assert.equal(ok(await actor.commit_revision(upload.id)).revision, 1n);
++  assert.equal(ok(await actor.begin_revision(request)).expires, 0n);
++  assert.equal(ok(await actor.get_quota(vault)).current, 1n);
++  assert.deepEqual(await actor.begin_revision({
++    ...request, operation: id(), object: id(),
++  }), { Err: { QuotaExceeded: null } });
++}, process.env.VAULT_PREVIOUS_WASM, { ...cfg, minimum_cycles: 20_000_000_000_000n }));
+diff --git a/tests/e2e/vault.spec.ts b/tests/e2e/vault.spec.ts
+--- a/tests/e2e/vault.spec.ts
++++ b/tests/e2e/vault.spec.ts
+@@ -1,36 +1,69 @@
+ import { readFile } from "node:fs/promises";
+-import { openArchive } from "../../packages/backup/src/index.ts";
+-import { unb64 } from "../../packages/crypto/src/documents.ts";
++import { makeArchive, openArchive } from "../../packages/backup/src/index.ts";
++import {
++  b64,
++  encryptDocument,
++  pack,
++  unb64,
++} from "../../packages/crypto/src/documents.ts";
++import {
++  aad,
++  deriveKey,
++  importKey,
++  randomBytes,
++  seal,
++  utf8,
++} from "../../packages/crypto/src/index.ts";
+ import { test, expect } from "@playwright/test";
+ test("real canister: passkey setup, encrypted note, credential, attachment, backup, relogin and lock", async ({
+   page,
+   context,
+ }) => {
+-  const cdp = await context.newCDPSession(page);
+-  await cdp.send("WebAuthn.enable");
+-  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+-    options: {
+-      protocol: "ctap2",
+-      transport: "internal",
+-      hasResidentKey: true,
+-      hasUserVerification: true,
+-      isUserVerified: true,
+-      automaticPresenceSimulation: true,
+-    },
+-  });
++  const authenticator = async (target: typeof page) => {
++    const cdp = await context.newCDPSession(target);
++    await cdp.send("WebAuthn.enable");
++    const { authenticatorId } = await cdp.send(
++      "WebAuthn.addVirtualAuthenticator",
++      {
++        options: {
++          protocol: "ctap2",
++          transport: "internal",
++          hasResidentKey: true,
++          hasUserVerification: true,
++          isUserVerified: true,
++          automaticPresenceSimulation: true,
++        },
++      },
++    );
++    return { cdp, authenticatorId };
++  };
+   const errors: string[] = [];
+-  page.on("pageerror", (e) => errors.push(e.message));
+   const outgoing: string[] = [];
+-  page.on("request", (r) => {
+-    const url = new URL(r.url());
+-    if (!["localhost", "127.0.0.1"].includes(url.hostname))
+-      outgoing.push(url.origin);
+-  });
++  const monitor = (page: Parameters<typeof authenticator>[0]) => {
++    page.on("pageerror", (e) => errors.push(e.message));
++    page.on("request", (r) => {
++      const url = new URL(r.url());
++      if (!["localhost", "127.0.0.1"].includes(url.hostname))
++        outgoing.push(url.origin);
++    });
++  };
++  monitor(page);
+   await page.goto("/");
+   await page.getByRole("button", { name: "合成Identityでログイン" }).click();
+   await expect(
+     page.getByRole("heading", { name: "保管庫", exact: true }),
+   ).toBeVisible();
++  await page.getByRole("button", { name: "＋ 保管庫を作成" }).click();
++  await expect(page.locator("output.secret")).toBeVisible();
++  await page.close();
++  page = await context.newPage();
++  monitor(page);
++  let webauthn = await authenticator(page);
++  await page.goto("/");
++  await page.getByRole("button", { name: "合成Identityでログイン" }).click();
++  await expect(page.getByText("未完了の作成", { exact: true })).toBeVisible();
++  await page.getByRole("button", { name: "中断した処理を取り消す" }).click();
++  await expect(page.getByText("未完了の作成", { exact: true })).toHaveCount(0);
+   await page.getByRole("button", { name: "＋ 保管庫を作成" }).click();
+   const secret = await page.locator("output.secret").textContent();
+   expect(secret).toBeTruthy();
+@@ -39,6 +72,21 @@
+   await expect(
+     page.getByRole("heading", { name: "保管庫の文書" }),
+   ).toBeVisible();
++  let commitResponseLost = false;
++  const dropCommit = async (route: import("@playwright/test").Route) => {
++    if (
++      !commitResponseLost &&
++      route.request().postDataBuffer()?.includes(Buffer.from("commit_revision"))
++    ) {
++      const response = await route.fetch();
++      expect(response.ok()).toBe(true);
++      commitResponseLost = true;
++      await route.abort("connectionreset");
++    } else {
++      await route.continue();
++    }
++  };
++  await page.route("**/api/**/canister/**/call", dropCommit);
+   await page.getByLabel("タイトル", { exact: true }).fill("Synthetic note");
+   await page
+     .getByLabel("本文（Markdown）")
+@@ -52,6 +100,12 @@
+     page.getByRole("button", { name: /Synthetic note/ }),
+   ).toBeVisible();
+   await page.getByRole("button", { name: /Synthetic note/ }).click();
++  expect(commitResponseLost).toBe(true);
++  await page.unroute("**/api/**/canister/**/call", dropCommit);
++  await page.getByRole("button", { name: "履歴を表示" }).click();
++  await expect(page.getByText("第1版", { exact: true })).toBeVisible();
++  await expect(page.getByText("第2版", { exact: true })).toHaveCount(0);
++
+   await expect(page.getByLabel("本文（Markdown）")).toHaveValue(
+     /Synthetic searchable body/,
+   );
+@@ -246,6 +300,122 @@
+     page.getByRole("heading", { name: "保管庫はロックされています" }),
+   ).toBeVisible();
+   expect(restores).toEqual([]);
++  const target = randomBytes(16),
++    object = randomBytes(16),
++    rootRaw = randomBytes(32),
++    recoverySecret = randomBytes(32);
++  const doc = await encryptDocument(
++    await importKey(rootRaw),
++    target,
++    object,
++    1n,
++    { kind: "note", title: "Synthetic restored note" },
++    utf8.encode("backup"),
++  );
++  const portable = {
++    version: 1 as const,
++    vault: b64(target),
++    epoch: "0",
++    sequence: "2",
++    key_name: "test_key_1",
++    record_count: 1,
++    chunk_count: 1,
++    plain_bytes: "6",
++    normal: pack(
++      await seal(
++        await importKey(randomBytes(32)),
++        rootRaw,
++        aad(target, new Uint8Array(16), 0n, "normal"),
++      ),
++    ),
++    recovery: pack(
++      await seal(
++        await deriveKey(recoverySecret, "recovery"),
++        rootRaw,
++        aad(target, new Uint8Array(16), 0n, "recovery"),
++      ),
++    ),
++  };
++  const payload = await makeArchive(
++    portable,
++    [
++      {
++        vault: portable.vault,
++        object: b64(object),
++        revision: "1",
++        sequence: "2",
++        plain_size: "6",
++        manifest: b64(doc.manifest),
++        hashes: doc.hashes.map(b64),
++        deleted: false,
++      },
++    ],
++    async (_, i) => doc.chunks[i],
++    rootRaw,
++  );
++  rootRaw.fill(0);
++  const startRestore = async () => {
++    await page.getByText("バックアップから復旧", { exact: true }).click();
++    await page.getByLabel("バックアップ", { exact: true }).setInputFiles({
++      name: "restore.kvault",
++      mimeType: "application/octet-stream",
++      buffer: Buffer.from(payload),
++    });
++    await page
++      .getByLabel("復旧用秘密", { exact: true })
++      .fill(b64(recoverySecret));
++    await page.getByRole("button", { name: "検証して復旧" }).click();
++  };
++  // Reopen the page with the same synthetic authenticator credentials.
++  const { credentials } = await webauthn.cdp.send("WebAuthn.getCredentials", {
++    authenticatorId: webauthn.authenticatorId,
++  });
++  await page.reload();
++  await page.getByRole("button", { name: "合成Identityでログイン" }).click();
++  let submitted!: () => void;
++  const staged = new Promise<void>((resolve) => {
++    submitted = resolve;
++  });
++  await page.route("**/api/**/canister/**/call", async (route) => {
++    if (
++      route
++        .request()
++        .postDataBuffer()
++        ?.includes(Buffer.from("put_restore_chunk"))
++    ) {
++      const response = await route.fetch();
++      expect(response.ok()).toBe(true);
++      await route.abort("connectionreset");
++      submitted();
++    } else {
++      await route.continue();
++    }
++  });
++  await startRestore();
++  await staged;
++  await page.close();
++  page = await context.newPage();
++  monitor(page);
++  webauthn = await authenticator(page);
++  for (const credential of credentials)
++    await webauthn.cdp.send("WebAuthn.addCredential", {
++      authenticatorId: webauthn.authenticatorId,
++      credential,
++    });
++  await page.goto("/");
++  await page.getByRole("button", { name: "合成Identityでログイン" }).click();
++  await expect(page.getByText("未完了の復旧", { exact: true })).toBeVisible();
++  page.once("dialog", (dialog) => void dialog.accept());
++  await page.getByRole("button", { name: "中断した処理を取り消す" }).click();
++  await expect(page.getByText("未完了の復旧", { exact: true })).toHaveCount(0);
++  await expect(
++    page.getByText("途中データを回収中", { exact: true }),
++  ).toHaveCount(0);
++  await startRestore();
++  await expect(
++    page.getByRole("button", { name: /Synthetic restored note/ }),
++  ).toBeVisible();
++  recoverySecret.fill(0);
+   expect(errors).toEqual([]);
+   expect(outgoing).toEqual([]);
+ });
+diff --git a/tools/ii-check.mjs b/tools/ii-check.mjs
+--- a/tools/ii-check.mjs
++++ b/tools/ii-check.mjs
+@@ -1,66 +1,154 @@
+ import { PocketIc, PocketIcServer } from "@dfinity/pic";
+ import { chromium, expect } from "@playwright/test";
++import { IDL } from "@icp-sdk/core/candid";
+ import { Principal } from "@icp-sdk/core/principal";
+ import { createServer } from "vite";
++import { idlFactory, init } from "../packages/contracts/vault.did.js";
++
++const origin = "http://localhost:5173";
+ const server = await PocketIcServer.start();
+ let pic, browser, web;
+ try {
+   pic = await PocketIc.create(server.getUrl(), {
+     ii: { state: { type: "new" } },
++    fiduciary: { state: { type: "new" } },
+     icpFeatures: { ii: "DefaultConfig" },
++    icpConfig: { betaFeatures: "Enabled" },
+   });
+   const port = await pic.makeLive();
+-  web = await createServer({
+-    root: "apps/web",
+-    mode: "development",
+-    server: { port: 5174, strictPort: true, host: "localhost" },
+-    define: {
+-      "import.meta.env.VITE_II_URL": JSON.stringify(
+-        `http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:${port}/authorize`,
+-      ),
+-    },
+-  });
+-  await web.listen();
++  const serve = async (canister) => {
++    web = await createServer({
++      root: "apps/web",
++      mode: "development",
++      server: { port: 5173, strictPort: true, host: "localhost" },
++      define: {
++        "import.meta.env.VITE_II_URL": JSON.stringify(
++          `http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:${port}/authorize`,
++        ),
++        "import.meta.env.VITE_CANISTER_ID": JSON.stringify(canister ?? ""),
++        "import.meta.env.VITE_IC_HOST": JSON.stringify(
++          `http://127.0.0.1:${port}`,
++        ),
++      },
++    });
++    await web.listen();
++  };
++  await serve();
+   browser = await chromium.launch();
+   const context = await browser.newContext();
+-  context.on("page", async (p) => {
+-    const c = await context.newCDPSession(p);
+-    await c.send("WebAuthn.enable");
+-    await c.send("WebAuthn.addVirtualAuthenticator", {
+-      options: {
+-        protocol: "ctap2",
+-        transport: "internal",
+-        hasResidentKey: true,
+-        hasUserVerification: true,
+-        isUserVerified: true,
+-        automaticPresenceSimulation: true,
++  const attachAuthenticator = async (target, credentials = []) => {
++    const session = await context.newCDPSession(target);
++    await session.send("WebAuthn.enable");
++    const { authenticatorId } = await session.send(
++      "WebAuthn.addVirtualAuthenticator",
++      {
++        options: {
++          protocol: "ctap2",
++          transport: "internal",
++          hasResidentKey: true,
++          hasUserVerification: true,
++          isUserVerified: true,
++          automaticPresenceSimulation: true,
++        },
+       },
+-    });
+-  });
+-  const page = await context.newPage();
+-  await page.goto("http://localhost:5174/ii-check.html");
++    );
++    for (const credential of credentials)
++      await session.send("WebAuthn.addCredential", {
++        authenticatorId,
++        credential,
++      });
++    return { session, authenticatorId };
++  };
++  const bootstrap = await context.newPage();
++  await bootstrap.goto(origin + "/ii-check.html");
+   const opened = context.waitForEvent("page");
+-  await page.getByRole("button", { name: "Sign in with local II" }).click();
+-  const popup = await opened;
+-  await popup.waitForLoadState("networkidle");
+-  await popup
++  await bootstrap
++    .getByRole("button", { name: "Sign in with local II" })
++    .click();
++  const enrollment = await opened;
++  const { session, authenticatorId } = await attachAuthenticator(enrollment);
++  await enrollment
+     .getByRole("button", { name: "Continue with passkey", exact: true })
+     .click();
+-  await popup
++  await enrollment
+     .getByRole("button", { name: "Create new identity", exact: true })
+     .click();
+-  await popup.locator("input").first().fill("Synthetic Vault Identity");
+-  await popup
++  await enrollment.locator("input").first().fill("Synthetic Vault Identity");
++  await enrollment
+     .getByRole("button", { name: "Create identity", exact: true })
+     .click();
+-  await popup.getByRole("button", { name: "Continue", exact: true }).click();
+-  await expect(page.locator("#result")).toHaveText(/^[a-z0-9-]+$/, {
++  await expect(
++    enrollment.getByRole("button", { name: "Continue", exact: true }),
++  ).toBeVisible();
++  const { credentials } = await session.send("WebAuthn.getCredentials", {
++    authenticatorId,
++  });
++  await enrollment
++    .getByRole("button", { name: "Continue", exact: true })
++    .click();
++  await expect(bootstrap.locator("#result")).toHaveText(/^[a-z0-9-]+$/, {
+     timeout: 15000,
+   });
+-  Principal.fromText(await page.locator("#result").innerText());
++  const owner = Principal.fromText(
++    await bootstrap.locator("#result").innerText(),
++  );
++  await bootstrap.close();
++
++  const { canisterId } = await pic.setupCanister({
++    sender: owner,
++    idlFactory,
++    wasm: new URL(
++      "../target/wasm32-unknown-unknown/release/vault_canister.wasm",
++      import.meta.url,
++    ).pathname,
++    arg: IDL.encode(init({ IDL }), [
++      {
++        owner,
++        origin,
++        rp_id: "localhost",
++        key_name: "test_key_1",
++        minimum_cycles: 100_000_000_000n,
++      },
++    ]),
++    cycles: 100_000_000_000_000n,
++  });
++  await web.close();
++  await serve(canisterId.toText());
++  const page = await context.newPage();
++  await attachAuthenticator(page);
++  await page.goto(origin);
++  const signIn = async () => {
++    const next = context.waitForEvent("page");
++    await page
++      .getByRole("button", { name: "Internet Identityでログイン" })
++      .click();
++    const popup = await next;
++    await attachAuthenticator(popup, credentials);
++    await popup
++      .getByRole("button", { name: "Continue", exact: true })
++      .click({ timeout: 15000 });
++    await expect(
++      page.getByRole("heading", { name: "保管庫", exact: true }),
++    ).toBeVisible({ timeout: 15000 });
++  };
++  await signIn();
++  await page.getByRole("button", { name: "＋ 保管庫を作成" }).click();
++  const secret = await page.locator("output.secret").innerText();
++  await page.getByLabel("保存した値を再入力").fill(secret);
++  await page.getByRole("button", { name: "パスキーを登録して作成" }).click();
++  await expect(page.getByRole("heading", { name: "保管庫の文書" })).toBeVisible(
++    { timeout: 15000 },
++  );
++  await expect(page.getByRole("button", { name: "一覧を更新" })).toBeEnabled();
++  await page.getByRole("button", { name: "ロック", exact: true }).click();
++  await page.getByRole("button", { name: "保管庫 1" }).click();
++  await page.getByRole("button", { name: "パスキーで解除" }).click();
++  await expect(page.getByRole("heading", { name: "保管庫の文書" })).toBeVisible(
++    { timeout: 15000 },
++  );
+   expect(await page.evaluate(() => indexedDB.databases())).toEqual([]);
+   console.log(
+-    "PASS: official AuthClient signed in through local Internet Identity with a synthetic passkey.",
++    "PASS: local Internet Identity login, Vault creation and passkey unlock.",
+   );
+ } finally {
+   await browser?.close();

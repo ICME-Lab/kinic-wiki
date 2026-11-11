@@ -375,5 +375,11 @@
       "path": "vitest.config.ts",
       "sha256": "dd39b47b222df843d98bdde187d86e0c312eee18a4985dbac3ce0cb55c57e6f2"
     }
-  ]
+  ],
+  "repository": "https://github.com/humandebri/kinic-vault.git",
+  "working_tree_patch": {
+    "path": "source-working-tree.patch",
+    "sha256": "52d2bbd7909a444b3d0f7de85840b535de8f3bbf421cb244302f5354d25ab21e",
+    "reconstruction_verified_files": 93
+  }
 }
