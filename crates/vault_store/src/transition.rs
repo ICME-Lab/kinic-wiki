@@ -70,6 +70,20 @@ pub fn decode(raw: &str) -> Result<TransitionState> {
             return Err(Error::Storage);
         }
         let has_candidate = j.candidate.is_some() && j.candidate_digest.len() == 32;
+        match (&j.request.candidate_mode, &j.existing_candidate) {
+            (Some(RestoreCandidateMode::ExistingInstances(id)), Some(c))
+                if !id.is_empty()
+                    && id.len() <= 1024
+                    && id == &c.credential
+                    && c.version > 0
+                    && c.version <= i64::MAX as u64
+                    && c.scope_digest.len() == 32
+                    && has_candidate
+                    && j.phase != RestoreAdmissionPhase::Registration => {}
+            (None | Some(RestoreCandidateMode::New), None) => {}
+            _ => return Err(Error::Storage),
+        }
+
         let phase_valid = match j.phase {
             RestoreAdmissionPhase::Registration => {
                 j.candidate.is_none()

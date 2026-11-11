@@ -1,4 +1,9 @@
 import { expect, it, vi } from "vitest";
+import { register, assertCredential } from "../src/webauthn";
+vi.mock("../src/webauthn", () => ({
+  register: vi.fn(),
+  assertCredential: vi.fn(),
+}));
 import { readFileSync } from "node:fs";
 import { Principal } from "@icp-sdk/core/principal";
 import { RestoreClient, sameRestoreGeneration } from "../src/restore";
@@ -234,7 +239,19 @@ async function fixture() {
   );
   Object.assign(client, { signer: { send, destroy: vi.fn() } });
   vi.spyOn(client, "deriveTarget").mockResolvedValue(kek);
-  return { client, j, archive, secret, next, kek, send, calls, uploaded, d };
+  return {
+    client,
+    actor,
+    j,
+    archive,
+    secret,
+    next,
+    kek,
+    send,
+    calls,
+    uploaded,
+    d,
+  };
 }
 it("requires new kit and exact saved prepared backup, preserves encrypted content, verifies server backup before acknowledgment", async () => {
   const f = await fixture();
@@ -353,4 +370,93 @@ it("distinguishes same VaultID across complete generation identities", async () 
     { ...f.next, key_name: "another" },
   ])
     expect(sameRestoreGeneration(f.next, changed)).toBe(false);
+});
+
+it("reuses the exact existing key without registration and still requires the independent current kit", async () => {
+  const f = await fixture(),
+    credential = new Uint8Array([41]);
+  const ch = {
+    bytes: randomBytes(32),
+    expires: 9999999999n,
+    registration: false,
+    credential_ids: [credential],
+  };
+  const begin = vi.fn(async (request) => {
+    f.j.request = request;
+    return { Ok: ch };
+  });
+  const prove = vi.fn(async () => ({
+    Ok: { ...f.j, current_live: [f.next], recovery_message: randomBytes(80) },
+  }));
+  const current = vi.fn(
+    async (_job: Uint8Array | number[], _signature: Uint8Array | number[]) => ({
+      Ok: f.j,
+    }),
+  );
+  Object.assign(f.actor, {
+    begin_restore_admission: begin,
+    prove_restore_candidate: prove,
+    prove_restore_current: current,
+    register_restore_candidate: vi.fn(),
+  });
+  vi.mocked(assertCredential).mockResolvedValue("fresh-uv");
+  vi.mocked(register).mockClear();
+  const saved = vi.fn(async () => {});
+  await expect(
+    f.client.admit(
+      randomBytes(32),
+      f.archive,
+      f.secret,
+      saved,
+      undefined,
+      credential,
+    ),
+  ).rejects.toThrow("CurrentLiveKitRequired");
+  expect(begin.mock.calls[0][0].candidate_mode).toEqual([
+    { ExistingInstances: credential },
+  ]);
+  expect(saved).toHaveBeenCalledWith(f.archive);
+  expect(assertCredential).toHaveBeenCalledWith(
+    ch,
+    "localhost",
+    expect.any(AbortSignal),
+  );
+  expect(register).not.toHaveBeenCalled();
+  expect(f.actor.register_restore_candidate).not.toHaveBeenCalled();
+  expect(current).not.toHaveBeenCalled();
+  await f.client.admit(
+    randomBytes(32),
+    f.archive,
+    f.secret,
+    saved,
+    randomBytes(32),
+    credential,
+  );
+  expect(current).toHaveBeenCalledOnce();
+  expect(current.mock.calls[0][1]).toHaveLength(64);
+});
+it("rejects substituted existing credential challenge before possession", async () => {
+  const f = await fixture();
+  Object.assign(f.actor, {
+    begin_restore_admission: async () => ({
+      Ok: {
+        bytes: randomBytes(32),
+        expires: 9999999999n,
+        registration: false,
+        credential_ids: [new Uint8Array([42])],
+      },
+    }),
+  });
+  vi.mocked(assertCredential).mockClear();
+  await expect(
+    f.client.admit(
+      randomBytes(32),
+      f.archive,
+      f.secret,
+      async () => {},
+      undefined,
+      new Uint8Array([41]),
+    ),
+  ).rejects.toThrow("RestoreCandidateChanged");
+  expect(assertCredential).not.toHaveBeenCalled();
 });

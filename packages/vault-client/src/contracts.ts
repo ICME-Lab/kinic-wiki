@@ -372,6 +372,7 @@ export interface RestoreAdmissionRequest {
   'records' : bigint,
   'archive_length' : bigint,
   'archive_digest' : Uint8Array | number[],
+  'candidate_mode' : [] | [RestoreCandidateMode],
   'target' : PendingCreation,
   'source_commitment' : Uint8Array | number[],
   'reserved_bytes' : bigint,
@@ -385,6 +386,7 @@ export interface RestoreAdmissionStatus {
    */
   'recovery_message' : Uint8Array | number[],
   'allocation_token' : [] | [bigint],
+  'existing_candidate' : [] | [RestoreExistingCandidate],
   'issued' : bigint,
   'cancel_complete' : boolean,
   'current_verifier' : Uint8Array | number[],
@@ -402,6 +404,11 @@ export interface RestoreAdmissionStatus {
   'parent_job' : [] | [Uint8Array | number[]],
 }
 /**
+ * None/New preserves the new physical candidate ceremony, including historical jobs.
+ */
+export type RestoreCandidateMode = { 'New' : null } |
+  { 'ExistingInstances' : Uint8Array | number[] };
+/**
  * Immutable replacement audit retained when the single active child slot is reused.
  */
 export interface RestoreChildLink {
@@ -409,6 +416,11 @@ export interface RestoreChildLink {
   'attempt' : Uint8Array | number[],
   'archive_digest' : Uint8Array | number[],
   'target' : Generation,
+}
+export interface RestoreExistingCandidate {
+  'credential' : Uint8Array | number[],
+  'version' : bigint,
+  'scope_digest' : Uint8Array | number[],
 }
 export type RestorePhase = { 'BackupVerified' : null } |
   { 'Importing' : null } |

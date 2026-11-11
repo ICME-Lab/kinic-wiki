@@ -16,9 +16,7 @@ pub(crate) fn current(
         return Err(Error::Unauthorized);
     }
     p.target.bytes()?;
-    if restore_admission::physical(db)? >= 10 {
-        return Err(Error::QuotaExceeded);
-    }
+
     let h = match store::header(db, &j.request.target.vault) {
         Ok(h) => Some(h),
         Err(Error::NotFound) => None,
@@ -133,9 +131,7 @@ pub(crate) fn projected(
             return Err(Error::QuotaExceeded);
         }
     }
-    if restore_admission::physical(db)? >= 10 {
-        return Err(Error::QuotaExceeded);
-    }
+
     Ok(())
 }
 fn header(j: &RestoreAdmissionStatus, p: &RestorePipeline) -> Result<Header> {
@@ -426,16 +422,7 @@ pub(crate) fn apply(
             if p.kit_ack.as_ref() != Some(&p.envelope_digest) || p.backup_ack.is_none() {
                 return Err(Error::Conflict);
             }
-            let c = serde_json::from_str(j.candidate.as_ref().ok_or(Error::Unauthorized)?)
-                .map_err(|_| Error::Storage)?;
-            authorization::insert(
-                db,
-                &c,
-                CredentialScope::Instances(vec![Instance {
-                    vault: p.target.vault.clone(),
-                    nonce: p.target.nonce.clone(),
-                }]),
-            )?;
+            restore_candidate::promote(db, &j, &p.target)?;
             let mut h = header(&j, &p)?;
             h.state = VaultState::Active;
             h.backup_sequence = Some(h.sequence);
@@ -451,7 +438,11 @@ pub(crate) fn apply(
             for raw in rows {
                 let mut grant: grants::Grant =
                     serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
-                if restore_grants::job(&grant.info.purpose).is_ok_and(|job| job == &j.request.job) {
+                if restore_grants::job(&grant.info.purpose).is_ok_and(|job| job == &j.request.job)
+                    || j.existing_candidate
+                        .as_ref()
+                        .is_some_and(|c| c.credential == grant.credential)
+                {
                     grant.revoked = true;
                     grants::save(db, &grant)?;
                 }

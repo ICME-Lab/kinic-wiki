@@ -1,4 +1,4 @@
-//! Restore-only admission. No target nonce, grant, key release, deletion or activation.
+//! Restore-only admission. Existing scopes stay unchanged until verified activation.
 use super::*;
 pub fn status(env: &impl Environment) -> Result<Option<RestoreAdmissionStatus>> {
     env.transaction(|db| Ok(store::transition::load_state(db)?.restore))
@@ -115,6 +115,7 @@ pub(crate) fn current(
     if j.semantic_config != incident::semantic(db, env)? {
         return Err(Error::Conflict);
     }
+    restore_candidate::current(db, j)?;
     if let Some(p) = &j.pipeline {
         return restore_pipeline::current(db, env, j, p);
     }
@@ -125,9 +126,6 @@ pub(crate) fn current(
         || epoch != j.next_epoch
     {
         return Err(Error::Unauthorized);
-    }
-    if physical(db)? >= 10 {
-        return Err(Error::QuotaExceeded);
     }
     Ok(())
 }
@@ -176,6 +174,7 @@ fn challenge(
         j.current_verifier.clone(),
         j.parent_job.clone(),
         j.candidate_digest.clone(),
+        j.existing_candidate.clone(),
         n.serial,
         expires,
         j.proof_fence.clone(),
@@ -243,13 +242,20 @@ pub fn begin(env: &impl Environment, r: RestoreAdmissionRequest) -> Result<Chall
                 return Err(Error::Busy);
             }
             fresh(db, env, j)?;
-            return if j.phase == RestoreAdmissionPhase::Registration {
+            return if matches!(
+                j.phase,
+                RestoreAdmissionPhase::Registration | RestoreAdmissionPhase::Possession
+            ) {
                 Ok(j.challenge.clone())
             } else {
                 Err(Error::Conflict)
             };
         }
-        if physical(db)? >= 10 {
+        if !matches!(
+            r.candidate_mode,
+            Some(RestoreCandidateMode::ExistingInstances(_))
+        ) && physical(db)? >= 10
+        {
             return Err(Error::QuotaExceeded);
         }
         let (h, parent, epoch) = check_request(db, env, &r)?;
@@ -267,6 +273,7 @@ pub fn begin(env: &impl Environment, r: RestoreAdmissionRequest) -> Result<Chall
             phase: RestoreAdmissionPhase::Registration,
             candidate: None,
             candidate_digest: vec![],
+            existing_candidate: None,
             challenge: Challenge {
                 bytes: vec![],
                 expires: 0,
@@ -282,7 +289,16 @@ pub fn begin(env: &impl Environment, r: RestoreAdmissionRequest) -> Result<Chall
             cancel_requested: false,
             cancel_complete: false,
         };
-        let ch = challenge(db, env, &mut j, true)?;
+        if let Some(RestoreCandidateMode::ExistingInstances(id)) = &j.request.candidate_mode {
+            let (raw, digest, bound) = restore_candidate::capture(db, id)?;
+            j.candidate = Some(raw);
+            j.candidate_digest = digest;
+            j.existing_candidate = Some(bound);
+            j.phase = RestoreAdmissionPhase::Possession;
+        }
+        restore_candidate::current(db, &j)?;
+        let registration = j.candidate.is_none();
+        let ch = challenge(db, env, &mut j, registration)?;
         // A restore request and current identity are small; reserve >=16 KiB for later proofs.
         s.namespace_flight = None;
         s.restore = Some(j);
@@ -336,10 +352,8 @@ pub fn possess(env: &impl Environment, job: Id, proof: String) -> Result<Restore
         if j.phase != RestoreAdmissionPhase::Possession {
             return Err(Error::Conflict);
         }
-        let c = serde_json::from_str(j.candidate.as_ref().ok_or(Error::Storage)?)
-            .map_err(|_| Error::Storage)?;
-        let c = auth::assertion(&store::config(db)?, &ceremony(&j), vec![c], &proof)?;
-        j.candidate = Some(serde_json::to_string(&c).map_err(|_| Error::Storage)?);
+        let ceremony = ceremony(&j);
+        restore_candidate::assert(db, &mut j, &ceremony, &proof)?;
         j.phase = if j.current_live.is_some() {
             RestoreAdmissionPhase::CurrentProof
         } else {
@@ -358,6 +372,7 @@ pub fn possess(env: &impl Environment, job: Id, proof: String) -> Result<Restore
                 j.current_verifier.clone(),
                 j.parent_job.clone(),
                 j.candidate_digest.clone(),
+                j.existing_candidate.clone(),
                 j.challenge.bytes.clone(),
                 j.challenge.expires,
                 j.proof_fence.clone(),

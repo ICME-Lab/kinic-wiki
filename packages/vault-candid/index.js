@@ -140,6 +140,10 @@ export const idlFactory = ({ IDL }) => {
     'reserved_bytes' : IDL.Nat64,
     'header' : Header,
   });
+  const RestoreCandidateMode = IDL.Variant({
+    'New' : IDL.Null,
+    'ExistingInstances' : IDL.Vec(IDL.Nat8),
+  });
   const RestoreAdmissionRequest = IDL.Record({
     'job' : IDL.Vec(IDL.Nat8),
     'source_generation' : IDL.Opt(Generation),
@@ -147,6 +151,7 @@ export const idlFactory = ({ IDL }) => {
     'records' : IDL.Nat64,
     'archive_length' : IDL.Nat64,
     'archive_digest' : IDL.Vec(IDL.Nat8),
+    'candidate_mode' : IDL.Opt(RestoreCandidateMode),
     'target' : PendingCreation,
     'source_commitment' : IDL.Vec(IDL.Nat8),
     'reserved_bytes' : IDL.Nat64,
@@ -510,6 +515,11 @@ export const idlFactory = ({ IDL }) => {
     'recovery' : IDL.Opt(Envelope),
     'phase' : RestorePhase,
   });
+  const RestoreExistingCandidate = IDL.Record({
+    'credential' : IDL.Vec(IDL.Nat8),
+    'version' : IDL.Nat64,
+    'scope_digest' : IDL.Vec(IDL.Nat8),
+  });
   const RestoreAdmissionPhase = IDL.Variant({
     'Registration' : IDL.Null,
     'Admitted' : IDL.Null,
@@ -522,6 +532,7 @@ export const idlFactory = ({ IDL }) => {
     'pipeline' : IDL.Opt(RestorePipeline),
     'recovery_message' : IDL.Vec(IDL.Nat8),
     'allocation_token' : IDL.Opt(IDL.Nat64),
+    'existing_candidate' : IDL.Opt(RestoreExistingCandidate),
     'issued' : IDL.Nat64,
     'cancel_complete' : IDL.Bool,
     'current_verifier' : IDL.Vec(IDL.Nat8),

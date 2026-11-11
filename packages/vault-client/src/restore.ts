@@ -6,6 +6,7 @@ import type {
   Generation,
   GrantPurpose,
   IncidentTarget,
+  RestoreCandidateMode,
 } from "./contracts";
 import { Session } from "./session";
 import { SignedMutations, ephemeralSigner } from "./signed";
@@ -179,6 +180,7 @@ export class RestoreClient {
     sourceSecret: Uint8Array,
     saveSource: Save,
     currentSecret?: Uint8Array,
+    existingCredential?: Uint8Array,
   ) {
     const ticket = this.session.capture(),
       source = await openArchive(archive, sourceSecret);
@@ -191,6 +193,11 @@ export class RestoreClient {
       this.session.check(ticket);
       const g = headerGeneration(source.header);
       const request = {
+        candidate_mode: existingCredential
+          ? ([{ ExistingInstances: existingCredential }] as [
+              RestoreCandidateMode,
+            ])
+          : ([] as []),
         job: randomBytes(16),
         target: {
           namespace,
@@ -215,17 +222,29 @@ export class RestoreClient {
       };
       let ch = ok(await this.actor.begin_restore_admission(request));
       this.session.check(ticket);
-      const registration = await register(
-        ch,
-        this.owner.toUint8Array(),
-        this.rpId,
-        this.session.signal,
-      );
-      this.session.check(ticket);
-      ch = ok(
-        await this.actor.register_restore_candidate(request.job, registration),
-      );
-      this.session.check(ticket);
+      if (existingCredential) {
+        if (
+          ch.registration ||
+          ch.credential_ids.length !== 1 ||
+          !equal(ch.credential_ids[0], existingCredential)
+        )
+          throw Error("RestoreCandidateChanged");
+      } else {
+        const registration = await register(
+          ch,
+          this.owner.toUint8Array(),
+          this.rpId,
+          this.session.signal,
+        );
+        this.session.check(ticket);
+        ch = ok(
+          await this.actor.register_restore_candidate(
+            request.job,
+            registration,
+          ),
+        );
+        this.session.check(ticket);
+      }
       const proof = await assertCredential(ch, this.rpId, this.session.signal);
       this.session.check(ticket);
       const j = ok(

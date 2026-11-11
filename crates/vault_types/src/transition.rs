@@ -1,8 +1,10 @@
-//! Bounded admission metadata only. An admitted candidate has no live credential/grant.
+//! Bounded restore metadata. Admission adds no credential or ordinary authority.
 use super::*;
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RestoreAdmissionRequest {
+    #[serde(default)]
+    pub candidate_mode: Option<RestoreCandidateMode>,
     pub job: Id,
     pub target: PendingCreation,
     pub archive_digest: Vec<u8>,
@@ -12,6 +14,19 @@ pub struct RestoreAdmissionRequest {
     pub archive_length: u64,
     pub records: u64,
     pub reserved_bytes: u64,
+}
+/// None/New preserves the new physical candidate ceremony, including historical jobs.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum RestoreCandidateMode {
+    New,
+    ExistingInstances(Vec<u8>),
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreExistingCandidate {
+    pub credential: Vec<u8>,
+    pub version: u64,
+    pub scope_digest: Vec<u8>,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RestoreAdmissionPhase {
@@ -32,6 +47,8 @@ pub struct RestoreAdmissionStatus {
     /// Public credential material only, bounded and checked before persistence.
     pub candidate: Option<String>,
     pub candidate_digest: Vec<u8>,
+    #[serde(default)]
+    pub existing_candidate: Option<RestoreExistingCandidate>,
     pub challenge: Challenge,
     /// Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
     pub recovery_message: Vec<u8>,

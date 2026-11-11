@@ -1,6 +1,7 @@
 use super::*;
 fn request(vault: u8) -> RestoreAdmissionRequest {
     RestoreAdmissionRequest {
+        candidate_mode: None,
         job: vec![91; 16],
         target: PendingCreation {
             namespace: vec![51; 32],
@@ -1667,3 +1668,51 @@ fn restore_allocation_retry_after_exact_settlement_or_failed_reservation_succeed
         );
     }
 }
+
+#[test]
+fn restore_reuse_at_ten_starts_possession_without_new_registration() {
+    let env = fixture();
+    let key = install_test_passkey(&env);
+    env.transaction(|db| {
+        let mut all = authorization::authorities(db)?;
+        all.credentials[0].version = 1;
+        let mut n = cleanup::namespace(db)?;
+        n.serial = 1;
+        cleanup::save(db, &n)?;
+        all.credentials[0].scope = CredentialScope::Instances(vec![Instance {
+            vault: vec![1; 16],
+            nonce: store::header(db, &[1; 16])?.generation.unwrap().nonce,
+        }]);
+        store::save(db, "authorities", &all)?;
+        let c = credentials(db)?[0].clone();
+        for n in 0..9 {
+            let mut c = c.clone();
+            c.id.0 = vec![100 + n];
+            authorization::insert(db, &c, CredentialScope::Global)?;
+        }
+        assert_eq!(restore_admission::physical(db)?, 10);
+        Ok(())
+    })
+    .unwrap();
+    assert!(matches!(
+        restore_admission::begin(&env, request(2)),
+        Err(Error::QuotaExceeded)
+    ));
+    let mut r = request(2);
+    r.candidate_mode = Some(RestoreCandidateMode::ExistingInstances(vec![41]));
+    let ch = restore_admission::begin(&env, r.clone()).unwrap();
+    assert!(!ch.registration);
+    assert_eq!(ch.credential_ids, vec![vec![41]]);
+    assert!(restore_admission::register(&env, r.job.clone(), registration(&ch, &key)).is_err());
+    let j = restore_admission::possess(&env, r.job, passkey_assertion(&env, &key, &ch)).unwrap();
+    assert_eq!(j.phase, RestoreAdmissionPhase::Admitted);
+    assert!(j.existing_candidate.is_some());
+    env.transaction(|db| {
+        assert_eq!(restore_admission::physical(db)?, 10);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[path = "restore_reuse_tests.rs"]
+mod reuse_tests;

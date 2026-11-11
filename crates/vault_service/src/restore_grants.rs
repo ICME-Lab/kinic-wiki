@@ -6,6 +6,7 @@ pub(crate) fn binding(j: &RestoreAdmissionStatus) -> Result<Vec<u8>> {
         &j.request,
         &j.challenge.bytes,
         &j.candidate_digest,
+        &j.existing_candidate,
         &j.current_live,
         &j.current_verifier,
     ))
@@ -127,6 +128,7 @@ pub fn begin(env: &impl Environment, r: GrantRequest) -> Result<Challenge> {
             j.current_live,
             j.current_verifier,
             j.candidate_digest,
+            j.existing_candidate,
             n.serial,
             expires,
             fence.clone(),
@@ -193,15 +195,7 @@ pub fn finish(
             &p.request.purpose,
             &p.request.generations,
         )?;
-        let c = serde_json::from_str(j.candidate.as_ref().ok_or(Error::Unauthorized)?)
-            .map_err(|_| Error::Storage)?;
-        let c = auth::assertion(
-            &store::config(db)?,
-            &ceremonies::as_ceremony(&p),
-            vec![c],
-            &proof,
-        )?;
-        j.candidate = Some(serde_json::to_string(&c).map_err(|_| Error::Storage)?);
+        restore_candidate::assert(db, &mut j, &ceremonies::as_ceremony(&p), &proof)?;
         let binding = binding(&j)?;
         restore_admission::save(db, j)?;
         let id = cleanup::mac(

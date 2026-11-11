@@ -308,6 +308,7 @@ type RestoreAdmissionRequest = record {
   records : nat64;
   archive_length : nat64;
   archive_digest : blob;
+  candidate_mode : opt RestoreCandidateMode;
   target : PendingCreation;
   source_commitment : blob;
   reserved_bytes : nat64;
@@ -319,6 +320,7 @@ type RestoreAdmissionStatus = record {
   // Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
   recovery_message : blob;
   allocation_token : opt nat64;
+  existing_candidate : opt RestoreExistingCandidate;
   issued : nat64;
   cancel_complete : bool;
   current_verifier : blob;
@@ -333,12 +335,19 @@ type RestoreAdmissionStatus = record {
   next_epoch : nat64;
   parent_job : opt blob;
 };
+// None/New preserves the new physical candidate ceremony, including historical jobs.
+type RestoreCandidateMode = variant { New; ExistingInstances : blob };
 // Immutable replacement audit retained when the single active child slot is reused.
 type RestoreChildLink = record {
   job : blob;
   attempt : blob;
   archive_digest : blob;
   target : Generation;
+};
+type RestoreExistingCandidate = record {
+  credential : blob;
+  version : nat64;
+  scope_digest : blob;
 };
 type RestorePhase = variant {
   BackupVerified;

@@ -22,6 +22,10 @@ import { generateKeyPairSync, sign, createHash } from "node:crypto";
 import { idlFactory as vaultIDL } from "../../packages/vault-candid/index.js";
 import { idlFactory as mutationFactory } from "../../packages/vault-candid/mutation.js";
 const root = fileURLToPath(new URL("../../", import.meta.url));
+const reuseSmoke = process.env.VAULT_RESTORE_REUSE_SMOKE === "1";
+const baseline = reuseSmoke
+  ? "target/vault-dedicated-task11-fix1.wasm"
+  : "target/vault-dedicated-task9.wasm";
 const local = createRequire(new URL("../package.json", import.meta.url));
 const req = createRequire(realpathSync(local.resolve("@dfinity/pic")));
 const { PocketIc, PocketIcServer } = req("@dfinity/pic"),
@@ -98,7 +102,7 @@ function registration(ch, credential) {
     attestationObject: b64(cbor({ fmt: "none", attStmt: {}, authData: auth })),
   });
 }
-function assertion(ch, credential) {
+function assertion(ch, credential, explicitCounter) {
   const client = Buffer.from(
     JSON.stringify({
       type: "webauthn.get",
@@ -107,7 +111,11 @@ function assertion(ch, credential) {
       crossOrigin: false,
     }),
   );
-  const auth = cat(hash("vault.kinic.xyz"), [5], [0, 0, 0, 0]);
+  const counter =
+    explicitCounter ?? (credential.counter = (credential.counter ?? 0) + 1);
+  const count = Buffer.alloc(4);
+  count.writeUInt32BE(counter);
+  const auth = cat(hash("vault.kinic.xyz"), [5], count);
   return JSON.stringify({
     id: b64(credential.id),
     clientDataJSON: b64(client),
@@ -117,10 +125,10 @@ function assertion(ch, credential) {
   });
 }
 assert.equal(
-  hash(
-    readFileSync(resolve(root, "target/vault-dedicated-task9.wasm")),
-  ).toString("hex"),
-  "4b21ee7a1c7d6ad20c2a7619ad86346927a550629b4baf284f136d5f48ee6005",
+  hash(readFileSync(resolve(root, baseline))).toString("hex"),
+  reuseSmoke
+    ? "d8054e10cf8c8c36538828d01a2a417acf11802910b55fd12a2bdef372445c20"
+    : "4b21ee7a1c7d6ad20c2a7619ad86346927a550629b4baf284f136d5f48ee6005",
 );
 const cryptoLib = await import(
   new URL("../../packages/vault-crypto/src/index.ts", import.meta.url)
@@ -150,7 +158,7 @@ try {
   const fixture = await pic.setupCanister({
     sender: owner,
     idlFactory: vaultIDL,
-    wasm: resolve(root, "target/vault-dedicated-task9.wasm"),
+    wasm: resolve(root, baseline),
     arg: IDL.encode([], []),
     cycles: 100_000_000_000_000n,
   });
@@ -378,6 +386,20 @@ try {
       purpose,
       generations,
     };
+    if (
+      "RestorePrepare" in purpose ||
+      "RestoreTarget" in purpose ||
+      "RestoreCleanup" in purpose
+    ) {
+      const ch = ok(await actor.begin_restore_grant(request));
+      return ok(
+        await actor.finish_restore_grant(
+          request.operation,
+          assertion(ch, passkey),
+          "RestoreCleanup" in purpose,
+        ),
+      );
+    }
     const cleanup = "Cleanup" in purpose;
     const ch = ok(
       await (cleanup ? actor.begin_cleanup : actor.begin_grant)(request),
@@ -408,6 +430,27 @@ try {
       })
     ).result,
   );
+  const scoped = { ...key(), id: b(44) };
+  if (reuseSmoke) {
+    const scope = {
+      Instances: [{ vault: sourceG.vault, nonce: sourceG.nonce }],
+    };
+    const ch = ok(
+      (await send(credentials, { BeginRegistration: { vault: b(1), scope } }))
+        .result,
+    ).Challenge;
+    ok(
+      (
+        await send(credentials, {
+          RegisterCredential: {
+            vault: b(1),
+            scope,
+            registration: registration(ch, scoped),
+          },
+        })
+      ).result,
+    );
+  }
   const context = ok(await actor.incident_context())[0];
   const selected = context.credentials.find((c) =>
     Buffer.from(c.credential).equals(Buffer.from(lost.id)),
@@ -428,16 +471,18 @@ try {
   );
 
   const parentBefore = ok(await actor.incident_status())[0];
-  await pic.upgradeCanister({
-    sender: owner,
-    canisterId,
-    wasm,
-    arg: IDL.encode([], []),
-  });
+  if (!reuseSmoke)
+    await pic.upgradeCanister({
+      sender: owner,
+      canisterId,
+      wasm,
+      arg: IDL.encode([], []),
+    });
   assert.deepEqual(ok(await actor.incident_status())[0], parentBefore);
   assert.ok(ok(await actor.account_balance()) > 0n);
   const candidate = { ...key(), id: b(43) };
   const request = {
+    candidate_mode: [],
     job: b(92),
     target: { namespace: context.namespace, vault: b(1), attempt: b(93) },
     archive_digest: b(94, 32),
@@ -448,8 +493,28 @@ try {
     records: 0n,
     reserved_bytes: 0n,
   };
+  // The frozen server rejects unknown request fields; encode its exact historical input.
+  let admissionActor = actor;
+  if (reuseSmoke) {
+    admissionActor = pic.createActor(({ IDL }) => {
+      const method = vaultIDL({ IDL })._fields.find(
+        ([name]) => name === "begin_restore_admission",
+      )[1];
+      const legacyRequest = IDL.Record(
+        Object.fromEntries(
+          method.argTypes[0]._fields.filter(
+            ([name]) => name !== "candidate_mode",
+          ),
+        ),
+      );
+      return IDL.Service({
+        begin_restore_admission: IDL.Func([legacyRequest], method.retTypes, []),
+      });
+    }, canisterId);
+    admissionActor.setPrincipal(owner);
+  }
   const registrationChallenge = ok(
-    await actor.begin_restore_admission(request),
+    await admissionActor.begin_restore_admission(request),
   );
   const possessionChallenge = ok(
     await actor.register_restore_candidate(
@@ -526,12 +591,116 @@ try {
   );
   ok(await actor.prove_restore_current(request.job, freshProof));
   assert.deepEqual(ok(await actor.incident_status())[0], parentBefore);
+  if (reuseSmoke) {
+    // The new-candidate child was written by the frozen fix1 Wasm, then resumed above.
+    const cancel = await fresh(
+      { RestoreCleanup: { job: request.job, target: request.target } },
+      [],
+      candidate,
+    );
+    ok((await send(cancel, { RestoreCancel: { cursor: 0n } })).result);
+    assert.ok(ok(await actor.restore_admission_status())[0].cancel_complete);
+    const reuse = {
+      ...request,
+      job: b(103),
+      target: { ...request.target, attempt: b(104) },
+      candidate_mode: [{ ExistingInstances: scoped.id }],
+    };
+    const ch = ok(await actor.begin_restore_admission(reuse));
+    assert.equal(ch.registration, false);
+    assert.deepEqual(ch.credential_ids, [scoped.id]);
+    assert.ok(
+      "Err" in
+        (await actor.register_restore_candidate(
+          reuse.job,
+          registration(ch, scoped),
+        )),
+    );
+    const possession = ok(
+      await actor.prove_restore_candidate(reuse.job, assertion(ch, scoped)),
+    );
+    assert.ok("CurrentProof" in possession.phase);
+    const signCurrent = async (j) =>
+      new Uint8Array(
+        await crypto.subtle.sign(
+          "Ed25519",
+          recoveryKey,
+          new Uint8Array(j.recovery_message),
+        ),
+      );
+    const currentProof = await signCurrent(possession);
+    const admittedReuse = ok(
+      await actor.prove_restore_current(reuse.job, currentProof),
+    );
+    assert.equal(admittedReuse.existing_candidate.length, 1);
+    const old = await fresh(
+      { RestorePrepare: { job: reuse.job, target: reuse.target } },
+      [],
+      scoped,
+    );
+    const counterBefore = scoped.counter;
+    const authoritiesBefore = ok(await actor.incident_context())[0].credentials;
+    await pic.upgradeCanister({
+      sender: owner,
+      canisterId,
+      wasm,
+      arg: IDL.encode([], []),
+    });
+    const persisted = ok(await actor.restore_admission_status())[0];
+    assert.deepEqual(
+      persisted.existing_candidate,
+      admittedReuse.existing_candidate,
+    );
+    assert.deepEqual(persisted.request, reuse);
+    assert.ok(
+      "Err" in (await actor.prove_restore_current(reuse.job, currentProof)),
+    );
+    assert.ok("Err" in (await send(old, { RestoreAllocate: null })).result);
+    const resumedChallenge = ok(
+      await actor.resume_restore_admission(reuse.job),
+    );
+    assert.ok(
+      "Err" in
+        (await actor.prove_restore_candidate(
+          reuse.job,
+          assertion(resumedChallenge, scoped, counterBefore),
+        )),
+    );
+    const resumedReuse = ok(
+      await actor.prove_restore_candidate(
+        reuse.job,
+        assertion(resumedChallenge, scoped),
+      ),
+    );
+    ok(
+      await actor.prove_restore_current(
+        reuse.job,
+        await signCurrent(resumedReuse),
+      ),
+    );
+    const clean = await fresh(
+      { RestoreCleanup: { job: reuse.job, target: reuse.target } },
+      [],
+      scoped,
+    );
+    ok((await send(clean, { RestoreCancel: { cursor: 0n } })).result);
+    assert.ok(ok(await actor.restore_admission_status())[0].cancel_complete);
+    assert.deepEqual(
+      ok(await actor.incident_context())[0].credentials,
+      authoritiesBefore,
+    );
+    assert.deepEqual(ok(await actor.incident_status())[0], parentBefore);
+    console.log(
+      "PASS actual Task11 fix1 to Task12 upgrade: legacy new-candidate child resumes, existing Instances UV without registration, physical shared counter survives upgrade and rejects replay, current proof and old grants fenced, fresh resume and exact cancel preserve scoped authority and frozen parent",
+    );
+  }
   actor.setPrincipal(other);
   assert.deepEqual(ok(await actor.restore_admission_status()), []);
   actor.setPrincipal(owner);
-  console.log(
-    "PASS actual Task9 frozen incident upgrade, retained legacy parent, candidate UV possession, current-verifier proof, no candidate Global grant, config guard, persisted child and fresh-proof resume after upgrade",
-  );
+  if (!reuseSmoke)
+    console.log(
+      "PASS actual Task9 frozen incident upgrade, retained legacy parent, candidate UV possession, current-verifier proof, no candidate Global grant, config guard, persisted child and fresh-proof resume after upgrade",
+    );
 } finally {
   await pic?.tearDown();
   await server.stop();
