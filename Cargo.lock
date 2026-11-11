@@ -4079,8 +4079,10 @@ dependencies = [
  "aes-gcm",
  "base64",
  "candid",
+ "ed25519-dalek",
  "futures",
  "hex",
+ "hmac 0.12.1",
  "ic-vetkeys",
  "ic_bls12_381",
  "kinic-sqlite-compat",
@@ -4096,6 +4098,7 @@ dependencies = [
 name = "vault-store"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "candid",
  "kinic-sqlite-compat",
  "serde",

@@ -172,7 +172,8 @@ pub fn stage(db: &Connection, v: &[u8], r: Revision, now: u64) -> Result<()> {
     {
         return Err(Error::InvalidInput);
     }
-    let charge = r.plain_size
+    let charge = if r.deleted { 0 } else { WRAPPER_HEADROOM }
+        + r.plain_size
         + r.chunk_hashes.len() as u64 * (16 + 4096)
         + r.manifest.len() as u64
         + serde_json::to_string(&r.chunk_hashes)

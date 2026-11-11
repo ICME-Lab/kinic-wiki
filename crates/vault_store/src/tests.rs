@@ -179,6 +179,8 @@ fn restore_preserves_ciphertext_and_requires_complete_authenticated_set() {
         ciphertext: vec![2; 48],
     };
     let header = Header {
+        generation: None,
+        recovery_verifier: vec![],
         id: vault.clone(),
         epoch: 0,
         state: VaultState::Active,
@@ -433,6 +435,8 @@ fn expired_restore_cleanup_is_bounded_and_allows_retry() {
     let vault = vec![41; 16];
     let request = BeginRestore {
         header: Header {
+            generation: None,
+            recovery_verifier: vec![],
             id: vault.clone(),
             epoch: 0,
             state: VaultState::Active,

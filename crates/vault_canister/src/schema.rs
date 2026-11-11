@@ -21,7 +21,13 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
         db.execute_batch("PRAGMA user_version=2")
             .map_err(|_| vault_types::Error::Storage)?;
     }
-    if !matches!(version, 1 | 2) {
+    if matches!(version, 1 | 2) {
+        db.execute_batch(vault_store::WRAPPER_SCHEMA)
+            .map_err(|_| vault_types::Error::Storage)?;
+        db.execute_batch("PRAGMA user_version=3")
+            .map_err(|_| vault_types::Error::Storage)?;
+    }
+    if !matches!(version, 1 | 2 | 3) {
         return Err(vault_types::Error::Storage);
     }
     Ok(())

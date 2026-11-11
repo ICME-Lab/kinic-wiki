@@ -1,0 +1,69 @@
+type Activate = record {
+  normal : Envelope;
+  attempt : opt blob;
+  vault : blob;
+  registration : opt text;
+  assertion : opt text;
+  operation : blob;
+  recovery : Envelope;
+};
+type BeginRevision = record {
+  object : blob;
+  vault : blob;
+  chunk_hashes : vec blob;
+  operation : blob;
+  manifest : blob;
+  plain_size : nat64;
+  expected_revision : nat64;
+};
+type CleanupAction = variant {
+  AbortExport : record { export : blob };
+  Purge;
+  Expired;
+  CancelSetup : record { attempt : blob };
+};
+type CredentialScope = variant { Global; Instances : vec Instance };
+type Derive = record {
+  attempt : opt blob;
+  vault : blob;
+  transport : blob;
+  epoch : nat64;
+  assertion : opt text;
+};
+type Envelope = record { ciphertext : blob; version : nat8; nonce : blob };
+type Instance = record { vault : blob; nonce : blob };
+type Mutation = record {
+  counter : nat64;
+  owner : principal;
+  version : nat8;
+  grant : blob;
+  canister : principal;
+  operation : MutationOperation;
+};
+type MutationOperation = variant {
+  PutChunk : record { vault : blob; data : blob; upload : blob; index : nat32 };
+  BeginRegistration : record { vault : blob; scope : CredentialScope };
+  CommitRevision : record { vault : blob; upload : blob };
+  KeyResult : record { handle : blob };
+  DeleteObject : record {
+    object : blob;
+    vault : blob;
+    operation : blob;
+    expected_revision : nat64;
+  };
+  RegisterCredential : record {
+    vault : blob;
+    registration : text;
+    scope : CredentialScope;
+  };
+  Cleanup : record { job : blob; action : CleanupAction; cursor : nat64 };
+  Derive : Derive;
+  Create : Reserve;
+  Activate : record { request : Activate; recovery_verifier : blob };
+  PurgeObject : record { object : blob; vault : blob };
+  BeginRevision : BeginRevision;
+  RemoveCredential : record { credential : blob };
+  CancelSetup : record { attempt : blob; vault : blob };
+};
+type Reserve = record { vault : blob; operation : blob };
+service : { encode : (Mutation) -> () }

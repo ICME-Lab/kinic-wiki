@@ -605,3 +605,68 @@ pub(crate) fn record_entry(
     .map_err(|_| Error::Storage)?;
     Ok(())
 }
+
+/// Called only inside an authenticated cleanup mutation transaction. One key flight and one
+/// orphan challenge maximum; never starts external work or creates an account/reservation.
+pub(crate) fn recover_pending_in(
+    db: &Connection,
+    owner: candid::Principal,
+    targets: &[vault_types::Id],
+    cancel_live: bool,
+    now: u64,
+) -> vault_types::Result<bool> {
+    let text = owner.to_text();
+    let millis =
+        i64::try_from(now.checked_mul(1000).ok_or(Error::Storage)?).map_err(|_| Error::Storage)?;
+    let runtime:i64=db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
+    let flight:Option<(i64,i64,i64)>=db.query_row("SELECT token,generation,created FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled') ORDER BY in_flight DESC,token DESC LIMIT 1",params![owner.as_slice()],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?,sqlite::row_get(r,2)?))).optional().map_err(|_|Error::Storage)?;
+    if let Some((token, generation, created)) = flight {
+        let mut control = vault_store::load::<serde_json::Value>(db, "control")?;
+        let exact = control
+            .as_ref()
+            .and_then(|c| c.get("derive"))
+            .filter(|f| f.get("token").and_then(|x| x.as_u64()) == Some(token as u64));
+        let target = exact
+            .and_then(|f| f.get("vault"))
+            .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok());
+        let scoped = cancel_live && target.as_ref().is_some_and(|v| targets.contains(v));
+        // Expired orphan accounting is safe owner maintenance; never cancel unrelated live work.
+        let orphan = generation != runtime && now >= created as u64 + 120;
+        if scoped || orphan {
+            let Some((own, actual, is_orphan)) = vault_store::keys::cancel_pending(db, now)? else {
+                return Err(Error::Storage);
+            };
+            if own != token as u64 {
+                return Err(Error::Conflict);
+            }
+            let journal = format!("derive:{token}");
+            let exists:Option<i64>=db.query_row("SELECT execution_checkpoint FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",params![text,journal],|r|sqlite::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
+            if let Some(checkpoint) = exists {
+                settle_reservation(db, &text, &journal, actual, millis, is_orphan, false)
+                    .map_err(|_| Error::Storage)?;
+                finish_reserved_execution(db, &text, &journal, checkpoint as u64, millis)
+                    .map_err(|_| Error::Storage)?;
+            }
+            if let Some(c) = control.as_mut() {
+                if c.get("derive")
+                    .and_then(|f| f.get("token"))
+                    .and_then(|x| x.as_u64())
+                    == Some(own)
+                {
+                    c["derive"] = serde_json::Value::Null;
+                    vault_store::save(db, "control", c)?;
+                }
+            }
+            vault_store::keys::acknowledge_cancel(db, own)?;
+        }
+    }
+    let challenge:Option<(String,i64)>=db.query_row("SELECT token,execution_checkpoint FROM vault_cycle_reservations WHERE owner=?1 AND generation<?2 AND token LIKE 'challenge:%' AND (in_flight=1 OR execution_checkpoint>execution_billed) ORDER BY created_at_ms,token LIMIT 1",params![text,runtime],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?))).optional().map_err(|_|Error::Storage)?;
+    if let Some((token, checkpoint)) = challenge {
+        settle_reservation(db, &text, &token, 0, millis, true, false)
+            .map_err(|_| Error::Storage)?;
+        finish_reserved_execution(db, &text, &token, checkpoint as u64, millis)
+            .map_err(|_| Error::Storage)?;
+    }
+    let pending:i64=db.query_row("SELECT (SELECT count(*) FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled'))+(SELECT count(*) FROM vault_cycle_reservations WHERE owner=?2 AND generation<?3 AND (in_flight=1 OR execution_checkpoint>execution_billed))",params![owner.as_slice(),text,runtime],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
+    Ok(pending == 0)
+}

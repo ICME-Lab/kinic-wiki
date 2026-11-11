@@ -1,0 +1,67 @@
+// Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {realpathSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {generateKeyPairSync,sign,createHash} from 'node:crypto';
+import {idlFactory as vaultIDL} from '../../packages/vault-candid/index.js';
+import {idlFactory as mutationFactory} from '../../packages/vault-candid/mutation.js';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const local=createRequire(new URL('../package.json',import.meta.url));const req=createRequire(realpathSync(local.resolve('@dfinity/pic')));
+const {PocketIc,PocketIcServer}=req('@dfinity/pic'),{IDL}=req('@icp-sdk/core/candid'),{Principal}=req('@icp-sdk/core/principal');
+if(process.env.POCKET_IC_BIN)PocketIcServer.getBinPath=()=>process.env.POCKET_IC_BIN;
+const b=(n,len=16)=>new Uint8Array(len).fill(n),cat=(...x)=>Buffer.concat(x.map(v=>Buffer.from(v))),hash=x=>createHash('sha256').update(x).digest(),b64=x=>Buffer.from(x).toString('base64url');
+const key=()=>{const pair=generateKeyPairSync('ed25519');return {...pair,public:Buffer.from(pair.publicKey.export({format:'jwk'}).x,'base64url')};};
+const owner=Principal.selfAuthenticating(b(90,32)),other=Principal.selfAuthenticating(b(91,32));const ok=x=>{assert.ok('Ok'in x,JSON.stringify(x,(_,v)=>typeof v==='bigint'?v.toString():v));return x.Ok;};
+const mutationType=mutationFactory({IDL})._fields.find(([n])=>n==='encode')[1].argTypes[0];
+// Tiny deterministic CBOR encoder for the standard WebAuthn none attestation fixture.
+const cb=(major,n)=>n<24?Buffer.from([major*32+n]):n<256?Buffer.from([major*32+24,n]):Buffer.from([major*32+25,n>>8,n&255]);
+const cbor=x=>typeof x==='string'?cat(cb(3,Buffer.byteLength(x)),Buffer.from(x)):Buffer.isBuffer(x)?cat(cb(2,x.length),x):cat(cb(5,Object.keys(x).length),...Object.entries(x).flatMap(([k,v])=>[cbor(k),cbor(v)]));
+function registration(ch,credential){
+ const cose=cat(Buffer.from([0xa4,1,1,3,0x27,0x20,6,0x21,0x58,0x20]),credential.public);
+ const auth=cat(hash('vault.kinic.xyz'),[0x45],[0,0,0,0],b(0),[0,16],credential.id,cose);
+ const client=JSON.stringify({type:'webauthn.create',challenge:b64(ch.bytes),origin:'https://vault.kinic.xyz',crossOrigin:false});
+ return JSON.stringify({id:b64(credential.id),transports:['internal'],clientDataJSON:b64(Buffer.from(client)),attestationObject:b64(cbor({fmt:'none',attStmt:{},authData:auth}))});
+}
+function assertion(ch,credential){
+ const client=Buffer.from(JSON.stringify({type:'webauthn.get',challenge:b64(ch.bytes),origin:'https://vault.kinic.xyz',crossOrigin:false}));const auth=cat(hash('vault.kinic.xyz'),[5],[0,0,0,0]);
+ return JSON.stringify({id:b64(credential.id),clientDataJSON:b64(client),authenticatorData:b64(auth),signature:b64(sign(null,cat(auth,hash(client)),credential.privateKey)),userHandle:b64(owner.toUint8Array())});
+}
+const server=await PocketIcServer.start();let pic;
+try{
+ pic=await PocketIc.create(server.getUrl());
+ const wasm=resolve(root,'target/wasm32-unknown-unknown/release/vault_canister.wasm');
+ const fixture=await pic.setupCanister({sender:owner,idlFactory:vaultIDL,wasm:resolve(root,'target/vault-dedicated-task4.wasm'),arg:IDL.encode([],[]),cycles:100_000_000_000_000n});const {actor,canisterId}=fixture;actor.setPrincipal(owner);
+ ok(await actor.set_config([{origin:'https://vault.kinic.xyz',rp_id:'vault.kinic.xyz',key_name:'key_1',minimum_cycles:100_000_000_000n}]));
+ const fake=await pic.setupCanister({sender:owner,idlFactory:()=>IDL.Service({configure:IDL.Func([IDL.Nat8,IDL.Nat64],[],[])}),wasm:resolve(root,'target/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm'),arg:IDL.encode([],[]),cycles:10_000_000_000_000n});fake.actor.setPrincipal(owner);await fake.actor.configure(0,10n);
+ ok(await actor.set_funding_config([{ledger:fake.canisterId,recipient:canisterId,cycles_per_kinic:2_000_000_000n}]));
+ const purchase={operation:b(80),beneficiary:owner,amount_e8s:100_000_000n,min_credits:2_000_000_000n,created_at_time:BigInt(await pic.getTime())*1_000_000n};ok(await actor.quote_purchase(purchase));ok(await actor.pay_purchase(purchase.operation));
+ const paid=ok(await actor.account_balance());await pic.upgradeCanister({sender:owner,canisterId,wasm,arg:IDL.encode([],[])});assert.equal(ok(await actor.account_balance()),paid);
+ const ephemeral=key(),credential={...key(),id:b(41)};
+ const first=ok(await actor.bootstrap({reserve:{vault:b(1),operation:b(2)},public_key:ephemeral.public}));
+ const retry=ok(await actor.bootstrap({reserve:{vault:b(1),operation:b(2)},public_key:ephemeral.public}));assert.deepEqual(first.header.generation,retry.header.generation);
+ ok(await actor.cancel_vault_setup(b(1),b(2)));
+ const setup=ok(await actor.bootstrap({reserve:{vault:b(1),operation:b(3)},public_key:ephemeral.public}));assert.notDeepEqual(first.header.generation[0].nonce,setup.header.generation[0].nonce);
+ assert.ok('Err'in await actor.derive_vault_key({vault:b(1),attempt:[b(3)],epoch:0n,transport:b(0,48),assertion:[]}));
+ const grant=ok(await actor.register_bootstrap(b(3),registration(setup.challenge,credential)));
+ const send=async(grant,counter,operation,principal=owner)=>{
+   const payload=new Uint8Array(IDL.encode([mutationType],[{version:2,owner:principal,canister:canisterId,grant:grant.id,counter,operation}]));const signature=sign(null,cat(Buffer.from('kinic-vault/mutation/v2\0'),payload),ephemeral.privateKey);return {result:await actor.mutate(payload,signature),payload,signature};
+ };
+ const envelope=n=>({version:2,nonce:b(n,12),ciphertext:b(n,48)});
+ const activation=await send(grant,0n,{Activate:{request:{vault:b(1),attempt:[b(3)],operation:b(4),normal:envelope(5),recovery:envelope(6),registration:[],assertion:[]},recovery_verifier:credential.public}});ok(activation.result);assert.deepEqual(await actor.mutate(activation.payload,activation.signature),activation.result);
+ actor.setPrincipal(other);assert.ok('Err'in await actor.mutate(activation.payload,activation.signature));actor.setPrincipal(owner);
+ assert.ok('Err'in await actor.reserve_vault({vault:b(7),operation:b(8)}));
+ const header=ok(await actor.get_vault_header(b(1)));const generations=header.generation;
+ const newGrant=async(n,purpose={Normal:null})=>{const r={operation:b(n),public_key:ephemeral.public,credential:credential.id,purpose,generations};const ch=ok(await actor.begin_grant(r));return ok(await actor.finish_grant(r.operation,assertion(ch,credential)));};
+ await newGrant(10);await newGrant(11);assert.ok('Err'in await actor.begin_grant({operation:b(12),public_key:ephemeral.public,credential:credential.id,purpose:{Normal:null},generations}));
+ // Spend only synthetic credit through bounded owner reads, then fresh cleanup remains possible.
+ for(let n=0;n<120&&ok(await actor.account_balance())>0n;n++)ok(await actor.list_vaults());assert.equal(ok(await actor.account_balance()),0n);
+ const cleanupReq={operation:b(20),public_key:ephemeral.public,credential:credential.id,purpose:{Cleanup:{job:b(21)}},generations};
+ const ch=ok(await actor.begin_cleanup(cleanupReq));const cleanupGrant=ok(await actor.finish_cleanup(b(20),assertion(ch,credential)));
+ await pic.upgradeCanister({sender:owner,canisterId,wasm,arg:IDL.encode([],[])});assert.ok('Err'in (await send(cleanupGrant,0n,{Cleanup:{job:b(21),cursor:0n,action:{Purge:null}}})).result);
+ const ch2=ok(await actor.begin_cleanup(cleanupReq));const cleanup2=ok(await actor.finish_cleanup(b(20),assertion(ch2,credential)));assert.notDeepEqual(cleanupGrant.id,cleanup2.id);
+ const purge=await send(cleanup2,0n,{Cleanup:{job:b(21),cursor:0n,action:{Purge:null}}});assert.equal(ok(purge.result).Cleanup.complete,true);assert.deepEqual(await actor.mutate(purge.payload,purge.signature),purge.result);
+ assert.equal(ok(await actor.list_vaults()).length,0);assert.equal(ok(await actor.cleanup_status())[0].complete,true);assert.equal(ok(await actor.account_balance()),0n);
+ console.log('PASS actual Wasm: Task4-funded account survives upgrade; independent fresh generation, exact bootstrap retry, legacy key/write denial, fresh passkey grant, signed replay/cross-owner, bounded normal grants, zero-balance cleanup, upgrade fence and final purge receipt.');
+}finally{if(pic)await pic.tearDown();await server.stop();}

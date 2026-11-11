@@ -7,6 +7,7 @@ vi.mock("../../vault-backup/src/index.ts", async (original) => ({
   openArchive: vi.fn(),
 }));
 const header = (n: number): Header => ({
+  generation: [], recovery_verifier: [],
   id: new Uint8Array(16).fill(n),
   epoch: 0n,
   sequence: 1n,

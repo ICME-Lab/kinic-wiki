@@ -1,7 +1,7 @@
 import "./offline.mjs";
 import { readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { openArchive } from "../../../packages/vault-backup/src/index.ts";
+import { openArchive, headerGeneration } from "../../../packages/vault-backup/src/index.ts";
 import {
   unb64,
   decryptDocument,
@@ -91,6 +91,7 @@ try {
       unb64(r.manifest),
       opened.chunks[i],
       r.hashes.map(unb64),
+      headerGeneration(opened.header),
     );
     const filename =
       Buffer.from(unb64(r.object)).toString("hex") + "-" + r.revision + ".bin";

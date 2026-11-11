@@ -20,6 +20,7 @@ pub enum Error {
     Expired,
     Busy,
     QuotaExceeded,
+    RateLimited { retry_after: u64 },
     InvalidProof,
     Storage,
     KeyService,
@@ -38,6 +39,7 @@ pub enum VaultState {
     Pending,
     Active,
     Restoring,
+    Purging,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Envelope {
@@ -47,6 +49,10 @@ pub struct Envelope {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Header {
+    #[serde(default)]
+    pub generation: Option<Generation>,
+    #[serde(default)]
+    pub recovery_verifier: Vec<u8>,
     pub id: Id,
     pub epoch: u64,
     pub state: VaultState,
@@ -267,3 +273,9 @@ mod integration_tests {
         );
     }
 }
+
+pub mod generation;
+pub use generation::*;
+
+pub mod mutation;
+pub use mutation::*;

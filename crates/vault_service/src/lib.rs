@@ -1,4 +1,11 @@
 mod auth;
+mod authorization;
+pub mod ceremonies;
+pub mod cleanup;
+pub mod generation;
+mod grants;
+pub mod mutations;
+pub mod recovery;
 pub mod runtime;
 use kinic_sqlite_compat::{Connection, OptionalExtension, params};
 use runtime::Environment;
@@ -85,6 +92,10 @@ fn credentials(db: &Connection) -> Result<Vec<passkey_auth::PasskeyCredential>> 
         .collect()
 }
 fn insert_credential(db: &Connection, c: &passkey_auth::PasskeyCredential) -> Result<()> {
+    let slot:Option<String>=db.query_row("SELECT key FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key LIKE 'credential-slot:%' ORDER BY key LIMIT 1",params![],|r|kinic_sqlite_compat::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
+    if let Some(slot) = slot {
+        db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![slot]).map_err(|_|Error::Storage)?;
+    }
     store::content::check_capacity(db, 65536)?;
     if credentials(db)?.len() >= 10 {
         return Err(Error::QuotaExceeded);
@@ -154,6 +165,9 @@ fn assert_proof(db: &Connection, ch: &Ceremony, json: &str) -> Result<()> {
     Ok(())
 }
 pub fn reserve_vault(env: &impl Environment, request: Reserve) -> Result<Header> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     env.transaction(|db| store::reserve(db, env.owner(), request, env.now()))
 }
@@ -167,6 +181,12 @@ pub fn list_unfinished_vaults(env: &impl Environment) -> Result<Vec<UnfinishedVa
 pub fn cancel_vault_setup(env: &impl Environment, vault: Id, attempt: Id) -> Result<()> {
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
+        if !env.mutation_authorized() {
+            let h = store::header(db, &vault)?;
+            if h.state != VaultState::Pending || h.sequence != 0 || !credentials(db)?.is_empty() {
+                return Err(Error::Unauthorized);
+            }
+        }
         store::setup::cancel(db, &vault, &attempt, env.now())?;
         let Some(mut c) = store::load::<Control>(db, "control")? else {
             return Ok(());
@@ -210,6 +230,9 @@ pub fn list_credentials(env: &impl Environment) -> Result<Vec<CredentialInfo>> {
 }
 
 pub async fn begin_unlock(env: &impl Environment, request: BeginUnlock) -> Result<Challenge> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     let token = env.transaction(|db| {
         let cfg = store::authorize(db, env.owner())?;
@@ -261,7 +284,11 @@ pub async fn begin_unlock(env: &impl Environment, request: BeginUnlock) -> Resul
             return Err(Error::QuotaExceeded);
         }
         c.challenges += 1;
-        c.serial = c.serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
+        c.serial = c
+            .serial
+            .checked_add(1)
+            .filter(|n| *n <= i64::MAX as u64)
+            .ok_or(Error::QuotaExceeded)?;
         let token = c.serial;
         c.random = Some(Flight {
             token,
@@ -332,6 +359,9 @@ pub async fn begin_unlock(env: &impl Environment, request: BeginUnlock) -> Resul
     })
 }
 pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result<KeyReply> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     let (cfg, token) = env.transaction(|db| {
         let mut cfg = store::authorize(db, env.owner())?;
@@ -344,7 +374,7 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         let h = live(db, &request.vault, env.now())?;
         epoch(&h, request.epoch)?;
         store::setup::check_attempt(db, &h, request.attempt.as_deref())?;
-        if h.state == VaultState::Active {
+        if h.state == VaultState::Active && !env.mutation_authorized() {
             let ch = ceremony(
                 db,
                 env.now(),
@@ -377,12 +407,19 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         }
         store::keys::reserve(
             db,
-            c.serial.checked_add(1).ok_or(Error::QuotaExceeded)?,
+            c.serial
+                .checked_add(1)
+                .filter(|n| *n <= i64::MAX as u64)
+                .ok_or(Error::QuotaExceeded)?,
             t,
             env.required_derive_payment(&h.key_name),
         )?;
         c.derives += 1;
-        c.serial = c.serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
+        c.serial = c
+            .serial
+            .checked_add(1)
+            .filter(|n| *n <= i64::MAX as u64)
+            .ok_or(Error::QuotaExceeded)?;
         let token = c.serial;
         c.derive = Some(Flight {
             token,
@@ -444,7 +481,13 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         let encrypted = env
             .derive_key(
                 &cfg.key_name,
-                owner_key_input(env.owner(), &request.vault, request.epoch)?,
+                env.transaction(|db| {
+                    let h = store::header(db, &request.vault)?;
+                    match h.generation {
+                        Some(g) => g.key_input(),
+                        None => Err(Error::Unauthorized),
+                    }
+                })?,
                 request.transport,
             )
             .await?;
@@ -466,7 +509,11 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         store::authorize(db, env.owner())?;
         let mut c = control(db)?;
         store::keys::settle(db, token, env.now(), actual)?;
-        let f = c.derive.take().filter(|f| f.token == token);
+        let f = if c.derive.as_ref().is_some_and(|f| f.token == token) {
+            c.derive.take()
+        } else {
+            None
+        };
         store::save(db, "control", &c)?;
         let Some(f) = f else {
             return Ok(Err(Error::Expired));
@@ -489,6 +536,9 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
     })?
 }
 pub fn activate_vault(env: &impl Environment, request: Activate) -> Result<Header> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     activate_inner(env, request, false)
 }
 fn activate_inner(env: &impl Environment, request: Activate, restoring: bool) -> Result<Header> {
@@ -564,6 +614,9 @@ fn activate_inner(env: &impl Environment, request: Activate, restoring: bool) ->
     })
 }
 pub fn manage_unlock_credential(env: &impl Environment, request: ManageCredential) -> Result<()> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
@@ -611,6 +664,9 @@ pub fn prepare_unlock_credential(
     vault: Id,
     registration: String,
 ) -> Result<Vec<u8>> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     env.transaction(|db| {
         let cfg = store::authorize(db, env.owner())?;
@@ -639,6 +695,9 @@ pub fn prepare_unlock_credential(
     })
 }
 pub fn begin_revision(env: &impl Environment, request: BeginRevision) -> Result<Upload> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     let payer_eligible = env.require_spending().is_ok();
     env.transaction(|db| {
         let cfg = store::authorize(db, env.owner())?;
@@ -650,12 +709,18 @@ pub fn begin_revision(env: &impl Environment, request: BeginRevision) -> Result<
     })
 }
 pub fn put_chunk(env: &impl Environment, upload: Id, index: u32, data: Vec<u8>) -> Result<()> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
         store::content::put(db, &upload, index, &data, env.now())
     })
 }
 pub fn commit_revision(env: &impl Environment, upload: Id) -> Result<Revision> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
         store::content::commit(db, &upload, env.now())
@@ -714,6 +779,9 @@ pub fn delete_object(
     expected_revision: u64,
     operation: Id,
 ) -> Result<Revision> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
@@ -728,12 +796,18 @@ pub fn delete_object(
     })
 }
 pub fn purge_object(env: &impl Environment, vault: Id, object: Id) -> Result<()> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
         store::content::purge(db, &vault, &object, env.now())
     })
 }
 pub fn collect_garbage(env: &impl Environment) -> Result<u64> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
         store::content::gc(db, env.now())
@@ -773,6 +847,9 @@ pub fn abort_export(env: &impl Environment, export: Id) -> Result<Header> {
     finish_export(env, export, false)
 }
 pub fn begin_restore(env: &impl Environment, request: BeginRestore) -> Result<Header> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     env.require_spending()?;
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
@@ -800,6 +877,9 @@ pub fn begin_restore_revision(
     revision: Revision,
     attempt: Option<Id>,
 ) -> Result<()> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     restore_transaction(env, &vault, attempt.as_deref(), |db, t| {
         store::restore::stage(db, &vault, revision, t)
     })
@@ -812,6 +892,9 @@ pub fn put_restore_chunk(
     data: Vec<u8>,
     attempt: Option<Id>,
 ) -> Result<()> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     restore_transaction(env, &vault, attempt.as_deref(), |db, t| {
         store::restore::put(db, &vault, index, &data, t)
     })
@@ -823,11 +906,17 @@ pub fn commit_restore_revision(
     sequence: u64,
     attempt: Option<Id>,
 ) -> Result<RestoreProgress> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     restore_transaction(env, &vault, attempt.as_deref(), |db, t| {
         store::restore::finish_record(db, &vault, sequence, t)
     })
 }
 pub fn commit_restore(env: &impl Environment, request: Activate) -> Result<Header> {
+    if !env.mutation_authorized() {
+        return Err(Error::Unauthorized);
+    }
     activate_inner(env, request, true)
 }
 pub fn get_active_export(env: &impl Environment) -> Result<Option<Export>> {

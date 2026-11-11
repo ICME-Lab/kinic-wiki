@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/api.ts",
     "./contracts": "./src/contracts.ts",
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./signed": "./src/signed.ts",
+    "./mutation-contracts": "./src/mutation-contracts.ts"
   },
   "dependencies": {
     "@icp-sdk/core": "5.4.0",

@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeArchive } from "../../../packages/vault-backup/src/index.ts";
+import { makeArchive, transformArchive } from "../../../packages/vault-backup/src/index.ts";
 import {
   aad,
   deriveKey,
@@ -17,7 +17,7 @@ import {
   pack,
   encryptDocument,
 } from "../../../packages/vault-crypto/src/documents.ts";
-test("standalone CLI recovers synthetic bytes and never prints the secret or contents", async () => {
+for (const version of [1, 2]) test(`standalone CLI v${version} recovers synthetic bytes and never prints the secret or contents`, async () => {
   const dir = await mkdtemp(join(tmpdir(), "kinic-vault-recovery-"));
   try {
     const raw = randomBytes(32),
@@ -64,11 +64,10 @@ test("standalone CLI recovers synthetic bytes and never prints the secret or con
       hashes: d.hashes.map(b64),
       deleted: false,
     };
-    await writeFile(
-      join(dir, "backup"),
-      await makeArchive(h, [r], async (_, i) => d.chunks[i], raw),
-    );
-    await writeFile(join(dir, "secret"), b64(secret));
+    let archive=await makeArchive(h,[r],async(_,i)=>d.chunks[i],raw), kit=secret;
+    if(version===2){const transformed=await transformArchive(archive,secret,{version:2,canister:'rrkah-fqaaa-aaaaa-aaaaq-cai',owner:'ryjl3-tyaaa-aaaaa-aaaba-cai',vault,epoch:1n,nonce:randomBytes(32),key_name:'key_1'},root);archive=transformed.archive;kit=transformed.recoverySecret;transformed.rootRaw.fill(0);}
+    await writeFile(join(dir,"backup"),archive);
+    await writeFile(join(dir,"secret"),b64(kit));
     const run = () =>
       spawnSync(
         process.execPath,

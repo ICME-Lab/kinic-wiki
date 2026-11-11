@@ -574,6 +574,7 @@ export class VaultClient {
       archive.root = undefined as never;
       const h = archive.header;
       const original: Header = {
+        generation: [], recovery_verifier: [],
         id: unb64(h.vault),
         epoch: BigInt(h.epoch),
         sequence: BigInt(h.sequence),
@@ -721,7 +722,8 @@ export function portableHeader(
       ciphertext: bytes(e.ciphertext),
     });
   return {
-    version: 1,
+    version: h.generation[0] ? 2 : 1,
+    ...(h.generation[0] ? {generation:{version:2 as const,canister:h.generation[0].canister.toText(),owner:h.generation[0].owner.toText(),vault:b64(bytes(h.generation[0].vault)),epoch:String(h.generation[0].epoch),nonce:b64(bytes(h.generation[0].nonce)),key_name:h.generation[0].key_name},recovery_verifier:b64(bytes(h.recovery_verifier))} : {}),
     ...stats,
     vault: b64(bytes(h.id)),
     epoch: String(h.epoch),

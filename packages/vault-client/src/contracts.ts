@@ -36,11 +36,21 @@ export interface BeginUnlock {
   'target' : Uint8Array | number[],
   'purpose' : Purpose,
 }
+export interface Bootstrap {
+  'public_key' : Uint8Array | number[],
+  'reserve' : Reserve,
+}
+export interface BootstrapReply { 'challenge' : Challenge, 'header' : Header }
 export interface Challenge {
   'expires' : bigint,
   'registration' : boolean,
   'credential_ids' : Array<Uint8Array | number[]>,
   'bytes' : Uint8Array | number[],
+}
+export interface CleanupProgress {
+  'job' : Uint8Array | number[],
+  'cursor' : bigint,
+  'complete' : boolean,
 }
 export interface CredentialInfo { 'id' : Uint8Array | number[] }
 export interface Derive {
@@ -63,6 +73,7 @@ export type Error = { 'Storage' : null } |
   { 'NotFound' : null } |
   { 'ExportInProgress' : null } |
   { 'Unauthorized' : null } |
+  { 'RateLimited' : { 'retry_after' : bigint } } |
   { 'Expired' : null } |
   { 'QuotaExceeded' : null } |
   { 'Conflict' : null };
@@ -86,12 +97,43 @@ export interface FundingConfig {
   'cycles_per_kinic' : bigint,
   'ledger' : Principal,
 }
+export interface Generation {
+  'vault' : Uint8Array | number[],
+  'owner' : Principal,
+  'epoch' : bigint,
+  'version' : number,
+  'canister' : Principal,
+  'nonce' : Uint8Array | number[],
+  'key_name' : string,
+}
+export interface GrantInfo {
+  'id' : Uint8Array | number[],
+  'expires' : bigint,
+  'next_counter' : bigint,
+  'generations' : Array<Generation>,
+  'purpose' : GrantPurpose,
+}
+export type GrantPurpose = { 'Restore' : { 'job' : Uint8Array | number[] } } |
+  { 'Credentials' : null } |
+  { 'Normal' : null } |
+  { 'Cleanup' : { 'job' : Uint8Array | number[] } } |
+  { 'Incident' : { 'job' : Uint8Array | number[] } } |
+  { 'Create' : null };
+export interface GrantRequest {
+  'credential' : Uint8Array | number[],
+  'public_key' : Uint8Array | number[],
+  'generations' : Array<Generation>,
+  'operation' : Uint8Array | number[],
+  'purpose' : GrantPurpose,
+}
 export interface Header {
   'id' : Uint8Array | number[],
   'normal' : [] | [Envelope],
+  'generation' : [] | [Generation],
   'epoch' : bigint,
   'backup_sequence' : [] | [bigint],
   'state' : VaultState,
+  'recovery_verifier' : Uint8Array | number[],
   'key_name' : string,
   'recovery' : [] | [Envelope],
   'sequence' : bigint,
@@ -120,6 +162,14 @@ export interface ManageCredential {
   'registration' : [] | [string],
   'assertion' : string,
 }
+export type MutationResult = { 'Key' : KeyReply } |
+  { 'Header' : Header } |
+  { 'Unit' : null } |
+  { 'Cleanup' : CleanupProgress } |
+  { 'Revision' : Revision } |
+  { 'Upload' : Upload } |
+  { 'Challenge' : Challenge } |
+  { 'Handle' : Uint8Array | number[] };
 export interface ObjectPage {
   'next' : [] | [Uint8Array | number[]],
   'entries' : Array<Revision>,
@@ -168,43 +218,51 @@ export type Result = { 'Ok' : Header } |
   { 'Err' : Error };
 export type Result_1 = { 'Ok' : bigint } |
   { 'Err' : Error };
-export type Result_10 = { 'Ok' : ExportPage } |
+export type Result_10 = { 'Ok' : Revision } |
   { 'Err' : Error };
-export type Result_11 = { 'Ok' : [] | [Export] } |
+export type Result_11 = { 'Ok' : KeyReply } |
   { 'Err' : Error };
-export type Result_12 = { 'Ok' : Uint8Array | number[] } |
+export type Result_12 = { 'Ok' : ExportPage } |
   { 'Err' : Error };
-export type Result_13 = { 'Ok' : [] | [VaultConfig] } |
+export type Result_13 = { 'Ok' : GrantInfo } |
   { 'Err' : Error };
-export type Result_14 = { 'Ok' : Quota } |
+export type Result_14 = { 'Ok' : [] | [Export] } |
   { 'Err' : Error };
-export type Result_15 = { 'Ok' : Array<CredentialInfo> } |
+export type Result_15 = { 'Ok' : Uint8Array | number[] } |
   { 'Err' : Error };
-export type Result_16 = { 'Ok' : ObjectPage } |
+export type Result_16 = { 'Ok' : [] | [VaultConfig] } |
   { 'Err' : Error };
-export type Result_17 = { 'Ok' : Array<Payment> } |
+export type Result_17 = { 'Ok' : Quota } |
   { 'Err' : Error };
-export type Result_18 = { 'Ok' : Array<UnfinishedVault> } |
+export type Result_18 = { 'Ok' : Array<CredentialInfo> } |
   { 'Err' : Error };
-export type Result_19 = { 'Ok' : Array<Header> } |
+export type Result_19 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_2 = { 'Ok' : Export } |
+export type Result_2 = { 'Ok' : Challenge } |
   { 'Err' : Error };
-export type Result_20 = { 'Ok' : [] | [Payment] } |
+export type Result_20 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_3 = { 'Ok' : null } |
+export type Result_21 = { 'Ok' : Array<UnfinishedVault> } |
   { 'Err' : Error };
-export type Result_4 = { 'Ok' : Upload } |
+export type Result_22 = { 'Ok' : Array<Header> } |
   { 'Err' : Error };
-export type Result_5 = { 'Ok' : Challenge } |
+export type Result_23 = { 'Ok' : MutationResult } |
   { 'Err' : Error };
-export type Result_6 = { 'Ok' : Payment } |
+export type Result_24 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
-export type Result_7 = { 'Ok' : RestoreProgress } |
+export type Result_3 = { 'Ok' : Export } |
   { 'Err' : Error };
-export type Result_8 = { 'Ok' : Revision } |
+export type Result_4 = { 'Ok' : null } |
   { 'Err' : Error };
-export type Result_9 = { 'Ok' : KeyReply } |
+export type Result_5 = { 'Ok' : Upload } |
+  { 'Err' : Error };
+export type Result_6 = { 'Ok' : BootstrapReply } |
+  { 'Err' : Error };
+export type Result_7 = { 'Ok' : Payment } |
+  { 'Err' : Error };
+export type Result_8 = { 'Ok' : [] | [CleanupProgress] } |
+  { 'Err' : Error };
+export type Result_9 = { 'Ok' : RestoreProgress } |
   { 'Err' : Error };
 export interface Revision {
   'deleted' : boolean,
@@ -248,35 +306,40 @@ export interface VaultConfig {
 }
 export type VaultState = { 'Active' : null } |
   { 'Restoring' : null } |
+  { 'Purging' : null } |
   { 'Pending' : null };
 export interface _SERVICE {
   'abort_export' : ActorMethod<[Uint8Array | number[]], Result>,
   'account_balance' : ActorMethod<[], Result_1>,
   'activate_vault' : ActorMethod<[Activate], Result>,
+  'begin_cleanup' : ActorMethod<[GrantRequest], Result_2>,
   'begin_export' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_2
+    Result_3
   >,
+  'begin_grant' : ActorMethod<[GrantRequest], Result_2>,
   'begin_restore' : ActorMethod<[BeginRestore], Result>,
   'begin_restore_revision' : ActorMethod<
     [Uint8Array | number[], Revision, [] | [Uint8Array | number[]]],
-    Result_3
+    Result_4
   >,
-  'begin_revision' : ActorMethod<[BeginRevision], Result_4>,
-  'begin_unlock' : ActorMethod<[BeginUnlock], Result_5>,
-  'cancel_pending_key_derivation' : ActorMethod<[], Result_3>,
-  'cancel_quote' : ActorMethod<[Uint8Array | number[]], Result_6>,
+  'begin_revision' : ActorMethod<[BeginRevision], Result_5>,
+  'begin_unlock' : ActorMethod<[BeginUnlock], Result_2>,
+  'bootstrap' : ActorMethod<[Bootstrap], Result_6>,
+  'cancel_pending_key_derivation' : ActorMethod<[], Result_4>,
+  'cancel_quote' : ActorMethod<[Uint8Array | number[]], Result_7>,
   'cancel_vault_setup' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_3
+    Result_4
   >,
+  'cleanup_status' : ActorMethod<[], Result_8>,
   'collect_garbage' : ActorMethod<[], Result_1>,
   'commit_restore' : ActorMethod<[Activate], Result>,
   'commit_restore_revision' : ActorMethod<
     [Uint8Array | number[], bigint, [] | [Uint8Array | number[]]],
-    Result_7
+    Result_9
   >,
-  'commit_revision' : ActorMethod<[Uint8Array | number[]], Result_8>,
+  'commit_revision' : ActorMethod<[Uint8Array | number[]], Result_10>,
   'delete_object' : ActorMethod<
     [
       Uint8Array | number[],
@@ -284,58 +347,64 @@ export interface _SERVICE {
       bigint,
       Uint8Array | number[],
     ],
-    Result_8
+    Result_10
   >,
-  'derive_vault_key' : ActorMethod<[Derive], Result_9>,
-  'export_index' : ActorMethod<[Uint8Array | number[], bigint], Result_10>,
+  'derive_vault_key' : ActorMethod<[Derive], Result_11>,
+  'export_index' : ActorMethod<[Uint8Array | number[], bigint], Result_12>,
+  'finish_cleanup' : ActorMethod<[Uint8Array | number[], string], Result_13>,
   'finish_export' : ActorMethod<[Uint8Array | number[], boolean], Result>,
-  'get_active_export' : ActorMethod<[], Result_11>,
+  'finish_grant' : ActorMethod<[Uint8Array | number[], string], Result_13>,
+  'get_active_export' : ActorMethod<[], Result_14>,
   'get_active_export_for_vault' : ActorMethod<
     [Uint8Array | number[]],
-    Result_11
+    Result_14
   >,
   'get_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
-    Result_12
+    Result_15
   >,
-  'get_config' : ActorMethod<[], Result_13>,
+  'get_config' : ActorMethod<[], Result_16>,
   'get_export_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
-    Result_12
+    Result_15
   >,
   'get_manifest' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_8
+    Result_10
   >,
-  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_14>,
+  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_17>,
   'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
-  'list_credentials' : ActorMethod<[], Result_15>,
+  'list_credentials' : ActorMethod<[], Result_18>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_10
+    Result_12
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_16
+    Result_19
   >,
-  'list_payments' : ActorMethod<[], Result_17>,
-  'list_unfinished_vaults' : ActorMethod<[], Result_18>,
-  'list_vaults' : ActorMethod<[], Result_19>,
-  'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_3>,
-  'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_6>,
-  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_20>,
+  'list_payments' : ActorMethod<[], Result_20>,
+  'list_unfinished_vaults' : ActorMethod<[], Result_21>,
+  'list_vaults' : ActorMethod<[], Result_22>,
+  'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_4>,
+  'mutate' : ActorMethod<
+    [Uint8Array | number[], Uint8Array | number[]],
+    Result_23
+  >,
+  'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_7>,
+  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_24>,
   'prepare_unlock_credential' : ActorMethod<
     [Uint8Array | number[], string],
-    Result_12
+    Result_15
   >,
   'purge_object' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_3
+    Result_4
   >,
   'put_chunk' : ActorMethod<
     [Uint8Array | number[], number, Uint8Array | number[]],
-    Result_3
+    Result_4
   >,
   'put_restore_chunk' : ActorMethod<
     [
@@ -344,12 +413,16 @@ export interface _SERVICE {
       Uint8Array | number[],
       [] | [Uint8Array | number[]],
     ],
-    Result_3
+    Result_4
   >,
-  'quote_purchase' : ActorMethod<[PurchaseRequest], Result_6>,
+  'quote_purchase' : ActorMethod<[PurchaseRequest], Result_7>,
+  'register_bootstrap' : ActorMethod<
+    [Uint8Array | number[], string],
+    Result_13
+  >,
   'reserve_vault' : ActorMethod<[Reserve], Result>,
-  'set_config' : ActorMethod<[[] | [VaultConfig]], Result_3>,
-  'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_3>,
+  'set_config' : ActorMethod<[[] | [VaultConfig]], Result_4>,
+  'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_4>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

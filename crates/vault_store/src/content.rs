@@ -69,11 +69,11 @@ pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
     })
 }
 pub fn usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT COALESCE(sum(CASE WHEN key IN ('control','candidate') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM (SELECT * FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(length(value)+length(id)+4096),0) FROM (SELECT * FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(charge),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(reserved),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*8192 FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*4096 FROM (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) GROUP BY vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM (SELECT * FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(65536),0) FROM (SELECT * FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(charge),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(reserved),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*8192 FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*4096 FROM (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) GROUP BY vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     Ok(n as u64)
 }
 pub fn global_usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights)+(SELECT COALESCE(sum(CASE WHEN key IN ('control','candidate') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(length(value)+length(id)+4096),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights)+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     Ok(n as u64)
 }
 pub fn check_capacity(db: &Connection, extra: u64) -> Result<()> {
@@ -254,7 +254,8 @@ pub fn begin_with_budget(
     if q.current.saturating_sub(old) + r.plain_size > VAULT_MAX {
         return Err(Error::QuotaExceeded);
     }
-    let reserved = r.plain_size
+    let reserved = WRAPPER_HEADROOM
+        + r.plain_size
         + r.chunk_hashes.len() as u64 * (16 + OVERHEAD)
         + raw.len() as u64 * 2
         + OVERHEAD * 3;
@@ -390,6 +391,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
     let hashes = serde_json::to_string(&rev.chunk_hashes).map_err(|_| Error::Storage)?;
     let charge = rev.plain_size
         + rev.chunk_hashes.len() as u64 * (16 + OVERHEAD)
+        + WRAPPER_HEADROOM
         + rev.manifest.len() as u64
         + hashes.len() as u64
         + OVERHEAD;
@@ -612,6 +614,7 @@ pub fn purge(db: &Connection, v: &[u8], o: &[u8], now: u64) -> Result<()> {
         params![v, o],
     )
     .map_err(db_error)?;
+    db.execute("DELETE FROM wrapper_slots WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2",params![v,o]).map_err(db_error)?;
     // Preserve head identity after purge so a stale expected_revision cannot recreate or collide with old AAD.
     put_header(db, &h)
 }
@@ -663,6 +666,7 @@ pub(crate) fn remove_revision(
         params![vault, object, revision],
     )
     .map_err(db_error)?;
+    db.execute("DELETE FROM wrapper_slots WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2 AND revision=?3",params![vault,object,revision]).map_err(db_error)?;
     db.execute(
         "DELETE FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision=?3)",
         params![vault, object, revision],

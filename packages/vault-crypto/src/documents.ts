@@ -1,3 +1,5 @@
+import { generationAAD, openV2, sealV2, type Generation } from "./generation.ts";
+import { strictJSON } from "./strict-json.ts";
 import {
   aad,
   importKey,
@@ -43,7 +45,7 @@ export type Metadata = {
   mime?: string;
 };
 export type Manifest = {
-  version: 1;
+  version: 1 | 2;
   dek: ReturnType<typeof pack>;
   metadata: ReturnType<typeof pack>;
   nonces: string[];
@@ -55,6 +57,7 @@ export async function encryptDocument(
   revision: bigint,
   metadata: Metadata,
   plaintext: Uint8Array,
+  generation?: Generation,
 ) {
   if (
     plaintext.length > 10 * 1024 * 1024 ||
@@ -64,7 +67,7 @@ export async function encryptDocument(
     throw Error("SizeLimit");
   const raw = randomBytes(32);
   const key = await importKey(raw);
-  const dek = await seal(root, raw, aad(vault, object, revision, "dek"));
+  const dek = generation ? await sealV2(root,raw,generationAAD(generation,object,revision,"dek")) : await seal(root, raw, aad(vault, object, revision, "dek"));
   raw.fill(0);
   const meta = utf8.encode(JSON.stringify(metadata));
   if (meta.length > 8192) throw Error("SizeLimit");
@@ -86,7 +89,7 @@ export async function encryptDocument(
   }
   const manifest = utf8.encode(
     JSON.stringify({
-      version: 1,
+      version: generation ? 2 : 1,
       dek: pack(dek),
       metadata: pack(encryptedMetadata),
       nonces,
@@ -100,23 +103,20 @@ export async function readManifest(
   object: Uint8Array,
   revision: bigint,
   bytes: Uint8Array,
+  generation?: Generation,
 ) {
   if (bytes.length > 65536) throw Error("InvalidManifest");
-  const m: Manifest = JSON.parse(
+  const m = strictJSON(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-  );
+  ) as Manifest;
   if (
-    m.version !== 1 ||
+    ![1,2].includes(m.version) ||
     !Array.isArray(m.nonces) ||
     m.nonces.length < 1 ||
     m.nonces.length > 10
   )
     throw Error("InvalidManifest");
-  const raw = await open(
-    root,
-    unpack(m.dek),
-    aad(vault, object, revision, "dek"),
-  );
+  const raw = await unwrapDEK(root,vault,object,revision,m,generation);
   const key = await importKey(raw);
   raw.fill(0);
   const metadata: Metadata = JSON.parse(
@@ -143,8 +143,9 @@ export async function decryptDocument(
   manifest: Uint8Array,
   chunks: Uint8Array[],
   hashes: Uint8Array[],
+  generation?: Generation,
 ) {
-  const parsed = await readManifest(root, vault, object, revision, manifest);
+  const parsed = await readManifest(root, vault, object, revision, manifest, generation);
   if (
     chunks.length !== parsed.manifest.nonces.length ||
     hashes.length !== chunks.length
@@ -167,4 +168,22 @@ export async function decryptDocument(
     );
   }
   return { metadata: parsed.metadata, plaintext: concat(...plain) };
+}
+
+export async function unwrapDEK(root:CryptoKey,vault:Uint8Array,object:Uint8Array,revision:bigint,m:Manifest,generation?:Generation){
+  if(m.version===1){if(m.dek.version!==1)throw Error("InvalidManifest");return open(root,unpack(m.dek),aad(vault,object,revision,"dek"));}
+  if(m.version!==2||!generation||b64(generation.vault)!==b64(vault))throw Error("InvalidGeneration");
+  return openV2(root,unpack(m.dek),generationAAD(generation,object,revision,"dek"));
+}
+/** Only replace DEK wrapping. Original content AAD/metadata/chunks remain byte-for-byte. */
+export async function rewrapManifest(source:CryptoKey,target:CryptoKey,vault:Uint8Array,object:Uint8Array,revision:bigint,bytes:Uint8Array,targetGeneration:Generation,sourceGeneration?:Generation){
+  if(bytes.length>65536)throw Error("InvalidManifest");
+  const parsed=await readManifest(source,vault,object,revision,bytes,sourceGeneration);
+  const raw=await unwrapDEK(source,vault,object,revision,parsed.manifest,sourceGeneration);
+  try {
+    const dek=await sealV2(target,raw,generationAAD(targetGeneration,object,revision,"dek"));
+    const reopened=await openV2(target,dek,generationAAD(targetGeneration,object,revision,"dek"));
+    try{if(b64(raw)!==b64(reopened))throw Error("InvalidWrapper");}finally{reopened.fill(0);}
+    return utf8.encode(JSON.stringify({version:2,dek:pack(dek),metadata:parsed.manifest.metadata,nonces:parsed.manifest.nonces}));
+  }finally{raw.fill(0);}
 }

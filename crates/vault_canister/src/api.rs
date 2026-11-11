@@ -10,6 +10,7 @@ use vault_types::*;
 struct Vault {
     owner: OwnerContext,
     started: u64,
+    maintenance: bool,
     derive_payment: std::cell::Cell<Option<u64>>,
     operation: std::cell::Cell<Option<(u64, bool)>>,
 }
@@ -19,9 +20,15 @@ impl Vault {
         Ok(Self {
             owner,
             started: meter(),
+            maintenance: true,
             derive_payment: std::cell::Cell::new(None),
             operation: std::cell::Cell::new(None),
         })
+    }
+    fn capture_cleanup() -> Result<Self> {
+        let mut env = Self::capture()?;
+        env.maintenance = false;
+        Ok(env)
     }
     fn execution_cycles(&self) -> u64 {
         meter().saturating_sub(self.started).saturating_add(
@@ -34,6 +41,14 @@ impl Vault {
         })
     }
     fn finish<T>(&self, result: Result<T>) -> Result<T> {
+        if self.operation.get().is_none()
+            && matches!(
+                &result,
+                Err(Error::Unauthorized | Error::InvalidProof | Error::Expired)
+            )
+        {
+            return result;
+        }
         let amount = self.execution_cycles();
         // Reserved completion remains chargeable after configuration changes and upgrades.
         if let Some(token) = self.operation_token() {
@@ -64,6 +79,17 @@ fn meter() -> u64 {
     }
 }
 impl Environment for Vault {
+    fn cleanup_existing_flights(
+        &self,
+        db: &Connection,
+        targets: &[Id],
+        cancel_live: bool,
+    ) -> Result<bool> {
+        crate::accounting::recover_pending_in(db, self.owner(), targets, cancel_live, self.now())
+    }
+    fn canister(&self) -> Principal {
+        ic_cdk::api::canister_self()
+    }
     fn owner(&self) -> Principal {
         self.owner.owner()
     }
@@ -75,7 +101,9 @@ impl Environment for Vault {
     }
     fn transaction<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         crate::state::transaction(|db| {
-            crate::accounting::maintain_expired_in(db, self.now())?;
+            if self.maintenance {
+                crate::accounting::maintain_expired_in(db, self.now())?;
+            }
             self.owner.run(db, |db| {
                 vault_store::config(db)?;
                 let value = f(db)?;
@@ -177,7 +205,7 @@ impl Environment for Vault {
     async fn public_key(&self, name: &str) -> Result<Vec<u8>> {
         management::vetkd_public_key(&management::VetKDPublicKeyArgs {
             canister_id: None,
-            context: CONTEXT.to_vec(),
+            context: KEY_CONTEXT_V2.to_vec(),
             key_id: key_id(name),
         })
         .await
@@ -188,7 +216,7 @@ impl Environment for Vault {
         let payment = self.required_derive_payment(name);
         let result = management::vetkd_derive_key(&management::VetKDDeriveKeyArgs {
             input,
-            context: CONTEXT.to_vec(),
+            context: KEY_CONTEXT_V2.to_vec(),
             key_id: key_id(name),
             transport_public_key: transport,
         })
@@ -516,7 +544,74 @@ fn get_active_export_for_vault(
 #[ic_cdk::update]
 fn cancel_pending_key_derivation() -> vault_types::Result<()> {
     let env = Vault::capture()?;
-    let result = with_service(|s| s.vault_recover_pending_work(env.owner, env.now()))
-        .map_err(|_| Error::Storage);
+    let result = Err(Error::Unauthorized);
     env.finish(result)
+}
+
+#[ic_cdk::update]
+async fn mutate(
+    payload: Vec<u8>,
+    signature: Vec<u8>,
+) -> vault_types::Result<vault_types::MutationResult> {
+    let env = Vault::capture_cleanup()?;
+    let r = vault_service::mutations::mutate(&env, payload, signature).await;
+    env.finish(r)
+}
+#[ic_cdk::update]
+async fn bootstrap(
+    request: vault_types::Bootstrap,
+) -> vault_types::Result<vault_types::BootstrapReply> {
+    let env = Vault::capture()?;
+    let r = vault_service::generation::bootstrap(&env, request).await;
+    env.finish(r)
+}
+#[ic_cdk::update]
+fn register_bootstrap(
+    attempt: vault_types::Id,
+    registration: String,
+) -> vault_types::Result<vault_types::GrantInfo> {
+    let env = Vault::capture()?;
+    let r = vault_service::generation::register(&env, attempt, registration);
+    env.finish(r)
+}
+#[ic_cdk::update]
+async fn begin_grant(
+    request: vault_types::GrantRequest,
+) -> vault_types::Result<vault_types::Challenge> {
+    let env = Vault::capture()?;
+    let r = vault_service::ceremonies::begin(&env, request).await;
+    env.finish(r)
+}
+#[ic_cdk::update]
+fn finish_grant(
+    operation: vault_types::Id,
+    proof: String,
+) -> vault_types::Result<vault_types::GrantInfo> {
+    let env = Vault::capture()?;
+    let r = vault_service::ceremonies::finish(&env, operation, proof);
+    env.finish(r)
+}
+#[ic_cdk::update]
+fn begin_cleanup(
+    request: vault_types::GrantRequest,
+) -> vault_types::Result<vault_types::Challenge> {
+    let env = Vault::capture_cleanup()?;
+    let r = vault_service::cleanup::begin(&env, request);
+    env.finish(r)
+}
+#[ic_cdk::update]
+fn finish_cleanup(
+    operation: vault_types::Id,
+    proof: String,
+) -> vault_types::Result<vault_types::GrantInfo> {
+    let env = Vault::capture_cleanup()?;
+    let r = vault_service::cleanup::finish(&env, operation, proof);
+    env.finish(r)
+}
+
+#[ic_cdk::update]
+fn cleanup_status() -> vault_types::Result<Option<vault_types::CleanupProgress>> {
+    let env = Vault::capture()?;
+    let r = vault_service::cleanup::status(&env);
+    env.finish(r)
 }

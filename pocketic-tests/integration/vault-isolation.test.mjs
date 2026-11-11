@@ -286,10 +286,10 @@ try {
   }
   actor.setPrincipal(other);
   assert.equal(ok(await actor.account_balance()), 1_000_000_000n);
-  const reserved = ok(await actor.reserve_vault({
+  const reserved = ok(await actor.bootstrap({reserve: {
     vault: new Uint8Array(16).fill(7),
     operation: new Uint8Array(16).fill(8)
-  }));
+  }, public_key: new Uint8Array(32).fill(9)})).header;
   assert.equal(reserved.epoch, 0n);
   actor.setPrincipal(owner);
   assert.ok('Err' in (await actor.get_vault_header(reserved.id)));

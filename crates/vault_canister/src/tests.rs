@@ -387,3 +387,65 @@ fn pending_fee_reserves_global_payment_capacity_before_dispatch() {
         Err(vault_types::Error::QuotaExceeded)
     ));
 }
+
+#[test]
+fn signed_cleanup_accounting_is_atomic_scoped_bounded_and_preserves_sent_cost() {
+    use kinic_sqlite_compat::params;
+    state::initialize().unwrap();
+    let owner = p(95);
+    fund(owner, 100_000_000_000);
+    let context = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::transaction(|db|context.run(db,|db|{
+  vault_store::keys::reserve(db,1,0,20_000_000_000)?;vault_store::keys::mark_sent(db,1,20_000_000_000)?;
+  vault_store::save(db,"control",&serde_json::json!({"serial":1,"derive":{"token":1,"vault":vec![1;16]},"random":null}))
+ })).unwrap();
+    let s = state::State;
+    s.vault_reserve_cycles(&owner.to_text(), "derive:1", 30_000_000_000, 0)
+        .unwrap();
+    s.vault_checkpoint_execution(&owner.to_text(), "derive:1", 2_000_000)
+        .unwrap();
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE accounts SET balance_cycles=0 WHERE owner=?1",
+            params![owner.to_text()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let run = |targets: &[Vec<u8>], rollback: bool| {
+        state::transaction(|db| {
+            context.run(db, |db| {
+                let result = accounting::recover_pending_in(db, owner, targets, true, 200)?;
+                if rollback {
+                    return Err(vault_types::Error::Conflict);
+                }
+                Ok(result)
+            })
+        })
+    };
+    assert!(!run(&[vec![2; 16]], false).unwrap());
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
+    assert!(run(&[vec![1; 16]], true).is_err());
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
+    assert!(!run(&[vec![1; 16]], false).unwrap());
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 9_998_000_000);
+    assert!(!run(&[vec![1; 16]], false).unwrap());
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 9_998_000_000);
+    s.vault_start_generation().unwrap();
+    assert!(run(&[vec![1; 16]], false).unwrap());
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 9_998_000_000);
+    // Tiny positive cleanup balances cap execution debit; no affordability gate or trap.
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE accounts SET balance_cycles=1 WHERE owner=?1",
+            params![owner.to_text()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    s.vault_charge_execution(&owner.to_text(), 20_000_000, 200_000)
+        .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
+}

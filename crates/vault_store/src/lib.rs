@@ -4,7 +4,11 @@ use serde::{Serialize, de::DeserializeOwned};
 use vault_types::*;
 
 pub use kinic_sqlite_compat;
-pub const SCHEMA: &str = include_str!("schema.sql");
+pub const SCHEMA: &str = concat!(
+    include_str!("schema.sql"),
+    include_str!("wrapper-schema.sql")
+);
+pub const WRAPPER_SCHEMA: &str = include_str!("wrapper-schema.sql");
 
 // Store functions are synchronous. The caller must provide one transaction per operation.
 pub fn load<T: DeserializeOwned>(db: &Connection, key: &str) -> Result<Option<T>> {
@@ -16,7 +20,8 @@ pub fn load<T: DeserializeOwned>(db: &Connection, key: &str) -> Result<Option<T>
         )
         .optional()
         .map_err(|_| Error::Storage)?;
-    raw.map(|s| serde_json::from_str(&s).map_err(|_| Error::Storage))
+    raw.filter(|s| s != "null")
+        .map(|s| serde_json::from_str(&s).map_err(|_| Error::Storage))
         .transpose()
 }
 pub fn save<T: Serialize>(db: &Connection, key: &str, value: &T) -> Result<()> {
@@ -25,7 +30,18 @@ pub fn save<T: Serialize>(db: &Connection, key: &str, value: &T) -> Result<()> {
         return Err(Error::QuotaExceeded);
     }
     let existing:Option<String>=db.query_row("SELECT value FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![key],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-    let reserved = matches!(key, "control" | "candidate");
+    let reserved = matches!(
+        key,
+        "control"
+            | "candidate"
+            | "cleanup"
+            | "authorities"
+            | "bootstrap"
+            | "grant-ceremony"
+            | "grant-random"
+    ) || key.starts_with("grant:")
+        || key.starts_with("grant-slot:")
+        || key.starts_with("credential-slot:");
     let extra = if reserved {
         if existing.is_some() { 0 } else { 65536 }
     } else {
@@ -157,6 +173,8 @@ pub fn reserve(db: &Connection, caller: Principal, r: Reserve, now: u64) -> Resu
         return Err(Error::Busy);
     }
     let h = Header {
+        generation: None,
+        recovery_verifier: vec![],
         id: r.vault,
         epoch: 0,
         state: VaultState::Pending,
@@ -243,3 +261,7 @@ fn select_owner(db: &Connection, owner: Principal) -> Result<()> {
 }
 pub mod keys;
 pub const EXPIRY_SCHEMA: &str = include_str!("expiry-schema.sql");
+
+pub mod cleanup;
+
+pub mod format;

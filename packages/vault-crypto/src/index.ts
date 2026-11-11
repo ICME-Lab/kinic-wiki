@@ -191,3 +191,6 @@ export function verifiedKEK(
   return importKey(vetkey.deriveSymmetricKey("kinic-vault/vrk-wrap/v1", 32));
 }
 export { TransportSecretKey };
+
+export * from "./generation.ts";
+export * from "./recovery.ts";

@@ -5,6 +5,7 @@ export class Session {
     return this.controller.signal;
   }
   transport?: TransportSecretKey;
+  signer?: { destroy(): void };
   generation = 0;
   root?: CryptoKey;
   raw?: Uint8Array;
@@ -30,6 +31,8 @@ export class Session {
     this.raw = undefined;
     this.root = undefined;
     this.transport = undefined;
+    this.signer?.destroy();
+    this.signer = undefined;
     for (const u of this.urls) URL.revokeObjectURL(u);
     this.urls.clear();
     this.onLock();

@@ -9,6 +9,7 @@ vi.mock("../../vault-crypto/src/index.ts", async (original) => ({
 }));
 it("verifies a reserved Vault using its persisted old key even after the default key changes", async () => {
   const header: Header = {
+  generation: [], recovery_verifier: [],
     id: new Uint8Array(16),
     epoch: 0n,
     sequence: 0n,

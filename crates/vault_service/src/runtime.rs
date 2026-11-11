@@ -5,10 +5,25 @@ use vault_types::{KeyReply, Result};
 #[allow(async_fn_in_trait)]
 pub trait Environment {
     fn owner(&self) -> Principal;
+    fn canister(&self) -> Principal {
+        Principal::from_slice(&[1])
+    }
+    /// Private service wrappers alone mint this capability in production.
+    fn mutation_authorized(&self) -> bool {
+        false
+    }
     fn now(&self) -> u64;
     fn balance(&self) -> u128;
     fn transaction<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T>;
     fn require_spending(&self) -> Result<()>;
+    fn cleanup_existing_flights(
+        &self,
+        _db: &Connection,
+        _targets: &[vault_types::Id],
+        _cancel_live: bool,
+    ) -> Result<bool> {
+        Ok(true)
+    }
     fn reserve_challenge(&self, _token: u64) -> Result<()> {
         Ok(())
     }

@@ -6,7 +6,8 @@ import { VaultClient } from '@kinic/vault-client';
 import type { Header, VaultActor } from '@kinic/vault-client/contracts';
 import { VaultBackups, VaultEncryptedCleanup } from './management';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-const header: Header = { id: new Uint8Array(16), epoch: 0n, sequence: 0n, state: { Active: null }, key_name: 'test_key_1', normal: [], recovery: [], backup_sequence: [], backup_at: [] };
+const header: Header = {
+        generation: [], recovery_verifier: [], id: new Uint8Array(16), epoch: 0n, sequence: 0n, state: { Active: null }, key_name: 'test_key_1', normal: [], recovery: [], backup_sequence: [], backup_at: [] };
 const run = (f: () => Promise<void>) => { void f(); };
 it('offers owner-authenticated ciphertext purge while locked without a payer or root key', async () => {
   const object = new Uint8Array(16).fill(3);
