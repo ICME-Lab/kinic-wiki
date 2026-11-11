@@ -1,4 +1,4 @@
-// Build real three-Vault/ten-passkey owner states through signed production APIs.
+// Build real three-Vault/ten-passkey owner states through signed APIs in synthetic-ledger acceptance.
 import {
   b,
   key,

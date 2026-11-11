@@ -36,7 +36,7 @@ try {
   pic = await PocketIc.create(server.getUrl());
   const wasm = resolve(
     root,
-    "target/wasm32-unknown-unknown/release/vault_canister.wasm",
+    "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
   );
   const baseline = resolve(root, "target/vault-capacity-baseline.wasm");
   const frozen = resolve(root, "target/vault-dedicated-task5-final.wasm");

@@ -1,3 +1,5 @@
+> Production funding is unavailable in default builds until reviewed authoritative ledger reconciliation exists. Quotes and all transfer dispatch (including exact retries) are rejected before ledger calls, regardless of controller funding configuration. The synthetic test-only build is explicitly certified and nondeployable. Existing journals, holds, balances and valid late callback settlement remain intact. The payment lifecycle below describes retained historical/synthetic accounting behavior, not enabled production purchases.
+
 # Dedicated Vault accounting capacity
 
 The dedicated Vault reserves **16 MiB within its shared 200 MiB logical limit** for private prepaid accounting. This reservation exists even when there are no accounts. Vault content, retained history, uploads, exports and other control state share the remaining 184 MiB, including the existing global overhead. Owner storage billing continues to use owner content/control usage; the fixed accounting reservation is not charged to each owner and creates no credit.

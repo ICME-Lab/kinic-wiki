@@ -36,7 +36,6 @@ fn source(
     let h = store::header(db, &source.vault)?;
     if source.owner != env.owner()
         || source.canister != env.canister()
-        || source.key_name != store::config(db)?.key_name
         || !authorization::covers(&a.scope, source)
         || h.generation.as_ref() != Some(source)
         || h.state != VaultState::Active

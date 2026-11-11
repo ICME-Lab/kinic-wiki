@@ -66,6 +66,7 @@ try {
       new Uint8Array(certified.response.body),
       new Uint8Array(response.body),
     );
+    if (path === "/config.json") assert.equal(JSON.parse(new TextDecoder().decode(response.body)).fundingMode, "unavailable");
     const body = new Uint8Array(response.body);
     body[0] ^= 1;
     assert.throws(() => verify({ ...response, body }));

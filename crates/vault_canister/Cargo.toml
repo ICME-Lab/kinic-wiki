@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
+[features]
+# Never deploy: exercises synthetic ledger behavior only. Production has no funding switch.
+synthetic-funding-test-only = []
 [dependencies]
 vault-service = { path = "../vault_service" }
 vault-store = { path = "../vault_store" }

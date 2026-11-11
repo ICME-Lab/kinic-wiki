@@ -105,6 +105,7 @@ export class SignedMutations {
   }
   async send(operation: MutationOperation) {
     if (this.pending || this.flight) throw Error("ResolvePendingMutation");
+    if (this.rejected) throw Error("FreshProofRequired");
     if (
       !this.key ||
       BigInt(Math.floor(Date.now() / 1000)) >= this.grant.expires

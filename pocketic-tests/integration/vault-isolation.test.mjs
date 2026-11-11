@@ -30,7 +30,7 @@ const server = await startVaultPocketIc(PocketIcServer.getBinPath());
 let pic;
 try {
   pic = await PocketIc.create(server.getUrl());
-  const wasm = resolve(root, 'target/wasm32-unknown-unknown/release/vault_canister.wasm');
+  const wasm = resolve(root, 'target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm');
   const {
     actor,
     canisterId
@@ -76,6 +76,7 @@ try {
     if (path === '/config.json') {
       const c = JSON.parse(new TextDecoder().decode(r.body));
       assert.equal(c.canister, canisterId.toText());
+      assert.equal(c.fundingMode, "synthetic-test-only");
       assert.equal(c.derivationOrigin, `https://${canisterId.toText()}.icp0.io`);
     }
     if (path.endsWith('ii-alternative-origins')) assert.deepEqual(JSON.parse(new TextDecoder().decode(r.body)), {
@@ -305,6 +306,36 @@ try {
   actor.setPrincipal(owner);
   assert.ok('Paid' in ok(await actor.payment_status(req.operation))[0].status);
   console.log('PASS dedicated ICRC-2 API with fake ledger: caller source and explicit beneficiary, dynamic fee, ambiguous-to-Duplicate exact retry, one credit, allowance/balance/BadFee statuses, paid state and owner data survive upgrade. No real token transfer.');
+  // Upgrade the synthetic journal into default production: even configured controllers
+  // cannot enable quotes, fresh payments or exact unknown retries. Reads/holds persist.
+  await fake.actor.configure(6, 10n);
+  const unresolvedRequest = await request(154);
+  ok(await actor.quote_purchase(unresolvedRequest));
+  const unresolved = ok(await actor.pay_purchase(unresolvedRequest.operation));
+  assert.ok('Unknown' in unresolved.status);
+  const unpaidRequest = await request(155);
+  ok(await actor.quote_purchase(unpaidRequest));
+  const feeCount = await fake.actor.fee_calls(), transferCount = (await fake.actor.calls()).length;
+  const journal = ok(await actor.list_payments());
+  actor.setPrincipal(other);
+  const oldBalance = ok(await actor.account_balance());
+  actor.setPrincipal(owner);
+  await pic.upgradeCanister({ sender: owner, canisterId,
+    wasm: resolve(root, 'target/wasm32-unknown-unknown/release/vault_canister.wasm'), arg: IDL.encode([], []) });
+  ok(await actor.set_funding_config([{ ledger: fake.canisterId, recipient: canisterId, cycles_per_kinic: 1_000_000_000n }]));
+  assert.deepEqual(await actor.quote_purchase(await request(156)), { Err: { Unauthorized: null } });
+  for (const operation of [unresolvedRequest.operation, unpaidRequest.operation, req.operation])
+    assert.deepEqual(await actor.pay_purchase(operation), { Err: { Unauthorized: null } });
+  assert.equal(await fake.actor.fee_calls(), feeCount);
+  assert.equal((await fake.actor.calls()).length, transferCount);
+  assert.deepEqual(ok(await actor.list_payments()), journal);
+  assert.deepEqual(ok(await actor.payment_status(unresolvedRequest.operation)), [unresolved]);
+  assert.ok('Err' in await actor.cancel_quote(unresolvedRequest.operation));
+  assert.ok('Expired' in ok(await actor.cancel_quote(unpaidRequest.operation)).status);
+  actor.setPrincipal(other);
+  assert.equal(ok(await actor.account_balance()), oldBalance);
+  actor.setPrincipal(owner);
+  console.log('PASS default production funding gate before fee/transfer calls, including exact unknown retry; upgrade preserves journal, balances and protected unknown hold; controller config cannot enable funding.');
   // Wiki's DID and binary expose no Vault API and remain independently upgradeable.
   const billing = IDL.Record({
     kinic_ledger_canister_id: IDL.Text,

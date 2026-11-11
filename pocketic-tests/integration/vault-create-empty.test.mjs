@@ -156,7 +156,7 @@ console.log(
     .update(
       readFileSync(
         new URL(
-          "../../target/wasm32-unknown-unknown/release/vault_canister.wasm",
+          "../../target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
           import.meta.url,
         ),
       ),
@@ -168,8 +168,19 @@ console.log(
   try {
     const c = await scoped(f);
     await f.pic.advanceTime(421000);
+    const defaultA = ok(await f.actor.get_config())[0];
+    assert.equal(f.sourceG.key_name, defaultA.key_name);
+    const defaultB = { ...defaultA, key_name: "test_key_1" };
+    ok(await f.actor.set_config([defaultB]));
     const oldSource = await f.fresh({ Normal: null }, [f.sourceG], c);
     const r = await start(f, c);
+    assert.ok("Err" in await f.actor.set_config([defaultA]), "pending creation must pin target configuration");
+    const forged = { ...f.sourceG, key_name: defaultB.key_name };
+    assert.ok("Err" in await f.actor.begin_grant({
+      operation: b(199), public_key: f.ephemeral.public, credential: c.id,
+      purpose: { CreateEmpty: { ...r.purpose.CreateEmpty, authorizer_instance: forged } },
+      generations: [forged],
+    }));
     const context = ok(await f.actor.incident_context())[0];
     assert.equal(ok(await f.actor.list_credentials()).length, 2);
     assert.equal(r.j.generation.length, 0);
@@ -209,6 +220,8 @@ console.log(
         })),
     );
     let target = await allocate(f, r);
+    assert.equal(target.key_name, defaultB.key_name);
+    assert.notEqual(target.key_name, f.sourceG.key_name);
     assert.ok(
       "Err" in
         (await f.actor.begin_grant({

@@ -133,6 +133,8 @@ try {
       "vault-canister",
       "-p",
       "vfs-canister",
+      "--features",
+      "vault-canister/synthetic-funding-test-only",
       "--target",
       "wasm32-unknown-unknown",
       "--release",
@@ -180,6 +182,8 @@ try {
     join(root, "target/vault-browser-provenance.json"),
     JSON.stringify(
       {
+        funding_mode: "synthetic-test-only",
+        deployable: false,
         source_commit: output("git", ["rev-parse", "HEAD"]),
         working_tree_diff_sha256: hash(output("git", ["diff", "--binary"])),
         project,

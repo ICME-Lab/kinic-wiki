@@ -125,7 +125,7 @@ const {
 } = cryptoLib;
 export async function restoreFixture(
   baseline = process.env.VAULT_RESTORE_WASM ??
-    "target/wasm32-unknown-unknown/release/vault_canister.wasm",
+    "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
   { priorCanisters = 0, credits = 2_000_000_000_000n } = {},
 ) {
   const server = await startVaultPocketIc(PocketIcServer.getBinPath());
@@ -137,7 +137,7 @@ export async function restoreFixture(
     });
     const wasm = resolve(
       root,
-      "target/wasm32-unknown-unknown/release/vault_canister.wasm",
+      "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
     );
     for (let i = 0; i < priorCanisters; i++)
       await pic.createCanister({ sender: owner, cycles: 1_000_000_000_000n });

@@ -5,6 +5,19 @@ use kinic_sqlite_compat::{self as sql, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vault_types::{Error, Result};
+/// Certified build provenance, independent of controller configuration and origin selection.
+pub const FUNDING_MODE: &str = if cfg!(feature = "synthetic-funding-test-only") {
+    "synthetic-test-only"
+} else {
+    "unavailable"
+};
+fn require_synthetic_funding() -> Result<()> {
+    if cfg!(feature = "synthetic-funding-test-only") {
+        Ok(())
+    } else {
+        Err(Error::Unauthorized)
+    }
+}
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize, PartialEq)]
 pub struct FundingConfig {
     pub ledger: Principal,
@@ -489,6 +502,7 @@ fn payment_status(operation: Vec<u8>) -> vault_types::Result<Option<Payment>> {
 }
 #[ic_cdk::update]
 async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment> {
+    require_synthetic_funding()?;
     let caller = ic_cdk::api::msg_caller();
     auth(caller)?;
     auth(request.beneficiary)?;
@@ -561,6 +575,8 @@ fn nat(n: &Nat) -> Option<u64> {
 }
 #[ic_cdk::update]
 async fn pay_purchase(operation: Vec<u8>) -> vault_types::Result<Payment> {
+    // Even an exact retry could newly debit: production must not dispatch it.
+    require_synthetic_funding()?;
     if operation.len() != 16 {
         return Err(Error::InvalidInput);
     }
@@ -642,4 +658,33 @@ fn cancel_quote(operation: Vec<u8>) -> vault_types::Result<Payment> {
         save(db, &p)?;
         Ok(p)
     })
+}
+
+#[cfg(all(test, not(feature = "synthetic-funding-test-only")))]
+mod production_gate_tests {
+    use super::*;
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    fn rejected_before_ic_or_ledger_calls(f: impl Future<Output = Result<Payment>>) {
+        let mut f = pin!(f);
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(matches!(
+            f.as_mut().poll(&mut cx),
+            Poll::Ready(Err(Error::Unauthorized))
+        ));
+    }
+    #[test]
+    fn production_quote_and_payment_fail_before_caller_fee_or_transfer_calls() {
+        rejected_before_ic_or_ledger_calls(quote_purchase(PurchaseRequest {
+            operation: vec![1; 16],
+            beneficiary: Principal::anonymous(),
+            amount_e8s: 100_000_000,
+            min_credits: 1,
+            created_at_time: 0,
+        }));
+        rejected_before_ic_or_ledger_calls(pay_purchase(vec![1; 16]));
+    }
 }

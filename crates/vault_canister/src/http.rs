@@ -98,7 +98,7 @@ pub fn initialize() {
             "https://id.ai".into(),
         )
     };
-    let config = serde_json::json!({"canister":id,"host":host,"derivationOrigin":derivation,"identityProvider":provider,"origin":origin,"local":local.is_some()});
+    let config = serde_json::json!({"canister":id,"host":host,"derivationOrigin":derivation,"identityProvider":provider,"origin":origin,"local":local.is_some(),"fundingMode":crate::funding::FUNDING_MODE});
     let mut entries = vec![];
     for (path, mime, bytes) in ASSETS {
         entries.push(entry(

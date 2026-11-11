@@ -224,3 +224,26 @@ it("shows a sanitized unlock failure without restoring keys or private content",
   expect(screen.queryByLabelText("Private note body")).toBeNull();
   expect(client.session.raw).toBeUndefined();
 });
+it.each(["InvalidProof", "Busy", "Unauthorized"])(
+  "retains the active editor draft after %s so a fresh explicit save can succeed",
+  async (error) => {
+    const { client } = await mounted();
+    fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "unsaved title" } });
+    let savedBody = "";
+    const save = vi.spyOn(client, "save").mockRejectedValueOnce(Error(error)).mockImplementation(async (_metadata, plain) => {
+      savedBody = new TextDecoder().decode(plain);
+      return {
+        revision: 1n, deleted: false, object: new Uint8Array(16), vault: header.id,
+        chunk_hashes: [], sequence: 1n, manifest: new Uint8Array(), plain_size: 1n,
+      };
+    });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save document" })); });
+    expect((screen.getByLabelText("Private note body") as HTMLTextAreaElement).value).toBe("synthetic secret draft");
+    expect((screen.getByLabelText("Document title") as HTMLInputElement).value).toBe("unsaved title");
+    expect(client.session.root).toBeDefined();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save document" })); });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1][0].title).toBe("unsaved title");
+    expect(savedBody).toBe("synthetic secret draft");
+  },
+);

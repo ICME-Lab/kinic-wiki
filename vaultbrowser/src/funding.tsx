@@ -72,6 +72,7 @@ export function Funding({
   const alive = useRef(true),
     working = useRef(false),
     approved = useRef(false);
+  const [fundingEnabled, setFundingEnabled] = useState(false);
   const [amount, setAmount] = useState("1");
   const [quote, setQuote] = useState<Payment>();
   const [historyReady, setHistoryReady] = useState(false);
@@ -102,6 +103,14 @@ export function Funding({
   useEffect(() => {
     let active = true;
     alive.current = true;
+    void loadConfig()
+      .then((config) => {
+        if (active)
+          setFundingEnabled(config.fundingMode === "synthetic-test-only");
+      })
+      .catch(() => {
+        if (active) setFundingEnabled(false);
+      });
     void client.actor
       .list_payments()
       .then((result) => {
@@ -137,10 +146,13 @@ export function Funding({
   return (
     <div className="grid gap-3">
       <p className="text-sm">
-        Pay from this Vault identity’s KINIC account. For a different wallet,
-        use this Vault principal as the beneficiary of the dedicated purchase
-        API.
+        Production funding is unavailable until authoritative ledger
+        reconciliation is reviewed and implemented. Existing payment records
+        remain available; do not send replacement payments.
       </p>
+      {fundingEnabled ? (
+        <output>Synthetic ledger test build only. Never use real funds.</output>
+      ) : null}
       <label className="grid gap-1 text-sm">
         KINIC amount
         <input
@@ -148,15 +160,16 @@ export function Funding({
           inputMode="decimal"
           className="rounded border border-line p-2"
           value={amount}
-          disabled={busy || !!quote}
+          disabled={busy || !!quote || !fundingEnabled}
           onChange={(e) => setAmount(e.target.value)}
         />
       </label>
       {!quote ? (
         <VaultButton
-          disabled={busy || !historyReady}
+          disabled={busy || !historyReady || !fundingEnabled}
           onClick={() =>
             work(async (check) => {
+              if (!fundingEnabled) throw Error("FundingUnavailable");
               if (!/^\d+(\.\d{1,8})?$/.test(amount))
                 throw Error("InvalidAmount");
               const [whole, frac = ""] = amount.split(".");
@@ -199,11 +212,13 @@ export function Funding({
           <output>{Object.keys(quote.status)[0]}</output>
           {"Quoted" in quote.status ? (
             <VaultButton
-              disabled={busy}
+              disabled={busy || !fundingEnabled}
               onClick={() =>
                 work(async (check) => {
                   const config = await loadConfig();
                   check();
+                  if (config.fundingMode !== "synthetic-test-only")
+                    throw Error("FundingUnavailable");
                   const agent = HttpAgent.createSync({
                     host: config.host,
                     identity: client.identity,
@@ -267,13 +282,14 @@ export function Funding({
             <>
               <p className="text-sm">
                 The ledger outcome is unknown. Retry only this exact payment.
-                After the retry window, ledger reconciliation is required; do
-                not create a replacement payment.
+                Production retries are disabled. No authoritative reconciliation
+                tool exists yet; do not create a replacement payment.
               </p>
               <VaultButton
-                disabled={busy}
+                disabled={busy || !fundingEnabled}
                 onClick={() =>
                   work(async (check) => {
+                    if (!fundingEnabled) throw Error("FundingUnavailable");
                     const paid = ok(
                       await client.actor.pay_purchase(quote.request.operation),
                     );

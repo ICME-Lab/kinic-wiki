@@ -128,7 +128,7 @@ try {
   });
   const wasm = resolve(
     root,
-    "target/wasm32-unknown-unknown/release/vault_canister.wasm",
+    "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
   );
   const fixture = await pic.setupCanister({
     sender: owner,

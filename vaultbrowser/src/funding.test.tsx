@@ -11,6 +11,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import type { VaultClient } from "@kinic/vault-client";
 import type { Payment } from "@kinic/vault-client/contracts";
 const mocks = vi.hoisted(() => ({
+  mode: "synthetic-test-only",
   approve: vi.fn(),
   agent: vi.fn(),
 }));
@@ -29,11 +30,13 @@ vi.mock("./config", () => ({
     canister: "aaaaa-aa",
     host: "https://icp0.io",
     local: false,
+    fundingMode: mocks.mode,
   }),
 }));
 import { Funding } from "./funding";
 afterEach(() => {
   cleanup();
+  mocks.mode = "synthetic-test-only";
   vi.clearAllMocks();
 });
 const payment: Payment = {
@@ -207,4 +210,31 @@ it("does not submit a payment after lock while ledger approval is still pending"
   resolve({ Ok: 8n });
   await new Promise((r) => setTimeout(r, 0));
   expect(c.actor.pay_purchase).not.toHaveBeenCalled();
+});
+
+it.each(["Quoted", "Unknown"])("production funding keeps %s history readable without approving or paying", async (status) => {
+  mocks.mode = "unavailable";
+  const c = client({ ...payment, status: { [status]: null } } as Payment);
+  render(<Funding client={c} onFunded={async () => {}} />);
+  const check = await screen.findByRole("button", { name: "Check payment status" });
+  expect(screen.getByText(/Production funding is unavailable/)).toBeTruthy();
+  const pay = screen.getByRole("button", { name: status === "Quoted" ? "Approve and pay this quote" : "Retry same payment" });
+  expect((pay as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(pay);
+  fireEvent.click(check);
+  await waitFor(() => expect(c.actor.payment_status).toHaveBeenCalled());
+  expect(mocks.approve).not.toHaveBeenCalled();
+  expect(c.actor.pay_purchase).not.toHaveBeenCalled();
+  expect(c.actor.quote_purchase).not.toHaveBeenCalled();
+});
+it("production cannot request new quotes", async () => {
+  mocks.mode = "unavailable";
+  const c = client();
+  vi.mocked(c.actor.list_payments).mockResolvedValue({ Ok: [] });
+  render(<Funding client={c} onFunded={async () => {}} />);
+  await waitFor(() => expect(c.actor.list_payments).toHaveBeenCalled());
+  const quote = screen.getByRole("button", { name: "Get quote" });
+  expect((quote as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(quote);
+  expect(c.actor.quote_purchase).not.toHaveBeenCalled();
 });

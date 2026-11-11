@@ -674,6 +674,7 @@ jobs:
         run: |
           pnpm --dir vaultbrowser build
           cargo build -p vault-canister -p vfs-canister --target wasm32-unknown-unknown --release --locked
+          node pocketic-tests/scripts/build-vault-synthetic-funding.mjs
           node pocketic-tests/scripts/build-vault-ledger.mjs
           node pocketic-tests/scripts/build-vault-client-acceptance.mjs
       - name: Rebuild reachable upgrade baselines
@@ -709,4 +710,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: vault-baseline-provenance
-          path: target/vault-*.json
+          path: |
+            target/vault-*.json
+            target/vault-synthetic-funding-build/provenance.json

@@ -11,7 +11,7 @@ import type {
 } from "./contracts";
 import type { MutationOperation, CleanupAction } from "./mutation-contracts";
 import { Session } from "./session";
-import { SignedMutations, ephemeralSigner } from "./signed";
+import { SignedMutations, authorityContext, ephemeralSigner } from "./signed";
 import { assertCredential, register } from "./webauthn";
 import {
   randomBytes,
@@ -29,7 +29,8 @@ export const cryptoGeneration = (g: Generation) => ({
 });
 export class OrdinaryAuthority {
   private signer?: SignedMutations;
-  private normal = false;
+  private normal?: string;
+  private authorizing?: object;
   private detachCleanup: () => void;
   credential?: Uint8Array;
   constructor(
@@ -49,9 +50,11 @@ export class OrdinaryAuthority {
   clear() {
     this.signer?.destroy();
     this.signer = undefined;
-    this.normal = false;
+    this.normal = undefined;
+    this.authorizing = undefined;
   }
   private install(grant: GrantInfo, keys: CryptoKeyPair) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     this.signer?.destroy();
     this.signer = new SignedMutations(
       this.actor,
@@ -60,43 +63,51 @@ export class OrdinaryAuthority {
       grant,
       keys,
     );
-    this.normal = "Normal" in grant.purpose;
+    this.normal =
+      "Normal" in grant.purpose ? authorityContext(grant.generations) : undefined;
   }
   async authorize(purpose: GrantPurpose, generations: Generation[]) {
-    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
-    const ticket = this.session.capture(),
-      keys = await ephemeralSigner();
-    this.session.check(ticket);
-    const list = ok(await this.actor.list_credentials());
-    this.session.check(ticket);
-    const credential =
-      this.credential ?? (list.length === 1 ? bytes(list[0].id) : undefined);
-    if (!credential) throw Error("ChoosePasskey");
-    const operation = randomBytes(16),
-      cleanup = "Cleanup" in purpose || "CancelCreation" in purpose;
-    const request = {
-      operation,
-      public_key: keys.publicKey,
-      credential,
-      purpose,
-      generations,
-    };
-    const ch = ok(
-      await (cleanup
-        ? this.actor.begin_cleanup(request)
-        : this.actor.begin_grant(request)),
-    );
-    this.session.check(ticket);
-    const proof = await assertCredential(ch, this.rp(), this.session.signal);
-    this.session.check(ticket);
-    const grant = ok(
-      await (cleanup
-        ? this.actor.finish_cleanup(operation, proof)
-        : this.actor.finish_grant(operation, proof)),
-    );
-    this.session.check(ticket);
-    this.install(grant, keys.keys);
-    return grant;
+    if (this.signer?.hasPending || this.authorizing)
+      throw Error("ResolvePendingMutation");
+    const authorization = {};
+    this.authorizing = authorization;
+    try {
+      const ticket = this.session.capture(),
+        keys = await ephemeralSigner();
+      this.session.check(ticket);
+      const list = ok(await this.actor.list_credentials());
+      this.session.check(ticket);
+      const credential =
+        this.credential ?? (list.length === 1 ? bytes(list[0].id) : undefined);
+      if (!credential) throw Error("ChoosePasskey");
+      const operation = randomBytes(16),
+        cleanup = "Cleanup" in purpose || "CancelCreation" in purpose;
+      const request = {
+        operation,
+        public_key: keys.publicKey,
+        credential,
+        purpose,
+        generations,
+      };
+      const ch = ok(
+        await (cleanup
+          ? this.actor.begin_cleanup(request)
+          : this.actor.begin_grant(request)),
+      );
+      this.session.check(ticket);
+      const proof = await assertCredential(ch, this.rp(), this.session.signal);
+      this.session.check(ticket);
+      const grant = ok(
+        await (cleanup
+          ? this.actor.finish_cleanup(operation, proof)
+          : this.actor.finish_grant(operation, proof)),
+      );
+      this.session.check(ticket);
+      this.install(grant, keys.keys);
+      return grant;
+    } finally {
+      if (this.authorizing === authorization) this.authorizing = undefined;
+    }
   }
   async bootstrap(vault: Uint8Array, attempt: Uint8Array) {
     const ticket = this.session.capture(),
@@ -122,6 +133,7 @@ export class OrdinaryAuthority {
     return reply.header;
   }
   async send(operation: MutationOperation) {
+    if (this.authorizing) throw Error("ResolvePendingMutation");
     const ticket = this.session.capture();
     if (!this.signer) throw Error("FreshProofRequired");
     if (this.signer.hasPending) throw Error("ResolvePendingMutation");
@@ -146,7 +158,37 @@ export class OrdinaryAuthority {
     return result;
   }
   async normalSend(operation: MutationOperation, generation: Generation) {
-    if (!this.normal) await this.authorize({ Normal: null }, [generation]);
+    // Unresolved requests retain their exact bytes even after expiry or generation changes.
+    if (this.signer?.hasPending || this.authorizing)
+      throw Error("ResolvePendingMutation");
+    if (!this.signer?.reusable || this.normal !== authorityContext([generation])) {
+      const ticket = this.session.capture();
+      const current = async () => {
+        const header = ok(await this.actor.get_vault_header(generation.vault));
+        this.session.check(ticket);
+        if (
+          !("Active" in header.state) ||
+          authorityContext(header.generation) !== authorityContext([generation])
+        )
+          throw Error("TargetChanged");
+      };
+      await current();
+      await this.authorize({ Normal: null }, [generation]);
+      const installed = this.signer;
+      try {
+        await current();
+      } catch (error) {
+        // The fresh grant has never dispatched a request; do not reuse a binding
+        // that the authoritative header has already shown to be stale.
+        if (
+          this.session.capture() === ticket &&
+          this.signer === installed &&
+          !installed?.hasPending
+        )
+          this.clear();
+        throw error;
+      }
+    }
     return this.send(operation);
   }
   async retry() {

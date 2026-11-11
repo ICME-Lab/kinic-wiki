@@ -706,3 +706,55 @@ fn restore_working_migration_preserves_old_pending_and_bills_only_forward() {
         Ok(())
     }).unwrap();
 }
+
+#[test]
+fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
+    state::initialize().unwrap();
+    let wallet = p(210);
+    let request = PurchaseRequest {
+        operation: vec![211; 16],
+        beneficiary: p(212),
+        amount_e8s: 100_000_000,
+        min_credits: 20_000_000,
+        created_at_time: 0,
+    };
+    record_quote(
+        wallet,
+        request.clone(),
+        FundingConfig {
+            ledger: p(213),
+            recipient: p(214),
+            cycles_per_kinic: 100_000_000,
+        },
+        10,
+        0,
+    )
+    .unwrap();
+    for _ in 0..99 {
+        let sent = begin_payment(wallet, &request.operation, 0).unwrap();
+        complete_payment(&sent, Outcome::Unknown).unwrap();
+    }
+    let last = begin_payment(wallet, &request.operation, 0).unwrap();
+    assert_eq!(last.attempt, 100);
+    assert!(begin_payment(wallet, &request.operation, 121_000_000_000).is_err());
+    assert!(begin_payment(wallet, &request.operation, 24 * 3600 * 1_000_000_000).is_err());
+    let mut unrelated = last.clone();
+    unrelated.request.beneficiary = p(215);
+    assert!(complete_payment(&unrelated, Outcome::Paid(4)).is_err());
+    unrelated = last.clone();
+    unrelated.config.ledger = p(216);
+    assert!(complete_payment(&unrelated, Outcome::Paid(4)).is_err());
+    state::initialize().unwrap(); // persisted journal survives runtime generation change
+    let paid = complete_payment(&last, Outcome::Paid(4)).unwrap();
+    assert_eq!(paid.status, Status::Paid(4));
+    assert_eq!(complete_payment(&last, Outcome::Paid(4)).unwrap(), paid);
+    assert_eq!(
+        complete_payment(&last, Outcome::Rejected(Status::Rejected)).unwrap(),
+        paid
+    );
+    assert_eq!(
+        state::State.balance(&p(212).to_text()).unwrap(),
+        100_000_000
+    );
+    assert_eq!(state::State.balance(&p(215).to_text()).unwrap(), 0);
+}

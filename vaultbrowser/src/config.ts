@@ -6,8 +6,10 @@ export interface BrowserConfig {
   identityProvider: string;
   origin: string;
   local: boolean;
+  fundingMode?: "unavailable" | "synthetic-test-only";
 }
 export function validateConfig(c: BrowserConfig, origin: string): BrowserConfig {
+  if (c.fundingMode !== undefined && !["unavailable", "synthetic-test-only"].includes(c.fundingMode)) throw Error('InvalidConfiguration');
   const id = Principal.fromText(c.canister).toText();
   const host = new URL(c.host),
     d = new URL(c.derivationOrigin),

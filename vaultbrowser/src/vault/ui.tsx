@@ -71,7 +71,7 @@ const errors: Record<string, string> = {
   ChoosePasskey:
     "Choose the registered passkey that authorizes this Vault or account action.",
   FreshProofRequired: "Unlock with a registered passkey before making changes.",
-  GrantExpired: "The passkey session expired. Lock and unlock the Vault again.",
+  GrantExpired: "The passkey authorization expired. Save again to verify your passkey; your draft is still open.",
   LegacyRecoveryRequired:
     "This legacy Vault requires the recovery workflow. Encrypted backup remains available.",
   ResolvePendingMutation:

@@ -527,3 +527,62 @@ fn create_empty_cancellation_at_each_key_await_fences_reply_and_preserves_source
         );
     }
 }
+
+#[test]
+fn create_empty_source_retains_key_a_after_default_changes_to_b() {
+    let (env, key, source, r) = setup();
+    env.transaction(|db| {
+        let mut config = store::config(db)?;
+        assert_ne!(source.key_name, "key_1");
+        config.key_name = "key_1".into();
+        db.execute(
+            "UPDATE global_settings SET value=?1 WHERE key='config'",
+            params![serde_json::to_string(&config).unwrap()],
+        )
+        .unwrap();
+        let mut forged = r.clone();
+        forged.generations[0].key_name = "key_1".into();
+        if let GrantPurpose::CreateEmpty {
+            authorizer_instance,
+            ..
+        } = &mut forged.purpose
+        {
+            authorizer_instance.key_name = "key_1".into();
+        }
+        assert_eq!(
+            create_empty::validate(db, &env, &forged),
+            Err(Error::Unauthorized)
+        );
+        Ok(())
+    })
+    .unwrap();
+    let g = grant(&env, &key, r, 1);
+    let j = allocated(&env, &g);
+    assert_eq!(j.generation.as_ref().unwrap().key_name, "key_1");
+    stage(&env, &g, 1);
+    call(&env, &g, 3, MutationOperation::CreateEmptyActivate).unwrap();
+    let normal = normal_grant(&env, &key, &source, 124, 2);
+    let result = call(
+        &env,
+        &normal,
+        0,
+        MutationOperation::Derive(Derive {
+            vault: source.vault.clone(),
+            epoch: source.epoch,
+            transport: ic_bls12_381::G1Affine::generator().to_compressed().to_vec(),
+            assertion: None,
+            attempt: None,
+        }),
+    )
+    .unwrap();
+    assert!(matches!(result, MutationResult::Handle(_)));
+    assert_eq!(*env.public_names.borrow(), vec![source.key_name.clone()]);
+    env.transaction(|db| {
+        assert_eq!(
+            store::header(db, &source.vault)?.generation,
+            Some(source.clone())
+        );
+        Ok(())
+    })
+    .unwrap();
+}
