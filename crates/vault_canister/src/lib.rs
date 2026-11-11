@@ -1,5 +1,6 @@
 mod accounting;
 mod api;
+mod capacity;
 mod funding;
 mod http;
 mod schema;
@@ -45,5 +46,7 @@ fn candid_contract_matches() {
     }
 }
 
+#[cfg(test)]
+mod capacity_tests;
 #[cfg(test)]
 mod tests;

@@ -615,3 +615,9 @@ fn cleanup_status() -> vault_types::Result<Option<vault_types::CleanupProgress>>
     let r = vault_service::cleanup::status(&env);
     env.finish(r)
 }
+
+/// Aggregate capacity is public metadata; it never allocates an owner or account.
+#[ic_cdk::query]
+fn global_capacity() -> vault_types::Result<vault_types::GlobalCapacity> {
+    crate::state::transaction(vault_store::content::global_capacity)
+}

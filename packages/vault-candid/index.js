@@ -255,6 +255,15 @@ export const idlFactory = ({ IDL }) => {
     'charged' : IDL.Nat64,
   });
   const Result_17 = IDL.Variant({ 'Ok' : Quota, 'Err' : Error });
+  const GlobalCapacity = IDL.Record({
+    'used' : IDL.Nat64,
+    'overcommitted' : IDL.Bool,
+    'limit' : IDL.Nat64,
+    'overage' : IDL.Nat64,
+    'accounting_reserved' : IDL.Nat64,
+    'legacy_excess' : IDL.Nat64,
+  });
+  const Result_18 = IDL.Variant({ 'Ok' : GlobalCapacity, 'Err' : Error });
   const HttpRequest = IDL.Record({
     'url' : IDL.Text,
     'method' : IDL.Text,
@@ -269,7 +278,7 @@ export const idlFactory = ({ IDL }) => {
     'status_code' : IDL.Nat16,
   });
   const CredentialInfo = IDL.Record({ 'id' : IDL.Vec(IDL.Nat8) });
-  const Result_18 = IDL.Variant({
+  const Result_19 = IDL.Variant({
     'Ok' : IDL.Vec(CredentialInfo),
     'Err' : Error,
   });
@@ -277,8 +286,8 @@ export const idlFactory = ({ IDL }) => {
     'next' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'entries' : IDL.Vec(Revision),
   });
-  const Result_19 = IDL.Variant({ 'Ok' : ObjectPage, 'Err' : Error });
-  const Result_20 = IDL.Variant({ 'Ok' : IDL.Vec(Payment), 'Err' : Error });
+  const Result_20 = IDL.Variant({ 'Ok' : ObjectPage, 'Err' : Error });
+  const Result_21 = IDL.Variant({ 'Ok' : IDL.Vec(Payment), 'Err' : Error });
   const UnfinishedVault = IDL.Record({
     'expires' : IDL.Nat64,
     'cleaning' : IDL.Bool,
@@ -287,11 +296,11 @@ export const idlFactory = ({ IDL }) => {
     'state' : VaultState,
     'namespace' : IDL.Opt(IDL.Vec(IDL.Nat8)),
   });
-  const Result_21 = IDL.Variant({
+  const Result_22 = IDL.Variant({
     'Ok' : IDL.Vec(UnfinishedVault),
     'Err' : Error,
   });
-  const Result_22 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
+  const Result_23 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
   const ManageCredential = IDL.Record({
     'remove' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'vault' : IDL.Vec(IDL.Nat8),
@@ -308,8 +317,8 @@ export const idlFactory = ({ IDL }) => {
     'Challenge' : Challenge,
     'Handle' : IDL.Vec(IDL.Nat8),
   });
-  const Result_23 = IDL.Variant({ 'Ok' : MutationResult, 'Err' : Error });
-  const Result_24 = IDL.Variant({ 'Ok' : IDL.Opt(Payment), 'Err' : Error });
+  const Result_24 = IDL.Variant({ 'Ok' : MutationResult, 'Err' : Error });
+  const Result_25 = IDL.Variant({ 'Ok' : IDL.Opt(Payment), 'Err' : Error });
   return IDL.Service({
     'abort_export' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result], []),
     'account_balance' : IDL.Func([], [Result_1], ['query']),
@@ -380,8 +389,9 @@ export const idlFactory = ({ IDL }) => {
       ),
     'get_quota' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_17], []),
     'get_vault_header' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result], []),
+    'global_capacity' : IDL.Func([], [Result_18], ['query']),
     'http_request' : IDL.Func([HttpRequest], [HttpResponse], ['query']),
-    'list_credentials' : IDL.Func([], [Result_18], []),
+    'list_credentials' : IDL.Func([], [Result_19], []),
     'list_history' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Nat64],
         [Result_12],
@@ -389,20 +399,20 @@ export const idlFactory = ({ IDL }) => {
       ),
     'list_objects' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_19],
+        [Result_20],
         [],
       ),
-    'list_payments' : IDL.Func([], [Result_20], ['query']),
-    'list_unfinished_vaults' : IDL.Func([], [Result_21], []),
-    'list_vaults' : IDL.Func([], [Result_22], []),
+    'list_payments' : IDL.Func([], [Result_21], ['query']),
+    'list_unfinished_vaults' : IDL.Func([], [Result_22], []),
+    'list_vaults' : IDL.Func([], [Result_23], []),
     'manage_unlock_credential' : IDL.Func([ManageCredential], [Result_4], []),
     'mutate' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_23],
+        [Result_24],
         [],
       ),
     'pay_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_7], []),
-    'payment_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_24], ['query']),
+    'payment_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_25], ['query']),
     'prepare_unlock_credential' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Text],
         [Result_15],

@@ -525,7 +525,7 @@ fn quota_reservations_in_two_vaults_meet_the_exact_global_boundary() {
         };
         let one = request(a.clone(), 64);
         let two = request(b.clone(), 65);
-        let base = content::quota(&db, &a).unwrap().charged;
+        let base = content::global_usage(&db).unwrap();
         content::begin(&db, one.clone(), 10).unwrap();
         content::begin(&db, two.clone(), 10).unwrap();
         let reservations = content::quota(&db, &a).unwrap().reserved;
@@ -544,7 +544,10 @@ fn quota_reservations_in_two_vaults_meet_the_exact_global_boundary() {
         let quota = content::quota(&db, &a).unwrap();
         if excess == 0 {
             result.unwrap();
-            assert_eq!(quota.charged + quota.reserved, TOTAL_MAX);
+            assert_eq!(
+                quota.charged + quota.reserved + capacity::ACCOUNTING_POOL,
+                TOTAL_MAX
+            );
         } else {
             assert_eq!(result.unwrap_err(), Error::QuotaExceeded);
             assert!(quota.reserved < reservations);
@@ -1042,4 +1045,47 @@ fn v2_empty_target_restore_validates_generation_seed_and_rejects_v1_zero_root() 
         .unwrap();
         assert_eq!(restore::ready(&db, &g.vault, 1).is_ok(), valid);
     }
+}
+
+#[test]
+fn capacity_overcommit_preserves_read_export_reuse_and_bounded_cleanup() {
+    let db = fixture();
+    let vault = active_fixture(&db);
+    pending_revision(&db, &vault, 0, 10);
+    content::commit(&db, &[10; 16], 1).unwrap();
+    let first = content::begin_export(&db, &vault, &[80; 16], 1).unwrap();
+    content::finish_export(&db, &first.id, true, 1).unwrap();
+    // Legacy versions could retain multiple finished snapshots. Replacing one
+    // must not demand growth even while another inactive row remains.
+    let mut legacy = first.clone();
+    legacy.id = vec![83; 16];
+    legacy.state = "Finished".into();
+    db.execute("INSERT INTO exports VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,'Finished')",params![legacy.id,vault,serde_json::to_string(&legacy).unwrap(),legacy.expires as i64]).unwrap();
+    let overage = 1234;
+    let fill = TOTAL_MAX - content::global_usage(&db).unwrap() + overage;
+    db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),x'ff',x'ff',1,1,NULL,0,x'','[]',1,?1)",params![fill as i64]).unwrap();
+    let status = content::global_capacity(&db).unwrap();
+    assert!(status.overcommitted);
+    assert_eq!(status.overage, overage);
+    assert_eq!(
+        content::chunk(&db, &vault, &[2; 16], 1, 0).unwrap(),
+        vec![7; 17]
+    );
+    assert_eq!(header(&db, &vault).unwrap().id, vault);
+    assert_eq!(
+        content::check_capacity(&db, 1).unwrap_err(),
+        Error::QuotaExceeded
+    );
+    let second = content::begin_export(&db, &vault, &[81; 16], 2).unwrap();
+    assert_eq!(second.vault, vault);
+    assert_eq!(content::global_capacity(&db).unwrap(), status);
+    assert_eq!(
+        content::begin_export(&db, &vault, &[82; 16], 2).unwrap_err(),
+        Error::Busy
+    );
+    content::finish_export(&db, &second.id, true, 2).unwrap();
+    db.execute("DELETE FROM revisions WHERE vault=x'ff'", params![])
+        .unwrap();
+    assert!(!content::global_capacity(&db).unwrap().overcommitted);
+    content::check_capacity(&db, 1).unwrap();
 }

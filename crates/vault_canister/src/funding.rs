@@ -65,7 +65,59 @@ fn load(db: &sql::Connection, w: Principal, id: &[u8]) -> Result<Option<Payment>
     raw.map(|v| serde_json::from_str(&v).map_err(|_| Error::Storage))
         .transpose()
 }
+fn payment_size(p: &Payment) -> Result<usize> {
+    let raw = serde_json::to_string(p).map_err(|_| Error::Storage)?;
+    vault_types::capacity::row_size(
+        &[
+            p.wallet.to_text().len(),
+            p.request.operation.len(),
+            raw.len(),
+        ],
+        1,
+    )
+    .ok_or(Error::QuotaExceeded)
+}
+/// Check the maximum-width callback, not merely the smaller Quoted/InFlight row.
+/// All receipt variants are typed; ledger free text is deliberately never stored.
+fn validate_receipts(p: &Payment) -> Result<()> {
+    if p.request.operation.len() != 16 || p.memo.len() != 32 {
+        return Err(Error::InvalidInput);
+    }
+    let mut widest = p.clone();
+    widest.fee = u64::MAX;
+    widest.credits = u64::MAX;
+    widest.created_at_time = u64::MAX;
+    widest.request.amount_e8s = u64::MAX;
+    widest.request.min_credits = u64::MAX;
+    widest.request.created_at_time = u64::MAX;
+    widest.config.cycles_per_kinic = u64::MAX;
+    widest.generation = i64::MIN;
+    widest.attempt = u64::MAX;
+    widest.sent_at = u64::MAX;
+    widest.uncertain = false;
+    // JSON encodes bytes as decimal arrays, so reserve the largest byte width too.
+    widest.memo = vec![255; 32];
+    widest.request.operation = vec![255; 16];
+    for status in [
+        Status::Quoted,
+        Status::InFlight,
+        Status::Unknown,
+        Status::Paid(u64::MAX),
+        Status::BadFee(u64::MAX),
+        Status::InsufficientFunds,
+        Status::InsufficientAllowance,
+        Status::Expired,
+        Status::Rejected,
+    ] {
+        widest.status = status;
+        if payment_size(&widest)? > vault_types::capacity::PAYMENT_ROW {
+            return Err(Error::QuotaExceeded);
+        }
+    }
+    Ok(())
+}
 fn save(db: &sql::Connection, p: &Payment) -> Result<()> {
+    validate_receipts(p)?;
     let expiry = if matches!(p.status, Status::Quoted) {
         p.created_at_time / 1_000_000_000 + 300
     } else if matches!(p.status, Status::InFlight | Status::Unknown) {
@@ -195,6 +247,21 @@ pub fn admit_quote(
             token,
             expires,
         };
+        validate_receipts(&flight.payment)?;
+        let raw = serde_json::to_string(&flight).map_err(|_| Error::Storage)?;
+        if vault_types::capacity::row_size(
+            &[
+                wallet.to_text().len(),
+                flight.payment.request.operation.len(),
+                raw.len(),
+            ],
+            3,
+        )
+        .ok_or(Error::QuotaExceeded)?
+            > vault_types::capacity::PAYMENT_ROW
+        {
+            return Err(Error::QuotaExceeded);
+        }
         db.execute("INSERT INTO quote_fee_flights(wallet,operation,token,generation,expires_ns,record) VALUES(?1,?2,?3,?4,?5,?6)",params![wallet.to_text(),flight.payment.request.operation,token,generation,i64::try_from(expires).map_err(|_|Error::InvalidInput)?,serde_json::to_string(&flight).map_err(|_|Error::Storage)?]).map_err(|_|Error::Storage)?;
         Ok(QuoteAdmission::Fee(flight))
     })
@@ -276,6 +343,8 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         if now < p.created_at_time || now - p.created_at_time > max {
             return Err(Error::Expired);
         }
+        crate::capacity::admit_beneficiary(db, p.request.beneficiary)?;
+        validate_receipts(&p)?;
         // Reserve arithmetic capacity before the ledger can debit. Other in-flight credits and
         // possible reservation refunds count even while an account has no persisted balance row.
         let beneficiary = p.request.beneficiary.to_text();
@@ -292,7 +361,7 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         let mut capacity =
             u128::from(balance as u64) + u128::from(refunds as u64) + u128::from(p.credits);
         let mut statement = db
-            .prepare("SELECT record FROM payments LIMIT 1024")
+            .prepare("SELECT record FROM payments")
             .map_err(|_| Error::Storage)?;
         let records: Vec<String> =
             sql::query_map(&mut statement, params![], |r| sql::row_get(r, 0))

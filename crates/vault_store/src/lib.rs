@@ -1,3 +1,4 @@
+mod accounting_capacity;
 use candid::Principal;
 use kinic_sqlite_compat::{self as sql, Connection, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};

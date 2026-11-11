@@ -510,12 +510,23 @@ pub(crate) fn record_entry(
     now: i64,
     operation: Option<&[u8]>,
 ) -> vault_types::Result<()> {
+    use vault_types::capacity::*;
+    if owner.len() > PRINCIPAL_TEXT
+        || kind.len() > KIND
+        || operation.unwrap_or(&[]).len() > 16
+        || row_size(
+            &[owner.len(), kind.len(), operation.unwrap_or(&[]).len()],
+            4,
+        )
+        .ok_or(Error::QuotaExceeded)?
+            > SMALL_ROW
+    {
+        return Err(Error::InvalidInput);
+    }
+    // Audit is disposable history only: payment receipts and reservation/checkpoint
+    // journals carry the exactly-once state. Evict BEFORE allocating the new row.
+    db.execute("DELETE FROM account_ledger WHERE id IN (SELECT id FROM account_ledger ORDER BY id LIMIT max(0,(SELECT count(*) FROM account_ledger)-9999))",params![]).map_err(|_|Error::Storage)?;
     db.execute("INSERT INTO account_ledger(owner,kind,amount_cycles,balance_after,at_ms,operation) VALUES(?1,?2,?3,?4,?5,?6)",params![owner,kind,amount,balance,now,operation.unwrap_or(&[])]).map_err(|_|Error::Storage)?;
-    db.execute(
-        "DELETE FROM account_ledger WHERE id<(SELECT max(id)-9999 FROM account_ledger)",
-        params![],
-    )
-    .map_err(|_| Error::Storage)?;
     Ok(())
 }
 

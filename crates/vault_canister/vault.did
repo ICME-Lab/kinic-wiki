@@ -89,6 +89,15 @@ type Generation = record {
   nonce : blob;
   key_name : text;
 };
+// Shared logical capacity; accounting is reserved globally, never billed per owner.
+type GlobalCapacity = record {
+  used : nat64;
+  overcommitted : bool;
+  limit : nat64;
+  overage : nat64;
+  accounting_reserved : nat64;
+  legacy_excess : nat64;
+};
 type GrantInfo = record {
   id : blob;
   expires : nat64;
@@ -202,14 +211,15 @@ type Result_14 = variant { Ok : opt Export; Err : Error };
 type Result_15 = variant { Ok : blob; Err : Error };
 type Result_16 = variant { Ok : opt VaultConfig; Err : Error };
 type Result_17 = variant { Ok : Quota; Err : Error };
-type Result_18 = variant { Ok : vec CredentialInfo; Err : Error };
-type Result_19 = variant { Ok : ObjectPage; Err : Error };
+type Result_18 = variant { Ok : GlobalCapacity; Err : Error };
+type Result_19 = variant { Ok : vec CredentialInfo; Err : Error };
 type Result_2 = variant { Ok : Challenge; Err : Error };
-type Result_20 = variant { Ok : vec Payment; Err : Error };
-type Result_21 = variant { Ok : vec UnfinishedVault; Err : Error };
-type Result_22 = variant { Ok : vec Header; Err : Error };
-type Result_23 = variant { Ok : MutationResult; Err : Error };
-type Result_24 = variant { Ok : opt Payment; Err : Error };
+type Result_20 = variant { Ok : ObjectPage; Err : Error };
+type Result_21 = variant { Ok : vec Payment; Err : Error };
+type Result_22 = variant { Ok : vec UnfinishedVault; Err : Error };
+type Result_23 = variant { Ok : vec Header; Err : Error };
+type Result_24 = variant { Ok : MutationResult; Err : Error };
+type Result_25 = variant { Ok : opt Payment; Err : Error };
 type Result_3 = variant { Ok : Export; Err : Error };
 type Result_4 = variant { Ok; Err : Error };
 type Result_5 = variant { Ok : Upload; Err : Error };
@@ -289,17 +299,19 @@ service : () -> {
   get_manifest : (blob, blob, nat64) -> (Result_10);
   get_quota : (blob) -> (Result_17);
   get_vault_header : (blob) -> (Result);
+  // Aggregate capacity is public metadata; it never allocates an owner or account.
+  global_capacity : () -> (Result_18) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
-  list_credentials : () -> (Result_18);
+  list_credentials : () -> (Result_19);
   list_history : (blob, blob, nat64) -> (Result_12);
-  list_objects : (blob, blob) -> (Result_19);
-  list_payments : () -> (Result_20) query;
-  list_unfinished_vaults : () -> (Result_21);
-  list_vaults : () -> (Result_22);
+  list_objects : (blob, blob) -> (Result_20);
+  list_payments : () -> (Result_21) query;
+  list_unfinished_vaults : () -> (Result_22);
+  list_vaults : () -> (Result_23);
   manage_unlock_credential : (ManageCredential) -> (Result_4);
-  mutate : (blob, blob) -> (Result_23);
+  mutate : (blob, blob) -> (Result_24);
   pay_purchase : (blob) -> (Result_7);
-  payment_status : (blob) -> (Result_24) query;
+  payment_status : (blob) -> (Result_25) query;
   prepare_unlock_credential : (blob, text) -> (Result_15);
   purge_object : (blob, blob) -> (Result_4);
   put_chunk : (blob, nat32, blob) -> (Result_4);

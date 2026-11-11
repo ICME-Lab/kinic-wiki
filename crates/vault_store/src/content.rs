@@ -74,7 +74,20 @@ pub fn usage(db: &Connection) -> Result<u64> {
 }
 pub fn global_usage(db: &Connection) -> Result<u64> {
     let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights)+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
-    Ok(n as u64)
+    Ok((n as u64)
+        .saturating_add(capacity::ACCOUNTING_POOL)
+        .saturating_add(crate::accounting_capacity::legacy_excess(db)?))
+}
+pub fn global_capacity(db: &Connection) -> Result<GlobalCapacity> {
+    let used = global_usage(db)?;
+    Ok(GlobalCapacity {
+        used,
+        limit: TOTAL_MAX,
+        accounting_reserved: capacity::ACCOUNTING_POOL,
+        legacy_excess: crate::accounting_capacity::legacy_excess(db)?,
+        overcommitted: used > TOTAL_MAX,
+        overage: used.saturating_sub(TOTAL_MAX),
+    })
 }
 pub fn check_capacity(db: &Connection, extra: u64) -> Result<()> {
     if usage(db)?.checked_add(extra).ok_or(Error::QuotaExceeded)? > TOTAL_MAX
@@ -741,6 +754,12 @@ pub fn begin_export(db: &Connection, vault: &[u8], export: &[u8], now: u64) -> R
     if n > 0 {
         return Err(Error::Busy);
     }
+    // Reuse the prepaid snapshot slot once its prior snapshot no longer pins data.
+    // Active, unexpired snapshots are protected by the Busy check above.
+    db.execute("DELETE FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=(SELECT id FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND (state<>'Active' OR expires<=?2) ORDER BY expires,id LIMIT 1)", params![vault,now as i64]).map_err(db_error)?;
+    let reclaimed: i64 = db
+        .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))
+        .map_err(db_error)?;
     let all: i64 = db
         .query_row("SELECT count(*) FROM exports", params![], |r| {
             sql::row_get(r, 0)
@@ -751,7 +770,7 @@ pub fn begin_export(db: &Connection, vault: &[u8], export: &[u8], now: u64) -> R
     }
     // The first bounded snapshot slot is prepaid when the vault is reserved.
     let existing:i64=db.query_row("SELECT count(*) FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1",params![vault],|r|sql::row_get(r,0)).map_err(db_error)?;
-    if existing > 0 {
+    if existing > 0 && reclaimed == 0 {
         check_capacity(db, OVERHEAD)?;
     }
 

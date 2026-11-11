@@ -1,3 +1,4 @@
+pub mod capacity;
 use candid::{CandidType, Principal};
 use serde::{Deserialize, Serialize};
 
@@ -280,3 +281,14 @@ pub use generation::*;
 
 pub mod mutation;
 pub use mutation::*;
+
+/// Shared logical capacity; accounting is reserved globally, never billed per owner.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct GlobalCapacity {
+    pub used: u64,
+    pub limit: u64,
+    pub accounting_reserved: u64,
+    pub legacy_excess: u64,
+    pub overcommitted: bool,
+    pub overage: u64,
+}

@@ -23,6 +23,7 @@ pub fn initialize() -> Result<()> {
         crate::schema::initialize_vault_schema(db)?;
         db.execute_batch(include_str!("accounts.sql"))
             .map_err(|_| Error::Storage)?;
+        crate::capacity::initialize(db)?;
         Ok(())
     })?;
     State.vault_start_generation()

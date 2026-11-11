@@ -105,6 +105,17 @@ export interface Generation {
   'nonce' : Uint8Array | number[],
   'key_name' : string,
 }
+/**
+ * Shared logical capacity; accounting is reserved globally, never billed per owner.
+ */
+export interface GlobalCapacity {
+  'used' : bigint,
+  'overcommitted' : boolean,
+  'limit' : bigint,
+  'overage' : bigint,
+  'accounting_reserved' : bigint,
+  'legacy_excess' : bigint,
+}
 export interface GrantInfo {
   'id' : Uint8Array | number[],
   'expires' : bigint,
@@ -247,21 +258,23 @@ export type Result_16 = { 'Ok' : [] | [VaultConfig] } |
   { 'Err' : Error };
 export type Result_17 = { 'Ok' : Quota } |
   { 'Err' : Error };
-export type Result_18 = { 'Ok' : Array<CredentialInfo> } |
+export type Result_18 = { 'Ok' : GlobalCapacity } |
   { 'Err' : Error };
-export type Result_19 = { 'Ok' : ObjectPage } |
+export type Result_19 = { 'Ok' : Array<CredentialInfo> } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : Challenge } |
   { 'Err' : Error };
-export type Result_20 = { 'Ok' : Array<Payment> } |
+export type Result_20 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_21 = { 'Ok' : Array<UnfinishedVault> } |
+export type Result_21 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_22 = { 'Ok' : Array<Header> } |
+export type Result_22 = { 'Ok' : Array<UnfinishedVault> } |
   { 'Err' : Error };
-export type Result_23 = { 'Ok' : MutationResult } |
+export type Result_23 = { 'Ok' : Array<Header> } |
   { 'Err' : Error };
-export type Result_24 = { 'Ok' : [] | [Payment] } |
+export type Result_24 = { 'Ok' : MutationResult } |
+  { 'Err' : Error };
+export type Result_25 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
 export type Result_3 = { 'Ok' : Export } |
   { 'Err' : Error };
@@ -388,26 +401,30 @@ export interface _SERVICE {
   >,
   'get_quota' : ActorMethod<[Uint8Array | number[]], Result_17>,
   'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result>,
+  /**
+   * Aggregate capacity is public metadata; it never allocates an owner or account.
+   */
+  'global_capacity' : ActorMethod<[], Result_18>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
-  'list_credentials' : ActorMethod<[], Result_18>,
+  'list_credentials' : ActorMethod<[], Result_19>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
     Result_12
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_19
+    Result_20
   >,
-  'list_payments' : ActorMethod<[], Result_20>,
-  'list_unfinished_vaults' : ActorMethod<[], Result_21>,
-  'list_vaults' : ActorMethod<[], Result_22>,
+  'list_payments' : ActorMethod<[], Result_21>,
+  'list_unfinished_vaults' : ActorMethod<[], Result_22>,
+  'list_vaults' : ActorMethod<[], Result_23>,
   'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_4>,
   'mutate' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_23
+    Result_24
   >,
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_7>,
-  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_24>,
+  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_25>,
   'prepare_unlock_credential' : ActorMethod<
     [Uint8Array | number[], string],
     Result_15
