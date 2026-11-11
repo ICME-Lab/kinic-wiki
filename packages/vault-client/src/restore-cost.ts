@@ -21,6 +21,13 @@ export function restoreRevision(r: PortableRecord): Revision {
 }
 const array = (a: Uint8Array | number[]) => JSON.stringify([...a]);
 export function restoreRecordCost(r: Revision) {
+  if (
+    r.deleted &&
+    (r.plain_size !== 0n ||
+      r.manifest.length !== 0 ||
+      r.chunk_hashes.length !== 0)
+  )
+    throw Error("InvalidBackup");
   const hashes = JSON.stringify(r.chunk_hashes.map((h) => [...h]));
   const pending = `{"vault":${array(r.vault)},"object":${array(r.object)},"revision":${r.revision},"plain_size":${r.plain_size},"manifest":${array(r.manifest)},"chunk_hashes":${hashes},"deleted":${r.deleted},"sequence":${r.sequence}}`;
   return {

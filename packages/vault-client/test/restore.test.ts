@@ -461,3 +461,25 @@ it("rejects substituted existing credential challenge before possession", async 
   ).rejects.toThrow("RestoreCandidateChanged");
   expect(assertCredential).not.toHaveBeenCalled();
 });
+
+it("rejects noncanonical tombstones before reserving their flat restore charge", () => {
+  const canonical: Revision = {
+    vault: new Uint8Array(16),
+    object: new Uint8Array(16),
+    revision: 1n,
+    sequence: 1n,
+    plain_size: 0n,
+    manifest: new Uint8Array(),
+    chunk_hashes: [],
+    deleted: true,
+  };
+  expect(restoreRecordCost(canonical).charge).toBe(4096n);
+  for (const change of [
+    { plain_size: 1n },
+    { manifest: new Uint8Array([1]) },
+    { chunk_hashes: [new Uint8Array(32)] },
+  ])
+    expect(() => restoreRecordCost({ ...canonical, ...change })).toThrow(
+      "InvalidBackup",
+    );
+});
