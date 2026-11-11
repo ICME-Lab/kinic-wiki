@@ -92,6 +92,9 @@ export interface Mutation {
   'operation' : MutationOperation,
 }
 export type MutationOperation = {
+    'RestoreCommitRecord' : { 'sequence' : bigint }
+  } |
+  {
     'PutChunk' : {
       'vault' : Uint8Array | number[],
       'data' : Uint8Array | number[],
@@ -99,6 +102,7 @@ export type MutationOperation = {
       'index' : number,
     }
   } |
+  { 'RestoreActivate' : null } |
   {
     'IncidentStage' : {
       'normal' : Envelope,
@@ -122,6 +126,7 @@ export type MutationOperation = {
       'upload' : Uint8Array | number[],
     }
   } |
+  { 'RestoreDiscard' : { 'cursor' : bigint, 'current' : Generation } } |
   { 'KeyResult' : { 'handle' : Uint8Array | number[] } } |
   {
     'DeleteObject' : {
@@ -138,6 +143,9 @@ export type MutationOperation = {
       'scope' : CredentialScope,
     }
   } |
+  { 'RestoreDerive' : IncidentDerive } |
+  { 'RestoreChunk' : { 'data' : Uint8Array | number[], 'index' : number } } |
+  { 'RestorePreflight' : RestorePreflight } |
   {
     'IncidentPrepareExport' : {
       'attempt' : Uint8Array | number[],
@@ -153,6 +161,7 @@ export type MutationOperation = {
       'cursor' : bigint,
     }
   } |
+  { 'RestoreBeginImport' : null } |
   {
     'IncidentReset' : {
       'attempt' : Uint8Array | number[],
@@ -160,6 +169,7 @@ export type MutationOperation = {
       'next_attempt' : Uint8Array | number[],
     }
   } |
+  { 'RestoreCancel' : { 'cursor' : bigint } } |
   {
     'IncidentConfirmBackup' : {
       'ack' : IncidentBackupAck,
@@ -169,6 +179,13 @@ export type MutationOperation = {
   } |
   { 'IncidentCutover' : { 'digest' : Uint8Array | number[] } } |
   { 'Derive' : Derive } |
+  {
+    'RestoreStage' : {
+      'normal' : Envelope,
+      'recovery_verifier' : Uint8Array | number[],
+      'recovery' : Envelope,
+    }
+  } |
   { 'Create' : Reserve } |
   {
     'IncidentConfirmKit' : {
@@ -197,12 +214,16 @@ export type MutationOperation = {
       'vault' : Uint8Array | number[],
     }
   } |
+  { 'RestoreAllocate' : null } |
+  { 'RestoreRecord' : Revision } |
+  { 'RestoreConfirmBackup' : IncidentBackupAck } |
   {
     'IncidentAllocate' : {
       'attempt' : Uint8Array | number[],
       'vault' : Uint8Array | number[],
     }
   } |
+  { 'RestoreConfirmKit' : { 'envelope_digest' : Uint8Array | number[] } } |
   { 'ClearInactive' : { 'vault' : Uint8Array | number[] } } |
   { 'BeginRevision' : BeginRevision } |
   { 'RemoveCredential' : { 'credential' : Uint8Array | number[] } } |
@@ -215,6 +236,32 @@ export type MutationOperation = {
 export interface Reserve {
   'vault' : Uint8Array | number[],
   'operation' : Uint8Array | number[],
+}
+export interface RestorePreflight {
+  'records' : bigint,
+  'peak_pending_bytes' : bigint,
+  'source_saved' : boolean,
+  'current_plain_bytes' : bigint,
+  'archive_length' : bigint,
+  'archive_digest' : Uint8Array | number[],
+  'plain_bytes' : bigint,
+  'objects' : bigint,
+  'source_fully_verified' : boolean,
+  'target_commitment' : Uint8Array | number[],
+  'source_commitment' : Uint8Array | number[],
+  'revision_bytes' : bigint,
+  'chunks' : bigint,
+  'sequence' : bigint,
+}
+export interface Revision {
+  'deleted' : boolean,
+  'object' : Uint8Array | number[],
+  'vault' : Uint8Array | number[],
+  'chunk_hashes' : Array<Uint8Array | number[]>,
+  'revision' : bigint,
+  'manifest' : Uint8Array | number[],
+  'plain_size' : bigint,
+  'sequence' : bigint,
 }
 export interface _SERVICE { 'encode' : ActorMethod<[Mutation], undefined> }
 export declare const idlFactory: IDL.InterfaceFactory;

@@ -129,7 +129,13 @@ export interface GrantInfo {
   'generations' : Array<Generation>,
   'purpose' : GrantPurpose,
 }
-export type GrantPurpose = { 'Restore' : { 'job' : Uint8Array | number[] } } |
+export type GrantPurpose = {
+    'RestoreCleanup' : {
+      'job' : Uint8Array | number[],
+      'target' : PendingCreation,
+    }
+  } |
+  { 'Restore' : { 'job' : Uint8Array | number[] } } |
   {
     'CancelCreation' : {
       'job' : Uint8Array | number[],
@@ -137,6 +143,12 @@ export type GrantPurpose = { 'Restore' : { 'job' : Uint8Array | number[] } } |
     }
   } |
   { 'Credentials' : null } |
+  {
+    'RestoreTarget' : {
+      'job' : Uint8Array | number[],
+      'generation' : Generation,
+    }
+  } |
   { 'Normal' : null } |
   { 'Cleanup' : { 'job' : Uint8Array | number[] } } |
   {
@@ -152,6 +164,12 @@ export type GrantPurpose = { 'Restore' : { 'job' : Uint8Array | number[] } } |
     }
   } |
   { 'Create' : null } |
+  {
+    'RestorePrepare' : {
+      'job' : Uint8Array | number[],
+      'target' : PendingCreation,
+    }
+  } |
   { 'IncidentPrepare' : IncidentPreparation };
 export interface GrantRequest {
   'credential' : Uint8Array | number[],
@@ -252,6 +270,7 @@ export interface IncidentTarget {
   'kit_ack' : [] | [Uint8Array | number[]],
   'target' : [] | [Generation],
   'backup_ack' : [] | [IncidentBackupAck],
+  'restore_child' : [] | [RestoreChildLink],
   'recovery_verifier' : Uint8Array | number[],
   'recovery' : [] | [Envelope],
   'reset_attempt' : [] | [Uint8Array | number[]],
@@ -359,11 +378,14 @@ export interface RestoreAdmissionRequest {
 export interface RestoreAdmissionStatus {
   'challenge' : Challenge,
   'request' : RestoreAdmissionRequest,
+  'pipeline' : [] | [RestorePipeline],
   /**
    * Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
    */
   'recovery_message' : Uint8Array | number[],
+  'allocation_token' : [] | [bigint],
   'issued' : bigint,
+  'cancel_complete' : boolean,
   'current_verifier' : Uint8Array | number[],
   'current_live' : [] | [Generation],
   'semantic_config' : Uint8Array | number[],
@@ -374,8 +396,60 @@ export interface RestoreAdmissionStatus {
   'candidate' : [] | [string],
   'proof_fence' : Uint8Array | number[],
   'candidate_digest' : Uint8Array | number[],
+  'cancel_requested' : boolean,
   'next_epoch' : bigint,
   'parent_job' : [] | [Uint8Array | number[]],
+}
+/**
+ * Immutable replacement audit retained when the single active child slot is reused.
+ */
+export interface RestoreChildLink {
+  'job' : Uint8Array | number[],
+  'attempt' : Uint8Array | number[],
+  'archive_digest' : Uint8Array | number[],
+  'target' : Generation,
+}
+export type RestorePhase = { 'BackupVerified' : null } |
+  { 'Importing' : null } |
+  { 'Discarding' : null } |
+  { 'Active' : null } |
+  { 'EnvelopesStaged' : null } |
+  { 'KitConfirmed' : null } |
+  { 'Cancelling' : null } |
+  { 'Cancelled' : null } |
+  { 'Allocated' : null };
+export interface RestorePipeline {
+  'discard_started' : boolean,
+  'normal' : [] | [Envelope],
+  'cleanup_cursor' : bigint,
+  'envelope_digest' : Uint8Array | number[],
+  'kit_ack' : [] | [Uint8Array | number[]],
+  'preflight' : [] | [RestorePreflight],
+  'target' : Generation,
+  'backup_ack' : [] | [IncidentBackupAck],
+  'old_removed' : boolean,
+  'recovery_verifier' : Uint8Array | number[],
+  'recovery' : [] | [Envelope],
+  'phase' : RestorePhase,
+}
+/**
+ * Locally validated archive metadata. This is a signed client assertion, not server AEAD validation.
+ */
+export interface RestorePreflight {
+  'records' : bigint,
+  'peak_pending_bytes' : bigint,
+  'source_saved' : boolean,
+  'current_plain_bytes' : bigint,
+  'archive_length' : bigint,
+  'archive_digest' : Uint8Array | number[],
+  'plain_bytes' : bigint,
+  'objects' : bigint,
+  'source_fully_verified' : boolean,
+  'target_commitment' : Uint8Array | number[],
+  'source_commitment' : Uint8Array | number[],
+  'revision_bytes' : bigint,
+  'chunks' : bigint,
+  'sequence' : bigint,
 }
 export interface RestoreProgress {
   'count' : bigint,
@@ -507,6 +581,7 @@ export interface _SERVICE {
   'begin_grant' : ActorMethod<[GrantRequest], Result_2>,
   'begin_restore' : ActorMethod<[BeginRestore], Result>,
   'begin_restore_admission' : ActorMethod<[RestoreAdmissionRequest], Result_2>,
+  'begin_restore_grant' : ActorMethod<[GrantRequest], Result_2>,
   'begin_restore_revision' : ActorMethod<
     [Uint8Array | number[], Revision, [] | [Uint8Array | number[]]],
     Result_4
@@ -542,6 +617,10 @@ export interface _SERVICE {
   'finish_cleanup' : ActorMethod<[Uint8Array | number[], string], Result_13>,
   'finish_export' : ActorMethod<[Uint8Array | number[], boolean], Result>,
   'finish_grant' : ActorMethod<[Uint8Array | number[], string], Result_13>,
+  'finish_restore_grant' : ActorMethod<
+    [Uint8Array | number[], string, boolean],
+    Result_13
+  >,
   'get_active_export' : ActorMethod<[], Result_14>,
   'get_active_export_for_vault' : ActorMethod<
     [Uint8Array | number[]],
@@ -651,6 +730,22 @@ export interface _SERVICE {
   >,
   'reserve_vault' : ActorMethod<[Reserve], Result>,
   'restore_admission_status' : ActorMethod<[], Result_30>,
+  'restore_target_chunk' : ActorMethod<
+    [Uint8Array | number[], Generation, Uint8Array | number[], bigint, number],
+    Result_15
+  >,
+  'restore_target_descriptor' : ActorMethod<
+    [Uint8Array | number[], Generation],
+    Result_20
+  >,
+  'restore_target_index' : ActorMethod<
+    [Uint8Array | number[], Generation, bigint],
+    Result_12
+  >,
+  'restore_target_progress' : ActorMethod<
+    [Uint8Array | number[], Generation],
+    Result_9
+  >,
   'resume_restore_admission' : ActorMethod<[Uint8Array | number[]], Result_2>,
   'set_config' : ActorMethod<[[] | [VaultConfig]], Result_4>,
   'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_4>,

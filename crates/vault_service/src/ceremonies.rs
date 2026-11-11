@@ -113,6 +113,7 @@ pub(crate) fn grant(env: &impl Environment, p: Pending, id: Id, version: u64) ->
         credential_version: version,
         fence: p.fence,
         revoked: false,
+        restore_binding: None,
         last_digest: vec![],
         last_result: None,
         work: None,

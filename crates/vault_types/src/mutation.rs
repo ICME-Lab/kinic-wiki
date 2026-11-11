@@ -21,6 +21,9 @@ pub enum GrantPurpose {
     Credentials,
     Create,
     Restore { job: Id },
+    RestorePrepare { job: Id, target: PendingCreation },
+    RestoreTarget { job: Id, generation: Generation },
+    RestoreCleanup { job: Id, target: PendingCreation },
     Incident { job: Id, vector_digest: Vec<u8> },
     IncidentPrepare(IncidentPreparation),
     IncidentCutover { job: Id, digest: Vec<u8> },
@@ -71,6 +74,35 @@ pub struct Mutation {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum MutationOperation {
+    RestoreAllocate,
+    RestoreDerive(IncidentDerive),
+    RestoreStage {
+        normal: Envelope,
+        recovery: Envelope,
+        recovery_verifier: Vec<u8>,
+    },
+    RestoreConfirmKit {
+        envelope_digest: Vec<u8>,
+    },
+    RestorePreflight(RestorePreflight),
+    RestoreDiscard {
+        current: Generation,
+        cursor: u64,
+    },
+    RestoreBeginImport,
+    RestoreRecord(Revision),
+    RestoreChunk {
+        index: u32,
+        data: Vec<u8>,
+    },
+    RestoreCommitRecord {
+        sequence: u64,
+    },
+    RestoreConfirmBackup(IncidentBackupAck),
+    RestoreActivate,
+    RestoreCancel {
+        cursor: u64,
+    },
     IncidentStart,
     IncidentAllocate {
         vault: Id,

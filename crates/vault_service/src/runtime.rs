@@ -4,6 +4,10 @@ use kinic_sqlite_compat::Connection;
 use vault_types::{KeyReply, Result};
 #[allow(async_fn_in_trait)]
 pub trait Environment {
+    /// Exact allocation accounting survives cancellation/runtime fencing. Read only.
+    fn challenge_pending(&self, _db: &Connection, _token: u64) -> Result<bool> {
+        Ok(false)
+    }
     fn owner(&self) -> Principal;
     fn canister(&self) -> Principal {
         Principal::from_slice(&[1])

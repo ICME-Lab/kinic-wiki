@@ -973,3 +973,7 @@ pub mod incident_export;
 pub mod incident_wrapping;
 
 pub mod restore_admission;
+
+mod restore_flights;
+pub mod restore_grants;
+pub mod restore_pipeline;

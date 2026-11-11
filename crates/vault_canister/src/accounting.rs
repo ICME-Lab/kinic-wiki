@@ -623,3 +623,13 @@ pub(crate) fn reconcile_key_gc_in(
     db.execute("INSERT INTO owner_scope(slot,owner) VALUES(1,?1) ON CONFLICT(slot) DO UPDATE SET owner=excluded.owner",params![caller.as_slice()]).map_err(|_|Error::Storage)?;
     Ok(())
 }
+
+/// Read one exact restore allocation reservation; no cancellation, refund or new row.
+pub(crate) fn challenge_pending_in(
+    db: &Connection,
+    owner: candid::Principal,
+    token: u64,
+) -> vault_types::Result<bool> {
+    let n:i64=db.query_row("SELECT count(*) FROM vault_cycle_reservations WHERE owner=?1 AND token=?2 AND (in_flight=1 OR execution_checkpoint>execution_billed)",params![owner.to_text(),format!("challenge:{token}")],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
+    Ok(n != 0)
+}

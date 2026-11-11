@@ -486,3 +486,941 @@ fn restore_candidate_uses_tenth_slot_without_an_eleventh_registration_or_namespa
     .unwrap();
     assert!(restore_admission::begin(&env, request(3)).is_err());
 }
+
+#[test]
+fn restore_admission_wall_clock_expiry_rejects_old_proofs_and_fresh_resume_succeeds() {
+    use ed25519_dalek::Signer;
+    let env = fixture();
+    let r = request(1);
+    let candidate = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+    let recovery = ed25519_dalek::SigningKey::from_bytes(&[88; 32]);
+    env.transaction(|db| {
+        let mut h = store::header(db, &[1; 16])?;
+        h.recovery_verifier = recovery.verifying_key().to_bytes().to_vec();
+        store::put_header(db, &h)
+    })
+    .unwrap();
+    let ch = restore_admission::begin(&env, r.clone()).unwrap();
+    let ch =
+        restore_admission::register(&env, r.job.clone(), registration(&ch, &candidate)).unwrap();
+    let possession = passkey_assertion(&env, &candidate, &ch);
+    let j = restore_admission::possess(&env, r.job.clone(), possession.clone()).unwrap();
+    let old = recovery.sign(&j.recovery_message).to_bytes().to_vec();
+    env.time.set(ch.expires);
+    assert!(matches!(
+        restore_admission::possess(&env, r.job.clone(), possession),
+        Err(Error::Expired)
+    ));
+    assert!(matches!(
+        restore_admission::prove_current(&env, r.job.clone(), old.clone()),
+        Err(Error::Expired)
+    ));
+    let fresh = restore_admission::resume(&env, r.job.clone()).unwrap();
+    assert_ne!(fresh.bytes, ch.bytes);
+    let j = restore_admission::possess(
+        &env,
+        r.job.clone(),
+        passkey_assertion(&env, &candidate, &fresh),
+    )
+    .unwrap();
+    assert!(restore_admission::prove_current(&env, r.job.clone(), old).is_err());
+    let sig = recovery.sign(&j.recovery_message).to_bytes().to_vec();
+    assert_eq!(
+        restore_admission::prove_current(&env, r.job, sig)
+            .unwrap()
+            .phase,
+        RestoreAdmissionPhase::Admitted
+    );
+}
+
+#[test]
+fn restore_fresh_same_vault_purge_never_reopens_old_parent_audit() {
+    let (env, key, pre, _) = super::incident_tests::fixture(3);
+    signed_call(&env, &key, &pre, 0, MutationOperation::IncidentStart).unwrap();
+    env.transaction(|db| {
+        let mut parent = store::incident::status(db)?.unwrap();
+        parent.targets[0].phase = PreparationPhase::Purged;
+        incident::save(db, &mut parent)?;
+        let mut fresh = parent.targets[0].source.clone();
+        fresh.generation.as_mut().unwrap().nonce = vec![99; 32];
+        fresh.state = VaultState::Active;
+        store::put_header(db, &fresh)?;
+        let before = serde_json::to_string(&parent).unwrap();
+        incident::purge(db, &[fresh.generation.unwrap()], false)?;
+        assert_eq!(
+            serde_json::to_string(&store::incident::status(db)?.unwrap()).unwrap(),
+            before
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn restore_pipeline_status_alone_does_not_issue_a_capability() {
+    let env = fixture();
+    restore_admission::begin(&env, request(2)).unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+    let r = GrantRequest {
+        operation: vec![11; 16],
+        public_key: key.verifying_key().to_bytes().to_vec(),
+        credential: vec![41],
+        generations: vec![],
+        purpose: GrantPurpose::RestorePrepare {
+            job: request(2).job,
+            target: request(2).target,
+        },
+    };
+    assert!(restore_grants::begin(&env, r).is_err());
+}
+
+fn admit_pipeline(env: &TestEnvironment, v: u8) -> ed25519_dalek::SigningKey {
+    use ed25519_dalek::Signer;
+    let candidate = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+    // signed_fixture uses an authority-only fake registration with ID 41. Give that
+    // fixture authority a separate ID before testing actual candidate promotion.
+    env.transaction(|db| {
+        let mut a = authorization::authorities(db)?;
+        for c in &mut a.credentials {
+            if c.id == vec![41] {
+                c.id = vec![40];
+            }
+        }
+        store::save(db, "authorities", &a)
+    })
+    .unwrap();
+    let current = ed25519_dalek::SigningKey::from_bytes(&[88; 32]);
+    env.transaction(|db| {
+        if let Ok(mut h) = store::header(db, &[v; 16]) {
+            h.recovery_verifier = current.verifying_key().to_bytes().to_vec();
+            store::put_header(db, &h)?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let ch = restore_admission::begin(env, request(v)).unwrap();
+    let ch =
+        restore_admission::register(env, request(v).job, registration(&ch, &candidate)).unwrap();
+    let j =
+        restore_admission::possess(env, request(v).job, passkey_assertion(env, &candidate, &ch))
+            .unwrap();
+    if j.current_live.is_some() {
+        restore_admission::prove_current(
+            env,
+            request(v).job,
+            current.sign(&j.recovery_message).to_bytes().to_vec(),
+        )
+        .unwrap();
+    }
+    candidate
+}
+fn pipeline_grant(
+    env: &TestEnvironment,
+    key: &ed25519_dalek::SigningKey,
+    purpose: GrantPurpose,
+) -> (ed25519_dalek::SigningKey, GrantInfo) {
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[81; 32]);
+    let free = matches!(purpose, GrantPurpose::RestoreCleanup { .. });
+    let r = GrantRequest {
+        operation: vec![111; 16],
+        public_key: signing.verifying_key().to_bytes().to_vec(),
+        credential: vec![41],
+        generations: vec![],
+        purpose,
+    };
+    let ch = restore_grants::begin(env, r.clone()).unwrap();
+    let grant =
+        restore_grants::finish(env, r.operation, passkey_assertion(env, key, &ch), free).unwrap();
+    (signing, grant)
+}
+fn allocated_pipeline(
+    env: &TestEnvironment,
+    v: u8,
+    key: &ed25519_dalek::SigningKey,
+) -> (ed25519_dalek::SigningKey, GrantInfo, Generation) {
+    let (signing, grant) = pipeline_grant(
+        env,
+        key,
+        GrantPurpose::RestorePrepare {
+            job: request(v).job,
+            target: request(v).target,
+        },
+    );
+    signed_call(env, &signing, &grant, 0, MutationOperation::RestoreAllocate).unwrap();
+    let target = restore_admission::status(env)
+        .unwrap()
+        .unwrap()
+        .pipeline
+        .unwrap()
+        .target;
+    let (signing, grant) = pipeline_grant(
+        env,
+        key,
+        GrantPurpose::RestoreTarget {
+            job: request(v).job,
+            generation: target.clone(),
+        },
+    );
+    (signing, grant, target)
+}
+fn empty_preflight(_env: &TestEnvironment, target: &Generation) -> RestorePreflight {
+    RestorePreflight {
+        archive_digest: request(target.vault[0]).archive_digest,
+        archive_length: 1000,
+        source_commitment: request(target.vault[0]).source_commitment,
+        target_commitment: store::restore::target_seed(target).unwrap(),
+        sequence: 0,
+        records: 0,
+        objects: 0,
+        chunks: 0,
+        revision_bytes: 0,
+        peak_pending_bytes: 0,
+        current_plain_bytes: 0,
+        plain_bytes: 0,
+        source_saved: true,
+        source_fully_verified: true,
+    }
+}
+fn stage_pipeline(
+    env: &TestEnvironment,
+    v: u8,
+    signing: &ed25519_dalek::SigningKey,
+    grant: &GrantInfo,
+    target: &Generation,
+) {
+    let e = Envelope {
+        version: 2,
+        nonce: vec![3; 12],
+        ciphertext: vec![4; 48],
+    };
+    signed_call(
+        env,
+        signing,
+        grant,
+        0,
+        MutationOperation::RestoreStage {
+            normal: e.clone(),
+            recovery: e,
+            recovery_verifier: ed25519_dalek::SigningKey::from_bytes(&[99; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        },
+    )
+    .unwrap();
+    let p = restore_admission::status(env)
+        .unwrap()
+        .unwrap()
+        .pipeline
+        .unwrap();
+    signed_call(
+        env,
+        signing,
+        grant,
+        1,
+        MutationOperation::RestoreConfirmKit {
+            envelope_digest: p.envelope_digest,
+        },
+    )
+    .unwrap();
+    signed_call(
+        env,
+        signing,
+        grant,
+        2,
+        MutationOperation::RestorePreflight(empty_preflight(env, target)),
+    )
+    .unwrap();
+    assert_eq!(v, target.vault[0]);
+}
+#[test]
+fn restore_pipeline_empty_absent_requires_kit_and_backup_then_promotes_only_fresh_scope() {
+    let env = fixture();
+    let key = admit_pipeline(&env, 2);
+    let (signing, g, target) = allocated_pipeline(&env, 2, &key);
+    assert!(signed_call(&env, &signing, &g, 0, MutationOperation::RestoreBeginImport).is_err());
+    stage_pipeline(&env, 2, &signing, &g, &target);
+    signed_call(&env, &signing, &g, 3, MutationOperation::RestoreBeginImport).unwrap();
+    assert!(signed_call(&env, &signing, &g, 4, MutationOperation::RestoreActivate).is_err());
+    let d = restore_pipeline::descriptor(&env, request(2).job, target.clone()).unwrap();
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        4,
+        MutationOperation::RestoreConfirmBackup(IncidentBackupAck {
+            descriptor_digest: d.descriptor_digest,
+            commitment: d.commitment,
+            archive_hash: vec![1; 32],
+            archive_length: 1000,
+            recovery_verifier: d.export.header.recovery_verifier,
+            sequence: 0,
+        }),
+    )
+    .unwrap();
+    signed_call(&env, &signing, &g, 5, MutationOperation::RestoreActivate).unwrap();
+    env.transaction(|db| {
+        let h = store::header(db, &target.vault)?;
+        assert_eq!(h.state, VaultState::Active);
+        assert_eq!(h.generation, Some(target.clone()));
+        assert_eq!(h.backup_sequence, Some(0));
+        let a = authorization::authority(db, &[41])?;
+        assert_eq!(
+            a.scope,
+            CredentialScope::Instances(vec![Instance {
+                vault: target.vault.clone(),
+                nonce: target.nonce.clone()
+            }])
+        );
+        assert!(!store::transition::pending(db)?);
+        Ok(())
+    })
+    .unwrap();
+    assert!(restore_admission::resume(&env, request(2).job).is_err());
+    assert!(
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            6,
+            MutationOperation::RestoreCancel { cursor: 0 }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn restore_pipeline_nested_discard_and_activation_preserve_other_frozen_sources() {
+    let (env, key, pre, _) = super::incident_tests::fixture(3);
+    signed_call(&env, &key, &pre, 0, MutationOperation::IncidentStart).unwrap();
+    env.time.set(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    );
+    let key = admit_pipeline(&env, 1);
+    let parent = env
+        .transaction(|db| Ok(store::incident::status(db)?.unwrap()))
+        .unwrap();
+    let (signing, g, target) = allocated_pipeline(&env, 1, &key);
+    stage_pipeline(&env, 1, &signing, &g, &target);
+    let current = restore_admission::status(&env)
+        .unwrap()
+        .unwrap()
+        .current_live
+        .unwrap();
+    let (clean_sign, clean) = pipeline_grant(
+        &env,
+        &key,
+        GrantPurpose::RestoreCleanup {
+            job: request(1).job,
+            target: request(1).target,
+        },
+    );
+    env.funded.set(false);
+    env.cleanup_settled.set(false);
+    signed_call(
+        &env,
+        &clean_sign,
+        &clean,
+        0,
+        MutationOperation::RestoreDiscard {
+            current: current.clone(),
+            cursor: 0,
+        },
+    )
+    .unwrap();
+    env.transaction(|db| {
+        assert_eq!(store::header(db, &[1; 16])?.state, VaultState::Purging);
+        assert!(store::transition::pending(db)?);
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        signed_call(
+            &env,
+            &clean_sign,
+            &clean,
+            1,
+            MutationOperation::RestoreDerive(IncidentDerive {
+                job: request(1).job,
+                attempt: request(1).target.attempt,
+                role: IncidentRole::Target,
+                generation: target.clone(),
+                transport: vec![1; 48]
+            })
+        )
+        .is_err()
+    );
+    env.cleanup_settled.set(true);
+    signed_call(
+        &env,
+        &clean_sign,
+        &clean,
+        1,
+        MutationOperation::RestoreDiscard {
+            current: current.clone(),
+            cursor: 1,
+        },
+    )
+    .unwrap();
+    let after = env
+        .transaction(|db| Ok(store::incident::status(db)?.unwrap()))
+        .unwrap();
+    assert_eq!(after.targets[0].phase, PreparationPhase::Purged);
+    assert_eq!(after.targets[0].source.generation, Some(current));
+    assert_eq!(
+        after.targets[0]
+            .restore_child
+            .as_ref()
+            .map(|c| c.job.clone()),
+        Some(request(1).job)
+    );
+    assert_eq!(
+        serde_json::to_string(&after.targets[1..]).unwrap(),
+        serde_json::to_string(&parent.targets[1..]).unwrap()
+    );
+    assert_eq!(after.compromised, parent.compromised);
+    env.funded.set(true);
+    signed_call(&env, &signing, &g, 3, MutationOperation::RestoreBeginImport).unwrap();
+    let d = restore_pipeline::descriptor(&env, request(1).job, target.clone()).unwrap();
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        4,
+        MutationOperation::RestoreConfirmBackup(IncidentBackupAck {
+            descriptor_digest: d.descriptor_digest,
+            commitment: d.commitment,
+            archive_hash: vec![1; 32],
+            archive_length: 1000,
+            recovery_verifier: d.export.header.recovery_verifier,
+            sequence: 0,
+        }),
+    )
+    .unwrap();
+    signed_call(&env, &signing, &g, 5, MutationOperation::RestoreActivate).unwrap();
+    env.transaction(|db| {
+        assert_eq!(store::header(db, &[1; 16])?.state, VaultState::Active);
+        assert!(!store::incident::pinned(db, &[1; 16])?);
+        for v in 2..=3 {
+            assert!(store::incident::pinned(db, &[v; 16])?);
+            assert_eq!(
+                store::header(db, &[v; 16])?.state,
+                VaultState::IncidentRequired
+            );
+        }
+        assert!(store::incident::owner_change_allowed(db).is_err());
+        let parent = incident::load(db, &env)?;
+        assert_eq!(parent.targets[0].phase, PreparationPhase::Purged);
+        assert_eq!(incident::sources(&parent)?.len(), 2);
+        Ok(())
+    })
+    .unwrap();
+    assert!(restore_admission::resume(&env, request(1).job).is_err());
+}
+#[test]
+fn restore_pipeline_preflight_rejects_capacity_and_unsaved_source_before_discard() {
+    let env = fixture();
+    let key = admit_pipeline(&env, 1);
+    let (signing, g, target) = allocated_pipeline(&env, 1, &key);
+    stage_pipeline(&env, 1, &signing, &g, &target);
+    let mut f = empty_preflight(&env, &target);
+    f.source_saved = false;
+    assert!(
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            3,
+            MutationOperation::RestorePreflight(f)
+        )
+        .is_err()
+    );
+    env.transaction(|db|{let used=store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,X'','[]',1,?3)",params![vec![3u8;16],vec![4u8;16],(TOTAL_MAX-used-300) as i64]).map_err(|_|Error::Storage)?;Ok(())}).unwrap();
+    let current = restore_admission::status(&env)
+        .unwrap()
+        .unwrap()
+        .current_live
+        .unwrap();
+    assert!(matches!(
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            3,
+            MutationOperation::RestoreDiscard { current, cursor: 0 }
+        ),
+        Err(Error::QuotaExceeded)
+    ));
+    env.transaction(|db| {
+        assert_eq!(store::header(db, &[1; 16])?.state, VaultState::Active);
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn restore_pipeline_cancel_during_random_waits_for_own_settlement_and_blocks_late_nonce() {
+    let env = fixture();
+    let candidate = admit_pipeline(&env, 2);
+    let (signing, prep) = pipeline_grant(
+        &env,
+        &candidate,
+        GrantPurpose::RestorePrepare {
+            job: request(2).job,
+            target: request(2).target,
+        },
+    );
+    let (clean_sign, clean) = pipeline_grant(
+        &env,
+        &candidate,
+        GrantPurpose::RestoreCleanup {
+            job: request(2).job,
+            target: request(2).target,
+        },
+    );
+    let hook_sign = clean_sign.clone();
+    let hook_grant = clean.clone();
+    *env.random_hook.borrow_mut() = Some(Box::new(move |env| {
+        env.funded.set(false);
+        signed_call(
+            env,
+            &hook_sign,
+            &hook_grant,
+            0,
+            MutationOperation::RestoreCancel { cursor: 0 },
+        )
+        .unwrap();
+        let j = restore_admission::status(env).unwrap().unwrap();
+        assert!(j.cancel_requested);
+        assert!(!j.cancel_complete);
+        env.transaction(|db| {
+            assert!(store::transition::pending(db)?);
+            cleanup::reclaim_empty(db, env.now())?;
+            assert!(store::transition::load_state(db)?.restore.is_some());
+            Ok(())
+        })
+        .unwrap();
+    }));
+    signed_call(&env, &signing, &prep, 0, MutationOperation::RestoreAllocate).unwrap();
+    let j = restore_admission::status(&env).unwrap().unwrap();
+    assert!(j.pipeline.is_none());
+    assert!(!j.cancel_complete);
+    signed_call(
+        &env,
+        &clean_sign,
+        &clean,
+        1,
+        MutationOperation::RestoreCancel { cursor: 0 },
+    )
+    .unwrap();
+    assert!(
+        restore_admission::status(&env)
+            .unwrap()
+            .unwrap()
+            .cancel_complete
+    );
+    assert_eq!(env.derive_calls.get(), 0);
+    env.cleanup_settled.set(false);
+    signed_call(
+        &env,
+        &clean_sign,
+        &clean,
+        2,
+        MutationOperation::RestoreCancel { cursor: 0 },
+    )
+    .unwrap();
+    assert!(
+        restore_admission::status(&env)
+            .unwrap()
+            .unwrap()
+            .cancel_complete
+    );
+    env.funded.set(true);
+    assert!(matches!(
+        restore_admission::begin(&env, request(2)),
+        Err(Error::Conflict)
+    ));
+}
+
+#[test]
+fn restore_pipeline_cost_vectors_import_all_records_and_reject_bad_chunks() {
+    let env = fixture();
+    let raw: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../packages/vault-backup/test/fixtures/restore-cost-vectors.json"
+    ))
+    .unwrap();
+    let mut records = vec![];
+    let mut charge = 0;
+    let mut peak = 0;
+    for x in raw.as_array().unwrap() {
+        let mut r = x["record"].clone();
+        for k in ["revision", "plain_size", "sequence"] {
+            r[k] = serde_json::json!(r[k].as_str().unwrap().parse::<u64>().unwrap());
+        }
+        let r: Revision = serde_json::from_value(r).unwrap();
+        let expected = x["charge"].as_str().unwrap().parse::<u64>().unwrap();
+        let pending = x["pending"].as_str().unwrap().parse::<u64>().unwrap();
+        assert_eq!(serde_json::to_vec(&r).unwrap().len() as u64, pending);
+        charge += expected;
+        peak = peak.max(pending);
+        records.push(r);
+    }
+    let key = admit_pipeline(&env, 2);
+    env.transaction(|db| {
+        let mut j = restore_admission::load(db, &request(2).job)?;
+        j.request.records = 2;
+        restore_admission::save(db, j)
+    })
+    .unwrap();
+    // The synthetic admitted fixture is updated before the signed grant binds the request.
+    let (signing, g, target) = allocated_pipeline(&env, 2, &key);
+    let e = Envelope {
+        version: 2,
+        nonce: vec![3; 12],
+        ciphertext: vec![4; 48],
+    };
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        0,
+        MutationOperation::RestoreStage {
+            normal: e.clone(),
+            recovery: e,
+            recovery_verifier: ed25519_dalek::SigningKey::from_bytes(&[99; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        },
+    )
+    .unwrap();
+    let digest = restore_admission::status(&env)
+        .unwrap()
+        .unwrap()
+        .pipeline
+        .unwrap()
+        .envelope_digest;
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        1,
+        MutationOperation::RestoreConfirmKit {
+            envelope_digest: digest,
+        },
+    )
+    .unwrap();
+    let mut f = empty_preflight(&env, &target);
+    f.records = 2;
+    f.objects = 2;
+    f.chunks = 1;
+    f.revision_bytes = charge;
+    f.peak_pending_bytes = peak;
+    f.sequence = records[1].sequence;
+    for r in &records {
+        f.target_commitment =
+            Sha256::digest([f.target_commitment, store::restore::leaf(r)].concat()).to_vec();
+    }
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        2,
+        MutationOperation::RestorePreflight(f.clone()),
+    )
+    .unwrap();
+    signed_call(&env, &signing, &g, 3, MutationOperation::RestoreBeginImport).unwrap();
+    let mut bad = records[0].clone();
+    bad.sequence = f.sequence + 1;
+    assert!(signed_call(&env, &signing, &g, 4, MutationOperation::RestoreRecord(bad)).is_err());
+    let mut n = 4;
+    for r in &records {
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            n,
+            MutationOperation::RestoreRecord(r.clone()),
+        )
+        .unwrap();
+        n += 1;
+        if !r.deleted {
+            assert!(
+                signed_call(
+                    &env,
+                    &signing,
+                    &g,
+                    n,
+                    MutationOperation::RestoreChunk {
+                        index: 0,
+                        data: vec![6; 16]
+                    }
+                )
+                .is_err()
+            );
+            assert!(
+                signed_call(
+                    &env,
+                    &signing,
+                    &g,
+                    n,
+                    MutationOperation::RestoreConfirmBackup(IncidentBackupAck {
+                        descriptor_digest: vec![1; 32],
+                        commitment: f.target_commitment.clone(),
+                        archive_hash: vec![1; 32],
+                        archive_length: 1000,
+                        recovery_verifier: vec![1; 32],
+                        sequence: f.sequence
+                    })
+                )
+                .is_err()
+            );
+            signed_call(
+                &env,
+                &signing,
+                &g,
+                n,
+                MutationOperation::RestoreChunk {
+                    index: 0,
+                    data: vec![5; 16],
+                },
+            )
+            .unwrap();
+            n += 1;
+        }
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            n,
+            MutationOperation::RestoreCommitRecord {
+                sequence: r.sequence,
+            },
+        )
+        .unwrap();
+        n += 1;
+    }
+    let progress = restore_pipeline::progress(&env, request(2).job, target.clone()).unwrap();
+    assert_eq!(progress.count, 2);
+    assert_eq!(progress.root, f.target_commitment);
+    let d = restore_pipeline::descriptor(&env, request(2).job, target.clone()).unwrap();
+    assert_eq!(d.export.sequence, 9007199254740993);
+    let page = restore_pipeline::index(&env, request(2).job, target.clone(), 0).unwrap();
+    assert_eq!(page.entries.len(), 2);
+    assert_eq!(
+        store::restore::leaf(&page.entries[1]),
+        store::restore::leaf(&records[1])
+    );
+    env.transaction(|db| {
+        let actual: i64 = db
+            .query_row("SELECT sum(charge) FROM revisions", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(actual as u64, charge);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn restore_pipeline_consumer_revalidates_expiry_and_reissued_proof_invalidates_old_grant() {
+    use ed25519_dalek::Signer;
+    let env = fixture();
+    let candidate = admit_pipeline(&env, 1);
+    let (signing, old, target) = allocated_pipeline(&env, 1, &candidate);
+    let j = restore_admission::status(&env).unwrap().unwrap();
+    env.time.set(j.challenge.expires);
+    assert!(matches!(
+        signed_call(
+            &env,
+            &signing,
+            &old,
+            0,
+            MutationOperation::RestoreBeginImport
+        ),
+        Err(Error::Expired)
+    ));
+    let ch = restore_admission::resume(&env, j.request.job.clone()).unwrap();
+    let j = restore_admission::possess(
+        &env,
+        j.request.job.clone(),
+        passkey_assertion(&env, &candidate, &ch),
+    )
+    .unwrap();
+    let current = ed25519_dalek::SigningKey::from_bytes(&[88; 32]);
+    restore_admission::prove_current(
+        &env,
+        j.request.job.clone(),
+        current.sign(&j.recovery_message).to_bytes().to_vec(),
+    )
+    .unwrap();
+    assert!(matches!(
+        signed_call(
+            &env,
+            &signing,
+            &old,
+            0,
+            MutationOperation::RestoreBeginImport
+        ),
+        Err(Error::Unauthorized)
+    ));
+    let (signing, g) = pipeline_grant(
+        &env,
+        &candidate,
+        GrantPurpose::RestoreTarget {
+            job: j.request.job,
+            generation: target.clone(),
+        },
+    );
+    stage_pipeline(&env, 1, &signing, &g, &target);
+}
+#[test]
+fn restore_pipeline_target_derive_rejects_source_role_and_settles_after_upgrade_callback() {
+    let env = fixture();
+    let candidate = admit_pipeline(&env, 2);
+    let (signing, g, target) = allocated_pipeline(&env, 2, &candidate);
+    let mut r = IncidentDerive {
+        job: request(2).job,
+        attempt: request(2).target.attempt,
+        role: IncidentRole::Source,
+        generation: target,
+        transport: ic_bls12_381::G1Affine::generator().to_compressed().to_vec(),
+    };
+    assert!(
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            0,
+            MutationOperation::RestoreDerive(r.clone())
+        )
+        .is_err()
+    );
+    assert_eq!(env.derive_calls.get(), 0);
+    r.role = IncidentRole::Target;
+    *env.derive_hook.borrow_mut() = Some(Box::new(|env| {
+        env.transaction(|db| {
+            db.execute(
+                "INSERT INTO global_settings VALUES('generation','2')",
+                params![],
+            )
+            .unwrap();
+            let mut c = control(db)?;
+            c.derive.as_mut().unwrap().token += 1;
+            store::save(db, "control", &c)
+        })
+        .unwrap();
+    }));
+    signed_call(&env, &signing, &g, 0, MutationOperation::RestoreDerive(r)).unwrap();
+    assert_eq!(env.derive_calls.get(), 1);
+    assert_eq!(env.settled.get(), Some(30_000_000_000));
+    env.transaction(|db| {
+        assert!(control(db)?.derive.is_some());
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        signed_call(
+            &env,
+            &signing,
+            &g,
+            1,
+            MutationOperation::KeyResult {
+                handle: vec![1; 32]
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn restore_pipeline_underclaimed_cost_rolls_back_record_without_growing_reservation() {
+    let env = fixture();
+    let candidate = admit_pipeline(&env, 2);
+    env.transaction(|db| {
+        let mut j = restore_admission::load(db, &request(2).job)?;
+        j.request.records = 1;
+        restore_admission::save(db, j)
+    })
+    .unwrap();
+    let (signing, g, target) = allocated_pipeline(&env, 2, &candidate);
+    let e = Envelope {
+        version: 2,
+        nonce: vec![3; 12],
+        ciphertext: vec![4; 48],
+    };
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        0,
+        MutationOperation::RestoreStage {
+            normal: e.clone(),
+            recovery: e,
+            recovery_verifier: ed25519_dalek::SigningKey::from_bytes(&[99; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        },
+    )
+    .unwrap();
+    let digest = restore_admission::status(&env)
+        .unwrap()
+        .unwrap()
+        .pipeline
+        .unwrap()
+        .envelope_digest;
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        1,
+        MutationOperation::RestoreConfirmKit {
+            envelope_digest: digest,
+        },
+    )
+    .unwrap();
+    let r = Revision {
+        vault: target.vault.clone(),
+        object: vec![4; 16],
+        revision: 1,
+        sequence: 1,
+        plain_size: 0,
+        manifest: vec![],
+        chunk_hashes: vec![],
+        deleted: true,
+    };
+    let mut f = empty_preflight(&env, &target);
+    f.records = 1;
+    f.objects = 1;
+    f.revision_bytes = 4096;
+    f.peak_pending_bytes = 400;
+    f.sequence = 1;
+    f.target_commitment =
+        Sha256::digest([f.target_commitment, store::restore::leaf(&r)].concat()).to_vec();
+    signed_call(
+        &env,
+        &signing,
+        &g,
+        2,
+        MutationOperation::RestorePreflight(f),
+    )
+    .unwrap();
+    signed_call(&env, &signing, &g, 3, MutationOperation::RestoreBeginImport).unwrap();
+    let before = env.transaction(store::content::usage).unwrap();
+    assert!(matches!(
+        signed_call(&env, &signing, &g, 4, MutationOperation::RestoreRecord(r)),
+        Err(Error::QuotaExceeded)
+    ));
+    assert_eq!(env.transaction(store::content::usage).unwrap(), before);
+    assert_eq!(
+        restore_pipeline::progress(&env, request(2).job, target.clone())
+            .unwrap()
+            .count,
+        0
+    );
+    assert!(restore_pipeline::descriptor(&env, request(2).job, target).is_err());
+}

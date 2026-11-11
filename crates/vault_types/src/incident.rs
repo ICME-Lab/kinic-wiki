@@ -30,6 +30,8 @@ pub enum PreparationPhase {
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct IncidentTarget {
     pub source: Header,
+    #[serde(default)]
+    pub restore_child: Option<RestoreChildLink>,
     pub target: Option<Generation>,
     pub attempt: Id,
     pub next_epoch: u64,
@@ -132,4 +134,13 @@ pub struct IncidentRead {
     pub vault: Id,
     pub attempt: Id,
     pub export: Id,
+}
+
+/// Immutable replacement audit retained when the single active child slot is reused.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RestoreChildLink {
+    pub job: Id,
+    pub attempt: Id,
+    pub target: Generation,
+    pub archive_digest: Vec<u8>,
 }

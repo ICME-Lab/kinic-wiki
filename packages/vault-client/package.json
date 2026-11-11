@@ -8,6 +8,7 @@
     "./contracts": "./src/contracts.ts",
     "./session": "./src/session.ts",
     "./incident": "./src/incident.ts",
+    "./restore": "./src/restore.ts",
     "./signed": "./src/signed.ts",
     "./mutation-contracts": "./src/mutation-contracts.ts"
   },

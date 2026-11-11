@@ -359,3 +359,8 @@ pub fn committed(db: &Connection, v: &[u8]) -> Result<()> {
         .map_err(err)?;
     Ok(())
 }
+
+/// Ciphertext-only resume cursor; authorization and exact generation checks live in service.
+pub fn status(db: &Connection, v: &[u8]) -> Result<RestoreProgress> {
+    progress(db, v, 0).map(|x| x.0)
+}

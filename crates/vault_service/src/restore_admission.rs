@@ -3,7 +3,7 @@ use super::*;
 pub fn status(env: &impl Environment) -> Result<Option<RestoreAdmissionStatus>> {
     env.transaction(|db| Ok(store::transition::load_state(db)?.restore))
 }
-fn physical(db: &Connection) -> Result<u64> {
+pub(crate) fn physical(db: &Connection) -> Result<u64> {
     let n:i64=db.query_row("SELECT count(*) FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
     Ok(n as u64)
 }
@@ -107,9 +107,16 @@ fn check_request(
     }
     Ok((h, parent, epoch))
 }
-fn current(db: &Connection, env: &impl Environment, j: &RestoreAdmissionStatus) -> Result<()> {
+pub(crate) fn current(
+    db: &Connection,
+    env: &impl Environment,
+    j: &RestoreAdmissionStatus,
+) -> Result<()> {
     if j.semantic_config != incident::semantic(db, env)? {
         return Err(Error::Conflict);
+    }
+    if let Some(p) = &j.pipeline {
+        return restore_pipeline::current(db, env, j, p);
     }
     let (h, parent, epoch) = check_request(db, env, &j.request)?;
     if h.as_ref().and_then(|h| h.generation.clone()) != j.current_live
@@ -124,20 +131,24 @@ fn current(db: &Connection, env: &impl Environment, j: &RestoreAdmissionStatus) 
     }
     Ok(())
 }
-fn fresh(db: &Connection, env: &impl Environment, j: &RestoreAdmissionStatus) -> Result<()> {
+pub(crate) fn fresh(
+    db: &Connection,
+    env: &impl Environment,
+    j: &RestoreAdmissionStatus,
+) -> Result<()> {
     current(db, env, j)?;
     if j.proof_fence != grants::fence(db)? || j.challenge.expires <= env.now() {
         return Err(Error::Expired);
     }
     Ok(())
 }
-fn load(db: &Connection, job: &[u8]) -> Result<RestoreAdmissionStatus> {
+pub(crate) fn load(db: &Connection, job: &[u8]) -> Result<RestoreAdmissionStatus> {
     store::transition::load_state(db)?
         .restore
         .filter(|j| j.request.job == job)
         .ok_or(Error::Unauthorized)
 }
-fn save(db: &Connection, j: RestoreAdmissionStatus) -> Result<()> {
+pub(crate) fn save(db: &Connection, j: RestoreAdmissionStatus) -> Result<()> {
     let mut s = store::transition::load_state(db)?;
     s.restore = Some(j);
     store::transition::save_state(db, &s)
@@ -216,6 +227,17 @@ pub fn begin(env: &impl Environment, r: RestoreAdmissionRequest) -> Result<Chall
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
         let mut s = store::transition::load_state(db)?;
+        if s.restore
+            .as_ref()
+            .is_some_and(|j| !store::transition::restore_unfinished(j))
+        {
+            if s.restore.as_ref().is_some_and(|j| {
+                j.request.job == r.job || j.request.target.attempt == r.target.attempt
+            }) {
+                return Err(Error::Conflict);
+            }
+            s.restore = None;
+        }
         if let Some(j) = &s.restore {
             if j.request != r {
                 return Err(Error::Busy);
@@ -255,6 +277,10 @@ pub fn begin(env: &impl Environment, r: RestoreAdmissionRequest) -> Result<Chall
             semantic_config: incident::semantic(db, env)?,
             proof_fence: vec![],
             issued: env.now(),
+            pipeline: None,
+            allocation_token: None,
+            cancel_requested: false,
+            cancel_complete: false,
         };
         let ch = challenge(db, env, &mut j, true)?;
         // A restore request and current identity are small; reserve >=16 KiB for later proofs.
@@ -303,7 +329,6 @@ pub fn register(env: &impl Environment, job: Id, proof: String) -> Result<Challe
     })
 }
 pub fn possess(env: &impl Environment, job: Id, proof: String) -> Result<RestoreAdmissionStatus> {
-    env.require_spending()?;
     proof_budget(env, &job, proof.len())?;
     env.transaction(|db| {
         let mut j = load(db, &job)?;
@@ -349,7 +374,6 @@ pub fn prove_current(
     job: Id,
     signature: Vec<u8>,
 ) -> Result<RestoreAdmissionStatus> {
-    env.require_spending()?;
     proof_budget(env, &job, signature.len())?;
     env.transaction(|db| {
         let mut j = load(db, &job)?;
@@ -369,7 +393,6 @@ pub fn prove_current(
     })
 }
 pub fn resume(env: &impl Environment, job: Id) -> Result<Challenge> {
-    env.require_spending()?;
     env.transaction(|db| {
         let mut j = load(db, &job)?;
         current(db, env, &j)?;

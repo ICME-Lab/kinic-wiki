@@ -11,6 +11,7 @@ struct TestEnvironment {
     cancel_random: Cell<bool>,
     fail_random: Cell<bool>,
     cleanup_settled: Cell<bool>,
+    challenge_pending: Cell<bool>,
     upgrade_random: Cell<bool>,
     cancel_public: Cell<bool>,
     replace_flight: Cell<bool>,
@@ -49,6 +50,7 @@ impl TestEnvironment {
             cancel_random: Cell::new(false),
             fail_random: Cell::new(false),
             cleanup_settled: Cell::new(true),
+            challenge_pending: Cell::new(false),
             upgrade_random: Cell::new(false),
             cancel_public: Cell::new(false),
             replace_flight: Cell::new(false),
@@ -89,6 +91,17 @@ impl TestEnvironment {
     }
 }
 impl Environment for TestEnvironment {
+    fn challenge_pending(&self, _db: &Connection, _token: u64) -> Result<bool> {
+        Ok(self.challenge_pending.get())
+    }
+    fn reserve_challenge(&self, _token: u64) -> Result<()> {
+        self.challenge_pending.set(true);
+        Ok(())
+    }
+    fn settle_challenge(&self, _token: u64) -> Result<()> {
+        self.challenge_pending.set(false);
+        Ok(())
+    }
     fn cleanup_existing_flights(
         &self,
         _db: &Connection,
@@ -463,7 +476,7 @@ fn signed_fixture(
         db.execute("UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![]).unwrap();
         store::save(db,"authorities",&authorization::Authorities{credentials:vec![authorization::Authority{id:vec![41],version:0,revoked:false,scope:CredentialScope::Global}]})?;
         cleanup::save(db,&cleanup::Namespace{identity:vec![51;32],seed:Some(vec![52;32]),serial:0,pending:None,grant:None,job:None,action:vec![],deleted:vec![],budget:Default::default(),cancelled:None})?;
-        let g=grants::Grant{info:GrantInfo{id:vec![53;32],expires:301,next_counter:0,purpose,generations:vec![h.generation.unwrap()]},owner:env.owner(),canister:env.canister(),public_key:signing.verifying_key().to_bytes().to_vec(),credential:vec![41],credential_version:0,fence:grants::fence(db)?,revoked:false,last_digest:vec![],last_result:None,work:None};
+        let g=grants::Grant{info:GrantInfo{id:vec![53;32],expires:301,next_counter:0,purpose,generations:vec![h.generation.unwrap()]},owner:env.owner(),canister:env.canister(),public_key:signing.verifying_key().to_bytes().to_vec(),credential:vec![41],credential_version:0,fence:grants::fence(db)?,revoked:false,restore_binding:None,last_digest:vec![],last_result:None,work:None};
         grants::save(db,&g)?;Ok(g.info)
     }).unwrap();
     (env, signing, info)

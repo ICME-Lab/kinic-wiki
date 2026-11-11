@@ -61,6 +61,14 @@ pub fn decode(raw: &str) -> Result<TransitionState> {
         {
             return Err(Error::Storage);
         }
+        if j.cancel_complete
+            && (!j.cancel_requested
+                || j.pipeline
+                    .as_ref()
+                    .is_some_and(|p| p.phase != RestorePhase::Cancelled))
+        {
+            return Err(Error::Storage);
+        }
         let has_candidate = j.candidate.is_some() && j.candidate_digest.len() == 32;
         let phase_valid = match j.phase {
             RestoreAdmissionPhase::Registration => {
@@ -93,6 +101,73 @@ pub fn decode(raw: &str) -> Result<TransitionState> {
         {
             g.bytes().map_err(|_| Error::Storage)?;
         }
+        if let Some(p) = &j.pipeline {
+            p.target.bytes().map_err(|_| Error::Storage)?;
+            if p.target.vault != j.request.target.vault
+                || p.target.epoch != j.next_epoch
+                || j.current_live
+                    .as_ref()
+                    .is_some_and(|g| g.nonce == p.target.nonce)
+                || p.envelope_digest.len() > 32
+                || p.recovery_verifier.len() > 32
+                || p.normal.as_ref().is_some_and(|e| {
+                    e.version != 2 || e.nonce.len() != 12 || e.ciphertext.len() != 48
+                })
+                || p.recovery.as_ref().is_some_and(|e| {
+                    e.version != 2 || e.nonce.len() != 12 || e.ciphertext.len() != 48
+                })
+            {
+                return Err(Error::Storage);
+            }
+            if matches!(
+                p.phase,
+                RestorePhase::EnvelopesStaged
+                    | RestorePhase::KitConfirmed
+                    | RestorePhase::Discarding
+                    | RestorePhase::Importing
+                    | RestorePhase::BackupVerified
+                    | RestorePhase::Active
+            ) && (p.normal.is_none()
+                || p.recovery.is_none()
+                || p.envelope_digest.len() != 32
+                || p.recovery_verifier.len() != 32)
+            {
+                return Err(Error::Storage);
+            }
+            if matches!(
+                p.phase,
+                RestorePhase::KitConfirmed
+                    | RestorePhase::Discarding
+                    | RestorePhase::Importing
+                    | RestorePhase::BackupVerified
+                    | RestorePhase::Active
+            ) && p.kit_ack.as_ref() != Some(&p.envelope_digest)
+            {
+                return Err(Error::Storage);
+            }
+            if matches!(
+                p.phase,
+                RestorePhase::Discarding
+                    | RestorePhase::Importing
+                    | RestorePhase::BackupVerified
+                    | RestorePhase::Active
+            ) && p.preflight.is_none()
+            {
+                return Err(Error::Storage);
+            }
+            if matches!(
+                p.phase,
+                RestorePhase::Importing | RestorePhase::BackupVerified | RestorePhase::Active
+            ) && !p.old_removed
+            {
+                return Err(Error::Storage);
+            }
+            if matches!(p.phase, RestorePhase::BackupVerified | RestorePhase::Active)
+                && p.backup_ack.is_none()
+            {
+                return Err(Error::Storage);
+            }
+        }
         if let Some(parent) = &j.parent_job {
             if !state.incident.as_ref().is_some_and(|p| {
                 &p.job == parent
@@ -122,7 +197,7 @@ pub fn save_state(db: &Connection, s: &TransitionState) -> Result<()> {
     save(db, "transition", s)
 }
 pub fn pending_state(s: &TransitionState) -> bool {
-    s.restore.is_some()
+    s.restore.as_ref().is_some_and(restore_unfinished)
         || s.namespace_flight.is_some()
         || s.incident.as_ref().is_some_and(|j| !j.complete)
 }
@@ -143,21 +218,38 @@ pub fn any_pending(db: &Connection) -> Result<bool> {
 }
 pub fn restore_pending(db: &Connection) -> Result<bool> {
     let s = load_state(db)?;
-    Ok(s.restore.is_some() || s.namespace_flight.is_some())
+    Ok(s.restore.as_ref().is_some_and(restore_unfinished) || s.namespace_flight.is_some())
 }
 pub fn pinned(db: &Connection, v: &[u8]) -> Result<bool> {
     let s = load_state(db)?;
-    Ok(s.restore
-        .as_ref()
-        .is_some_and(|j| j.request.target.vault == v)
-        || s.incident.as_ref().is_some_and(|j| {
-            !j.complete
-                && j.targets.iter().any(|t| {
-                    t.source.id == v
-                        && !matches!(
-                            t.phase,
-                            PreparationPhase::Purging | PreparationPhase::Purged
-                        )
-                })
-        }))
+    let live = match header(db, v) {
+        Ok(h) => h.generation,
+        Err(Error::NotFound) => None,
+        Err(e) => return Err(e),
+    };
+    Ok(s.restore.as_ref().is_some_and(|j| {
+        restore_unfinished(j)
+            && j.request.target.vault == v
+            && (live == j.current_live
+                || j.pipeline
+                    .as_ref()
+                    .is_some_and(|p| live.as_ref() == Some(&p.target)))
+    }) || s.incident.as_ref().is_some_and(|j| {
+        !j.complete
+            && j.targets.iter().any(|t| {
+                t.source.id == v
+                    && t.source.generation == live
+                    && !matches!(
+                        t.phase,
+                        PreparationPhase::Purging | PreparationPhase::Purged
+                    )
+            })
+    }))
+}
+
+pub fn restore_unfinished(j: &RestoreAdmissionStatus) -> bool {
+    !j.cancel_complete
+        && j.pipeline
+            .as_ref()
+            .is_none_or(|p| !matches!(p.phase, RestorePhase::Active | RestorePhase::Cancelled))
 }

@@ -22,6 +22,7 @@ pub fn readable(db: &Connection, vault: &[u8]) -> Result<Header> {
         && status(db)?.is_some_and(|j| {
             j.targets.iter().any(|t| {
                 t.source.id == vault
+                    && t.source.generation == h.generation
                     && matches!(
                         t.phase,
                         PreparationPhase::Purging | PreparationPhase::Purged
@@ -40,12 +41,14 @@ pub fn readable(db: &Connection, vault: &[u8]) -> Result<Header> {
 /// TIME and sequence are captured together at entry. Current schema retires by sequence,
 /// not time; keeping TIME explicit prevents a future expiry filter from changing membership.
 pub fn snapshot(db: &Connection, vault: &[u8]) -> Result<(u64, u64)> {
+    let h = header(db, vault)?;
     let j = status(db)?.filter(|j| !j.complete).ok_or(Error::NotFound)?;
     let t = j
         .targets
         .iter()
         .find(|t| {
             t.source.id == vault
+                && t.source.generation == h.generation
                 && !matches!(
                     t.phase,
                     PreparationPhase::Purging | PreparationPhase::Purged

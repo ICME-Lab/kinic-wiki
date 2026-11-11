@@ -1932,7 +1932,7 @@ fn incident_reset_cancel_and_partial_purge_fence_staged_exports() {
                     incident::cancel(db, &env, &j.job, &j.vector_digest, &r.sources)?;
                 }
                 _ => {
-                    incident::purge(db, &[vec![1; 16]], false)?;
+                    incident::purge(db, &r.sources[..1], false)?;
                 }
             }
             Ok(())
@@ -1955,7 +1955,7 @@ fn incident_reset_cancel_and_partial_purge_fence_staged_exports() {
         if mode == 2 {
             env.transaction(|db| {
                 while !store::cleanup::purge_batch(db, &[vec![1; 16]])? {}
-                incident::purge(db, &[vec![1; 16]], true)
+                incident::purge(db, &r.sources[..1], true)
             })
             .unwrap();
             for t in &j.targets[1..] {

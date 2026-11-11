@@ -18,7 +18,13 @@ pub async fn mutate(
                 if m.owner != env.owner()
                     || m.canister != env.canister()
                     || payload.len() > CLEANUP_MUTATION_MAX
-                    || !matches!(m.operation, MutationOperation::Cleanup { .. })
+                    || !(matches!(m.operation, MutationOperation::Cleanup { .. })
+                        || matches!(g.info.purpose, GrantPurpose::RestoreCleanup { .. })
+                            && matches!(
+                                m.operation,
+                                MutationOperation::RestoreDiscard { .. }
+                                    | MutationOperation::RestoreCancel { .. }
+                            ))
                 {
                     return Err(Error::Unauthorized);
                 }
@@ -64,7 +70,11 @@ pub async fn mutate(
         let result = if is_cleanup {
             let n = n.as_mut().ok_or(Error::Unauthorized)?;
             n.budget = cleanup::namespace(db)?.budget;
-            cleanup_operation(db, env, &g, n, &m.operation)?
+            if matches!(g.info.purpose, GrantPurpose::RestoreCleanup { .. }) {
+                restore_pipeline::apply(db, env, &g, &m.operation)?
+            } else {
+                cleanup_operation(db, env, &g, n, &m.operation)?
+            }
         } else {
             if !spending && !matches!(m.operation, MutationOperation::KeyResult { .. }) {
                 return Err(Error::QuotaExceeded);
@@ -103,6 +113,12 @@ pub async fn mutate(
                     .await
                     .map(|_| MutationResult::Unit)
             }
+            WorkRequest::RestoreAllocate { job } => restore_flights::allocate(&authorized, job)
+                .await
+                .map(|_| MutationResult::Unit),
+            WorkRequest::RestoreDerive(r) => restore_flights::derive(&authorized, r)
+                .await
+                .map(MutationResult::Key),
             WorkRequest::IncidentDerive(r) => incident_flights::derive(&authorized, r)
                 .await
                 .map(MutationResult::Key),
@@ -155,7 +171,41 @@ fn ordinary(
     g: &mut Grant,
     op: &MutationOperation,
 ) -> Result<MutationResult> {
-    let a = authorization::authority(db, &g.credential)?;
+    if restore_grants::is_restore(&g.info.purpose) {
+        match op {
+            MutationOperation::RestoreAllocate
+                if matches!(g.info.purpose, GrantPurpose::RestorePrepare { .. }) =>
+            {
+                return work(
+                    g,
+                    env,
+                    WorkRequest::RestoreAllocate {
+                        job: restore_grants::job(&g.info.purpose)?.clone(),
+                    },
+                );
+            }
+            MutationOperation::RestoreDerive(r)
+                if matches!(g.info.purpose, GrantPurpose::RestoreTarget { .. }) =>
+            {
+                restore_flights::role(db, env, r)?;
+                return work(g, env, WorkRequest::RestoreDerive(r.clone()));
+            }
+            MutationOperation::KeyResult { .. } => {}
+            _ => {
+                let result = restore_pipeline::apply(db, env, g, op)?;
+                if matches!(op, MutationOperation::RestoreActivate) {
+                    g.revoked = true;
+                }
+                return Ok(result);
+            }
+        }
+    }
+    let a = if restore_grants::is_restore(&g.info.purpose) {
+        None
+    } else {
+        Some(authorization::authority(db, &g.credential)?)
+    };
+
     let normal = matches!(g.info.purpose, GrantPurpose::Normal);
     let incident_grant = matches!(g.info.purpose, GrantPurpose::Incident { .. });
     let preparation = matches!(g.info.purpose, GrantPurpose::IncidentPrepare(_));
@@ -264,7 +314,9 @@ fn ordinary(
                 .map(|_| MutationResult::Unit)
         }
         MutationOperation::Create(r) => {
-            if g.info.purpose != GrantPurpose::Create || a.scope != CredentialScope::Global {
+            if g.info.purpose != GrantPurpose::Create
+                || a.as_ref().ok_or(Error::Unauthorized)?.scope != CredentialScope::Global
+            {
                 return Err(Error::Unauthorized);
             }
             if store::load::<cleanup::Namespace>(db, "cleanup")?.is_some_and(|n| {
@@ -406,7 +458,7 @@ fn ordinary(
             if g.info.purpose == GrantPurpose::Credentials =>
         {
             store::incident::owner_change_allowed(db)?;
-            authorization::remove(db, &a, credential)?;
+            authorization::remove(db, a.as_ref().ok_or(Error::Unauthorized)?, credential)?;
             Ok(MutationResult::Unit)
         }
         MutationOperation::BeginRegistration { vault, scope } => Ok(MutationResult::Challenge(
@@ -549,6 +601,9 @@ impl<E: Environment> Environment for Authorized<'_, E> {
             f(db)
         })
     }
+    fn challenge_pending(&self, db: &Connection, token: u64) -> Result<bool> {
+        self.env.challenge_pending(db, token)
+    }
     fn require_spending(&self) -> Result<()> {
         self.env.require_spending()
     }
@@ -660,7 +715,7 @@ fn cleanup_operation(
     }
     n.action = digest;
     if matches!(action, CleanupAction::Purge) {
-        incident::purge(db, &targets, false)?;
+        incident::purge(db, &g.info.generations, false)?;
     }
     let settled = env.cleanup_existing_flights(
         db,
@@ -711,7 +766,7 @@ fn cleanup_operation(
         }
     };
     if complete && matches!(action, CleanupAction::Purge) {
-        incident::purge(db, &targets, true)?;
+        incident::purge(db, &g.info.generations, true)?;
     }
     progress.cursor = progress.cursor.checked_add(1).ok_or(Error::QuotaExceeded)?;
     progress.complete = complete;

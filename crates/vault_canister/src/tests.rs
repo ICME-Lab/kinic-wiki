@@ -634,3 +634,40 @@ fn restore_transition_without_header_blocks_configuration_and_malformed_state_fa
     .unwrap();
     assert_eq!(state::State.vault_set_config(None), Err(Error::Storage));
 }
+
+#[test]
+fn restore_challenge_completion_waits_for_exact_owner_token_and_checkpoint() {
+    state::initialize().unwrap();
+    let owner = p(91);
+    fund(owner, 1_000_000_000);
+    let s = state::State;
+    s.vault_reserve_cycles(&owner.to_text(), "challenge:1", 20_000_000, 0)
+        .unwrap();
+    s.vault_reserve_cycles(&owner.to_text(), "challenge:2", 20_000_000, 0)
+        .unwrap();
+    s.vault_checkpoint_execution(&owner.to_text(), "challenge:1", 7_000_000)
+        .unwrap();
+    state::transaction(|db| {
+        assert!(accounting::challenge_pending_in(db, owner, 1)?);
+        assert!(!accounting::challenge_pending_in(db, p(92), 1)?);
+        assert!(!accounting::challenge_pending_in(db, owner, 3)?);
+        Ok(())
+    })
+    .unwrap();
+    s.vault_settle_cycles(&owner.to_text(), "challenge:1", 0, 1000)
+        .unwrap();
+    state::transaction(|db| {
+        assert!(accounting::challenge_pending_in(db, owner, 1)?);
+        Ok(())
+    })
+    .unwrap();
+    s.vault_finish_execution(&owner.to_text(), "challenge:1", 7_000_000, 1000)
+        .unwrap();
+    state::transaction(|db| {
+        assert!(!accounting::challenge_pending_in(db, owner, 1)?);
+        assert!(accounting::challenge_pending_in(db, owner, 2)?);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 973_000_000);
+}

@@ -38,6 +38,14 @@ pub struct RestoreAdmissionStatus {
     pub semantic_config: Vec<u8>,
     pub proof_fence: Vec<u8>,
     pub issued: u64,
+    #[serde(default)]
+    pub pipeline: Option<RestorePipeline>,
+    #[serde(default)]
+    pub allocation_token: Option<u64>,
+    #[serde(default)]
+    pub cancel_requested: bool,
+    #[serde(default)]
+    pub cancel_complete: bool,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
@@ -65,4 +73,52 @@ impl Default for TransitionState {
             namespace_flight: None,
         }
     }
+}
+
+/// Locally validated archive metadata. This is a signed client assertion, not server AEAD validation.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RestorePreflight {
+    pub archive_digest: Vec<u8>,
+    pub archive_length: u64,
+    pub source_commitment: Vec<u8>,
+    pub target_commitment: Vec<u8>,
+    pub sequence: u64,
+    pub records: u64,
+    pub objects: u64,
+    pub chunks: u64,
+    pub revision_bytes: u64,
+    pub peak_pending_bytes: u64,
+    pub current_plain_bytes: u64,
+    pub plain_bytes: u64,
+    pub source_saved: bool,
+    pub source_fully_verified: bool,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum RestorePhase {
+    Allocated,
+    EnvelopesStaged,
+    KitConfirmed,
+    Discarding,
+    Importing,
+    BackupVerified,
+    Active,
+    Cancelling,
+    Cancelled,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct RestorePipeline {
+    pub target: Generation,
+    pub phase: RestorePhase,
+    pub normal: Option<Envelope>,
+    pub recovery: Option<Envelope>,
+    pub recovery_verifier: Vec<u8>,
+    pub envelope_digest: Vec<u8>,
+    pub kit_ack: Option<Vec<u8>>,
+    pub preflight: Option<RestorePreflight>,
+    pub old_removed: bool,
+    pub discard_started: bool,
+    pub cleanup_cursor: u64,
+    pub backup_ack: Option<IncidentBackupAck>,
 }

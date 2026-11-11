@@ -13,6 +13,8 @@ pub(crate) struct Grant {
     pub credential_version: u64,
     pub fence: Vec<u8>,
     pub revoked: bool,
+    #[serde(default)]
+    pub restore_binding: Option<Vec<u8>>,
     pub last_digest: Vec<u8>,
     pub last_result: Option<MutationResult>,
     pub work: Option<Work>,
@@ -30,6 +32,8 @@ pub(crate) enum WorkRequest {
     Create(Reserve),
     IncidentAllocate { vault: Id, attempt: Id },
     IncidentDerive(IncidentDerive),
+    RestoreAllocate { job: Id },
+    RestoreDerive(IncidentDerive),
 }
 pub(crate) fn key(id: &[u8]) -> String {
     format!(
@@ -174,6 +178,14 @@ pub(crate) fn current(db: &Connection, env: &impl Environment, g: &Grant) -> Res
     }
     if g.info.expires <= env.now() || g.fence != fence(db)? {
         return Err(Error::Expired);
+    }
+    if restore_grants::is_restore(&g.info.purpose) {
+        let j =
+            restore_grants::validate(db, env, &g.credential, &g.info.purpose, &g.info.generations)?;
+        if g.restore_binding.as_ref() != Some(&restore_grants::binding(&j)?) {
+            return Err(Error::Unauthorized);
+        }
+        return Ok(());
     }
     let authority = crate::authorization::authority(db, &g.credential)?;
     if authority.revoked || authority.version != g.credential_version {

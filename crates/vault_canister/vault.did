@@ -108,14 +108,17 @@ type GrantInfo = record {
   purpose : GrantPurpose;
 };
 type GrantPurpose = variant {
+  RestoreCleanup : record { job : blob; target : PendingCreation };
   Restore : record { job : blob };
   CancelCreation : record { job : blob; target : PendingCreation };
   Credentials;
+  RestoreTarget : record { job : blob; generation : Generation };
   Normal;
   Cleanup : record { job : blob };
   Incident : record { job : blob; vector_digest : blob };
   IncidentCutover : record { job : blob; digest : blob };
   Create;
+  RestorePrepare : record { job : blob; target : PendingCreation };
   IncidentPrepare : IncidentPreparation;
 };
 type GrantRequest = record {
@@ -215,6 +218,7 @@ type IncidentTarget = record {
   kit_ack : opt blob;
   target : opt Generation;
   backup_ack : opt IncidentBackupAck;
+  restore_child : opt RestoreChildLink;
   recovery_verifier : blob;
   recovery : opt Envelope;
   reset_attempt : opt blob;
@@ -311,9 +315,12 @@ type RestoreAdmissionRequest = record {
 type RestoreAdmissionStatus = record {
   challenge : Challenge;
   request : RestoreAdmissionRequest;
+  pipeline : opt RestorePipeline;
   // Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
   recovery_message : blob;
+  allocation_token : opt nat64;
   issued : nat64;
+  cancel_complete : bool;
   current_verifier : blob;
   current_live : opt Generation;
   semantic_config : blob;
@@ -322,8 +329,58 @@ type RestoreAdmissionStatus = record {
   candidate : opt text;
   proof_fence : blob;
   candidate_digest : blob;
+  cancel_requested : bool;
   next_epoch : nat64;
   parent_job : opt blob;
+};
+// Immutable replacement audit retained when the single active child slot is reused.
+type RestoreChildLink = record {
+  job : blob;
+  attempt : blob;
+  archive_digest : blob;
+  target : Generation;
+};
+type RestorePhase = variant {
+  BackupVerified;
+  Importing;
+  Discarding;
+  Active;
+  EnvelopesStaged;
+  KitConfirmed;
+  Cancelling;
+  Cancelled;
+  Allocated;
+};
+type RestorePipeline = record {
+  discard_started : bool;
+  normal : opt Envelope;
+  cleanup_cursor : nat64;
+  envelope_digest : blob;
+  kit_ack : opt blob;
+  preflight : opt RestorePreflight;
+  target : Generation;
+  backup_ack : opt IncidentBackupAck;
+  old_removed : bool;
+  recovery_verifier : blob;
+  recovery : opt Envelope;
+  phase : RestorePhase;
+};
+// Locally validated archive metadata. This is a signed client assertion, not server AEAD validation.
+type RestorePreflight = record {
+  records : nat64;
+  peak_pending_bytes : nat64;
+  source_saved : bool;
+  current_plain_bytes : nat64;
+  archive_length : nat64;
+  archive_digest : blob;
+  plain_bytes : nat64;
+  objects : nat64;
+  source_fully_verified : bool;
+  target_commitment : blob;
+  source_commitment : blob;
+  revision_bytes : nat64;
+  chunks : nat64;
+  sequence : nat64;
 };
 type RestoreProgress = record { count : nat64; root : blob; sequence : nat64 };
 type Result = variant { Ok : Header; Err : Error };
@@ -415,6 +472,7 @@ service : () -> {
   begin_grant : (GrantRequest) -> (Result_2);
   begin_restore : (BeginRestore) -> (Result);
   begin_restore_admission : (RestoreAdmissionRequest) -> (Result_2);
+  begin_restore_grant : (GrantRequest) -> (Result_2);
   begin_restore_revision : (blob, Revision, opt blob) -> (Result_4);
   begin_revision : (BeginRevision) -> (Result_5);
   begin_unlock : (BeginUnlock) -> (Result_2);
@@ -433,6 +491,7 @@ service : () -> {
   finish_cleanup : (blob, text) -> (Result_13);
   finish_export : (blob, bool) -> (Result);
   finish_grant : (blob, text) -> (Result_13);
+  finish_restore_grant : (blob, text, bool) -> (Result_13);
   get_active_export : () -> (Result_14);
   get_active_export_for_vault : (blob) -> (Result_14);
   get_chunk : (blob, blob, nat64, nat32) -> (Result_15);
@@ -476,6 +535,12 @@ service : () -> {
   register_restore_candidate : (blob, text) -> (Result_2);
   reserve_vault : (Reserve) -> (Result);
   restore_admission_status : () -> (Result_30) query;
+  restore_target_chunk : (blob, Generation, blob, nat64, nat32) -> (
+      Result_15,
+    ) query;
+  restore_target_descriptor : (blob, Generation) -> (Result_20) query;
+  restore_target_index : (blob, Generation, nat64) -> (Result_12) query;
+  restore_target_progress : (blob, Generation) -> (Result_9) query;
   resume_restore_admission : (blob) -> (Result_2);
   set_config : (opt VaultConfig) -> (Result_4);
   set_funding_config : (opt FundingConfig) -> (Result_4);

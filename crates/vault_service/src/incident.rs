@@ -60,6 +60,13 @@ pub(crate) fn vector(j: &IncidentStatus) -> Result<Vec<u8>> {
             PreparationPhase::Cancelled => bytes.extend_from_slice(&[2, 4]),
             _ => {}
         }
+        if let Some(child) = &t.restore_child {
+            bytes.extend_from_slice(&[3]);
+            sized(&mut bytes, &child.job);
+            sized(&mut bytes, &child.attempt);
+            sized(&mut bytes, &child.target.bytes()?);
+            sized(&mut bytes, &child.archive_digest);
+        }
         match &t.target {
             Some(g) => {
                 bytes.push(1);
@@ -268,6 +275,7 @@ pub(crate) fn start(
             return Err(Error::Busy);
         }
         targets.push(IncidentTarget {
+            restore_child: None,
             snapshot_time: env.now(),
             snapshot_sequence: h.sequence,
             source: h,
@@ -513,12 +521,16 @@ fn discard(t: &mut IncidentTarget) {
 }
 /// Fence selected terminal targets before the first bounded deletion. The fixed audit
 /// identities remain in the vector; only surviving sources authorize further preparation.
-pub(crate) fn purge(db: &Connection, targets: &[Id], complete: bool) -> Result<()> {
+pub(crate) fn purge(db: &Connection, targets: &[Generation], complete: bool) -> Result<()> {
     let Some(mut j) = store::incident::status(db)?.filter(|j| !j.complete) else {
         return Ok(());
     };
     for t in &mut j.targets {
-        if targets.contains(&t.source.id) {
+        if t.source
+            .generation
+            .as_ref()
+            .is_some_and(|g| targets.contains(g))
+        {
             discard(t);
             t.source.normal = None;
             t.source.recovery = None;

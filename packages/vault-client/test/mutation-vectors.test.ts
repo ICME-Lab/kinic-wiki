@@ -160,6 +160,68 @@ test("all generated JS Candid mutation variants and generation bytes match froze
     { IncidentCutover: { digest: b(8, 32) } },
     { ClearInactive: { vault: v } },
   );
+  operations.push(
+    { RestoreAllocate: null },
+    {
+      RestoreDerive: {
+        job: op,
+        attempt: op,
+        role: { Target: null },
+        generation,
+        transport: b(8, 48),
+      },
+    },
+    {
+      RestoreStage: { normal: env, recovery: env, recovery_verifier: b(7, 32) },
+    },
+    { RestoreConfirmKit: { envelope_digest: b(8, 32) } },
+    {
+      RestorePreflight: {
+        archive_digest: b(1, 32),
+        archive_length: 1000n,
+        source_commitment: b(2, 32),
+        target_commitment: b(3, 32),
+        sequence: 7n,
+        records: 1n,
+        objects: 1n,
+        chunks: 1n,
+        revision_bytes: 20000n,
+        peak_pending_bytes: 2000n,
+        current_plain_bytes: 1n,
+        plain_bytes: 1n,
+        source_saved: true,
+        source_fully_verified: true,
+      },
+    },
+    { RestoreDiscard: { current: generation, cursor: 0n } },
+    { RestoreBeginImport: null },
+    {
+      RestoreRecord: {
+        vault: v,
+        object: o,
+        revision: 1n,
+        sequence: 7n,
+        plain_size: 0n,
+        manifest: new Uint8Array(),
+        chunk_hashes: [],
+        deleted: true,
+      },
+    },
+    { RestoreChunk: { index: 0, data: b(4) } },
+    { RestoreCommitRecord: { sequence: 7n } },
+    {
+      RestoreConfirmBackup: {
+        descriptor_digest: b(8, 32),
+        commitment: b(9, 32),
+        archive_hash: b(10, 32),
+        archive_length: 1000n,
+        recovery_verifier: b(7, 32),
+        sequence: 7n,
+      },
+    },
+    { RestoreActivate: null },
+    { RestoreCancel: { cursor: 0n } },
+  );
   const key = Ed25519KeyIdentity.generate(b(15, 32));
   const owner = Principal.fromUint8Array(new Uint8Array([2])),
     canister = Principal.fromUint8Array(new Uint8Array([1]));

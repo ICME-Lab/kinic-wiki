@@ -74,7 +74,9 @@ type Mutation = record {
   operation : MutationOperation;
 };
 type MutationOperation = variant {
+  RestoreCommitRecord : record { sequence : nat64 };
   PutChunk : record { vault : blob; data : blob; upload : blob; index : nat32 };
+  RestoreActivate;
   IncidentStage : record {
     normal : Envelope;
     attempt : blob;
@@ -86,6 +88,7 @@ type MutationOperation = variant {
   IncidentDerive : IncidentDerive;
   BeginRegistration : record { vault : blob; scope : CredentialScope };
   CommitRevision : record { vault : blob; upload : blob };
+  RestoreDiscard : record { cursor : nat64; current : Generation };
   KeyResult : record { handle : blob };
   DeleteObject : record {
     object : blob;
@@ -98,6 +101,9 @@ type MutationOperation = variant {
     registration : text;
     scope : CredentialScope;
   };
+  RestoreDerive : IncidentDerive;
+  RestoreChunk : record { data : blob; index : nat32 };
+  RestorePreflight : RestorePreflight;
   IncidentPrepareExport : record {
     attempt : blob;
     vault : blob;
@@ -105,7 +111,9 @@ type MutationOperation = variant {
   };
   IncidentCancel;
   Cleanup : record { job : blob; action : CleanupAction; cursor : nat64 };
+  RestoreBeginImport;
   IncidentReset : record { attempt : blob; vault : blob; next_attempt : blob };
+  RestoreCancel : record { cursor : nat64 };
   IncidentConfirmBackup : record {
     ack : IncidentBackupAck;
     attempt : blob;
@@ -113,6 +121,11 @@ type MutationOperation = variant {
   };
   IncidentCutover : record { digest : blob };
   Derive : Derive;
+  RestoreStage : record {
+    normal : Envelope;
+    recovery_verifier : blob;
+    recovery : Envelope;
+  };
   Create : Reserve;
   IncidentConfirmKit : record {
     attempt : blob;
@@ -127,11 +140,41 @@ type MutationOperation = variant {
     rows : vec IncidentWrapper;
   };
   PurgeObject : record { object : blob; vault : blob };
+  RestoreAllocate;
+  RestoreRecord : Revision;
+  RestoreConfirmBackup : IncidentBackupAck;
   IncidentAllocate : record { attempt : blob; vault : blob };
+  RestoreConfirmKit : record { envelope_digest : blob };
   ClearInactive : record { vault : blob };
   BeginRevision : BeginRevision;
   RemoveCredential : record { credential : blob };
   CancelSetup : record { attempt : blob; vault : blob };
 };
 type Reserve = record { vault : blob; operation : blob };
+type RestorePreflight = record {
+  records : nat64;
+  peak_pending_bytes : nat64;
+  source_saved : bool;
+  current_plain_bytes : nat64;
+  archive_length : nat64;
+  archive_digest : blob;
+  plain_bytes : nat64;
+  objects : nat64;
+  source_fully_verified : bool;
+  target_commitment : blob;
+  source_commitment : blob;
+  revision_bytes : nat64;
+  chunks : nat64;
+  sequence : nat64;
+};
+type Revision = record {
+  deleted : bool;
+  object : blob;
+  vault : blob;
+  chunk_hashes : vec blob;
+  revision : nat64;
+  manifest : blob;
+  plain_size : nat64;
+  sequence : nat64;
+};
 service : { encode : (Mutation) -> () }

@@ -86,6 +86,9 @@ fn meter() -> u64 {
     }
 }
 impl Environment for Vault {
+    fn challenge_pending(&self, db: &Connection, token: u64) -> Result<bool> {
+        crate::accounting::challenge_pending_in(db, self.owner(), token)
+    }
     fn cleanup_existing_flights(
         &self,
         db: &Connection,
@@ -754,4 +757,59 @@ fn resume_restore_admission(job: vault_types::Id) -> vault_types::Result<vault_t
     let env = Vault::capture()?;
     let result = vault_service::restore_admission::resume(&env, job);
     env.finish(result)
+}
+
+#[ic_cdk::update]
+fn begin_restore_grant(
+    request: vault_types::GrantRequest,
+) -> vault_types::Result<vault_types::Challenge> {
+    let env = Vault::capture_cleanup()?;
+    let result = vault_service::restore_grants::begin(&env, request);
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn finish_restore_grant(
+    operation: vault_types::Id,
+    proof: String,
+    cleanup_only: bool,
+) -> vault_types::Result<vault_types::GrantInfo> {
+    let env = Vault::capture_cleanup()?;
+    let result = vault_service::restore_grants::finish(&env, operation, proof, cleanup_only);
+    env.finish(result)
+}
+#[ic_cdk::query]
+fn restore_target_descriptor(
+    job: vault_types::Id,
+    target: vault_types::Generation,
+) -> vault_types::Result<vault_types::StagedExport> {
+    let env = Vault::capture_read()?;
+    vault_service::restore_pipeline::descriptor(&env, job, target)
+}
+#[ic_cdk::query]
+fn restore_target_index(
+    job: vault_types::Id,
+    target: vault_types::Generation,
+    after: u64,
+) -> vault_types::Result<vault_types::ExportPage> {
+    let env = Vault::capture_read()?;
+    vault_service::restore_pipeline::index(&env, job, target, after)
+}
+#[ic_cdk::query]
+fn restore_target_chunk(
+    job: vault_types::Id,
+    target: vault_types::Generation,
+    object: vault_types::Id,
+    revision: u64,
+    index: u32,
+) -> vault_types::Result<Vec<u8>> {
+    let env = Vault::capture_read()?;
+    vault_service::restore_pipeline::chunk(&env, job, target, object, revision, index)
+}
+#[ic_cdk::query]
+fn restore_target_progress(
+    job: vault_types::Id,
+    target: vault_types::Generation,
+) -> vault_types::Result<vault_types::RestoreProgress> {
+    let env = Vault::capture_read()?;
+    vault_service::restore_pipeline::progress(&env, job, target)
 }
