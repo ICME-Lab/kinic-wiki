@@ -182,15 +182,15 @@ pub fn decode(raw: &str) -> Result<TransitionState> {
                 return Err(Error::Storage);
             }
         }
-        if let Some(parent) = &j.parent_job {
-            if !state.incident.as_ref().is_some_and(|p| {
+        if let Some(parent) = &j.parent_job
+            && !state.incident.as_ref().is_some_and(|p| {
                 &p.job == parent
                     && p.targets
                         .iter()
                         .any(|t| t.source.generation == j.current_live)
-            }) {
-                return Err(Error::Storage);
-            }
+            })
+        {
+            return Err(Error::Storage);
         }
     }
     if let Some(j) = &state.creation {

@@ -4,8 +4,52 @@ import { Principal } from "@icp-sdk/core/principal";
 // @ts-ignore generated JS factory has an equivalent generated TS contract beside it.
 import { idlFactory } from "../../vault-candid/mutation.js";
 import type { Mutation, MutationOperation } from "./mutation-contracts.ts";
-import type { GrantInfo, MutationResult, VaultActor } from "./contracts.ts";
+import type {
+  GrantInfo,
+  GrantPurpose,
+  Generation,
+  MutationResult,
+  VaultActor,
+} from "./contracts.ts";
 import { concat, utf8 } from "../../vault-crypto/src/index.ts";
+// @ts-ignore generated JS has the adjacent generated TS contract.
+import { idlFactory as vaultIDL } from "../../vault-candid/index.js";
+const grantRequestIDL = (vaultIDL({ IDL }) as IDL.ServiceClass)._fields.find(
+  ([name]) => name === "begin_grant",
+)![1].argTypes[0]!;
+/** Canonical full wire binding; no secret or ephemeral key is retained here. */
+export function grantBinding(
+  credential: Uint8Array,
+  purpose: GrantPurpose,
+  generations: Generation[],
+) {
+  return new Uint8Array(
+    IDL.encode(
+      [grantRequestIDL],
+      [
+        {
+          operation: new Uint8Array(16),
+          public_key: new Uint8Array(32),
+          credential,
+          purpose,
+          generations,
+        },
+      ],
+    ),
+  );
+}
+export function authorityContext(value: unknown): string {
+  if (typeof value === "bigint") return `bigint:${value}`;
+  if (value instanceof Principal) return `principal:${value.toText()}`;
+  if (value instanceof Uint8Array) return authorityContext(Array.from(value));
+  if (Array.isArray(value)) return `[${value.map(authorityContext).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${authorityContext(v)}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
+}
 export const MUTATION_DOMAIN = utf8.encode("kinic-vault/mutation/v2\0");
 export const mutationIDL = (
   idlFactory({ IDL }) as IDL.ServiceClass
@@ -31,6 +75,7 @@ export class SignedMutations {
   private flight?: Promise<MutationResult>;
   private key?: CryptoKey;
   private counter: bigint;
+  private rejected = false;
   constructor(
     private actor: Pick<VaultActor, "mutate">,
     private owner: Principal,
@@ -42,7 +87,15 @@ export class SignedMutations {
     this.counter = grant.next_counter;
   }
   get hasPending() {
-    return !!this.pending;
+    return !!this.pending || !!this.flight;
+  }
+  get reusable() {
+    return (
+      !!this.key &&
+      !this.hasPending &&
+      !this.rejected &&
+      BigInt(Math.floor(Date.now() / 1000)) < this.grant.expires
+    );
   }
   destroy() {
     this.key = undefined;
@@ -105,6 +158,7 @@ export class SignedMutations {
     if (!this.key || this.pending !== p) throw Error("Locked");
     if ("Err" in result) {
       this.pending = undefined;
+      this.rejected = true;
       throw Error(Object.keys(result.Err)[0]);
     }
     this.counter++;

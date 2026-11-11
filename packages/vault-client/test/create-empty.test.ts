@@ -284,3 +284,68 @@ it("confirmSavedKit reopens staged envelopes and fences a late derive after lock
   ).rejects.toThrow("Locked");
   expect(send).not.toHaveBeenCalled();
 });
+
+it("reuses exact scoped creation authority but renews on target, key version, scope or lock", async () => {
+  const { g, j } = await fixture();
+  j.creator = { credential: b(6), version: 1n, scope_digest: b(8, 32) };
+  j.key_digest = b(7, 32);
+  vi.mocked(assertCredential).mockResolvedValue("uv");
+  let request: any;
+  const begin = vi.fn(async (r: any) => {
+    request = r;
+    return {
+      Ok: {
+        bytes: b(1, 32),
+        expires: 9999999999n,
+        registration: false,
+        credential_ids: [b(6)],
+      },
+    };
+  });
+  const actor = {
+    begin_grant: begin,
+    finish_grant: async () => ({
+      Ok: {
+        id: b(9, 32),
+        expires: 9999999999n,
+        next_counter: 0n,
+        purpose: request.purpose,
+        generations: request.generations,
+      },
+    }),
+    create_empty_status: async () => ({ Ok: [j] }),
+  } as unknown as VaultActor;
+  const client = new CreateEmptyClient(
+    actor,
+    g.owner,
+    g.canister,
+    "localhost",
+    true,
+  );
+  const ensure = () =>
+    client.ensureAuthenticated(
+      b(6),
+      new Uint8Array(j.job),
+      j.target,
+      j.authorizer_instance,
+    );
+  await ensure();
+  await ensure();
+  expect(begin).toHaveBeenCalledTimes(1);
+  j.phase = { KitConfirmed: null };
+  await ensure();
+  expect(begin).toHaveBeenCalledTimes(1);
+  j.generation = [{ ...g, nonce: b(10, 32) }];
+  await ensure();
+  expect(begin).toHaveBeenCalledTimes(2);
+  j.creator.version++;
+  await ensure();
+  expect(begin).toHaveBeenCalledTimes(3);
+  j.creator.scope_digest = b(11, 32);
+  await ensure();
+  expect(begin).toHaveBeenCalledTimes(4);
+  client.session.lock();
+  await ensure();
+  expect(begin).toHaveBeenCalledTimes(5);
+  client.destroy();
+});

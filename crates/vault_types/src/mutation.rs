@@ -260,7 +260,7 @@ pub enum MutationResult {
     Unit,
     InactiveCleanup { complete: bool },
     Challenge(Challenge),
-    Header(Header),
+    Header(Box<Header>),
     Upload(Upload),
     Revision(Revision),
     Handle(Id),

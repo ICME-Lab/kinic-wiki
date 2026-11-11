@@ -600,7 +600,7 @@ fn activate_inner(env: &impl Environment, request: Activate, restoring: bool) ->
         } else if h.state != VaultState::Pending {
             return Err(Error::Conflict);
         }
-        let ch = ceremony(db, env.now(), &request.vault, Purpose::Activate, &vec![0; 48], &[])?;
+        let ch = ceremony(db, env.now(), &request.vault, Purpose::Activate, &[0; 48], &[])?;
         if credentials(db)?.is_empty() {
             let credential = auth::registration(
                 &cfg,
@@ -648,7 +648,7 @@ pub fn manage_unlock_credential(env: &impl Environment, request: ManageCredentia
         } else {
             hash(&request.registration)?
         };
-        let ch = ceremony(db, env.now(), &request.vault, purpose, &vec![0; 48], &target)?;
+        let ch = ceremony(db, env.now(), &request.vault, purpose, &[0; 48], &target)?;
         assert_proof(db, &ch, &request.assertion)?;
         if let Some(id) = request.remove {
             let creds = credentials(db)?;
@@ -688,14 +688,7 @@ pub fn prepare_unlock_credential(
     env.transaction(|db| {
         let cfg = store::authorize(db, env.owner())?;
         store::incident::readable(db, &vault)?;
-        let ch = ceremony(
-            db,
-            env.now(),
-            &vault,
-            Purpose::AddCredential,
-            &vec![0; 48],
-            &[],
-        )?;
+        let ch = ceremony(db, env.now(), &vault, Purpose::AddCredential, &[0; 48], &[])?;
         let credential = auth::registration(&cfg, &ch, &registration)?;
         let digest = hash(&Some(registration))?;
         store::save(

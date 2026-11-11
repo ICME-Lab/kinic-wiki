@@ -27,12 +27,12 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
         db.execute_batch("PRAGMA user_version=3")
             .map_err(|_| vault_types::Error::Storage)?;
     }
-    if matches!(version, 1 | 2 | 3) {
+    if matches!(version, 1..=3) {
         // Conservative prepaid migration: preserve existing data even if the added
         // reservation makes an intermediate namespace overcommitted.
         db.execute_batch("INSERT OR IGNORE INTO settings(owner,key,value) SELECT owner,'transition','null' FROM settings WHERE key='cleanup'; PRAGMA user_version=4;").map_err(|_| vault_types::Error::Storage)?;
     }
-    if matches!(version, 1 | 2 | 3 | 4) {
+    if matches!(version, 1..=4) {
         let columns: i64 = db
             .query_row(
                 "SELECT count(*) FROM pragma_table_info('restores') WHERE name='working_prepaid'",
@@ -51,7 +51,7 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
     }
     db.execute_batch(vault_store::RESTORE_WORKING_SCHEMA)
         .map_err(|_| vault_types::Error::Storage)?;
-    if !matches!(version, 1 | 2 | 3 | 4 | 5) {
+    if !matches!(version, 1..=5) {
         return Err(vault_types::Error::Storage);
     }
     db.execute_batch(vault_store::KEY_CAPACITY_SCHEMA)

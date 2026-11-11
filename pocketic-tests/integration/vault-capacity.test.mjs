@@ -1,3 +1,5 @@
+import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
+import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
 // Actual Wasm capacity and Task5 migration with a separate synthetic ledger.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -28,7 +30,7 @@ const ok = (r) => {
 };
 const capacityError = (r) =>
   assert.deepEqual(r, { Err: { QuotaExceeded: null } });
-const server = await PocketIcServer.start();
+const server = await startVaultPocketIc(PocketIcServer.getBinPath());
 let pic;
 try {
   pic = await PocketIc.create(server.getUrl());
@@ -38,10 +40,7 @@ try {
   );
   const baseline = resolve(root, "target/vault-capacity-baseline.wasm");
   const frozen = resolve(root, "target/vault-dedicated-task5-final.wasm");
-  assert.equal(
-    createHash("sha256").update(readFileSync(frozen)).digest("hex"),
-    "c6c21518081576723e62301dd03531d1726d5458a68d5109fa35e09d46458954",
-  );
+  verifyVaultBaseline(frozen);
   const account = IDL.Record({
     owner: IDL.Principal,
     subaccount: IDL.Opt(IDL.Vec(IDL.Nat8)),

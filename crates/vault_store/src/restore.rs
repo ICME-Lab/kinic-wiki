@@ -113,11 +113,13 @@ fn begin_inner(db: &Connection, r: BeginRestore, now: u64, prepaid: bool) -> Res
     h.backup_sequence = None;
     h.backup_at = None;
     h.key_name = cfg.key_name;
-    if let Some(g) = &h.generation {
-        if g.owner != cfg.owner || g.vault != h.id || g.epoch != h.epoch || g.key_name != h.key_name
-        {
-            return Err(Error::InvalidInput);
-        }
+    if let Some(g) = &h.generation
+        && (g.owner != cfg.owner
+            || g.vault != h.id
+            || g.epoch != h.epoch
+            || g.key_name != h.key_name)
+    {
+        return Err(Error::InvalidInput);
     }
     if let Some(e) = &h.recovery {
         if h.generation.is_some() {

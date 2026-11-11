@@ -583,15 +583,14 @@ pub(crate) fn recover_pending_in(
                 finish_reserved_execution(db, &text, &journal, checkpoint as u64, millis)
                     .map_err(|_| Error::Storage)?;
             }
-            if let Some(c) = control.as_mut() {
-                if c.get("derive")
+            if let Some(c) = control.as_mut()
+                && c.get("derive")
                     .and_then(|f| f.get("token"))
                     .and_then(|x| x.as_u64())
                     == Some(own)
-                {
-                    c["derive"] = serde_json::Value::Null;
-                    vault_store::save(db, "control", c)?;
-                }
+            {
+                c["derive"] = serde_json::Value::Null;
+                vault_store::save(db, "control", c)?;
             }
             vault_store::keys::acknowledge_cancel(db, own)?;
         }

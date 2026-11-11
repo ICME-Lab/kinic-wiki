@@ -7,7 +7,12 @@ import type {
   PendingCreation,
 } from "./contracts";
 import { Session } from "./session";
-import { SignedMutations, ephemeralSigner } from "./signed";
+import {
+  SignedMutations,
+  ephemeralSigner,
+  grantBinding,
+  authorityContext,
+} from "./signed";
 import { assertCredential } from "./webauthn";
 import { bytes, ok } from "./api";
 import {
@@ -36,6 +41,7 @@ const kitTarget = (j: CreateEmptyStatus) => ({
 });
 export class CreateEmptyClient {
   private signer?: SignedMutations;
+  private reuse?: { binding: Uint8Array; context: string };
   private detach: () => void;
   constructor(
     private actor: VaultActor,
@@ -48,12 +54,14 @@ export class CreateEmptyClient {
     this.detach = session.addLockCleanup(() => {
       this.signer?.destroy();
       this.signer = undefined;
+      this.reuse = undefined;
     });
   }
   destroy() {
     this.session.lock();
     this.signer?.destroy();
     this.signer = undefined;
+    this.reuse = undefined;
     this.detach();
   }
   private signed() {
@@ -75,6 +83,7 @@ export class CreateEmptyClient {
     source: Generation,
   ) {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    this.reuse = undefined;
     const ticket = this.session.capture(),
       keys = await ephemeralSigner();
     this.session.check(ticket);
@@ -108,7 +117,43 @@ export class CreateEmptyClient {
       grant,
       keys.keys,
     );
-    return this.status();
+    const current = await this.status();
+    this.reuse = {
+      binding: grantBinding(credential, purpose, [source]),
+      context: this.authority(current),
+    };
+    return current;
+  }
+  private authority(j: CreateEmptyStatus) {
+    return authorityContext([
+      j.job,
+      j.target,
+      j.authorizer_instance,
+      j.creator,
+      j.generation,
+      j.key_digest,
+    ]);
+  }
+  async ensureAuthenticated(
+    credential: Uint8Array,
+    job: Uint8Array,
+    target: PendingCreation,
+    source: Generation,
+  ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    const current = await this.status();
+    const purpose = {
+      CreateEmpty: { job, target, authorizer_instance: source },
+    };
+    const binding = grantBinding(credential, purpose, [source]);
+    if (
+      this.signer?.reusable &&
+      this.reuse &&
+      equal(binding, this.reuse.binding) &&
+      this.authority(current) === this.reuse.context
+    )
+      return current;
+    return this.authenticate(credential, job, target, source);
   }
   async allocate() {
     const ticket = this.session.capture();
@@ -252,6 +297,7 @@ export class CreateEmptyClient {
     this.session.check(ticket);
     this.signer?.destroy();
     this.signer = undefined;
+    this.reuse = undefined;
     return this.status();
   }
   async cancel() {
@@ -268,6 +314,7 @@ export class CreateEmptyClient {
     this.session.check(ticket);
     this.signer?.destroy();
     this.signer = undefined;
+    this.reuse = undefined;
     return result;
   }
   async retry() {

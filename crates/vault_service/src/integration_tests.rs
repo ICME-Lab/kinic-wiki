@@ -2,6 +2,7 @@ use super::*;
 use candid::Principal;
 use std::cell::{Cell, RefCell};
 type TestHook = Box<dyn FnOnce(&TestEnvironment)>;
+type ChallengeRows = std::collections::BTreeMap<(Principal, u64), (bool, u64, u64)>;
 struct TestEnvironment {
     authorized: Cell<bool>,
     funded: Cell<bool>,
@@ -11,7 +12,7 @@ struct TestEnvironment {
     cancel_random: Cell<bool>,
     fail_random: Cell<bool>,
     cleanup_settled: Cell<bool>,
-    challenge_rows: RefCell<std::collections::BTreeMap<(Principal, u64), (bool, u64, u64)>>,
+    challenge_rows: RefCell<ChallengeRows>,
     fail_challenge_reserve: Cell<bool>,
     defer_challenge_execution: Cell<bool>,
     challenge_reserves: Cell<u64>,
@@ -1831,10 +1832,7 @@ fn review2_completed_cancellation_marker_does_not_freeze_a_new_creation_attempt(
     }
     assert!(matches!(
         signed_call(&env, &key, &normal, 0, activation),
-        Ok(MutationResult::Header(Header {
-            state: VaultState::Active,
-            ..
-        }))
+        Ok(MutationResult::Header(header)) if header.state == VaultState::Active
     ));
     assert_eq!(
         signed_call(&env, &key, &cleanup_grant, 1, cancellation_operation(1)).unwrap_err(),

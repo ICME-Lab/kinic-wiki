@@ -595,11 +595,9 @@ pub(crate) fn cancel(
         .targets
         .iter_mut()
         .find(|t| t.phase == PreparationPhase::Cancelling)
+        && store::overlays::clear_inactive(db, &t.source, 1 - t.source.published_slot.unwrap_or(1))?
     {
-        if store::overlays::clear_inactive(db, &t.source, 1 - t.source.published_slot.unwrap_or(1))?
-        {
-            t.phase = PreparationPhase::Cancelled;
-        }
+        t.phase = PreparationPhase::Cancelled;
     }
     let complete = !j
         .targets

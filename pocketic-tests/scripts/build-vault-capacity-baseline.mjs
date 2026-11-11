@@ -1,6 +1,7 @@
 // Isolated Task5 fixture: only init seeding differs from the immutable baseline.
 // No fixture method or seeding code is linked into production Vault Wasm.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   readFileSync,
@@ -11,6 +12,7 @@ import {
 import { resolve, join } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
 const base = "17a21c18ba37700f03af835b32c3038a55886a45";
+execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", base, "HEAD"]);
 const dir = join(root, "target/vault-capacity-baseline");
 mkdirSync(dir, { recursive: true });
 const archive = join(dir, "source.tar");
@@ -24,6 +26,7 @@ execFileSync("git", [
   base,
   "Cargo.toml",
   "Cargo.lock",
+  "rust-toolchain.toml",
   "crates/vault_canister",
   "crates/vault_types",
   "crates/vault_store",
@@ -84,4 +87,30 @@ writeFileSync(
 );
 console.log(
   `Synthetic seeded Task5 baseline ${base}: target/vault-capacity-baseline.wasm`,
+);
+
+const digest = (path) =>
+  createHash("sha256").update(readFileSync(path)).digest("hex");
+writeFileSync(
+  join(root, "target/vault-capacity-baseline.json"),
+  JSON.stringify(
+    {
+      source_commit: base,
+      source_archive_sha256: digest(archive),
+      fixture: "pocketic-tests/fixtures/vault-capacity-init.rs",
+      fixture_sha256: digest(
+        join(root, "pocketic-tests/fixtures/vault-capacity-init.rs"),
+      ),
+      wasm_sha256: digest(join(root, "target/vault-capacity-baseline.wasm")),
+      cargo_lock_sha256: digest(join(dir, "Cargo.lock")),
+      rustc: execFileSync("rustc", ["--version"], {
+        cwd: dir,
+        encoding: "utf8",
+      }).trim(),
+      assets:
+        "Current vaultbrowser/dist; backend upgrade fixture, not historical frontend provenance",
+    },
+    null,
+    2,
+  ) + "\n",
 );

@@ -13,24 +13,24 @@ pub async fn mutate(
     // Failed Ed25519 proofs consume the separate daily cleanup mutation budget too.
     // Commit this cheap admission separately; proof failure must not roll it back.
     env.transaction(|db| {
-        if let Some(n) = store::load::<cleanup::Namespace>(db, "cleanup")? {
-            if let Some(g) = n.grant.as_ref().filter(|g| g.info.id == m.grant) {
-                if m.owner != env.owner()
-                    || m.canister != env.canister()
-                    || payload.len() > CLEANUP_MUTATION_MAX
-                    || !(matches!(m.operation, MutationOperation::Cleanup { .. })
-                        || matches!(g.info.purpose, GrantPurpose::RestoreCleanup { .. })
-                            && matches!(
-                                m.operation,
-                                MutationOperation::RestoreDiscard { .. }
-                                    | MutationOperation::RestoreCancel { .. }
-                            ))
-                {
-                    return Err(Error::Unauthorized);
-                }
-                grants::current(db, env, g)?;
-                cleanup::budget(db, env.now(), 2)?;
+        if let Some(n) = store::load::<cleanup::Namespace>(db, "cleanup")?
+            && let Some(g) = n.grant.as_ref().filter(|g| g.info.id == m.grant)
+        {
+            if m.owner != env.owner()
+                || m.canister != env.canister()
+                || payload.len() > CLEANUP_MUTATION_MAX
+                || !(matches!(m.operation, MutationOperation::Cleanup { .. })
+                    || matches!(g.info.purpose, GrantPurpose::RestoreCleanup { .. })
+                        && matches!(
+                            m.operation,
+                            MutationOperation::RestoreDiscard { .. }
+                                | MutationOperation::RestoreCancel { .. }
+                        ))
+            {
+                return Err(Error::Unauthorized);
             }
+            grants::current(db, env, g)?;
+            cleanup::budget(db, env.now(), 2)?;
         }
         Ok(())
     })?;
@@ -135,11 +135,11 @@ pub async fn mutate(
                 .map(MutationResult::Key),
             WorkRequest::Create(r) => create_generation(&authorized, r)
                 .await
-                .map(MutationResult::Header),
+                .map(|header| MutationResult::Header(Box::new(header))),
         };
         env.transaction(|db| {
             let mut g = grants::load(db, &m.grant)?;
-            if !g.work.as_ref().is_some_and(|w| w.handle == work.handle) {
+            if g.work.as_ref().is_none_or(|w| w.handle != work.handle) {
                 return Ok(());
             }
             let completion = if grants::current(db, env, &g).is_ok() && work.expires > env.now() {
@@ -361,7 +361,7 @@ fn ordinary(
             }
             let h = store::reserve(db, env.owner(), r.clone(), env.now())?;
             if h.generation.is_some() {
-                return Ok(MutationResult::Header(h));
+                return Ok(MutationResult::Header(Box::new(h)));
             }
             work(g, env, WorkRequest::Create(r.clone()))
         }
@@ -419,7 +419,7 @@ fn ordinary(
             h.sequence = 1;
             store::put_header(db, &h)?;
             db.execute("UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![h.id]).map_err(|_|Error::Storage)?;
-            Ok(MutationResult::Header(h))
+            Ok(MutationResult::Header(Box::new(h)))
         }
         MutationOperation::BeginRevision(r) if normal => {
             generation(db, g, &r.vault, true)?;

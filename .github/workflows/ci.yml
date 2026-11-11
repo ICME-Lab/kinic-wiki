@@ -27,6 +27,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
+      vault: ${{ steps.paths.outputs.vault }}
       canister: ${{ steps.paths.outputs.canister }}
       rust_all: ${{ steps.paths.outputs.rust_all }}
       probe: ${{ steps.paths.outputs.probe }}
@@ -62,6 +63,7 @@ jobs:
 
           if [[ "${{ github.event_name }}" != "pull_request" ]]; then
             {
+              echo "vault=true"
               echo "canister=true"
               echo "rust_all=true"
               echo "probe=true"
@@ -97,8 +99,9 @@ jobs:
 
           js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^patches/|^scripts/cloudflare/|^crates/vfs_canister/vfs\.did$)'
 
+          set_output vault "($js_workspace|^crates/vault_|^crates/kinic_sqlite_compat/|^vendor/passkey-auth/|^packages/vault-|^vaultbrowser/|^tools/vault-recovery/|^scripts/.*vault.*|^pocketic-tests/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^\.github/workflows/ci\.yml$)"
           set_output canister '^(packages/vfs-client-core/api-guidance\.json$|Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
-          set_output rust_all '^(Cargo\.(toml|lock)$|vendor/ic-agent/|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
+          set_output rust_all '^(Cargo\.(toml|lock)$|vendor/(ic-agent|passkey-auth)/|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat|vault_canister|vault_store|vault_service|vault_types)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(Cargo\.lock$|vendor/ic-agent/|crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
           set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^wikibrowser/)"
@@ -629,3 +632,81 @@ jobs:
       - run: pnpm run store-assets:generate
       - run: pnpm run release:package
       - run: pnpm run release:check
+
+  vault-check:
+    needs: changes
+    if: needs.changes.outputs.vault == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Upgrade fixtures are immutable commits reachable from this branch.
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: corepack enable && corepack prepare pnpm@11.0.8 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: npm ci --prefix pocketic-tests --ignore-scripts
+      - run: rustup toolchain install --profile minimal && rustup target add wasm32-unknown-unknown
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-vault-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Contracts and origin boundary
+        run: |
+          node scripts/check-vault-boundary.mjs
+          node packages/vault-client/scripts/generate-contracts.mjs --check
+      - name: Client crypto, backups and UI tests
+        run: pnpm --filter './packages/vault-*' --filter vaultbrowser -r test
+      - name: Types and strict lint
+        run: |
+          pnpm --dir packages/vault-client typecheck
+          pnpm --dir vaultbrowser typecheck
+          pnpm --dir wikibrowser exec oxlint --react-plugin --import-plugin --jsdoc-plugin --jsx-a11y-plugin --deny-warnings "$GITHUB_WORKSPACE/vaultbrowser/src" "$GITHUB_WORKSPACE/packages/vault-client/src" "$GITHUB_WORKSPACE/packages/vault-ui/src"
+      - name: Standalone offline archive recovery
+        run: node --test tools/vault-recovery/test/offline.test.mjs
+      - name: Current standalone assets and canisters
+        run: |
+          pnpm --dir vaultbrowser build
+          cargo build -p vault-canister -p vfs-canister --target wasm32-unknown-unknown --release --locked
+          node pocketic-tests/scripts/build-vault-ledger.mjs
+          node pocketic-tests/scripts/build-vault-client-acceptance.mjs
+      - name: Rebuild reachable upgrade baselines
+        run: |
+          node pocketic-tests/scripts/build-vault-baselines.mjs
+          node pocketic-tests/scripts/build-vault-capacity-baseline.mjs
+          node pocketic-tests/scripts/build-vault-restore-baseline.mjs
+          VAULT_RESTORE_BASE=97dc47e2280ea207139b6704d0333985ebf73a82 VAULT_RESTORE_OUTPUT=vault-restore-task12-quota node pocketic-tests/scripts/build-vault-restore-baseline.mjs
+      - name: Provision PocketIC 16.1
+        run: |
+          mkdir -p target/tools
+          curl -fsSL --retry 3 https://github.com/dfinity/pocketic/releases/download/16.1.0/pocket-ic-x86_64-linux.gz -o target/tools/pocket-ic.gz
+          gzip -dc target/tools/pocket-ic.gz > target/tools/pocket-ic
+          chmod +x target/tools/pocket-ic
+          test "$(target/tools/pocket-ic --version)" = "pocket-ic-server 16.1.0"
+      - name: Actual dedicated Wasm protocol acceptance
+        env:
+          POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
+        run: pnpm --dir pocketic-tests test:vault
+      - name: Install pinned local-network CLI and Chromium
+        run: |
+          curl -fsSL --retry 3 https://github.com/dfinity/icp-cli/releases/download/v1.0.2/icp-cli-x86_64-unknown-linux-gnu.tar.xz -o target/tools/icp.tar.xz
+          echo "7684bccea569f8ad44eb209705d64c286fc5045df255b692fd86e90a30a47f25  target/tools/icp.tar.xz" | sha256sum -c -
+          tar -xJf target/tools/icp.tar.xz -C target/tools
+          find "$GITHUB_WORKSPACE/target/tools" -type f -name icp -exec dirname {} \; >> "$GITHUB_PATH"
+          pnpm --dir wikibrowser exec playwright install --with-deps chromium
+      - name: Actual same-II cross-origin browser acceptance
+        run: |
+          icp identity new vault-acceptance-ci --storage plaintext --output-seed target/vault-ci-seed.txt
+          VAULT_ACCEPTANCE_IDENTITY=vault-acceptance-ci node pocketic-tests/scripts/run-vault-browser-acceptance.mjs
+      - name: Preserve baseline provenance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-baseline-provenance
+          path: target/vault-*.json

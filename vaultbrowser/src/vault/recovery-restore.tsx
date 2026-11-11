@@ -121,9 +121,17 @@ export function BackupRestore({
       throw Error("RestoreCandidateChanged");
     return bytes(ids[0]);
   };
-  const authenticate = async (j: RestoreAdmissionStatus, cleanup = false) => {
+  const authenticate = async (
+    j: RestoreAdmissionStatus,
+    cleanup = false,
+    fresh = false,
+  ) => {
     const p = j.pipeline[0];
-    await service.authenticate(
+    await (
+      fresh
+        ? service.authenticate.bind(service)
+        : service.ensureAuthenticated.bind(service)
+    )(
       candidate(j),
       cleanup
         ? { RestoreCleanup: { job: j.request.job, target: j.request.target } }
@@ -134,11 +142,13 @@ export function BackupRestore({
             },
     );
   };
-  const resume = async (cleanup = false) => {
+  const resume = async (cleanup = false, fresh = false) => {
     const j = await service.status(),
       s = await readSource(j);
-    const next = await service.resume(s.archive, s.secret, s.currentSecret);
-    await authenticate(next, cleanup);
+    const next = await (
+      fresh ? service.resume.bind(service) : service.ensureResumed.bind(service)
+    )(s.archive, s.secret, s.currentSecret);
+    await authenticate(next, cleanup, fresh);
     return s;
   };
   const p = status?.pipeline[0],
@@ -156,6 +166,12 @@ export function BackupRestore({
         archive is verified locally before admission. If this Vault still
         exists, its current kit must separately prove the exact live instance. A
         new passkey is scoped only to the fresh restored instance.
+      </p>
+      <p className="text-sm">
+        Restoring does not revoke existing passkey registrations. A still-valid
+        all-Vaults passkey can authorize the new instance. Compromise response
+        requires a remaining trusted passkey covering every affected Vault; this
+        scoped recovery does not grant that authority.
       </p>
       <p className="text-sm">
         At the 10-passkey limit, reuse an existing scoped passkey from a
@@ -256,6 +272,18 @@ export function BackupRestore({
               ? generationLabel(status.request.source_generation[0])
               : "Legacy encrypted backup"}
           </p>
+          {status.request.source_generation[0] ? (
+            <details className="text-sm">
+              <summary>Source identity details</summary>
+              <p className="break-all">
+                Canister:{" "}
+                {status.request.source_generation[0].canister.toText()}
+              </p>
+              <p className="break-all">
+                Owner: {status.request.source_generation[0].owner.toText()}
+              </p>
+            </details>
+          ) : null}
           {currentLabel ? (
             <p className="break-all text-sm">
               Current live instance to replace: {currentLabel}
@@ -269,8 +297,9 @@ export function BackupRestore({
           {status.parent_job[0] ? (
             <p className="text-sm">
               This restores only the proven frozen Vault into a separate fresh
-              instance. Other incident targets stay frozen. The owner incident
-              remains incomplete; this is not a partial incident commit.
+              instance. Any unresolved original incident targets stay frozen.
+              This does not commit the incident or complete other pending
+              restorations.
             </p>
           ) : null}
           <output className="text-sm">
@@ -286,7 +315,7 @@ export function BackupRestore({
                 disabled={disabled || !enabled}
                 onClick={() =>
                   act(async () => {
-                    await resume();
+                    await resume(false, true);
                   })
                 }
               >

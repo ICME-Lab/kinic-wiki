@@ -134,14 +134,14 @@ pub async fn begin(env: &impl Environment, r: GrantRequest) -> Result<Challenge>
     let token = env.transaction(|db| {
         validate_request(db, env, &r)?;
         grants::admission(db, env.now())?;
-        if let Some(p) = store::load::<Pending>(db, "grant-ceremony")? {
-            if p.challenge.expires > env.now() {
-                return if p.request == r {
-                    Ok(Err(p.challenge))
-                } else {
-                    Err(Error::Busy)
-                };
-            }
+        if let Some(p) = store::load::<Pending>(db, "grant-ceremony")?
+            && p.challenge.expires > env.now()
+        {
+            return if p.request == r {
+                Ok(Err(p.challenge))
+            } else {
+                Err(Error::Busy)
+            };
         }
         if store::load::<Flight>(db, "grant-random")?.is_some_and(|f| f.expires > env.now()) {
             return Err(Error::Busy);

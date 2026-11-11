@@ -9,7 +9,12 @@ import type {
   RestoreCandidateMode,
 } from "./contracts";
 import { Session } from "./session";
-import { SignedMutations, ephemeralSigner } from "./signed";
+import {
+  SignedMutations,
+  ephemeralSigner,
+  grantBinding,
+  authorityContext,
+} from "./signed";
 import { register, assertCredential } from "./webauthn";
 import { bytes, ok } from "./api";
 import {
@@ -30,6 +35,7 @@ import {
   randomBytes,
   generationBytes,
   recoverySigningKey,
+  recoveryVerifier,
   verifiedGenerationKEK,
   TransportSecretKey,
 } from "../../vault-crypto/src/index";
@@ -102,6 +108,30 @@ const kitTarget = (j: RestoreAdmissionStatus) => {
 };
 export class RestoreClient {
   private signer?: SignedMutations;
+  private reuse?: { binding: Uint8Array; context: string };
+  private proofContext?: string;
+  private authority(j: RestoreAdmissionStatus) {
+    return authorityContext([
+      j.request,
+      j.challenge,
+      j.phase,
+      j.candidate,
+      j.candidate_digest,
+      j.existing_candidate,
+      j.current_live,
+      j.current_verifier,
+      j.semantic_config,
+      j.proof_fence,
+      j.issued,
+      j.cancel_requested,
+      j.parent_job,
+      j.pipeline[0]?.target,
+    ]);
+  }
+  private rememberProof(j: RestoreAdmissionStatus) {
+    this.proofContext = this.authority(j);
+    return j;
+  }
   private detach: () => void;
   constructor(
     private actor: VaultActor,
@@ -114,12 +144,16 @@ export class RestoreClient {
     this.detach = session.addLockCleanup(() => {
       this.signer?.destroy();
       this.signer = undefined;
+      this.reuse = undefined;
+      this.proofContext = undefined;
     });
   }
   destroy() {
     this.session.lock();
     this.signer?.destroy();
     this.signer = undefined;
+    this.reuse = undefined;
+    this.proofContext = undefined;
     this.detach();
   }
   private signed() {
@@ -135,38 +169,61 @@ export class RestoreClient {
   }
   async authenticate(credential: Uint8Array, purpose: GrantPurpose) {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
-    const ticket = this.session.capture(),
-      keys = await ephemeralSigner();
-    this.session.check(ticket);
-    const operation = randomBytes(16),
-      ch = ok(
-        await this.actor.begin_restore_grant({
+    this.reuse = undefined;
+    try {
+      const ticket = this.session.capture(),
+        keys = await ephemeralSigner();
+      this.session.check(ticket);
+      const operation = randomBytes(16),
+        ch = ok(
+          await this.actor.begin_restore_grant({
+            operation,
+            public_key: keys.publicKey,
+            credential,
+            purpose,
+            generations: [],
+          }),
+        );
+      this.session.check(ticket);
+      const proof = await assertCredential(ch, this.rpId, this.session.signal);
+      this.session.check(ticket);
+      const g = ok(
+        await this.actor.finish_restore_grant(
           operation,
-          public_key: keys.publicKey,
-          credential,
-          purpose,
-          generations: [],
-        }),
+          proof,
+          "RestoreCleanup" in purpose,
+        ),
       );
-    this.session.check(ticket);
-    const proof = await assertCredential(ch, this.rpId, this.session.signal);
-    this.session.check(ticket);
-    const g = ok(
-      await this.actor.finish_restore_grant(
-        operation,
-        proof,
-        "RestoreCleanup" in purpose,
-      ),
-    );
-    this.session.check(ticket);
-    this.signer?.destroy();
-    this.signer = new SignedMutations(
-      this.actor,
-      this.owner,
-      this.canister,
-      g,
-      keys.keys,
-    );
+      this.session.check(ticket);
+      this.signer?.destroy();
+      this.signer = new SignedMutations(
+        this.actor,
+        this.owner,
+        this.canister,
+        g,
+        keys.keys,
+      );
+      this.reuse = {
+        binding: grantBinding(credential, purpose, []),
+        context: this.proofContext ?? "",
+      };
+    } catch (error) {
+      this.proofContext = undefined;
+      throw error;
+    }
+  }
+  async ensureAuthenticated(credential: Uint8Array, purpose: GrantPurpose) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    const current = await this.status(),
+      binding = grantBinding(credential, purpose, []);
+    if (
+      this.signer?.reusable &&
+      this.reuse &&
+      equal(binding, this.reuse.binding) &&
+      this.authority(current) === this.reuse.context
+    )
+      return;
+    return this.authenticate(credential, purpose);
   }
   private async proveCurrent(j: RestoreAdmissionStatus, secret?: Uint8Array) {
     if (!j.current_live[0]) return j;
@@ -267,7 +324,7 @@ export class RestoreClient {
         await this.actor.prove_restore_candidate(request.job, proof),
       );
       this.session.check(ticket);
-      return await this.proveCurrent(j, currentSecret);
+      return this.rememberProof(await this.proveCurrent(j, currentSecret));
     } finally {
       detach();
       source.rootRaw.fill(0);
@@ -296,12 +353,51 @@ export class RestoreClient {
       throw e;
     }
   }
+  /** Every selected archive is still fully opened and verified before reusing live proof. */
+  async ensureResumed(
+    archive: Uint8Array,
+    sourceSecret: Uint8Array,
+    currentSecret?: Uint8Array,
+  ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    try {
+      const ticket = this.session.capture(),
+        j = await this.status();
+      const source = await this.verifySource(j, archive, sourceSecret);
+      source.rootRaw.fill(0);
+      this.session.check(ticket);
+      if (j.current_live[0]) {
+        if (!currentSecret) throw Error("CurrentLiveKitRequired");
+        if (!equal(await recoveryVerifier(currentSecret), j.current_verifier)) {
+          this.proofContext = undefined;
+          this.reuse = undefined;
+          throw Error("CurrentLiveKitRequired");
+        }
+        this.session.check(ticket);
+      }
+      if (
+        this.proofContext === this.authority(j) &&
+        j.challenge.expires > BigInt(Math.floor(Date.now() / 1000)) &&
+        (!this.signer || this.signer.reusable)
+      )
+        return j;
+      this.proofContext = undefined;
+      this.reuse = undefined;
+      return await this.resume(archive, sourceSecret, currentSecret);
+    } catch (error) {
+      this.proofContext = undefined;
+      this.reuse = undefined;
+      throw error;
+    }
+  }
   async resume(
     archive: Uint8Array,
     sourceSecret: Uint8Array,
     currentSecret?: Uint8Array,
   ) {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    this.proofContext = undefined;
+    this.reuse = undefined;
     const ticket = this.session.capture(),
       j = await this.status(),
       source = await this.verifySource(j, archive, sourceSecret);
@@ -343,7 +439,7 @@ export class RestoreClient {
         await this.actor.prove_restore_candidate(j.request.job, proof),
       );
       this.session.check(ticket);
-      return await this.proveCurrent(fresh, currentSecret);
+      return this.rememberProof(await this.proveCurrent(fresh, currentSecret));
     } finally {
       detach();
       source.rootRaw.fill(0);
@@ -541,12 +637,14 @@ export class RestoreClient {
       j = await this.status(),
       p = target(j),
       f = p.preflight[0];
-    if (!(
-      "EnvelopesStaged" in p.phase ||
-      "KitConfirmed" in p.phase ||
-      "Importing" in p.phase ||
-      "BackupVerified" in p.phase
-    ))
+    if (
+      !(
+        "EnvelopesStaged" in p.phase ||
+        "KitConfirmed" in p.phase ||
+        "Importing" in p.phase ||
+        "BackupVerified" in p.phase
+      )
+    )
       throw Error("PreparedResumeUnavailable");
     const source = await this.verifySource(j, sourceArchive, oldSecret);
     let secret: Uint8Array;
@@ -801,6 +899,8 @@ export class RestoreClient {
     this.session.check(ticket);
     this.signer?.destroy();
     this.signer = undefined;
+    this.reuse = undefined;
+    this.proofContext = undefined;
     return this.status();
   }
   async retry() {

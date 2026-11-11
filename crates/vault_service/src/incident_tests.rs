@@ -462,10 +462,10 @@ fn incident_pins_snapshot_and_zero_balance_terminal_cleanup() {
             },
         )
         .unwrap();
-        if let MutationResult::Cleanup(p) = result {
-            if p.complete {
-                break;
-            }
+        if let MutationResult::Cleanup(p) = result
+            && p.complete
+        {
+            break;
         }
     }
     assert!(incident::status(&env).unwrap().unwrap().complete);

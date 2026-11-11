@@ -13,7 +13,7 @@ import {
 import { resolve, join } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
 const base =
-  process.env.VAULT_RESTORE_BASE ?? "b5c6feaaf33a05cd53f0e49e38a93d8f7fda6480";
+  process.env.VAULT_RESTORE_BASE ?? "8070858eb6c7168264b18f4a115de4e4f14490cf";
 const commit = execFileSync(
   "git",
   ["-C", root, "rev-parse", `${base}^{commit}`],

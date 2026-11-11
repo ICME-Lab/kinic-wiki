@@ -68,8 +68,12 @@ pub fn initialize() {
     let local = option_env!("VAULT_LOCAL_ORIGIN");
     let origin = local.unwrap_or("https://vault.kinic.xyz");
     let (host, derivation, provider) = if local.is_some() {
-        let host = option_env!("VAULT_LOCAL_HOST").expect("local host required");
-        let provider = option_env!("VAULT_LOCAL_II").expect("local II required");
+        let (Some(host), Some(provider)) = (
+            option_env!("VAULT_LOCAL_HOST"),
+            option_env!("VAULT_LOCAL_II"),
+        ) else {
+            panic!("local Vault requires both host and II provider");
+        };
         let parsed = url::Url::parse(host).expect("local host");
         assert!(matches!(parsed.host_str(), Some("localhost" | "127.0.0.1")));
         assert!(

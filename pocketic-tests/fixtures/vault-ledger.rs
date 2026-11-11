@@ -1,4 +1,4 @@
-//! Synthetic ledger only. Never deployed outside PocketIC.
+//! Synthetic ledger only. Only PocketIC or an isolated local acceptance network; never production.
 use candid::{CandidType, Nat, Principal};
 use serde::Deserialize;
 use std::cell::{Cell, RefCell};
@@ -52,3 +52,19 @@ async fn icrc2_transfer_from(arg:Transfer)->Result<Nat,TransferError>{
 }
 #[ic_cdk::query]
 fn calls()->Vec<Transfer>{CALLS.with(|calls|calls.borrow().clone())}
+
+// Browser acceptance exercises the real ICRC-2 approval round trip. This fixture
+// records synthetic approvals; it is not a ledger implementation or balance proof.
+#[derive(Clone, CandidType, Deserialize)]
+struct Approval { from_subaccount:Option<Vec<u8>>, spender:Account, amount:Nat, expected_allowance:Option<Nat>, expires_at:Option<u64>, fee:Option<Nat>, memo:Option<Vec<u8>>, created_at_time:Option<u64> }
+thread_local! {static APPROVALS:RefCell<Vec<(Principal,Approval)>>=const{RefCell::new(Vec::new())};}
+#[ic_cdk::update]
+fn icrc2_approve(arg:Approval)->Result<Nat,TransferError>{
+ let caller=ic_cdk::api::msg_caller();assert_ne!(caller,Principal::anonymous());
+ APPROVALS.with(|rows|{let mut rows=rows.borrow_mut();assert!(rows.len()<64);rows.push((caller,arg));Ok(Nat::from(rows.len() as u64))})
+}
+#[ic_cdk::query]
+fn approvals()->Vec<(Principal,Approval)>{APPROVALS.with(|rows|rows.borrow().clone())}
+
+#[ic_cdk::query]
+fn icrc1_balance_of(_account:Account)->Nat{Nat::from(1_000_000_000u64)}

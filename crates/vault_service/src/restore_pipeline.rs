@@ -188,30 +188,30 @@ pub(crate) fn apply(
     if j.cancel_complete && matches!(op, MutationOperation::RestoreCancel { .. }) {
         return Ok(MutationResult::Unit);
     }
-    if let MutationOperation::RestoreCancel { cursor } = op {
-        if j.pipeline.is_none() {
-            if *cursor != 0 {
-                return Err(Error::Conflict);
-            }
-            j.cancel_requested = true;
-            let mut c = control(db)?;
-            if c.random.as_ref().is_some_and(|f| {
-                Some(f.token) == j.allocation_token
-                    && f.attempt.as_ref() == Some(&j.request.target.attempt)
-            }) {
-                c.random = None;
-                store::save(db, "control", &c)?;
-            }
-            let settled = env.cleanup_existing_flights(db, &[], false)?;
-            j.cancel_complete = settled
-                && !j
-                    .allocation_token
-                    .map(|t| env.challenge_pending(db, t))
-                    .transpose()?
-                    .unwrap_or(false);
-            restore_admission::save(db, j)?;
-            return Ok(MutationResult::Unit);
+    if let MutationOperation::RestoreCancel { cursor } = op
+        && j.pipeline.is_none()
+    {
+        if *cursor != 0 {
+            return Err(Error::Conflict);
         }
+        j.cancel_requested = true;
+        let mut c = control(db)?;
+        if c.random.as_ref().is_some_and(|f| {
+            Some(f.token) == j.allocation_token
+                && f.attempt.as_ref() == Some(&j.request.target.attempt)
+        }) {
+            c.random = None;
+            store::save(db, "control", &c)?;
+        }
+        let settled = env.cleanup_existing_flights(db, &[], false)?;
+        j.cancel_complete = settled
+            && !j
+                .allocation_token
+                .map(|t| env.challenge_pending(db, t))
+                .transpose()?
+                .unwrap_or(false);
+        restore_admission::save(db, j)?;
+        return Ok(MutationResult::Unit);
     }
     let mut p = j.pipeline.clone().ok_or(Error::Conflict)?;
     match op {

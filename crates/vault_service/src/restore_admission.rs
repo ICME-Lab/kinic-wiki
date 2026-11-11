@@ -441,7 +441,7 @@ pub async fn initialize_namespace(env: &impl Environment, operation: Id) -> Resu
         if s.restore.is_some()||s.incident.is_some(){return Err(Error::Busy);}
         if let Some(n)=store::load::<cleanup::Namespace>(db,"cleanup")? {
             if n.seed.is_some(){return Ok(Err(n.identity));}
-            if !s.namespace_flight.as_ref().is_some_and(|f|f.operation==operation){return Err(Error::Conflict);}
+            if s.namespace_flight.as_ref().is_none_or(|f| f.operation != operation){return Err(Error::Conflict);}
         }else{
             let count:i64=db.query_row("SELECT (SELECT count(*) FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT count(*) FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
             if count!=0{return Err(Error::Unauthorized);}

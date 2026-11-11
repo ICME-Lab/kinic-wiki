@@ -12,28 +12,29 @@
   "dependencies": {
     "@icp-sdk/auth": "5.0.0",
     "@icp-sdk/core": "^5.4.0",
-    "react": "19.2.5",
-    "react-dom": "19.2.5",
-    "lucide-react": "0.555.0",
-    "@kinic/vault-client": "workspace:*",
-    "@kinic/vault-candid": "workspace:*",
-    "@kinic/vault-crypto": "workspace:*",
     "@kinic/vault-backup": "workspace:*",
-    "@kinic/vault-ui": "workspace:*"
+    "@kinic/vault-candid": "workspace:*",
+    "@kinic/vault-client": "workspace:*",
+    "@kinic/vault-crypto": "workspace:*",
+    "@kinic/vault-ui": "workspace:*",
+    "lucide-react": "0.555.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
   },
   "devDependencies": {
-    "vite": "8.1.6",
-    "vitest": "4.1.12",
-    "typescript": "7.0.2",
-    "@vitejs/plugin-react": "6.0.3",
+    "@dfinity/response-verification": "3.2.0",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "24.10.1",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
-    "@types/node": "24.10.1",
-    "tailwindcss": "3.4.18",
-    "tailwindcss-animate": "1.0.7",
-    "postcss": "8.5.23",
+    "@vitejs/plugin-react": "6.0.3",
     "autoprefixer": "10.4.22",
     "jsdom": "30.0.1",
-    "@testing-library/react": "16.3.2"
+    "postcss": "8.5.23",
+    "tailwindcss": "3.4.18",
+    "tailwindcss-animate": "1.0.7",
+    "typescript": "7.0.2",
+    "vite": "8.1.6",
+    "vitest": "4.1.12"
   }
 }

@@ -270,3 +270,153 @@ it.each(["missing", "reset", "child", "purging", "purged-child"])(
     f.service.destroy();
   },
 );
+
+it.each(["purged", "nonpurged", "emptydigest"])(
+  "complete without cutover digest only resolves all-Purged originals (%s)",
+  async (mode) => {
+    const purged = mode !== "nonpurged";
+    const f = await fixture();
+    f.setStatus({
+      job: id(2),
+      namespace: id(9, 32),
+      vector_digest: id(5, 32),
+      complete: true,
+      completed_digest: mode === "emptydigest" ? [new Uint8Array()] : [],
+      cancel_digest: [],
+      compromised: [],
+      semantic_config: [],
+      targets: [
+        {
+          source: f.headers[0],
+          attempt: id(10),
+          phase: purged ? { Purged: null } : { BackupVerified: null },
+          target: [],
+          restore_child: [],
+          kit_ack: [],
+          backup_ack: [],
+        },
+      ],
+    } as unknown as IncidentStatus);
+    render(
+      <IncidentRecovery
+        client={f.client}
+        service={f.service}
+        credential={id(7)}
+        enabled
+        disabled={false}
+        onChanged={async () => {}}
+        run={(fn) => {
+          void fn();
+        }}
+      />,
+    );
+    await screen.findByText(
+      mode === "purged"
+        ? /original incident is resolved by removal or replacement/
+        : /Incident incomplete/,
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Commit all verified targets with fresh passkey proof",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText(/All incident targets committed/)).toBeNull();
+    expect(f.operations).toEqual([]);
+    f.service.destroy();
+  },
+);
+
+it.each([false, true])(
+  "resumes exact nonce declaration and gates mixed preparation (%s)",
+  async (mixed) => {
+    const f = await fixture();
+    const target = {
+      source: f.headers[0],
+      attempt: id(10),
+      target: [],
+      phase: { PendingNonce: null },
+      backup_ack: [],
+      kit_ack: [],
+      restore_child: [],
+      coverage: [],
+    } as unknown as IncidentTarget;
+    const compromised = [{ credential: id(8), version: 2n }];
+    f.setStatus({
+      job: id(2),
+      namespace: id(9, 32),
+      vector_digest: id(5, 32),
+      complete: false,
+      completed_digest: [],
+      cancel_digest: [],
+      compromised,
+      semantic_config: [],
+      targets: mixed
+        ? [
+            target,
+            {
+              ...target,
+              source: f.headers[1],
+              attempt: id(11),
+              target: [f.headers[1].generation[0]!],
+              phase: { Allocated: null },
+            },
+          ]
+        : [target],
+    });
+    let pending: Promise<void> | undefined;
+    render(
+      <IncidentRecovery
+        client={f.client}
+        service={f.service}
+        credential={id(7)}
+        enabled
+        disabled={false}
+        onChanged={async () => {}}
+        run={(fn) => {
+          pending = fn();
+        }}
+      />,
+    );
+    const button = await screen.findByRole("button", {
+      name: "Allocate new target 1",
+    });
+    if (mixed)
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Save and verify new kit 2",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Cancel incident preparation",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    await act(async () => {
+      fireEvent.click(button);
+      await pending;
+    });
+    expect(f.request()!.purpose).toEqual({
+      IncidentPrepare: {
+        job: id(2),
+        namespace: id(9, 32),
+        sources: (mixed ? f.headers.slice(0, 2) : f.headers.slice(0, 1)).map(
+          (h) => h.generation[0],
+        ),
+        targets: (mixed ? f.headers.slice(0, 2) : f.headers.slice(0, 1)).map(
+          (h, i) => ({
+            namespace: id(9, 32),
+            vault: h.id,
+            attempt: id(10 + i),
+          }),
+        ),
+        compromised,
+      },
+    });
+    expect(f.operations).toEqual(["IncidentAllocate"]);
+    f.service.destroy();
+  },
+);

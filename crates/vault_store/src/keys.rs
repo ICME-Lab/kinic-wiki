@@ -60,10 +60,11 @@ fn settle_inner(db: &Connection, token: u64, now: u64, actual: u64, complete: bo
     let Some((old, phase)) = previous else {
         return Err(Error::NotFound);
     };
-    if let Some(old) = old {
-        if old != actual as i64 && !(complete && phase == "cancelled" && old >= actual as i64) {
-            return Err(Error::Conflict);
-        }
+    if let Some(old) = old
+        && old != actual as i64
+        && !(complete && phase == "cancelled" && old >= actual as i64)
+    {
+        return Err(Error::Conflict);
     }
     db.execute("UPDATE key_flights SET actual=?2,settled=?3,in_flight=CASE WHEN ?4=1 THEN 0 ELSE in_flight END WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND token=?1",params![token as i64,actual as i64,now as i64,if complete{1i64}else{0i64}]).map_err(|_|Error::Storage)?;
     Ok(())

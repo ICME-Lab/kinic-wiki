@@ -97,7 +97,7 @@ mcp-staging-smoke-oauth.json.*
 /plugins/kinic-wiki/main.js
 
 # icp-cli local state
-/.icp/cache/
+**/.icp/cache/
 
 # Local hooks and helper scripts
 /.githooks/

@@ -1,3 +1,4 @@
+import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
@@ -25,7 +26,7 @@ const ok = r => {
   assert.ok('Ok' in r);
   return r.Ok;
 };
-const server = await PocketIcServer.start();
+const server = await startVaultPocketIc(PocketIcServer.getBinPath());
 let pic;
 try {
   pic = await PocketIc.create(server.getUrl());

@@ -1,3 +1,5 @@
+import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
+import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -102,12 +104,7 @@ function assertion(ch, credential) {
     userHandle: b64(owner.toUint8Array()),
   });
 }
-assert.equal(
-  hash(
-    readFileSync(resolve(root, "target/vault-dedicated-task7.wasm")),
-  ).toString("hex"),
-  "758f24eb8bf70ebef81043466ebe07413dc77320fb0279caeb33864c5a7f8178",
-);
+verifyVaultBaseline("target/vault-dedicated-task7.wasm");
 const cryptoLib = await import(
   new URL("../../packages/vault-crypto/src/index.ts", import.meta.url)
 );
@@ -122,7 +119,7 @@ const {
   generationAAD,
   recoveryVerifier,
 } = cryptoLib;
-const server = await PocketIcServer.start();
+const server = await startVaultPocketIc(PocketIcServer.getBinPath());
 let pic;
 try {
   pic = await PocketIc.create(server.getUrl(), {

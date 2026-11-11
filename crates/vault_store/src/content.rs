@@ -328,7 +328,7 @@ pub fn put(db: &Connection, id: &[u8], index: u32, bytes: &[u8], now: u64) -> Re
         .saturating_sub(idx as u64 * 1024 * 1024)
         .min(1024 * 1024)
         + 16) as usize;
-    if bytes.len() != expected || &Sha256::digest(bytes)[..] != r.chunk_hashes[idx] {
+    if bytes.len() != expected || Sha256::digest(bytes)[..] != r.chunk_hashes[idx] {
         return Err(Error::InvalidInput);
     }
     let old: Option<Vec<u8>> = db

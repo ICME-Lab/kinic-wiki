@@ -201,9 +201,9 @@ fn check(
     if f.expires <= env.now()
         || f.configuration != grants::fence(db)?
         || require_flight
-            && !control(db)?
+            && control(db)?
                 .derive
-                .is_some_and(|current| current.token == f.token)
+                .is_none_or(|current| current.token != f.token)
     {
         return Err(Error::Expired);
     }

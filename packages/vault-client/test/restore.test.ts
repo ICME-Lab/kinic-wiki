@@ -642,3 +642,118 @@ it("existing scoped admission refuses a substituted registration challenge witho
   expect(register).not.toHaveBeenCalled();
   expect(assertCredential).not.toHaveBeenCalled();
 });
+
+it("reuses only current same-session admission while fully verifying every reselected archive", async () => {
+  const f = await fixture();
+  Object.assign(f.client, { signer: undefined });
+  Object.assign(f.j, {
+    phase: { Admitted: null },
+    candidate: ["public-candidate"],
+    candidate_digest: randomBytes(32),
+    existing_candidate: [],
+    proof_fence: randomBytes(32),
+    current_verifier: new Uint8Array(),
+    semantic_config: randomBytes(32),
+    issued: 0n,
+    parent_job: [],
+    cancel_requested: false,
+  });
+  let n = 0;
+  const renew = vi.fn(async () => {
+    f.j.challenge = {
+      bytes: new Uint8Array(32).fill(++n),
+      expires: BigInt(Math.floor(Date.now() / 1000) + 120),
+      registration: false,
+      credential_ids: [new Uint8Array([9])],
+    };
+    return { Ok: f.j.challenge };
+  });
+  Object.assign(f.actor, {
+    resume_restore_admission: renew,
+    prove_restore_candidate: async () => ({ Ok: f.j }),
+  });
+  vi.mocked(assertCredential).mockResolvedValue("uv");
+  await f.client.resume(f.archive, f.secret);
+  await f.client.ensureResumed(f.archive.slice(), f.secret.slice());
+  expect(renew).toHaveBeenCalledTimes(1);
+  const corrupt = f.archive.slice();
+  corrupt[corrupt.length - 1] ^= 1;
+  await expect(f.client.ensureResumed(corrupt, f.secret)).rejects.toThrow();
+  expect(renew).toHaveBeenCalledTimes(1);
+  await f.client.ensureResumed(f.archive, f.secret);
+  expect(renew).toHaveBeenCalledTimes(2);
+  f.j.pipeline[0]!.target = {
+    ...f.j.pipeline[0]!.target,
+    nonce: randomBytes(32),
+  };
+  await f.client.ensureResumed(f.archive, f.secret);
+  expect(renew).toHaveBeenCalledTimes(3);
+  f.j.existing_candidate = [
+    {
+      credential: new Uint8Array([9]),
+      version: 2n,
+      scope_digest: randomBytes(32),
+    },
+  ];
+  await f.client.ensureResumed(f.archive, f.secret);
+  expect(renew).toHaveBeenCalledTimes(4);
+  f.j.proof_fence = randomBytes(32);
+  await f.client.ensureResumed(f.archive, f.secret);
+  expect(renew).toHaveBeenCalledTimes(5);
+  f.client.session.lock();
+  await f.client.ensureResumed(f.archive, f.secret);
+  expect(renew).toHaveBeenCalledTimes(6);
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now + 121000);
+  await f.client.ensureResumed(f.archive, f.secret);
+  expect(renew).toHaveBeenCalledTimes(7);
+  clock.mockRestore();
+  f.j.current_live = [f.j.request.source_generation[0]!];
+  f.j.current_verifier = await recoveryVerifier(f.secret);
+  const current = vi.fn(async () => ({ Ok: f.j }));
+  Object.assign(f.actor, { prove_restore_current: current });
+  await f.client.ensureResumed(f.archive, f.secret, f.secret);
+  expect(current).toHaveBeenCalledTimes(1);
+  // Authorized deletion leaves the exact captured current proof bound to this job.
+  f.j.pipeline[0]!.old_removed = true;
+  await f.client.ensureResumed(f.archive, f.secret, f.secret);
+  expect(current).toHaveBeenCalledTimes(1);
+  await expect(
+    f.client.ensureResumed(f.archive, f.secret, randomBytes(32)),
+  ).rejects.toThrow("CurrentLiveKitRequired");
+  await f.client.ensureResumed(f.archive, f.secret, f.secret);
+  expect(current).toHaveBeenCalledTimes(2);
+  let grantRequest: any;
+  const beginGrant = vi.fn(async (r: any) => {
+    grantRequest = r;
+    return { Ok: f.j.challenge };
+  });
+  Object.assign(f.actor, {
+    begin_restore_grant: beginGrant,
+    finish_restore_grant: async () => ({
+      Ok: {
+        id: randomBytes(32),
+        expires: BigInt(Math.floor(Date.now() / 1000) + 300),
+        next_counter: 0n,
+        purpose: grantRequest.purpose,
+        generations: [],
+      },
+    }),
+    mutate: async () => ({ Err: { Expired: null } }),
+  });
+  const purpose = {
+    RestoreTarget: {
+      job: f.j.request.job,
+      generation: f.j.pipeline[0]!.target,
+    },
+  };
+  await f.client.ensureAuthenticated(new Uint8Array([9]), purpose);
+  await f.client.ensureAuthenticated(new Uint8Array([9]), purpose);
+  expect(beginGrant).toHaveBeenCalledTimes(1);
+  await expect(f.client.allocate()).rejects.toThrow("Expired");
+  await f.client.ensureResumed(f.archive, f.secret, f.secret);
+  expect(current).toHaveBeenCalledTimes(3);
+  await f.client.ensureAuthenticated(new Uint8Array([9]), purpose);
+  expect(beginGrant).toHaveBeenCalledTimes(2);
+  f.client.destroy();
+});

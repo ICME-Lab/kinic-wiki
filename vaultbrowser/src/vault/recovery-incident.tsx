@@ -71,12 +71,30 @@ export function IncidentRecovery({
     });
   const proof = async () => {
     const j = await service.status();
-    await service.authenticate(
+    const remaining = j.targets.filter(
+      (t) => !("Purged" in t.phase) && !("Purging" in t.phase),
+    );
+    const sources = remaining.map((t) => t.source.generation[0]!);
+    // Allocation resumes the exact existing declaration. An Incident grant
+    // requires every remaining target nonce to have already been allocated.
+    await service.ensureAuthenticated(
       key(),
-      { Incident: { job: j.job, vector_digest: j.vector_digest } },
-      j.targets
-        .filter((t) => !("Purged" in t.phase) && !("Purging" in t.phase))
-        .map((t) => t.source.generation[0]!),
+      remaining.some((t) => !t.target[0])
+        ? {
+            IncidentPrepare: {
+              job: j.job,
+              namespace: j.namespace,
+              sources,
+              targets: remaining.map((t) => ({
+                namespace: j.namespace,
+                vault: t.source.id,
+                attempt: t.attempt,
+              })),
+              compromised: j.compromised,
+            },
+          }
+        : { Incident: { job: j.job, vector_digest: j.vector_digest } },
+      sources,
     );
     return j;
   };
@@ -90,6 +108,14 @@ export function IncidentRecovery({
   );
   const trusted = context?.credentials.find(
     (c) => credential && sameBytes(c.credential, credential),
+  );
+  const resolvedOriginals =
+    !!status?.complete &&
+    status.completed_digest.length === 0 &&
+    status.targets.length > 0 &&
+    status.targets.every((t) => "Purged" in t.phase);
+  const awaitingAllocation = !!status?.targets.some(
+    (t) => !("Purged" in t.phase) && !("Purging" in t.phase) && !t.target[0],
   );
   const allVerified =
     !!status &&
@@ -220,10 +246,18 @@ export function IncidentRecovery({
       {status ? (
         <>
           <output className="text-sm">
-            {status.complete && status.completed_digest[0]
+            {status.complete && status.completed_digest[0]?.length === 32
               ? "All incident targets committed. Unlock again with fresh passkey verification."
-              : "Incident incomplete. Old writes stay frozen, including after cancellation or interruption."}
+              : resolvedOriginals
+                ? "The original incident is resolved by removal or replacement. Finish any separate pending restore before using its replacement Vault."
+                : "Incident incomplete. Old writes stay frozen, including after cancellation or interruption."}
           </output>
+          {awaitingAllocation ? (
+            <p className="text-sm">
+              Allocate every remaining target before preparing or resetting
+              targets. Cancellation remains available.
+            </p>
+          ) : null}
           {status.targets.map((t, i) => {
             const phase = Object.keys(t.phase)[0];
             const terminal =
@@ -245,7 +279,9 @@ export function IncidentRecovery({
                 ) : null}
                 <p className="text-sm">
                   {terminal
-                    ? "This original target was discarded or separately restored. Other targets remain frozen; this does not complete the owner incident."
+                    ? resolvedOriginals
+                      ? "This original target was removed or separately replaced. Check any separate restore before using its replacement."
+                      : "This original target was discarded or separately restored. Other targets remain frozen; this does not complete the owner incident."
                     : phase === "BackupVerified"
                       ? "New backup fully verified for this target; whole incident still pending."
                       : phase === "Cancelled"
@@ -273,7 +309,7 @@ export function IncidentRecovery({
                     ) : null}
                     {phase === "Allocated" ? (
                       <VaultButton
-                        disabled={disabled || !enabled}
+                        disabled={disabled || !enabled || awaitingAllocation}
                         onClick={() =>
                           targetAction(t, async () => {
                             await service.prepare(
@@ -302,7 +338,7 @@ export function IncidentRecovery({
                       "BackupVerified",
                     ].includes(phase) ? (
                       <VaultButton
-                        disabled={disabled || !enabled}
+                        disabled={disabled || !enabled || awaitingAllocation}
                         onClick={() =>
                           targetAction(t, async () => {
                             await service.resume(bytes(t.source.id), () =>
@@ -329,7 +365,7 @@ export function IncidentRecovery({
                     ) : null}
                     {t.coverage[0]?.complete ? (
                       <VaultButton
-                        disabled={disabled || !enabled}
+                        disabled={disabled || !enabled || awaitingAllocation}
                         onClick={() =>
                           targetAction(t, async () => {
                             await service.saveBackup(
@@ -356,7 +392,7 @@ export function IncidentRecovery({
                       </VaultButton>
                     ) : null}
                     <VaultButton
-                      disabled={disabled || !enabled}
+                      disabled={disabled || !enabled || awaitingAllocation}
                       onClick={() =>
                         targetAction(t, async () => {
                           if (

@@ -69,7 +69,12 @@ export function ScopedCreation({
       }
     });
   const proof = async (j: CreateEmptyStatus) =>
-    service.authenticate(key(), bytes(j.job), j.target, j.authorizer_instance);
+    service.ensureAuthenticated(
+      key(),
+      bytes(j.job),
+      j.target,
+      j.authorizer_instance,
+    );
   const phase = status ? Object.keys(status.phase)[0] : "";
   const scoped = context?.credentials.find(
     (c) =>

@@ -88,7 +88,7 @@ const errors: Record<string, string> = {
     "A storage, operation or cycles limit was reached. Check your prepaid cycles balance.",
   SizeLimit:
     "Attachments are limited to 10 MiB; notes and credentials to 256 KiB.",
-  Busy: "An operation is pending. Continue the same cleanup action or retry the pending signed request.",
+  Busy: "An operation or temporary authorization limit is pending. Retry any pending signed request first; otherwise wait for earlier authorizations to expire, then resume. Completed authorizations can remain reserved for up to 7 minutes.",
   Expired: "This operation expired. Start it again.",
   Locked: "Vault locked. Unlock it again to continue.",
   RecoveryConfirmationMismatch:

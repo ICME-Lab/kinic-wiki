@@ -44,7 +44,7 @@ fn worst_case_pool_and_rows_fit() {
         + SETTINGS
         + KEY_ROWS * KEY_ROW;
     assert_eq!(total, 16_105_472);
-    assert!(SETTING_SLOTS * SETTING_ROW + BILLING_CURSOR_ROW <= SETTINGS);
+    const { assert!(SETTING_SLOTS * SETTING_ROW + BILLING_CURSOR_ROW <= SETTINGS) };
     assert!(GLOBAL_SETTING_KEYS.len() <= SETTING_SLOTS);
     assert_eq!(ACCOUNTING_POOL as usize - total, 671_744);
     assert!(row_size(&[PRINCIPAL_TEXT, TOKEN, PRINCIPAL_TEXT], 8).unwrap() <= SMALL_ROW);

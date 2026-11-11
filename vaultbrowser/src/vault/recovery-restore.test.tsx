@@ -185,6 +185,38 @@ it.each(["valid", "malformed", "locked"])(
           name: "Activate verified scoped restoration",
         }),
       ).toBeNull();
+      const freshResume = vi
+        .spyOn(service, "resume")
+        .mockResolvedValue(status!);
+      const freshAuthenticate = vi
+        .spyOn(service, "authenticate")
+        .mockResolvedValue(undefined);
+      const ensureResume = vi.spyOn(service, "ensureResumed");
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Resume restoration with source files and fresh proof",
+        }),
+      );
+      await screen.findByLabelText("Select source encrypted backup");
+      await act(async () => {
+        fireEvent.change(
+          screen.getByLabelText("Select source encrypted backup"),
+          {
+            target: {
+              files: [
+                {
+                  size: archive.length,
+                  arrayBuffer: async () => archive.slice().buffer,
+                },
+              ],
+            },
+          },
+        );
+        await pending;
+      });
+      expect(freshResume).toHaveBeenCalledTimes(1);
+      expect(freshAuthenticate).toHaveBeenCalledTimes(1);
+      expect(ensureResume).not.toHaveBeenCalled();
     } else expect(request).toBeUndefined();
     service.destroy();
     secret.fill(0);

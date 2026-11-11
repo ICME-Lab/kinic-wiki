@@ -5,12 +5,13 @@ import type {
   VaultActor,
   Generation,
   GrantPurpose,
+  GrantInfo,
   IncidentStatus,
   IncidentTarget,
 } from "./contracts";
 import type { IncidentRole } from "./mutation-contracts";
 import { Session } from "./session";
-import { SignedMutations, ephemeralSigner } from "./signed";
+import { SignedMutations, ephemeralSigner, grantBinding } from "./signed";
 import { assertCredential } from "./webauthn";
 import { bytes, ok } from "./api";
 import { b64, unb64 } from "../../vault-crypto/src/documents";
@@ -103,6 +104,7 @@ export async function verifyIncidentKit(
 }
 export class IncidentClient {
   private signer?: SignedMutations;
+  private reuse?: { binding: Uint8Array; grant: GrantInfo };
   private detach: () => void;
   private roots?: { source: CryptoKey; target: CryptoKey; binding: string };
   constructor(
@@ -116,6 +118,7 @@ export class IncidentClient {
     this.detach = session.addLockCleanup(() => {
       this.signer?.destroy();
       this.signer = undefined;
+      this.reuse = undefined;
       this.roots = undefined;
     });
   }
@@ -123,6 +126,7 @@ export class IncidentClient {
     this.session.lock();
     this.signer?.destroy();
     this.signer = undefined;
+    this.reuse = undefined;
     this.roots = undefined;
     this.detach();
   }
@@ -132,6 +136,7 @@ export class IncidentClient {
     generations: Generation[],
   ) {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    this.reuse = undefined;
     const ticket = this.session.capture(),
       keys = await ephemeralSigner();
     this.session.check(ticket);
@@ -168,7 +173,29 @@ export class IncidentClient {
       grant,
       keys.keys,
     );
+    this.reuse = {
+      binding: grantBinding(credential, purpose, generations),
+      grant,
+    };
     return grant;
+  }
+  /** Continue only identical unexpired phase authority. Final cutover calls authenticate directly. */
+  async ensureAuthenticated(
+    credential: Uint8Array,
+    purpose: GrantPurpose,
+    generations: Generation[],
+  ) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
+    this.session.check(this.session.capture());
+    const binding = grantBinding(credential, purpose, generations);
+    if (
+      !("IncidentCutover" in purpose) &&
+      this.signer?.reusable &&
+      this.reuse &&
+      equal(binding, this.reuse.binding)
+    )
+      return this.reuse.grant;
+    return this.authenticate(credential, purpose, generations);
   }
   async status(): Promise<IncidentStatus> {
     const ticket = this.session.capture();
@@ -218,6 +245,7 @@ export class IncidentClient {
    * Fresh cleanup proof works at zero balance and cannot allocate or derive a key.
    */
   async cancel(credential: Uint8Array, job: Uint8Array) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     this.session.lock();
     const ticket = this.session.capture();
     try {
@@ -497,6 +525,7 @@ export class IncidentClient {
     );
   }
   async cutover(credential: Uint8Array) {
+    if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     this.session.lock();
     const ticket = this.session.capture();
     try {

@@ -33,21 +33,36 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     live.current = true;
     let disposed = false;
+    let ownedClient: AuthClient | undefined;
     const initializing = serial.current;
     void AuthClient.create({
       idleOptions: {
         idleTimeout: 5 * 60 * 1000,
         disableDefaultIdleCallback: true,
+        // The SDK creates the manager lazily on a first login. Supplying the
+        // callback here also covers restored delegations and later logins.
+        onIdle: () => {
+          if (
+            disposed ||
+            !live.current ||
+            !ownedClient ||
+            client.current !== ownedClient
+          )
+            return;
+          serial.current++;
+          setIdentity(undefined);
+          setLoading(false);
+          void ownedClient.logout().catch(() => {
+            if (!disposed && live.current && client.current === ownedClient)
+              setError("Sign-out did not complete. Close this tab.");
+          });
+        },
       },
     })
       .then(async (c) => {
         if (disposed) return;
+        ownedClient = c;
         client.current = c;
-        c.idleManager?.registerCallback(() => {
-          serial.current++;
-          setIdentity(undefined);
-          void c.logout();
-        });
         const authenticated = await c.isAuthenticated();
         if (!disposed && serial.current === initializing) {
           setIdentity(authenticated ? c.getIdentity() : undefined);

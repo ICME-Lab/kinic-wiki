@@ -1,3 +1,4 @@
+import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,10 +20,7 @@ import {
   revision,
 } from "../helpers/vault-restore-pipeline.mjs";
 const baseline = "target/vault-dedicated-task12.wasm";
-assert.equal(
-  hash(readFileSync(join(root, baseline))).toString("hex"),
-  "2514eedbcd717fd8befe9fa5987b403b7f230e59455a999851982cbf3dff5c01",
-);
+verifyVaultBaseline(baseline);
 const quotaProvenance = JSON.parse(
   readFileSync(join(root, "target/vault-restore-task12-quota.json"), "utf8"),
 );

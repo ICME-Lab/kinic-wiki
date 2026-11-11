@@ -81,6 +81,29 @@ it.each(["incident", "restore", "create"] as const)(
     ).rejects.toThrow("network");
     await expect(authenticate()).rejects.toThrow("ResolvePendingMutation");
     expect(grants).toBe(1);
+    if (client instanceof IncidentClient) {
+      await expect(
+        client.ensureAuthenticated(credential, { Normal: null }, []),
+      ).rejects.toThrow("ResolvePendingMutation");
+      await expect(client.cutover(credential)).rejects.toThrow(
+        "ResolvePendingMutation",
+      );
+      await expect(client.cancel(credential, job)).rejects.toThrow(
+        "ResolvePendingMutation",
+      );
+    } else if (client instanceof RestoreClient) {
+      await expect(
+        client.ensureAuthenticated(credential, {
+          RestorePrepare: { job, target },
+        }),
+      ).rejects.toThrow("ResolvePendingMutation");
+      await expect(
+        client.ensureResumed(new Uint8Array(), new Uint8Array()),
+      ).rejects.toThrow("ResolvePendingMutation");
+    } else
+      await expect(
+        client.ensureAuthenticated(credential, job, target, generation),
+      ).rejects.toThrow("ResolvePendingMutation");
     if (client instanceof RestoreClient) {
       await expect(
         client.admit(
