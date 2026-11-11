@@ -152,6 +152,15 @@ pub(crate) async fn allocate(env: &impl Environment, job: Id) -> Result<()> {
         if j.pipeline.is_some() {
             return Err(Error::Conflict);
         }
+        // Publication expiry does not settle the previous allocation. Keep its sole
+        // durable token until both its RPC and execution checkpoint are accounted for.
+        if j.allocation_token
+            .map(|token| env.challenge_pending(db, token))
+            .transpose()?
+            .unwrap_or(false)
+        {
+            return Err(Error::Busy);
+        }
         let mut c = control(db)?;
         if c.random.as_ref().is_some_and(|f| f.expires > env.now()) {
             return Err(Error::Busy);

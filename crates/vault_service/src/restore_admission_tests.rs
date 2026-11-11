@@ -1424,3 +1424,246 @@ fn restore_pipeline_underclaimed_cost_rolls_back_record_without_growing_reservat
     );
     assert!(restore_pipeline::descriptor(&env, request(2).job, target).is_err());
 }
+
+fn renew_pipeline(env: &TestEnvironment, candidate: &ed25519_dalek::SigningKey, v: u8) {
+    use ed25519_dalek::Signer;
+    let ch = restore_admission::resume(env, request(v).job).unwrap();
+    let j = restore_admission::possess(env, request(v).job, passkey_assertion(env, candidate, &ch))
+        .unwrap();
+    if j.current_live.is_some() {
+        let current = ed25519_dalek::SigningKey::from_bytes(&[88; 32]);
+        restore_admission::prove_current(
+            env,
+            request(v).job,
+            current.sign(&j.recovery_message).to_bytes().to_vec(),
+        )
+        .unwrap();
+    }
+}
+fn prepare_pipeline(
+    env: &TestEnvironment,
+    candidate: &ed25519_dalek::SigningKey,
+    v: u8,
+) -> (ed25519_dalek::SigningKey, GrantInfo) {
+    pipeline_grant(
+        env,
+        candidate,
+        GrantPurpose::RestorePrepare {
+            job: request(v).job,
+            target: request(v).target,
+        },
+    )
+}
+#[test]
+fn restore_allocation_expired_retry_retains_exact_pending_token_until_cancel_settlement() {
+    let env = fixture();
+    let candidate = admit_pipeline(&env, 2);
+    let (signing, prep) = prepare_pipeline(&env, &candidate, 2);
+    let hook_candidate = candidate.clone();
+    env.defer_challenge_execution.set(true);
+    *env.random_hook.borrow_mut() = Some(Box::new(move |env| {
+        let old = restore_admission::status(env).unwrap().unwrap();
+        let token = old.allocation_token.unwrap();
+        env.time.set(old.challenge.expires + 1);
+        renew_pipeline(env, &hook_candidate, 2);
+        let (signing, prep) = prepare_pipeline(env, &hook_candidate, 2);
+        let before = env
+            .transaction(|db| Ok((control(db)?.serial, control(db)?.challenges)))
+            .unwrap();
+        let reserves = env.challenge_reserves.get();
+        let calls = env.random_calls.get();
+        signed_call(env, &signing, &prep, 0, MutationOperation::RestoreAllocate).unwrap();
+        env.transaction(|db| {
+            let g = grants::load(db, &prep.id)?;
+            assert!(matches!(g.work.unwrap().result, Some(Err(Error::Busy))));
+            assert_eq!((control(db)?.serial, control(db)?.challenges), before);
+            assert_eq!(
+                restore_admission::load(db, &request(2).job)?.allocation_token,
+                Some(token)
+            );
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(env.challenge_reserves.get(), reserves);
+        assert_eq!(env.random_calls.get(), calls);
+        // An unrelated newer reservation and another owner's same token cannot be released.
+        env.challenge_rows
+            .borrow_mut()
+            .insert((env.owner(), token + 1000), (true, 9, 0));
+        env.challenge_rows
+            .borrow_mut()
+            .insert((Principal::anonymous(), token), (true, 8, 0));
+        let (signing, clean) = pipeline_grant(
+            env,
+            &hook_candidate,
+            GrantPurpose::RestoreCleanup {
+                job: request(2).job,
+                target: request(2).target,
+            },
+        );
+        env.funded.set(false);
+        signed_call(
+            env,
+            &signing,
+            &clean,
+            0,
+            MutationOperation::RestoreCancel { cursor: 0 },
+        )
+        .unwrap();
+        env.transaction(|db| {
+            assert!(!restore_admission::load(db, &request(2).job)?.cancel_complete);
+            assert!(store::transition::pending(db)?);
+            // Empty, credential-free namespace would otherwise qualify for reclamation.
+            db.execute(
+                "DELETE FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
+                params![],
+            )
+            .map_err(|_| Error::Storage)?;
+            assert!(credentials(db)?.is_empty());
+            cleanup::reclaim_empty(db, env.now())?;
+            assert!(store::transition::load_state(db)?.restore.is_some());
+            Ok(())
+        })
+        .unwrap();
+    }));
+    signed_call(&env, &signing, &prep, 0, MutationOperation::RestoreAllocate).unwrap();
+    let j = restore_admission::status(&env).unwrap().unwrap();
+    let token = j.allocation_token.unwrap();
+    assert!(j.pipeline.is_none()); // Late T1 never publishes a nonce.
+    assert_eq!(
+        env.challenge_rows.borrow()[&(env.owner(), token)],
+        (false, 1, 0)
+    );
+    renew_pipeline(&env, &candidate, 2);
+    let (signing, clean) = pipeline_grant(
+        &env,
+        &candidate,
+        GrantPurpose::RestoreCleanup {
+            job: request(2).job,
+            target: request(2).target,
+        },
+    );
+    signed_call(
+        &env,
+        &signing,
+        &clean,
+        0,
+        MutationOperation::RestoreCancel { cursor: 0 },
+    )
+    .unwrap();
+    assert!(
+        !restore_admission::status(&env)
+            .unwrap()
+            .unwrap()
+            .cancel_complete
+    );
+    env.challenge_rows
+        .borrow_mut()
+        .get_mut(&(env.owner(), token))
+        .unwrap()
+        .2 = 1;
+    signed_call(
+        &env,
+        &signing,
+        &clean,
+        1,
+        MutationOperation::RestoreCancel { cursor: 0 },
+    )
+    .unwrap();
+    assert!(
+        restore_admission::status(&env)
+            .unwrap()
+            .unwrap()
+            .cancel_complete
+    );
+    env.transaction(|db| {
+        assert!(!store::transition::pending(db)?);
+        cleanup::reclaim_empty(db, env.now())?;
+        assert!(store::transition::load_state(db)?.restore.is_none());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        env.challenge_rows.borrow()[&(env.owner(), token + 1000)],
+        (true, 9, 0)
+    );
+    assert_eq!(
+        env.challenge_rows.borrow()[&(Principal::anonymous(), token)],
+        (true, 8, 0)
+    );
+}
+
+#[test]
+fn restore_allocation_retry_after_exact_settlement_or_failed_reservation_succeeds() {
+    for failed_reservation in [false, true] {
+        let env = fixture();
+        let candidate = admit_pipeline(&env, 1);
+        let (signing, prep) = prepare_pipeline(&env, &candidate, 1);
+        env.fail_challenge_reserve.set(failed_reservation);
+        if !failed_reservation {
+            env.defer_challenge_execution.set(true);
+            *env.random_hook.borrow_mut() = Some(Box::new(|env| {
+                env.time.set(
+                    restore_admission::status(env)
+                        .unwrap()
+                        .unwrap()
+                        .challenge
+                        .expires
+                        + 1,
+                );
+            }));
+        }
+        signed_call(&env, &signing, &prep, 0, MutationOperation::RestoreAllocate).unwrap();
+        let j = restore_admission::status(&env).unwrap().unwrap();
+        let token = j.allocation_token.unwrap();
+        assert!(j.pipeline.is_none());
+        if failed_reservation {
+            assert_eq!(env.random_calls.get(), 0);
+            assert!(
+                !env.challenge_rows
+                    .borrow()
+                    .contains_key(&(env.owner(), token))
+            );
+        }
+        env.time.set(j.challenge.expires + 1);
+        renew_pipeline(&env, &candidate, 1);
+        let (signing, prep) = prepare_pipeline(&env, &candidate, 1);
+        if !failed_reservation {
+            signed_call(&env, &signing, &prep, 0, MutationOperation::RestoreAllocate).unwrap();
+            env.transaction(|db| {
+                assert!(matches!(
+                    grants::load(db, &prep.id)?.work.unwrap().result,
+                    Some(Err(Error::Busy))
+                ));
+                assert_eq!(
+                    restore_admission::load(db, &request(1).job)?.allocation_token,
+                    Some(token)
+                );
+                Ok(())
+            })
+            .unwrap();
+            env.challenge_rows
+                .borrow_mut()
+                .get_mut(&(env.owner(), token))
+                .unwrap()
+                .2 = 1;
+        }
+        env.challenge_rows
+            .borrow_mut()
+            .insert((env.owner(), token + 1000), (true, 9, 0));
+        env.defer_challenge_execution.set(false);
+        let (signing, prep) = prepare_pipeline(&env, &candidate, 1);
+        signed_call(&env, &signing, &prep, 0, MutationOperation::RestoreAllocate).unwrap();
+        let j = restore_admission::status(&env).unwrap().unwrap();
+        assert!(j.pipeline.is_some());
+        assert_ne!(j.allocation_token, Some(token));
+        assert_eq!(
+            env.challenge_rows.borrow()[&(env.owner(), token + 1000)],
+            (true, 9, 0)
+        );
+        assert_eq!(
+            env.random_calls.get(),
+            if failed_reservation { 1 } else { 2 }
+        );
+    }
+}

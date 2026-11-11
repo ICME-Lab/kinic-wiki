@@ -11,7 +11,11 @@ struct TestEnvironment {
     cancel_random: Cell<bool>,
     fail_random: Cell<bool>,
     cleanup_settled: Cell<bool>,
-    challenge_pending: Cell<bool>,
+    challenge_rows: RefCell<std::collections::BTreeMap<(Principal, u64), (bool, u64, u64)>>,
+    fail_challenge_reserve: Cell<bool>,
+    defer_challenge_execution: Cell<bool>,
+    challenge_reserves: Cell<u64>,
+    random_calls: Cell<u64>,
     upgrade_random: Cell<bool>,
     cancel_public: Cell<bool>,
     replace_flight: Cell<bool>,
@@ -50,7 +54,11 @@ impl TestEnvironment {
             cancel_random: Cell::new(false),
             fail_random: Cell::new(false),
             cleanup_settled: Cell::new(true),
-            challenge_pending: Cell::new(false),
+            challenge_rows: RefCell::new(std::collections::BTreeMap::new()),
+            fail_challenge_reserve: Cell::new(false),
+            defer_challenge_execution: Cell::new(false),
+            challenge_reserves: Cell::new(0),
+            random_calls: Cell::new(0),
             upgrade_random: Cell::new(false),
             cancel_public: Cell::new(false),
             replace_flight: Cell::new(false),
@@ -91,15 +99,36 @@ impl TestEnvironment {
     }
 }
 impl Environment for TestEnvironment {
-    fn challenge_pending(&self, _db: &Connection, _token: u64) -> Result<bool> {
-        Ok(self.challenge_pending.get())
+    fn challenge_pending(&self, _db: &Connection, token: u64) -> Result<bool> {
+        // Same predicate as the real accounting table: either RPC or execution is unsettled.
+        Ok(self
+            .challenge_rows
+            .borrow()
+            .get(&(self.owner(), token))
+            .is_some_and(|(in_flight, checkpoint, billed)| *in_flight || checkpoint > billed))
     }
-    fn reserve_challenge(&self, _token: u64) -> Result<()> {
-        self.challenge_pending.set(true);
+    fn reserve_challenge(&self, token: u64) -> Result<()> {
+        self.challenge_reserves
+            .set(self.challenge_reserves.get() + 1);
+        if self.fail_challenge_reserve.replace(false) {
+            return Err(Error::QuotaExceeded);
+        }
+        self.challenge_rows
+            .borrow_mut()
+            .insert((self.owner(), token), (true, 1, 0));
         Ok(())
     }
-    fn settle_challenge(&self, _token: u64) -> Result<()> {
-        self.challenge_pending.set(false);
+    fn settle_challenge(&self, token: u64) -> Result<()> {
+        if let Some(row) = self
+            .challenge_rows
+            .borrow_mut()
+            .get_mut(&(self.owner(), token))
+        {
+            row.0 = false;
+            if !self.defer_challenge_execution.get() {
+                row.2 = row.1;
+            }
+        }
         Ok(())
     }
     fn cleanup_existing_flights(
@@ -159,7 +188,9 @@ impl Environment for TestEnvironment {
             self.checkpoints.get() >= 1,
             "raw_rand must have a durable execution checkpoint"
         );
-        if let Some(hook) = self.random_hook.borrow_mut().take() {
+        self.random_calls.set(self.random_calls.get() + 1);
+        let hook = self.random_hook.borrow_mut().take();
+        if let Some(hook) = hook {
             hook(self);
         }
         if self.cancel_random.replace(false) {
