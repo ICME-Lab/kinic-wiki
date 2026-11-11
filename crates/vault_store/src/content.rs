@@ -720,6 +720,9 @@ fn collect_retired_revision(db: &Connection, now: u64) -> Result<u64> {
 }
 
 pub fn gc(db: &Connection, now: u64) -> Result<u64> {
+    if transition::restore_pending(db)? {
+        return Ok(0);
+    }
     collect_expired_receipts(db, now)?;
     collect_expired_upload(db, now)?;
     db.execute(

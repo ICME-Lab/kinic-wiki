@@ -276,3 +276,5 @@ pub mod overlays;
 pub mod incident;
 
 pub const KEY_CAPACITY_SCHEMA: &str = include_str!("key-capacity-schema.sql");
+
+pub mod transition;

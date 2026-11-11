@@ -341,6 +341,42 @@ export interface Reserve {
   'vault' : Uint8Array | number[],
   'operation' : Uint8Array | number[],
 }
+export type RestoreAdmissionPhase = { 'Registration' : null } |
+  { 'Admitted' : null } |
+  { 'Possession' : null } |
+  { 'CurrentProof' : null };
+export interface RestoreAdmissionRequest {
+  'job' : Uint8Array | number[],
+  'source_generation' : [] | [Generation],
+  'source_epoch' : bigint,
+  'records' : bigint,
+  'archive_length' : bigint,
+  'archive_digest' : Uint8Array | number[],
+  'target' : PendingCreation,
+  'source_commitment' : Uint8Array | number[],
+  'reserved_bytes' : bigint,
+}
+export interface RestoreAdmissionStatus {
+  'challenge' : Challenge,
+  'request' : RestoreAdmissionRequest,
+  /**
+   * Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
+   */
+  'recovery_message' : Uint8Array | number[],
+  'issued' : bigint,
+  'current_verifier' : Uint8Array | number[],
+  'current_live' : [] | [Generation],
+  'semantic_config' : Uint8Array | number[],
+  'phase' : RestoreAdmissionPhase,
+  /**
+   * Public credential material only, bounded and checked before persistence.
+   */
+  'candidate' : [] | [string],
+  'proof_fence' : Uint8Array | number[],
+  'candidate_digest' : Uint8Array | number[],
+  'next_epoch' : bigint,
+  'parent_job' : [] | [Uint8Array | number[]],
+}
 export interface RestoreProgress {
   'count' : bigint,
   'root' : Uint8Array | number[],
@@ -390,7 +426,11 @@ export type Result_27 = { 'Ok' : MutationResult } |
   { 'Err' : Error };
 export type Result_28 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
+export type Result_29 = { 'Ok' : RestoreAdmissionStatus } |
+  { 'Err' : Error };
 export type Result_3 = { 'Ok' : Export } |
+  { 'Err' : Error };
+export type Result_30 = { 'Ok' : [] | [RestoreAdmissionStatus] } |
   { 'Err' : Error };
 export type Result_4 = { 'Ok' : null } |
   { 'Err' : Error };
@@ -466,6 +506,7 @@ export interface _SERVICE {
   >,
   'begin_grant' : ActorMethod<[GrantRequest], Result_2>,
   'begin_restore' : ActorMethod<[BeginRestore], Result>,
+  'begin_restore_admission' : ActorMethod<[RestoreAdmissionRequest], Result_2>,
   'begin_restore_revision' : ActorMethod<
     [Uint8Array | number[], Revision, [] | [Uint8Array | number[]]],
     Result_4
@@ -547,6 +588,10 @@ export interface _SERVICE {
    * Owner-only encrypted status remains available when configuration is absent or incompatible.
    */
   'incident_status' : ActorMethod<[], Result_21>,
+  'initialize_restore_namespace' : ActorMethod<
+    [Uint8Array | number[]],
+    Result_15
+  >,
   'list_credentials' : ActorMethod<[], Result_22>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
@@ -570,6 +615,14 @@ export interface _SERVICE {
     [Uint8Array | number[], string],
     Result_15
   >,
+  'prove_restore_candidate' : ActorMethod<
+    [Uint8Array | number[], string],
+    Result_29
+  >,
+  'prove_restore_current' : ActorMethod<
+    [Uint8Array | number[], Uint8Array | number[]],
+    Result_29
+  >,
   'purge_object' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
     Result_4
@@ -592,7 +645,13 @@ export interface _SERVICE {
     [Uint8Array | number[], string],
     Result_13
   >,
+  'register_restore_candidate' : ActorMethod<
+    [Uint8Array | number[], string],
+    Result_2
+  >,
   'reserve_vault' : ActorMethod<[Reserve], Result>,
+  'restore_admission_status' : ActorMethod<[], Result_30>,
+  'resume_restore_admission' : ActorMethod<[Uint8Array | number[]], Result_2>,
   'set_config' : ActorMethod<[[] | [VaultConfig]], Result_4>,
   'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_4>,
 }

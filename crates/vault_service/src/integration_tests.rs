@@ -1982,3 +1982,6 @@ fn incident_admission_freezes_atomically_and_invalidates_global_empty_grants() {
 
 #[path = "incident_tests.rs"]
 mod incident_tests;
+
+#[path = "restore_admission_tests.rs"]
+mod restore_admission_tests;

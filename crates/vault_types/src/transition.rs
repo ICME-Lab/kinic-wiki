@@ -1,0 +1,68 @@
+//! Bounded admission metadata only. An admitted candidate has no live credential/grant.
+use super::*;
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreAdmissionRequest {
+    pub job: Id,
+    pub target: PendingCreation,
+    pub archive_digest: Vec<u8>,
+    pub source_commitment: Vec<u8>,
+    pub source_epoch: u64,
+    pub source_generation: Option<Generation>,
+    pub archive_length: u64,
+    pub records: u64,
+    pub reserved_bytes: u64,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum RestoreAdmissionPhase {
+    Registration,
+    Possession,
+    CurrentProof,
+    Admitted,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreAdmissionStatus {
+    pub request: RestoreAdmissionRequest,
+    pub current_live: Option<Generation>,
+    pub current_verifier: Vec<u8>,
+    pub parent_job: Option<Id>,
+    pub next_epoch: u64,
+    pub phase: RestoreAdmissionPhase,
+    /// Public credential material only, bounded and checked before persistence.
+    pub candidate: Option<String>,
+    pub candidate_digest: Vec<u8>,
+    pub challenge: Challenge,
+    /// Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
+    pub recovery_message: Vec<u8>,
+    pub semantic_config: Vec<u8>,
+    pub proof_fence: Vec<u8>,
+    pub issued: u64,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreNamespaceFlight {
+    pub operation: Id,
+    pub token: u64,
+    pub expires: u64,
+    pub fence: Vec<u8>,
+    pub ready: bool,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionState {
+    pub version: u8,
+    pub incident: Option<IncidentStatus>,
+    pub restore: Option<RestoreAdmissionStatus>,
+    pub namespace_flight: Option<RestoreNamespaceFlight>,
+}
+impl Default for TransitionState {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            incident: None,
+            restore: None,
+            namespace_flight: None,
+        }
+    }
+}

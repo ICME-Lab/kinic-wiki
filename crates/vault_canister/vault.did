@@ -291,6 +291,40 @@ type Quota = record {
   charged : nat64;
 };
 type Reserve = record { vault : blob; operation : blob };
+type RestoreAdmissionPhase = variant {
+  Registration;
+  Admitted;
+  Possession;
+  CurrentProof;
+};
+type RestoreAdmissionRequest = record {
+  job : blob;
+  source_generation : opt Generation;
+  source_epoch : nat64;
+  records : nat64;
+  archive_length : nat64;
+  archive_digest : blob;
+  target : PendingCreation;
+  source_commitment : blob;
+  reserved_bytes : nat64;
+};
+type RestoreAdmissionStatus = record {
+  challenge : Challenge;
+  request : RestoreAdmissionRequest;
+  // Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
+  recovery_message : blob;
+  issued : nat64;
+  current_verifier : blob;
+  current_live : opt Generation;
+  semantic_config : blob;
+  phase : RestoreAdmissionPhase;
+  // Public credential material only, bounded and checked before persistence.
+  candidate : opt text;
+  proof_fence : blob;
+  candidate_digest : blob;
+  next_epoch : nat64;
+  parent_job : opt blob;
+};
 type RestoreProgress = record { count : nat64; root : blob; sequence : nat64 };
 type Result = variant { Ok : Header; Err : Error };
 type Result_1 = variant { Ok : nat64; Err : Error };
@@ -314,7 +348,9 @@ type Result_25 = variant { Ok : vec UnfinishedVault; Err : Error };
 type Result_26 = variant { Ok : vec Header; Err : Error };
 type Result_27 = variant { Ok : MutationResult; Err : Error };
 type Result_28 = variant { Ok : opt Payment; Err : Error };
+type Result_29 = variant { Ok : RestoreAdmissionStatus; Err : Error };
 type Result_3 = variant { Ok : Export; Err : Error };
+type Result_30 = variant { Ok : opt RestoreAdmissionStatus; Err : Error };
 type Result_4 = variant { Ok; Err : Error };
 type Result_5 = variant { Ok : Upload; Err : Error };
 type Result_6 = variant { Ok : BootstrapReply; Err : Error };
@@ -378,6 +414,7 @@ service : () -> {
   begin_export : (blob, blob) -> (Result_3);
   begin_grant : (GrantRequest) -> (Result_2);
   begin_restore : (BeginRestore) -> (Result);
+  begin_restore_admission : (RestoreAdmissionRequest) -> (Result_2);
   begin_restore_revision : (blob, Revision, opt blob) -> (Result_4);
   begin_revision : (BeginRevision) -> (Result_5);
   begin_unlock : (BeginUnlock) -> (Result_2);
@@ -417,6 +454,7 @@ service : () -> {
   incident_staged_index : (IncidentRead, nat64) -> (Result_12) query;
   // Owner-only encrypted status remains available when configuration is absent or incompatible.
   incident_status : () -> (Result_21) query;
+  initialize_restore_namespace : (blob) -> (Result_15);
   list_credentials : () -> (Result_22);
   list_history : (blob, blob, nat64) -> (Result_12);
   list_objects : (blob, blob) -> (Result_23);
@@ -428,12 +466,17 @@ service : () -> {
   pay_purchase : (blob) -> (Result_7);
   payment_status : (blob) -> (Result_28) query;
   prepare_unlock_credential : (blob, text) -> (Result_15);
+  prove_restore_candidate : (blob, text) -> (Result_29);
+  prove_restore_current : (blob, blob) -> (Result_29);
   purge_object : (blob, blob) -> (Result_4);
   put_chunk : (blob, nat32, blob) -> (Result_4);
   put_restore_chunk : (blob, nat32, blob, opt blob) -> (Result_4);
   quote_purchase : (PurchaseRequest) -> (Result_7);
   register_bootstrap : (blob, text) -> (Result_13);
+  register_restore_candidate : (blob, text) -> (Result_2);
   reserve_vault : (Reserve) -> (Result);
+  restore_admission_status : () -> (Result_30) query;
+  resume_restore_admission : (blob) -> (Result_2);
   set_config : (opt VaultConfig) -> (Result_4);
   set_funding_config : (opt FundingConfig) -> (Result_4);
 }

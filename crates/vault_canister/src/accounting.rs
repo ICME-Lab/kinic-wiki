@@ -259,8 +259,8 @@ impl State {
                 (None,None)=>true,_=>false
             };
             if !compatible {
-                let pending:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE json_extract(header,'$.state') IN ('Pending','Restoring','IncidentRequired')) OR EXISTS(SELECT 1 FROM settings WHERE key='transition' AND value!='null' AND json_extract(value,'$.complete')=0)",params![],|r|sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage)?;
-                if pending!=0{return Err(vault_types::Error::Conflict);}
+                let pending:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE json_extract(header,'$.state') IN ('Pending','Restoring','IncidentRequired'))",params![],|r|sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage)?;
+                if pending!=0 || vault_store::transition::any_pending(db)? {return Err(vault_types::Error::Conflict);}
             }
             match config {
                 Some(config)=>{let raw=serde_json::to_string(&config).map_err(|_|vault_types::Error::Storage)?;db.execute("INSERT INTO global_settings(key,value) VALUES('config',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![raw]).map_err(|_|vault_types::Error::Storage)?;}

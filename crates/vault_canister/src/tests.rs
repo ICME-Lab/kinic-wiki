@@ -586,3 +586,51 @@ fn global_key_settlement_survives_configuration_removal_without_allocating_autho
     })
     .unwrap();
 }
+
+#[test]
+fn restore_transition_without_header_blocks_configuration_and_malformed_state_fails_closed() {
+    use vault_types::*;
+    state::initialize().unwrap();
+    let config = VaultConfig {
+        origin: "http://localhost:5173".into(),
+        rp_id: "localhost".into(),
+        key_name: "test_key_1".into(),
+        minimum_cycles: 100_000_000_000,
+    };
+    state::State.vault_set_config(Some(config.clone())).unwrap();
+    state::transaction(|db| {
+        vault_store::OwnerContext::authenticated(p(52))?.run(db, |db| {
+            vault_store::transition::save_state(
+                db,
+                &TransitionState {
+                    namespace_flight: Some(RestoreNamespaceFlight {
+                        operation: vec![1; 16],
+                        token: 1,
+                        expires: 120,
+                        fence: vec![2; 32],
+                        ready: true,
+                    }),
+                    ..Default::default()
+                },
+            )
+        })
+    })
+    .unwrap();
+    assert_eq!(state::State.vault_set_config(None), Err(Error::Conflict));
+    let mut changed = config;
+    changed.key_name = "other_key".into();
+    assert_eq!(
+        state::State.vault_set_config(Some(changed)),
+        Err(Error::Conflict)
+    );
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE settings SET value='{\"version\":1}' WHERE key='transition'",
+            [],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(state::State.vault_set_config(None), Err(Error::Storage));
+}

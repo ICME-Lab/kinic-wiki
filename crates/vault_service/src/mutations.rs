@@ -596,6 +596,11 @@ fn cleanup_operation(
     n: &mut cleanup::Namespace,
     op: &MutationOperation,
 ) -> Result<MutationResult> {
+    // Restore cancellation/replacement receives its own exact authority in Task 11.
+    // Existing owner cleanup must not erase a pending child or its parent pins.
+    if store::transition::restore_pending(db)? {
+        return Err(Error::Busy);
+    }
     let MutationOperation::Cleanup {
         job,
         cursor,

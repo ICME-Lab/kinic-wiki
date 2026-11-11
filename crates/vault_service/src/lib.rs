@@ -971,3 +971,5 @@ mod incident_flights;
 pub mod incident_cutover;
 pub mod incident_export;
 pub mod incident_wrapping;
+
+pub mod restore_admission;

@@ -1,29 +1,20 @@
 //! Source pins live in the one prepaid transition slot, never in a per-record table.
 use super::*;
 pub fn status(db: &Connection) -> Result<Option<IncidentStatus>> {
-    load(db, "transition")
+    Ok(transition::load_state(db)?.incident)
 }
 pub fn pending(db: &Connection) -> Result<bool> {
     Ok(status(db)?.is_some_and(|j| !j.complete))
 }
 pub fn owner_change_allowed(db: &Connection) -> Result<()> {
-    if pending(db)? {
+    if transition::pending(db)? {
         Err(Error::Conflict)
     } else {
         Ok(())
     }
 }
 pub fn pinned(db: &Connection, vault: &[u8]) -> Result<bool> {
-    Ok(status(db)?.is_some_and(|j| {
-        !j.complete
-            && j.targets.iter().any(|t| {
-                t.source.id == vault
-                    && !matches!(
-                        t.phase,
-                        PreparationPhase::Purging | PreparationPhase::Purged
-                    )
-            })
-    }))
+    transition::pinned(db, vault)
 }
 pub fn readable(db: &Connection, vault: &[u8]) -> Result<Header> {
     let h = header(db, vault)?;

@@ -702,3 +702,56 @@ fn incident_cutover_digest() -> vault_types::Result<Vec<u8>> {
     let env = Vault::capture_read()?;
     vault_service::incident_cutover::ready_digest(&env)
 }
+
+#[ic_cdk::update]
+async fn initialize_restore_namespace(operation: vault_types::Id) -> vault_types::Result<Vec<u8>> {
+    let env = Vault::capture()?;
+    let result = vault_service::restore_admission::initialize_namespace(&env, operation).await;
+    env.finish(result)
+}
+#[ic_cdk::query]
+fn restore_admission_status() -> vault_types::Result<Option<vault_types::RestoreAdmissionStatus>> {
+    let env = Vault::capture_read()?;
+    vault_service::restore_admission::status(&env)
+}
+#[ic_cdk::update]
+fn begin_restore_admission(
+    request: vault_types::RestoreAdmissionRequest,
+) -> vault_types::Result<vault_types::Challenge> {
+    let env = Vault::capture()?;
+    let result = vault_service::restore_admission::begin(&env, request);
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn register_restore_candidate(
+    job: vault_types::Id,
+    registration: String,
+) -> vault_types::Result<vault_types::Challenge> {
+    let env = Vault::capture()?;
+    let result = vault_service::restore_admission::register(&env, job, registration);
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn prove_restore_candidate(
+    job: vault_types::Id,
+    assertion: String,
+) -> vault_types::Result<vault_types::RestoreAdmissionStatus> {
+    let env = Vault::capture()?;
+    let result = vault_service::restore_admission::possess(&env, job, assertion);
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn prove_restore_current(
+    job: vault_types::Id,
+    signature: Vec<u8>,
+) -> vault_types::Result<vault_types::RestoreAdmissionStatus> {
+    let env = Vault::capture()?;
+    let result = vault_service::restore_admission::prove_current(&env, job, signature);
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn resume_restore_admission(job: vault_types::Id) -> vault_types::Result<vault_types::Challenge> {
+    let env = Vault::capture()?;
+    let result = vault_service::restore_admission::resume(&env, job);
+    env.finish(result)
+}

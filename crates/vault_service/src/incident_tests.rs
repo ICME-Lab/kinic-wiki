@@ -1,5 +1,5 @@
 use super::*;
-fn fixture(
+pub(super) fn fixture(
     count: u8,
 ) -> (
     TestEnvironment,

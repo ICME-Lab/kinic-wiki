@@ -72,7 +72,9 @@ pub(crate) fn vector(j: &IncidentStatus) -> Result<Vec<u8>> {
 }
 pub(crate) fn save(db: &Connection, j: &mut IncidentStatus) -> Result<()> {
     j.vector_digest = vector(j)?;
-    store::save(db, "transition", j)
+    let mut state = store::transition::load_state(db)?;
+    state.incident = Some(j.clone());
+    store::transition::save_state(db, &state)
 }
 fn safe_authority(
     db: &Connection,
@@ -109,6 +111,9 @@ pub(crate) fn validate(
     purpose: &GrantPurpose,
     generations: &[Generation],
 ) -> Result<()> {
+    if store::transition::restore_pending(db)? {
+        return Err(Error::Busy);
+    }
     match purpose {
         GrantPurpose::IncidentPrepare(r) => {
             id(&r.job)?;

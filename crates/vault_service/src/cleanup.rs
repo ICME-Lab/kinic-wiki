@@ -232,6 +232,9 @@ pub fn status(env: &impl Environment) -> Result<Option<CleanupProgress>> {
 /// Reclaim only a completely purged namespace after replay/callback retention. Account/payment
 /// tables are intentionally untouched. A fresh namespace gets independent randomness.
 pub(crate) fn reclaim_empty(db: &Connection, now: u64) -> Result<()> {
+    if store::transition::pending(db)? {
+        return Ok(());
+    }
     let Some(n) = store::load::<Namespace>(db, "cleanup")? else {
         return Ok(());
     };
