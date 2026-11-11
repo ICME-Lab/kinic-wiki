@@ -69,11 +69,11 @@ pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
     })
 }
 pub fn usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM (SELECT * FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(65536),0) FROM (SELECT * FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(charge),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(reserved),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*8192 FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*4096 FROM (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) GROUP BY vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','transition','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM (SELECT * FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(65536),0) FROM (SELECT * FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(charge),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(reserved),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*8192 FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*4096 FROM (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) GROUP BY vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     Ok(n as u64)
 }
 pub fn global_usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights)+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights)+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','transition','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     Ok((n as u64)
         .saturating_add(capacity::ACCOUNTING_POOL)
         .saturating_add(crate::accounting_capacity::legacy_excess(db)?))
@@ -436,6 +436,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
         params![id],
     )
     .map_err(db_error)?;
+    overlays::populate_current(db, &h, &rev)?;
     put_header(db, &h)?;
     record(db, id, &d, &rev, now)?;
     Ok(rev)
@@ -456,7 +457,7 @@ fn row(r: &sql::Row<'_>) -> sql::Result<Revision> {
 }
 const COLS: &str = "r.vault,r.object,r.revision,r.plain_size,r.manifest,r.hashes,r.deleted,r.born";
 pub fn manifest(db: &Connection, v: &[u8], o: &[u8], revision: u64) -> Result<Revision> {
-    active(db, v)?;
+    let header = active(db, v)?;
     id(o)?;
     let rev = if revision == 0 {
         head(db, v, o)?
@@ -466,7 +467,7 @@ pub fn manifest(db: &Connection, v: &[u8], o: &[u8], revision: u64) -> Result<Re
     if rev > i64::MAX as u64 {
         return Err(Error::InvalidInput);
     }
-    db.query_row(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision=?3 AND r.retired IS NULL"),params![v,o,rev as i64],row).optional().map_err(db_error)?.ok_or(Error::NotFound)
+    overlays::effective(db, &header, db.query_row(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision=?3 AND r.retired IS NULL"),params![v,o,rev as i64],row).optional().map_err(db_error)?.ok_or(Error::NotFound)?)
 }
 pub fn chunk(db: &Connection, v: &[u8], o: &[u8], revision: u64, index: u32) -> Result<Vec<u8>> {
     let m = manifest(db, v, o, revision)?;
@@ -483,7 +484,7 @@ pub fn chunk(db: &Connection, v: &[u8], o: &[u8], revision: u64, index: u32) -> 
     .ok_or(Error::NotFound)
 }
 pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<RevisionPage> {
-    active(db, v)?;
+    let header = active(db, v)?;
     id(o)?;
     let mut s=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision<?3 AND r.retired IS NULL ORDER BY r.revision DESC LIMIT 11")).map_err(db_error)?;
     let entries = sql::query_map(
@@ -496,6 +497,7 @@ pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<Revis
     let mut page = Vec::new();
     let mut more = false;
     for e in entries {
+        let e = overlays::effective(db, &header, e)?;
         let size = e.manifest.len() + e.chunk_hashes.len() * 32 + 512;
         if page.len() >= 10 || bytes + size > 800_000 {
             more = true;
@@ -515,7 +517,7 @@ pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<Revis
     })
 }
 pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
-    active(db, v)?;
+    let header = active(db, v)?;
     if !after.is_empty() {
         id(after)?
     }
@@ -525,6 +527,7 @@ pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
     let mut bytes = 0;
     let mut more = false;
     for e in entries {
+        let e = overlays::effective(db, &header, e)?;
         let size = e.manifest.len() + e.chunk_hashes.len() * 32 + 512;
         if page.len() >= 100 || bytes + size > 800_000 {
             more = true;
@@ -835,6 +838,7 @@ pub fn export_index(db: &Connection, export: &[u8], after: u64, now: u64) -> Res
     let mut bytes = 0;
     let mut more = false;
     for r in rows {
+        let r = overlays::effective(db, &e.header, r)?;
         let len = r.manifest.len() + r.chunk_hashes.len() * 32 + 512;
         if entries.len() >= 100 || bytes + len > 800_000 {
             more = true;

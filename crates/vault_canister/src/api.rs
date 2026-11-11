@@ -118,6 +118,10 @@ impl Environment for Vault {
         })
     }
 
+    fn settle_key_reservation(&self, token: u64, actual: u64) -> Result<bool> {
+        settle_key_reservation_for_owner(self.owner, token, self.now(), actual)
+    }
+
     fn require_spending(&self) -> Result<()> {
         let config = with_service(|s| Ok(s.vault_config()))
             .map_err(|_| Error::Storage)??
@@ -186,9 +190,7 @@ impl Environment for Vault {
                 now_millis(),
             )
         })
-        .map_err(|_| Error::Storage)?;
-        with_service(|s| Ok(s.vault_settle_key_flight(self.owner, token, self.now(), actual)))
-            .map_err(|_| Error::Storage)?
+        .map_err(|_| Error::Storage)
     }
     fn actual_derive_payment(&self, attached: u64) -> u64 {
         self.derive_payment.get().unwrap_or(attached)
@@ -221,9 +223,12 @@ impl Environment for Vault {
             transport_public_key: transport,
         })
         .await;
-        let refund = u64::try_from(ic_cdk::api::msg_cycles_refunded()).unwrap_or(u64::MAX);
         self.derive_payment
-            .set(Some(payment.saturating_sub(refund)));
+            .set(Some(crate::key_cost::actual_payment(
+                payment,
+                &result,
+                ic_cdk::api::msg_cycles_refunded,
+            )));
         result
             .map(|x| x.encrypted_key)
             .map_err(|_| Error::KeyService)
@@ -620,4 +625,14 @@ fn cleanup_status() -> vault_types::Result<Option<vault_types::CleanupProgress>>
 #[ic_cdk::query]
 fn global_capacity() -> vault_types::Result<vault_types::GlobalCapacity> {
     crate::state::transaction(vault_store::content::global_capacity)
+}
+
+/// Release only an existing captured owner's callback token, even after config removal.
+pub(crate) fn settle_key_reservation_for_owner(
+    owner: OwnerContext,
+    token: u64,
+    now: u64,
+    actual: u64,
+) -> Result<bool> {
+    crate::state::State.vault_settle_key_flight(owner, token, now, actual)
 }

@@ -29,6 +29,7 @@ export const idlFactory = ({ IDL }) => {
     'recovery_verifier' : IDL.Vec(IDL.Nat8),
     'key_name' : IDL.Text,
     'recovery' : IDL.Opt(Envelope),
+    'published_slot' : IDL.Opt(IDL.Nat8),
     'sequence' : IDL.Nat64,
     'backup_at' : IDL.Opt(IDL.Nat64),
   });

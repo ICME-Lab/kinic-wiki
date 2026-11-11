@@ -35,6 +35,12 @@ pub trait Environment {
     }
     fn reserve_cycles(&self, token: u64, amount: u64) -> Result<()>;
     fn settle_cycles(&self, token: u64, actual: u64) -> Result<()>;
+    /// Bookkeeping only: settle this owner's exact token and release only its control flight.
+    /// Private authorized wrappers delegate to the raw owner environment after publication expires.
+    fn settle_key_reservation(&self, token: u64, actual: u64) -> Result<bool> {
+        self.transaction(|db| settle_key_reservation_in(db, token, self.now(), actual))
+    }
+
     fn actual_derive_payment(&self, attached: u64) -> u64 {
         attached
     }
@@ -54,4 +60,22 @@ pub fn validate_key_reply(reply: KeyReply) -> Result<KeyReply> {
     ic_vetkeys::EncryptedVetKey::deserialize(&reply.encrypted_key)
         .map_err(|_| vault_types::Error::KeyService)?;
     Ok(reply)
+}
+
+/// Narrow accounting-only callback; the embedding adapter supplies authenticated owner scope.
+/// No key material, authorization, namespace initialization or arbitrary mutation is exposed.
+pub fn settle_key_reservation_in(
+    db: &Connection,
+    token: u64,
+    now: u64,
+    actual: u64,
+) -> Result<bool> {
+    vault_store::keys::settle(db, token, now, actual)?;
+    let mut c = crate::control(db)?;
+    let current = c.derive.as_ref().is_some_and(|f| f.token == token);
+    if current {
+        c.derive = None;
+        vault_store::save(db, "control", &c)?;
+    }
+    Ok(current)
 }

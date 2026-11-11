@@ -370,7 +370,7 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         return Err(Error::Unauthorized);
     }
     env.require_spending()?;
-    let (cfg, token) = env.transaction(|db| {
+    let (cfg, token, flight) = env.transaction(|db| {
         let mut cfg = store::authorize(db, env.owner())?;
         let configuration = hash(&cfg)?;
         if !valid_transport(&request.transport)
@@ -440,18 +440,11 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         });
         store::save(db, "control", &c)?;
         cfg.key_name = h.key_name;
-        Ok((cfg, token))
+        Ok((cfg, token, c.derive.clone().ok_or(Error::Storage)?))
     })?;
     let mut payment = env.required_derive_payment(&cfg.key_name);
     if let Err(error) = env.reserve_cycles(token, store::keys::DERIVE_RESERVATION) {
-        env.transaction(|db| {
-            store::keys::settle(db, token, env.now(), 0)?;
-            let mut c = control(db)?;
-            if c.derive.as_ref().is_some_and(|f| f.token == token) {
-                c.derive = None;
-            }
-            store::save(db, "control", &c)
-        })?;
+        env.settle_key_reservation(token, 0)?;
         return Err(error);
     }
     env.checkpoint_execution()?;
@@ -511,20 +504,14 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         0
     };
     env.settle_cycles(token, actual)?;
-    // Clear only this flight. Never roll back failure accounting or overwrite a newer request.
+    let current = env.settle_key_reservation(token, actual)?;
+    // Release accounting first; publication remains fully grant/runtime/generation fenced.
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
-        let mut c = control(db)?;
-        store::keys::settle(db, token, env.now(), actual)?;
-        let f = if c.derive.as_ref().is_some_and(|f| f.token == token) {
-            c.derive.take()
-        } else {
-            None
-        };
-        store::save(db, "control", &c)?;
-        let Some(f) = f else {
+        if !current {
             return Ok(Err(Error::Expired));
-        };
+        }
+        let f = flight;
         if f.expires <= env.now() {
             return Ok(Err(Error::Expired));
         }

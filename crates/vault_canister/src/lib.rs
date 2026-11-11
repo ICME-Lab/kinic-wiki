@@ -3,6 +3,7 @@ mod api;
 mod capacity;
 mod funding;
 mod http;
+mod key_cost;
 mod schema;
 mod state;
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;

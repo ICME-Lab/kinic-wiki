@@ -153,6 +153,7 @@ export interface Header {
   'recovery_verifier' : Uint8Array | number[],
   'key_name' : string,
   'recovery' : [] | [Envelope],
+  'published_slot' : [] | [number],
   'sequence' : bigint,
   'backup_at' : [] | [bigint],
 }

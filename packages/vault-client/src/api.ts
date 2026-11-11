@@ -574,7 +574,7 @@ export class VaultClient {
       archive.root = undefined as never;
       const h = archive.header;
       const original: Header = {
-        generation: [], recovery_verifier: [],
+        published_slot: [], generation: [], recovery_verifier: [],
         id: unb64(h.vault),
         epoch: BigInt(h.epoch),
         sequence: BigInt(h.sequence),

@@ -495,6 +495,87 @@ try {
   assert.equal(ok(await actor.list_vaults()).length, 0);
   assert.equal(ok(await actor.cleanup_status())[0].complete, true);
   assert.equal(ok(await actor.account_balance()), 0n);
+  // Frozen Task6/v3 namespace: migrate the prepaid transition slot without
+  // changing the durable creation identity or manufacturing fresh authority.
+  const previous = await pic.setupCanister({
+    sender: owner,
+    idlFactory: vaultIDL,
+    wasm: resolve(root, "target/vault-dedicated-task6.wasm"),
+    arg: IDL.encode([], []),
+    cycles: 100_000_000_000_000n,
+  });
+  previous.actor.setPrincipal(owner);
+  const config = {
+    origin: "https://vault.kinic.xyz",
+    rp_id: "vault.kinic.xyz",
+    key_name: "key_1",
+    minimum_cycles: 100_000_000_000n,
+  };
+  ok(await previous.actor.set_config([config]));
+  ok(
+    await previous.actor.set_funding_config([
+      {
+        ledger: fake.canisterId,
+        recipient: previous.canisterId,
+        cycles_per_kinic: 2_000_000_000n,
+      },
+    ]),
+  );
+  const funded = {
+    ...purchase,
+    operation: b(60),
+    created_at_time: BigInt(await pic.getTime()) * 1_000_000n,
+  };
+  ok(await previous.actor.quote_purchase(funded));
+  ok(await previous.actor.pay_purchase(funded.operation));
+  const pending = ok(
+    await previous.actor.bootstrap({
+      reserve: { vault: b(61), operation: b(62) },
+      public_key: ephemeral.public,
+    }),
+  );
+  assert.equal(pending.header.published_slot.length, 0);
+  const beforeUpgrade = ok(await previous.actor.global_capacity());
+  const unfinishedBefore = ok(await previous.actor.list_unfinished_vaults());
+  await pic.upgradeCanister({
+    sender: owner,
+    canisterId: previous.canisterId,
+    wasm,
+    arg: IDL.encode([], []),
+  });
+  const afterUpgrade = ok(await previous.actor.global_capacity());
+  assert.equal(afterUpgrade.used - beforeUpgrade.used, 65_536n);
+  assert.deepEqual(
+    ok(await previous.actor.list_unfinished_vaults()),
+    unfinishedBefore,
+  );
+  assert.ok(
+    "Conflict" in
+      (await previous.actor.set_config([{ ...config, key_name: "other_key" }]))
+        .Err,
+  );
+  assert.ok("Conflict" in (await previous.actor.set_config([])).Err);
+  ok(
+    await previous.actor.set_config([
+      { ...config, minimum_cycles: 100_000_000_001n },
+    ]),
+  );
+  await pic.upgradeCanister({
+    sender: owner,
+    canisterId: previous.canisterId,
+    wasm,
+    arg: IDL.encode([], []),
+  });
+  assert.equal(
+    ok(await previous.actor.global_capacity()).used,
+    afterUpgrade.used,
+  );
+  ok(await previous.actor.cancel_vault_setup(b(61), b(62)));
+  assert.equal(ok(await previous.actor.list_unfinished_vaults()).length, 0);
+  ok(await previous.actor.set_config([]));
+  console.log(
+    "PASS actual Wasm: frozen Task6 namespace gains exactly one 64 KiB transition reservation, repeated upgrade preserves it and the pending identity; incompatible configure/removal is rejected until cancellation completes.",
+  );
   console.log(
     "PASS actual Wasm: Task4-funded account survives upgrade; independent fresh generation, exact bootstrap retry, legacy key/write denial, fresh passkey grant, signed replay/cross-owner, bounded normal grants, expired pre-nonce second creation survives upgrade and cancels at zero balance, generated Pending creation cancels at zero balance, zero-balance cleanup, upgrade fence and final purge receipt.",
   );

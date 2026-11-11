@@ -443,6 +443,9 @@ impl<E: Environment> Environment for Authorized<'_, E> {
     fn settle_cycles(&self, t: u64, a: u64) -> Result<()> {
         self.env.settle_cycles(t, a)
     }
+    fn settle_key_reservation(&self, t: u64, a: u64) -> Result<bool> {
+        self.env.settle_key_reservation(t, a)
+    }
     fn required_derive_payment(&self, k: &str) -> u64 {
         self.env.required_derive_payment(k)
     }

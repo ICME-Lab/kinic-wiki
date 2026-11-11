@@ -4,7 +4,7 @@ import { VaultClient } from '../src/api';
 import type { Header, VaultActor } from '../src/contracts';
 import { importKey } from '../../vault-crypto/src/index';
 const header: Header = {
-  generation: [], recovery_verifier: [], id: new Uint8Array(16), epoch: 0n, sequence: 0n, key_name: 'test_key_1', state: { Active: null }, normal: [], recovery: [], backup_at: [], backup_sequence: [] };
+  published_slot: [], generation: [], recovery_verifier: [], id: new Uint8Array(16), epoch: 0n, sequence: 0n, key_name: 'test_key_1', state: { Active: null }, normal: [], recovery: [], backup_at: [], backup_sequence: [] };
 it('retries the same encrypted revision and chunk operation after transport loss', async () => {
   const begin_revision = vi.fn().mockRejectedValueOnce(Error('transport')).mockResolvedValue({ Ok: { id: new Uint8Array(16), expires: 0n, revision: 1n } });
   const put_chunk = vi.fn().mockRejectedValueOnce(Error('transport')).mockResolvedValue({ Ok: null });

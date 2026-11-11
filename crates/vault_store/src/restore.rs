@@ -37,7 +37,8 @@ pub fn begin(db: &Connection, r: BeginRestore, now: u64) -> Result<Header> {
     id(&r.header.id)?;
     id(&r.operation)?;
     setup::reject_discarded(db, &r.header.id, &r.operation, now)?;
-    if r.count > 10000
+    if r.header.published_slot.is_some()
+        || r.count > 10000
         || r.root.len() != 32
         || r.reserved_bytes > TOTAL_MAX
         || r.header.epoch > i64::MAX as u64

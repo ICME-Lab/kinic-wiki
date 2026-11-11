@@ -16,7 +16,7 @@ async function fixture() {
     raw = randomBytes(32),
     secret = randomBytes(32);
   const header: Header = {
-  generation: [], recovery_verifier: [],
+  published_slot: [], generation: [], recovery_verifier: [],
     id: vault,
     epoch: 0n,
     sequence: 0n,

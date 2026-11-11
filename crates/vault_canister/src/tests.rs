@@ -449,3 +449,140 @@ fn signed_cleanup_accounting_is_atomic_scoped_bounded_and_preserves_sent_cost() 
         .unwrap();
     assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
 }
+
+#[test]
+fn unresolved_creation_rejects_semantic_configuration_change() {
+    use vault_types::*;
+    state::initialize().unwrap();
+    let config = VaultConfig {
+        origin: "http://localhost:5173".into(),
+        rp_id: "localhost".into(),
+        key_name: "test_key_1".into(),
+        minimum_cycles: 100_000_000_000,
+    };
+    state::State.vault_set_config(Some(config.clone())).unwrap();
+    state::transaction(|db| {
+        vault_store::OwnerContext::authenticated(p(51))?.run(db, |db| {
+            vault_store::reserve(
+                db,
+                p(51),
+                Reserve {
+                    vault: vec![1; 16],
+                    operation: vec![2; 16],
+                },
+                1,
+            )
+            .map(|_| ())
+        })
+    })
+    .unwrap();
+    let mut changed = config.clone();
+    changed.key_name = "other_key".into();
+    assert_eq!(
+        state::State.vault_set_config(Some(changed)),
+        Err(Error::Conflict)
+    );
+    assert_eq!(state::State.vault_set_config(None), Err(Error::Conflict));
+    let mut operational = config;
+    operational.minimum_cycles += 1;
+    assert!(state::State.vault_set_config(Some(operational)).is_ok());
+}
+
+#[test]
+fn transition_reservation_migration_is_idempotent_and_preserves_overcommitted_owners() {
+    use kinic_sqlite_compat::{Connection, params};
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        &[
+            vault_store::SCHEMA,
+            vault_store::CONTENT_SCHEMA,
+            vault_store::RESTORE_SCHEMA,
+            "PRAGMA user_version=3;",
+        ]
+        .concat(),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO settings VALUES(?1,'cleanup','null')",
+        params![p(11).as_slice()],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO settings VALUES(?1,'cleanup','null')",
+        params![p(12).as_slice()],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,?4,'[]',1,?5)",
+        params![
+            p(11).as_slice(),
+            vec![1u8; 16],
+            vec![2u8; 16],
+            Vec::<u8>::new(),
+            vault_types::TOTAL_MAX as i64
+        ],
+    )
+    .unwrap();
+    let before = vault_store::content::global_usage(&db).unwrap();
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(
+        vault_store::content::global_usage(&db).unwrap(),
+        before + 2 * 65536
+    );
+    assert!(
+        vault_store::content::global_capacity(&db)
+            .unwrap()
+            .overcommitted
+    );
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(
+        vault_store::content::global_usage(&db).unwrap(),
+        before + 2 * 65536
+    );
+    let (count, charge): (i64, i64) = db
+        .query_row(
+            "SELECT count(*),sum(charge) FROM revisions",
+            params![],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((count, charge), (1, vault_types::TOTAL_MAX as i64));
+}
+
+#[test]
+fn global_key_settlement_survives_configuration_removal_without_allocating_authority() {
+    use kinic_sqlite_compat::params;
+    state::initialize().unwrap();
+    state::transaction(|db|{
+        db.execute("INSERT INTO key_flights(owner,token,day,reserved,created,payment) VALUES(?1,7,0,30000000000,1,30000000000)",params![p(15).as_slice()]).unwrap();
+        Ok(())
+    }).unwrap();
+    let owner = vault_store::OwnerContext::authenticated(p(15)).unwrap();
+    assert!(!api::settle_key_reservation_for_owner(owner, 7, 2, 0).unwrap());
+    assert!(!api::settle_key_reservation_for_owner(owner, 7, 2, 0).unwrap());
+    assert_eq!(
+        api::settle_key_reservation_for_owner(
+            vault_store::OwnerContext::authenticated(p(16)).unwrap(),
+            7,
+            2,
+            0
+        ),
+        Err(vault_types::Error::NotFound)
+    );
+    state::transaction(|db| {
+        let (actual, flight): (i64, i64) = db
+            .query_row(
+                "SELECT actual,in_flight FROM key_flights WHERE token=7",
+                params![],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((actual, flight), (0, 0));
+        let settings: i64 = db
+            .query_row("SELECT count(*) FROM settings", params![], |r| r.get(0))
+            .unwrap();
+        assert_eq!(settings, 0);
+        Ok(())
+    })
+    .unwrap();
+}

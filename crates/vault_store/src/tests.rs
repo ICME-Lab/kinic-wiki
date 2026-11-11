@@ -179,6 +179,7 @@ fn restore_preserves_ciphertext_and_requires_complete_authenticated_set() {
         ciphertext: vec![2; 48],
     };
     let header = Header {
+        published_slot: None,
         generation: None,
         recovery_verifier: vec![],
         id: vault.clone(),
@@ -203,6 +204,25 @@ fn restore_preserves_ciphertext_and_requires_complete_authenticated_set() {
         sequence: 7,
     };
     let root = Sha256::digest([vec![0; 32], restore::leaf(&revision)].concat()).to_vec();
+    // An exported overlay is materialized in the archive; its server slot pointer
+    // cannot be imported into a different dataset with no matching wrapper rows.
+    let mut invalid = header.clone();
+    invalid.published_slot = Some(0);
+    assert_eq!(
+        restore::begin(
+            &db,
+            BeginRestore {
+                header: invalid,
+                operation: vec![13; 16],
+                count: 1,
+                root: root.clone(),
+                reserved_bytes: 30000
+            },
+            1
+        )
+        .unwrap_err(),
+        Error::InvalidInput
+    );
     let h = restore::begin(
         &db,
         BeginRestore {
@@ -435,6 +455,7 @@ fn expired_restore_cleanup_is_bounded_and_allows_retry() {
     let vault = vec![41; 16];
     let request = BeginRestore {
         header: Header {
+            published_slot: None,
             generation: None,
             recovery_verifier: vec![],
             id: vault.clone(),
@@ -1014,6 +1035,7 @@ fn v2_empty_target_restore_validates_generation_seed_and_rejects_v1_zero_root() 
             ciphertext: vec![2; 48],
         };
         let h = Header {
+            published_slot: None,
             generation: Some(g.clone()),
             recovery_verifier: vec![3; 32],
             id: g.vault.clone(),
@@ -1088,4 +1110,191 @@ fn capacity_overcommit_preserves_read_export_reuse_and_bounded_cleanup() {
         .unwrap();
     assert!(!content::global_capacity(&db).unwrap().overcommitted);
     content::check_capacity(&db, 1).unwrap();
+}
+
+#[test]
+fn transition_metadata_uses_one_fixed_prepaid_owner_slot() {
+    let db = fixture();
+    let before = content::usage(&db).unwrap();
+    let global_before = content::global_usage(&db).unwrap();
+    save(&db, "transition", &()).unwrap();
+    assert_eq!(content::usage(&db).unwrap() - before, 65536);
+    assert_eq!(content::global_usage(&db).unwrap() - global_before, 65536);
+    let prepaid = content::usage(&db).unwrap();
+    save(&db, "transition", &"x".repeat(60000)).unwrap();
+    assert_eq!(content::usage(&db).unwrap(), prepaid);
+    assert_eq!(
+        save(&db, "transition", &"x".repeat(65536)),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn published_wrapper_is_required_and_preserves_content_ciphertext() {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+    use sha2::{Digest, Sha256};
+    let db = fixture();
+    let owner = config(&db).unwrap().owner;
+    let mut h = reserve(
+        &db,
+        owner,
+        Reserve {
+            vault: vec![1; 16],
+            operation: vec![2; 16],
+        },
+        1,
+    )
+    .unwrap();
+    let generation = Generation {
+        version: 2,
+        canister: Principal::from_slice(&[8]),
+        owner,
+        vault: h.id.clone(),
+        epoch: 1,
+        nonce: vec![4; 32],
+        key_name: "test_key_1".into(),
+    };
+    h.generation = Some(generation.clone());
+    h.published_slot = Some(0);
+    let wrapper = format::PackedEnvelope {
+        version: 2,
+        nonce: B64.encode([1; 12]),
+        ciphertext: B64.encode([2; 48]),
+    };
+    let base = format::Manifest {
+        version: 1,
+        dek: format::PackedEnvelope {
+            version: 1,
+            ..wrapper.clone()
+        },
+        metadata: format::PackedEnvelope {
+            version: 1,
+            nonce: B64.encode([3; 12]),
+            ciphertext: B64.encode([4; 16]),
+        },
+        nonces: vec![B64.encode([5; 12])],
+    };
+    let revision = Revision {
+        vault: h.id.clone(),
+        object: vec![3; 16],
+        revision: 1,
+        plain_size: 1,
+        manifest: serde_json::to_vec(&base).unwrap(),
+        chunk_hashes: vec![vec![6; 32]],
+        deleted: false,
+        sequence: 1,
+    };
+    assert_eq!(
+        overlays::effective(&db, &h, revision.clone()).unwrap_err(),
+        Error::Storage
+    );
+    let digest = Sha256::digest(&revision.manifest).to_vec();
+    overlays::stage(
+        &db,
+        &revision,
+        &generation,
+        0,
+        &digest,
+        &serde_json::to_vec(&wrapper).unwrap(),
+    )
+    .unwrap();
+    h.state = VaultState::Active;
+    h.sequence = 1;
+    put_header(&db, &h).unwrap();
+    db.execute("UPDATE vaults SET expires=0", params![])
+        .unwrap();
+    db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,?4,0,8192)",params![h.id,revision.object,revision.manifest,serde_json::to_string(&revision.chunk_hashes).unwrap()]).unwrap();
+    db.execute(
+        "INSERT INTO objects VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)",
+        params![h.id, revision.object],
+    )
+    .unwrap();
+    let effective = overlays::effective(&db, &h, revision.clone()).unwrap();
+    assert_eq!(
+        content::manifest(&db, &h.id, &revision.object, 1)
+            .unwrap()
+            .manifest,
+        effective.manifest
+    );
+    assert_eq!(
+        content::history(&db, &h.id, &revision.object, 2)
+            .unwrap()
+            .entries[0]
+            .manifest,
+        effective.manifest
+    );
+    assert_eq!(
+        content::objects(&db, &h.id, &[]).unwrap().entries[0].manifest,
+        effective.manifest
+    );
+    let export = content::begin_export(&db, &h.id, &[11; 16], 1).unwrap();
+    assert_eq!(
+        content::export_index(&db, &export.id, 0, 1)
+            .unwrap()
+            .entries[0]
+            .manifest,
+        effective.manifest
+    );
+    assert_eq!(overlays::clear_inactive(&db, &h, 0), Err(Error::Conflict));
+    assert!(overlays::clear_inactive(&db, &h, 1).unwrap());
+    let parsed = format::parse(&effective.manifest, 1).unwrap();
+    assert_eq!(parsed.version, 2);
+    assert_eq!(parsed.metadata.ciphertext, base.metadata.ciphertext);
+    assert_eq!(parsed.nonces, base.nonces);
+    assert_eq!(effective.chunk_hashes, revision.chunk_hashes);
+    assert_eq!(effective.sequence, revision.sequence);
+    let ciphertext = vec![42; 17];
+    let upload = content::begin_with_budget(
+        &db,
+        BeginRevision {
+            vault: h.id.clone(),
+            object: revision.object.clone(),
+            expected_revision: 1,
+            operation: vec![12; 16],
+            plain_size: 1,
+            manifest: effective.manifest.clone(),
+            chunk_hashes: vec![Sha256::digest(&ciphertext).to_vec()],
+        },
+        2,
+        true,
+    )
+    .unwrap();
+    content::put(&db, &upload.id, 0, &ciphertext, 2).unwrap();
+    let created = content::commit(&db, &upload.id, 2).unwrap();
+    assert_eq!(
+        content::manifest(&db, &h.id, &revision.object, 2)
+            .unwrap()
+            .manifest,
+        created.manifest
+    );
+    let rows: i64 = db
+        .query_row(
+            "SELECT count(*) FROM wrapper_slots WHERE slot=0",
+            params![],
+            |r| sql::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(rows, 2);
+    db.execute("DELETE FROM wrapper_slots WHERE revision=2", params![])
+        .unwrap();
+    assert_eq!(
+        content::manifest(&db, &h.id, &revision.object, 2).unwrap_err(),
+        Error::Storage
+    );
+    let mut wrong = h.clone();
+    wrong.generation.as_mut().unwrap().nonce[0] ^= 1;
+    assert_eq!(
+        overlays::effective(&db, &wrong, revision.clone()).unwrap_err(),
+        Error::Storage
+    );
+    let mut tombstone = revision;
+    tombstone.deleted = true;
+    tombstone.manifest.clear();
+    tombstone.chunk_hashes.clear();
+    assert!(
+        overlays::effective(&db, &h, tombstone)
+            .unwrap()
+            .manifest
+            .is_empty()
+    );
 }

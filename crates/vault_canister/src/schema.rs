@@ -27,7 +27,12 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
         db.execute_batch("PRAGMA user_version=3")
             .map_err(|_| vault_types::Error::Storage)?;
     }
-    if !matches!(version, 1 | 2 | 3) {
+    if matches!(version, 1 | 2 | 3) {
+        // Conservative prepaid migration: preserve existing data even if the added
+        // reservation makes an intermediate namespace overcommitted.
+        db.execute_batch("INSERT OR IGNORE INTO settings(owner,key,value) SELECT owner,'transition','null' FROM settings WHERE key='cleanup'; PRAGMA user_version=4;").map_err(|_| vault_types::Error::Storage)?;
+    }
+    if !matches!(version, 1 | 2 | 3 | 4) {
         return Err(vault_types::Error::Storage);
     }
     Ok(())

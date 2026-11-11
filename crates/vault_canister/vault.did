@@ -131,6 +131,7 @@ type Header = record {
   recovery_verifier : blob;
   key_name : text;
   recovery : opt Envelope;
+  published_slot : opt nat8;
   sequence : nat64;
   backup_at : opt nat64;
 };

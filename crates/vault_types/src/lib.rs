@@ -51,6 +51,8 @@ pub struct Envelope {
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Header {
     #[serde(default)]
+    pub published_slot: Option<u8>,
+    #[serde(default)]
     pub generation: Option<Generation>,
     #[serde(default)]
     pub recovery_verifier: Vec<u8>,

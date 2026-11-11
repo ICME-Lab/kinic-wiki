@@ -252,6 +252,16 @@ impl State {
             validate_vault_config(config)?;
         }
         self.vault_raw_transaction(|db|{
+            let old:Option<String>=db.query_row("SELECT value FROM global_settings WHERE key='config'",params![],|r|sqlite::row_get(r,0)).optional().map_err(|_|vault_types::Error::Storage)?;
+            let old:Option<vault_types::VaultConfig>=old.map(|s|serde_json::from_str(&s).map_err(|_|vault_types::Error::Storage)).transpose()?;
+            let compatible=match (&old,&config){
+                (Some(a),Some(b))=>a.origin==b.origin&&a.rp_id==b.rp_id&&a.key_name==b.key_name,
+                (None,None)=>true,_=>false
+            };
+            if !compatible {
+                let pending:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE json_extract(header,'$.state') IN ('Pending','Restoring','IncidentRequired')) OR EXISTS(SELECT 1 FROM settings WHERE key='transition' AND value!='null' AND json_extract(value,'$.complete')=0)",params![],|r|sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage)?;
+                if pending!=0{return Err(vault_types::Error::Conflict);}
+            }
             match config {
                 Some(config)=>{let raw=serde_json::to_string(&config).map_err(|_|vault_types::Error::Storage)?;db.execute("INSERT INTO global_settings(key,value) VALUES('config',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![raw]).map_err(|_|vault_types::Error::Storage)?;}
                 None=>{db.execute("DELETE FROM global_settings WHERE key='config'",params![]).map_err(|_|vault_types::Error::Storage)?;}
@@ -311,9 +321,11 @@ impl State {
         token: u64,
         now: u64,
         actual: u64,
-    ) -> vault_types::Result<()> {
+    ) -> vault_types::Result<bool> {
         self.vault_raw_transaction(|db| {
-            context.run(db, |db| vault_store::keys::settle(db, token, now, actual))
+            context.run(db, |db| {
+                vault_service::runtime::settle_key_reservation_in(db, token, now, actual)
+            })
         })
     }
 }

@@ -38,6 +38,7 @@ pub fn save<T: Serialize>(db: &Connection, key: &str, value: &T) -> Result<()> {
             | "cleanup"
             | "authorities"
             | "bootstrap"
+            | "transition"
             | "grant-ceremony"
             | "grant-random"
     ) || key.starts_with("grant:")
@@ -174,6 +175,7 @@ pub fn reserve(db: &Connection, caller: Principal, r: Reserve, now: u64) -> Resu
         return Err(Error::Busy);
     }
     let h = Header {
+        published_slot: None,
         generation: None,
         recovery_verifier: vec![],
         id: r.vault,
@@ -266,3 +268,5 @@ pub const EXPIRY_SCHEMA: &str = include_str!("expiry-schema.sql");
 pub mod cleanup;
 
 pub mod format;
+
+pub mod overlays;

@@ -89,7 +89,13 @@ pub(crate) fn prepay(db: &Connection) -> Result<()> {
     for n in 0..10 {
         store::save(db, &format!("credential-slot:{n}"), &())?;
     }
-    for k in ["candidate", "grant-ceremony", "grant-random", "bootstrap"] {
+    for k in [
+        "candidate",
+        "grant-ceremony",
+        "grant-random",
+        "bootstrap",
+        "transition",
+    ] {
         store::save(db, k, &())?;
     }
     Ok(())

@@ -130,7 +130,8 @@ impl Environment for TestEnvironment {
     }
     fn settle_cycles(&self, token: u64, actual: u64) -> Result<()> {
         self.settled.set(Some(actual));
-        self.transaction(|db| store::keys::settle(db, token, self.now(), actual))
+        let _ = token;
+        Ok(())
     }
     fn actual_derive_payment(&self, attached: u64) -> u64 {
         self.actual_payment.get().unwrap_or(attached)
@@ -1790,4 +1791,115 @@ fn review2_completed_cancellation_marker_does_not_freeze_a_new_creation_attempt(
         signed_call(&env, &key, &cleanup_grant, 1, cancellation_operation(1)).unwrap_err(),
         Error::Unauthorized
     );
+}
+
+#[test]
+fn signed_derivation_settles_own_global_reservation_after_revocation_at_each_await() {
+    for invalidation in ["revocation", "expiry", "runtime", "cancel", "newer-flight"] {
+        for after_public in [true, false] {
+            let (env, key, grant) = signed_fixture(GrantPurpose::Normal);
+            let hook: TestHook = Box::new(move |env| {
+                env.transaction(|db| {
+                    match invalidation {
+                        "revocation" => {
+                            let mut all = authorization::authorities(db)?;
+                            all.credentials[0].revoked = true;
+                            store::save(db, "authorities", &all)?;
+                        }
+                        "expiry" => env.time.set(302),
+                        "runtime" => {
+                            db.execute(
+                                "INSERT INTO global_settings VALUES('generation','1')",
+                                params![],
+                            )
+                            .map_err(|_| Error::Storage)?;
+                        }
+                        "cancel" => {
+                            let mut c = control(db)?;
+                            c.derive = None;
+                            store::save(db, "control", &c)?;
+                        }
+                        "newer-flight" => {
+                            let mut c = control(db)?;
+                            c.derive.as_mut().unwrap().token += 1;
+                            store::save(db, "control", &c)?;
+                        }
+                        _ => unreachable!(),
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            });
+            if after_public {
+                *env.public_hook.borrow_mut() = Some(hook);
+            } else {
+                *env.derive_hook.borrow_mut() = Some(hook);
+            }
+            let result = signed_call(
+                &env,
+                &key,
+                &grant,
+                0,
+                MutationOperation::Derive(Derive {
+                    vault: vec![1; 16],
+                    attempt: None,
+                    epoch: 0,
+                    transport: ic_bls12_381::G1Affine::generator().to_compressed().to_vec(),
+                    assertion: None,
+                }),
+            );
+            assert!(
+                matches!(result, Ok(MutationResult::Handle(_))),
+                "{invalidation}: {result:?}"
+            );
+            let expected = if after_public { 0 } else { 30_000_000_000 };
+            let token = env
+                .transaction(|db| {
+                    let (token, actual, flight): (i64, Option<i64>, i64) = db
+                        .query_row(
+                            "SELECT token,actual,in_flight FROM key_flights",
+                            params![],
+                            |r| {
+                                Ok((
+                                    kinic_sqlite_compat::row_get(r, 0)?,
+                                    kinic_sqlite_compat::row_get(r, 1)?,
+                                    kinic_sqlite_compat::row_get(r, 2)?,
+                                ))
+                            },
+                        )
+                        .map_err(|_| Error::Storage)?;
+                    assert_eq!(flight, 0, "{invalidation}");
+                    assert_eq!(actual, Some(expected), "{invalidation}");
+                    if invalidation == "newer-flight" {
+                        assert_eq!(control(db)?.derive.unwrap().token, token as u64 + 1);
+                    } else {
+                        assert!(control(db)?.derive.is_none());
+                    }
+                    // The physical service slot is available after the old callback settles.
+                    store::keys::reserve(db, token as u64 + 10, env.now(), 30_000_000_000)?;
+                    store::keys::settle(db, token as u64 + 10, env.now(), 0)?;
+                    Ok(token as u64)
+                })
+                .unwrap();
+            assert!(!env.settle_key_reservation(token, expected as u64).unwrap());
+            assert_eq!(
+                env.settle_key_reservation(
+                    token,
+                    if expected == 0 {
+                        1
+                    } else {
+                        expected as u64 - 1
+                    }
+                ),
+                Err(Error::Conflict)
+            );
+            let owner = env.owner();
+            env.owner.set(Principal::self_authenticating([99; 32]));
+            assert_eq!(
+                env.settle_key_reservation(token, expected as u64),
+                Err(Error::NotFound)
+            );
+            env.owner.set(owner);
+        }
+    }
 }
