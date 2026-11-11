@@ -1,7 +1,14 @@
-import { AuthClient } from '@icp-sdk/auth/client';
-import type { Identity } from '@icp-sdk/core/agent';
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { loadConfig } from './config';
+import { AuthClient } from "@icp-sdk/auth/client";
+import type { Identity } from "@icp-sdk/core/agent";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { loadConfig } from "./config";
 type Session = {
   identity?: Identity;
   loading: boolean;
@@ -13,14 +20,10 @@ const Context = createContext<Session>({
   loading: true,
   error: "",
   login: () => {},
-  logout: () => {}
+  logout: () => {},
 });
 export const useVaultAuth = () => useContext(Context);
-export function VaultAuthProvider({
-  children
-}: {
-  children: ReactNode;
-}) {
+export function VaultAuthProvider({ children }: { children: ReactNode }) {
   const [identity, setIdentity] = useState<Identity>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,29 +33,33 @@ export function VaultAuthProvider({
   useEffect(() => {
     live.current = true;
     let disposed = false;
+    const initializing = serial.current;
     void AuthClient.create({
       idleOptions: {
         idleTimeout: 5 * 60 * 1000,
-        disableDefaultIdleCallback: true
-      }
-    }).then(async c => {
-      if (disposed) return;
-      client.current = c;
-      c.idleManager?.registerCallback(() => {
-        setIdentity(undefined);
-        void c.logout();
+        disableDefaultIdleCallback: true,
+      },
+    })
+      .then(async (c) => {
+        if (disposed) return;
+        client.current = c;
+        c.idleManager?.registerCallback(() => {
+          serial.current++;
+          setIdentity(undefined);
+          void c.logout();
+        });
+        const authenticated = await c.isAuthenticated();
+        if (!disposed && serial.current === initializing) {
+          setIdentity(authenticated ? c.getIdentity() : undefined);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setError("Sign-in initialization failed. Reload to try again.");
+          setLoading(false);
+        }
       });
-      const authenticated = await c.isAuthenticated();
-      if (!disposed) {
-        setIdentity(authenticated ? c.getIdentity() : undefined);
-        setLoading(false);
-      }
-    }).catch(() => {
-      if (!disposed) {
-        setError("Sign-in initialization failed. Reload to try again.");
-        setLoading(false);
-      }
-    });
     return () => {
       disposed = true;
       live.current = false;
@@ -66,45 +73,62 @@ export function VaultAuthProvider({
     setIdentity(undefined);
     setError("");
     setLoading(true);
-    void loadConfig().then(config => c.login({
-      identityProvider: config.identityProvider,
-      derivationOrigin: config.derivationOrigin,
-      maxTimeToLive: 8n * 3600n * 1_000_000_000n,
-      onSuccess: () => {
+    void loadConfig()
+      .then((config) => {
+        if (!live.current || serial.current !== token) return;
+        return c.login({
+          identityProvider: config.identityProvider,
+          derivationOrigin: config.derivationOrigin,
+          maxTimeToLive: 8n * 3600n * 1_000_000_000n,
+          onSuccess: () => {
+            if (live.current && serial.current === token) {
+              setIdentity(c.getIdentity());
+              setLoading(false);
+            }
+          },
+          onError: () => {
+            if (live.current && serial.current === token) {
+              setError("Sign-in did not complete. Try again.");
+              setLoading(false);
+            }
+          },
+        });
+      })
+      .catch(() => {
         if (live.current && serial.current === token) {
-          setIdentity(c.getIdentity());
+          setError(
+            "Vault sign-in configuration is unavailable. Reload to try again.",
+          );
           setLoading(false);
         }
-      },
-      onError: () => {
-        if (live.current && serial.current === token) {
-          setError("Sign-in did not complete. Try again.");
-          setLoading(false);
-        }
-      }
-    })).catch(() => {
-      if (live.current && serial.current === token) {
-        setError("Vault sign-in configuration is unavailable. Reload to try again.");
-        setLoading(false);
-      }
-    });
+      });
   };
   const logout = () => {
     serial.current++;
     setIdentity(undefined);
     setError("");
     setLoading(true);
-    void client.current?.logout().catch(() => {
-      if (live.current) setError("Sign-out did not complete. Close this tab.");
-    }).finally(() => {
-      if (live.current) setLoading(false);
-    });
+    void client.current
+      ?.logout()
+      .catch(() => {
+        if (live.current)
+          setError("Sign-out did not complete. Close this tab.");
+      })
+      .finally(() => {
+        if (live.current) setLoading(false);
+      });
   };
-  return <Context value={{
-    identity,
-    loading,
-    error,
-    login,
-    logout
-  }}>{children}</Context>;
+  return (
+    <Context
+      value={{
+        identity,
+        loading,
+        error,
+        login,
+        logout,
+      }}
+    >
+      {children}
+    </Context>
+  );
 }

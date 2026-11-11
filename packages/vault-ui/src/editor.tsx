@@ -2,11 +2,15 @@
 
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import {
+  defaultHighlightStyle,
+  HighlightStyle,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
-import CodeMirror from "@uiw/react-codemirror";
+import CodeMirror, { EditorState } from "@uiw/react-codemirror";
 import { Save, RotateCcw } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useRef, useLayoutEffect } from "react";
 
 export type EditorSaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -26,11 +30,15 @@ const syntaxColors: Record<string, string> = {
   "#256": "rgb(var(--info-text))",
   "#00c": "rgb(var(--info-text))",
   "#940": "rgb(var(--warn-text))",
-  "#f00": "rgb(var(--danger-text))"
+  "#f00": "rgb(var(--danger-text))",
 };
-const editorHighlightStyle = HighlightStyle.define(defaultHighlightStyle.specs.map((rule) => (
-  rule.color ? { ...rule, color: syntaxColors[rule.color] ?? "rgb(var(--ink))" } : rule
-)));
+const editorHighlightStyle = HighlightStyle.define(
+  defaultHighlightStyle.specs.map((rule) =>
+    rule.color
+      ? { ...rule, color: syntaxColors[rule.color] ?? "rgb(var(--ink))" }
+      : rule,
+  ),
+);
 
 const editorTheme = EditorView.theme({
   "&": { color: "rgb(var(--ink))", backgroundColor: "rgb(var(--surface))" },
@@ -39,23 +47,27 @@ const editorTheme = EditorView.theme({
   ".cm-gutters": {
     color: "hsl(var(--muted))",
     backgroundColor: "rgb(var(--paper))",
-    borderRightColor: "rgb(var(--line))"
+    borderRightColor: "rgb(var(--line))",
   },
-  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "rgb(var(--line) / 0.35)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "rgb(var(--accent-soft) / 0.28)"
+  ".cm-activeLine, .cm-activeLineGutter": {
+    backgroundColor: "rgb(var(--line) / 0.35)",
   },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+    {
+      backgroundColor: "rgb(var(--accent-soft) / 0.28)",
+    },
   ".cm-panels, .cm-tooltip": {
     color: "rgb(var(--ink))",
     backgroundColor: "rgb(var(--paper))",
-    borderColor: "rgb(var(--line))"
-  }
+    borderColor: "rgb(var(--line))",
+  },
 });
 
 export function MarkdownEditor({
   content,
   disabled,
   indentWithTab = true,
+  sensitiveCleanup,
   lineCount,
   byteCount,
   saveState,
@@ -63,11 +75,12 @@ export function MarkdownEditor({
   warning,
   onChange,
   onRevert,
-  onSave
+  onSave,
 }: {
   content: string;
   disabled: boolean;
   indentWithTab?: boolean;
+  sensitiveCleanup?: (cleanup: () => void) => () => void;
   lineCount: number;
   byteCount: number;
   saveState: EditorSaveState;
@@ -77,10 +90,39 @@ export function MarkdownEditor({
   onRevert: () => void;
   onSave: () => void;
 }) {
-  const extensions = useMemo(() => [markdown({ base: markdownLanguage, codeLanguages: languages }), EditorView.lineWrapping, editorTheme, syntaxHighlighting(editorHighlightStyle)], []);
+  const privateView = useRef<EditorView | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!sensitiveCleanup) return;
+    const wipe = () => {
+      const view = privateView.current;
+      if (!view) return;
+      // Vault disables async completion at initialization. Replacing the whole
+      // state drops its document, selection and undo/redo history without leaving
+      // completion callbacks holding the previous private state.
+      view.setState(EditorState.create());
+      view.contentDOM.replaceChildren();
+    };
+    const detach = sensitiveCleanup(wipe);
+    return () => {
+      wipe();
+      detach();
+      privateView.current = undefined;
+    };
+  }, [sensitiveCleanup]);
+  const extensions = useMemo(
+    () => [
+      markdown({ base: markdownLanguage, codeLanguages: languages }),
+      EditorView.lineWrapping,
+      editorTheme,
+      syntaxHighlighting(editorHighlightStyle),
+    ],
+    [],
+  );
   const busy = saveState === "saving";
-  const canSave = (saveState === "dirty" || saveState === "error") && !disabled && !busy;
-  const canRevert = (saveState === "dirty" || saveState === "error") && !disabled && !busy;
+  const canSave =
+    (saveState === "dirty" || saveState === "error") && !disabled && !busy;
+  const canRevert =
+    (saveState === "dirty" || saveState === "error") && !disabled && !busy;
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur">
@@ -103,23 +145,38 @@ export function MarkdownEditor({
           <RotateCcw size={15} />
           Revert
         </button>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusClassName(saveState)}`}>
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusClassName(saveState)}`}
+        >
           {statusLabel(saveState)}
         </span>
         <span className="ml-auto font-mono text-xs text-muted">
-          {lineCount.toLocaleString()} lines / {byteCount.toLocaleString()} bytes
+          {lineCount.toLocaleString()} lines / {byteCount.toLocaleString()}{" "}
+          bytes
         </span>
-        {warning ? <p className="basis-full text-sm text-yellow-800">{warning}</p> : null}
-        {error ? <p className="basis-full text-sm text-red-700">{error}</p> : null}
+        {warning ? (
+          <p className="basis-full text-sm text-yellow-800">{warning}</p>
+        ) : null}
+        {error ? (
+          <p className="basis-full text-sm text-red-700">{error}</p>
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <CodeMirror
+          onCreateEditor={
+            sensitiveCleanup
+              ? (view) => {
+                  privateView.current = view;
+                }
+              : undefined
+          }
           basicSetup={{
+            autocompletion: !sensitiveCleanup,
             foldGutter: false,
             highlightActiveLine: true,
             highlightSelectionMatches: true,
             lineNumbers: true,
-            searchKeymap: true
+            searchKeymap: true,
           }}
           className="h-full"
           editable={!disabled}

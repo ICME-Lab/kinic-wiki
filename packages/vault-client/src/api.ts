@@ -1,3 +1,20 @@
+import { strictJSON } from "../../vault-crypto/src/strict-json";
+import { Principal } from "@icp-sdk/core/principal";
+import { OrdinaryAuthority, cryptoGeneration } from "./ordinary";
+import type {
+  Generation,
+  GrantPurpose,
+  UnfinishedVault,
+  CleanupProgress,
+} from "./contracts";
+import {
+  generationAAD,
+  generationBytes,
+  sealV2,
+  openV2,
+  recoveryVerifier,
+  utf8,
+} from "../../vault-crypto/src/index";
 import { type Identity } from "@icp-sdk/core/agent";
 import {
   type VaultActor,
@@ -10,15 +27,10 @@ import {
   deriveKey,
   importKey,
   open,
-  seal,
   randomBytes,
-  TransportSecretKey,
-  verifiedKEK,
-  utf8,
 } from "../../vault-crypto/src/index.ts";
 import {
   pack,
-  unpack,
   b64,
   unb64,
   readManifest,
@@ -28,11 +40,10 @@ import {
 } from "../../vault-crypto/src/documents.ts";
 import {
   makeArchive,
-  openArchive,
   type PortableHeader,
   type PortableRecord,
 } from "../../vault-backup/src/index.ts";
-import { register, assertCredential } from "./webauthn.ts";
+import { register } from "./webauthn.ts";
 import { Session } from "./session.ts";
 export const bytes = (x: Uint8Array | number[]) => new Uint8Array(x);
 export function ok<T>(r: { Ok: T } | { Err: unknown }): T {
@@ -40,8 +51,7 @@ export function ok<T>(r: { Ok: T } | { Err: unknown }): T {
   const e = r.Err;
   throw Error(e && typeof e === "object" ? Object.keys(e)[0] : "RequestFailed");
 }
-const ZERO = new Uint8Array(16),
-  TRANSPORT = new Uint8Array(48);
+const ZERO = new Uint8Array(16);
 export type Item = {
   revision: Revision;
   metadata: Metadata;
@@ -82,14 +92,13 @@ export class VaultClient {
     this.rpId = rpId;
   }
   destroy() {
+    this.authorityValue?.destroy();
+    this.authorityValue = undefined;
     this.session.lock();
     this.header = undefined;
     this.actorValue = undefined;
     this.identityValue = undefined;
     this.rpId = "";
-  }
-  private assertPasskey(ch: Parameters<typeof assertCredential>[0]) {
-    return assertCredential(ch, this.rpId, this.session.signal);
   }
   private registerPasskey(
     ch: Parameters<typeof register>[0],
@@ -97,198 +106,224 @@ export class VaultClient {
   ) {
     return register(ch, owner, this.rpId, this.session.signal);
   }
-  async challenge(
-    vault: Uint8Array,
-    purpose: "Activate" | "Unlock" | "AddCredential" | "RemoveCredential",
-    transport: Uint8Array = TRANSPORT,
-    target: Uint8Array = new Uint8Array(),
-    attempt?: Uint8Array,
-  ) {
-    return ok(
-      await this.actor.begin_unlock({
-        vault,
-        epoch: this.header?.epoch ?? 0n,
-        purpose: { [purpose]: null } as never,
-        transport,
-        target,
-        attempt: attempt ? [attempt] : [],
-      }),
-    );
+  private authorityValue?: OrdinaryAuthority;
+  private authority() {
+    return (this.authorityValue ??= new OrdinaryAuthority(
+      this.actor,
+      this.identity.getPrincipal(),
+      Principal.fromText(this.canister),
+      () => this.rpId,
+      this.local,
+      this.session,
+    ));
+  }
+  selectCredential(id: Uint8Array | undefined) {
+    this.authority().credential = id;
+  }
+  authorize(purpose: GrantPurpose, generations: Generation[]) {
+    return this.authority().authorize(purpose, generations);
+  }
+  retryMutation() {
+    return this.authority().retry();
+  }
+  private generation() {
+    const g = this.header?.generation[0];
+    if (!g) throw Error("LegacyRecoveryRequired");
+    return g;
   }
   async createKit() {
     this.session.lock();
     const g = this.session.capture(),
       vault = randomBytes(16),
       attempt = randomBytes(16);
-    const header = ok(
-      await this.actor.reserve_vault({ vault, operation: attempt }),
-    );
-    this.session.check(g);
-    this.header = header;
+    let raw: Uint8Array | undefined, secret: Uint8Array | undefined;
+    const detach = this.session.addLockCleanup(() => {
+      raw?.fill(0);
+      secret?.fill(0);
+    });
     try {
-      this.session.transport = TransportSecretKey.random();
-      const transportPublic = this.session.transport.publicKeyBytes();
-      const reply = ok(
-        await this.actor.derive_vault_key({
-          vault,
-          epoch: 0n,
-          transport: transportPublic,
-          assertion: [],
-          attempt: [attempt],
-        }),
-      );
+      const credentials = ok(await this.actor.list_credentials());
       this.session.check(g);
-      const pendingKey = verifiedKEK(
-        bytes(reply.encrypted_key),
-        this.session.transport!,
-        this.canister,
-        vault,
-        0n,
-        this.local,
-        this.identity.getPrincipal().toUint8Array(),
-        header.key_name,
-      );
-      this.session.transport = undefined;
-      const kek = await pendingKey;
-      this.session.check(g);
-      const raw = randomBytes(32),
-        secret = randomBytes(32);
-      try {
-        const normal = await seal(kek, raw, aad(vault, ZERO, 0n, "normal"));
-        const recovery = await seal(
-          await deriveKey(secret, "recovery"),
-          raw,
-          aad(vault, ZERO, 0n, "recovery"),
-        );
-        this.session.check(g);
-        const root = await importKey(raw);
-        this.session.check(g);
-        this.session.raw = raw;
-        this.session.root = root;
-        return {
-          vault,
-          attempt,
-          normal,
-          recovery,
-          secret: b64(secret),
-          generation: g,
-        };
-      } catch (e) {
-        raw.fill(0);
-        throw e;
-      } finally {
-        secret.fill(0);
+      let header: Header;
+      if (!credentials.length)
+        header = await this.authority().bootstrap(vault, attempt);
+      else {
+        await this.authorize({ Create: null }, []);
+        let result = await this.authority().send({
+          Create: { vault, operation: attempt },
+        });
+        if ("Handle" in result)
+          result = await this.authority().send({
+            KeyResult: { handle: result.Handle },
+          });
+        if (!("Header" in result)) throw Error("MissingHeader");
+        header = result.Header;
+        await this.authorize({ Normal: null }, [header.generation[0]!]);
       }
+      this.session.check(g);
+      this.header = header;
+      const kek = await this.authority().derive(header, attempt);
+      this.session.check(g);
+      raw = randomBytes(32);
+      secret = randomBytes(32);
+      const normal = await sealV2(
+        kek,
+        raw,
+        generationAAD(cryptoGeneration(this.generation()), ZERO, 0n, "normal"),
+      );
+      const recovery = await sealV2(
+        await deriveKey(secret, "recovery"),
+        raw,
+        generationAAD(
+          cryptoGeneration(this.generation()),
+          ZERO,
+          0n,
+          "recovery",
+        ),
+      );
+      const verifier = await recoveryVerifier(secret),
+        root = await importKey(raw);
+      this.session.check(g);
+      this.session.raw = raw;
+      this.session.root = root;
+      return {
+        vault,
+        attempt,
+        normal,
+        recovery,
+        secret: b64(secret),
+        recoveryVerifier: verifier,
+        generation: g,
+      };
     } catch (e) {
-      if (this.session.capture() === g) this.session.lock();
+      raw?.fill(0);
+      if (this.session.capture() === g) {
+        this.authorityValue?.clear();
+        this.session.raw = undefined;
+        this.session.root = undefined;
+        this.session.transport = undefined;
+      }
       throw e;
+    } finally {
+      detach();
+      secret?.fill(0);
     }
   }
   async activate(
     kit: Awaited<ReturnType<VaultClient["createKit"]>>,
     confirmation: string,
   ) {
-    const g = kit.generation;
-    this.session.check(g);
+    this.session.check(kit.generation);
     if (confirmation !== kit.secret)
       throw Error("RecoveryConfirmationMismatch");
-    const ch = await this.challenge(
-      kit.vault,
-      "Activate",
-      undefined,
-      undefined,
-      kit.attempt,
-    );
-    this.session.check(g);
-    const registration = ch.registration
-      ? await this.registerPasskey(
-          ch,
-          this.identity.getPrincipal().toUint8Array(),
-        )
-      : undefined;
-    const assertion = ch.registration
-      ? undefined
-      : await this.assertPasskey(ch);
-    this.session.check(g);
-    const header = ok(
-      await this.actor.activate_vault({
-        vault: kit.vault,
-        attempt: [kit.attempt],
-        operation: randomBytes(16),
-        normal: kit.normal,
-        recovery: kit.recovery,
-        registration: registration ? [registration] : [],
-        assertion: assertion ? [assertion] : [],
-      }),
-    );
-    this.session.check(g);
-    this.header = header;
-    return header;
+    const result = await this.authority().send({
+      Activate: {
+        request: {
+          vault: kit.vault,
+          attempt: [kit.attempt],
+          operation: randomBytes(16),
+          normal: kit.normal,
+          recovery: kit.recovery,
+          registration: [],
+          assertion: [],
+        },
+        recovery_verifier: kit.recoveryVerifier,
+      },
+    });
+    if (!("Header" in result)) throw Error("MissingHeader");
+    this.header = result.Header;
+    return result.Header;
   }
   async unlock(header: Header) {
     this.session.lock();
     const g = this.session.capture();
     this.header = header;
+    let raw: Uint8Array | undefined;
     try {
-      this.session.transport = TransportSecretKey.random();
-      const transportPublic = this.session.transport.publicKeyBytes();
-      const ch = await this.challenge(
-        bytes(header.id),
-        "Unlock",
-        transportPublic,
-      );
+      await this.authorize({ Normal: null }, [this.generation()]);
+      const kek = await this.authority().derive(header),
+        current = ok(await this.actor.get_vault_header(header.id));
       this.session.check(g);
-      const assertion = await this.assertPasskey(ch);
-      this.session.check(g);
-      const reply = ok(
-        await this.actor.derive_vault_key({
-          vault: header.id,
-          epoch: header.epoch,
-          transport: transportPublic,
-          assertion: [assertion],
-          attempt: [],
-        }),
-      );
-      this.session.check(g);
-      const pendingKey = verifiedKEK(
-        bytes(reply.encrypted_key),
-        this.session.transport!,
-        this.canister,
-        bytes(header.id),
-        header.epoch,
-        this.local,
-        this.identity.getPrincipal().toUint8Array(),
-        header.key_name,
-      );
-      this.session.transport = undefined;
-      const kek = await pendingKey;
-      this.session.check(g);
-      const current = ok(await this.actor.get_vault_header(header.id));
-      this.session.check(g);
-      if (!current.normal[0]) throw Error("InvalidEnvelope");
-      const raw = await open(
+      if (!current.normal[0] || !current.generation[0])
+        throw Error("InvalidEnvelope");
+      raw = await openV2(
         kek,
         {
-          version: current.normal[0].version,
+          ...current.normal[0],
           nonce: bytes(current.normal[0].nonce),
           ciphertext: bytes(current.normal[0].ciphertext),
         },
-        aad(bytes(current.id), ZERO, current.epoch, "normal"),
+        generationAAD(
+          cryptoGeneration(current.generation[0]),
+          ZERO,
+          0n,
+          "normal",
+        ),
       );
-      try {
-        const root = await importKey(raw);
-        this.session.check(g);
-        this.session.root = root;
-        this.session.raw = raw;
-        this.header = current;
-      } catch (e) {
-        raw.fill(0);
-        throw e;
-      }
+      const root = await importKey(raw);
+      this.session.check(g);
+      this.session.raw = raw;
+      this.session.root = root;
+      this.header = current;
     } catch (e) {
-      if (this.session.capture() === g) this.session.lock();
+      raw?.fill(0);
+      if (this.session.capture() === g) {
+        this.authorityValue?.clear();
+        this.session.raw = undefined;
+        this.session.root = undefined;
+        this.session.transport = undefined;
+      }
       throw e;
     }
+  }
+  async deleteObject(r: Revision) {
+    return this.authority().normalSend(
+      {
+        DeleteObject: {
+          vault: r.vault,
+          object: r.object,
+          expected_revision: r.revision,
+          operation: randomBytes(16),
+        },
+      },
+      this.generation(),
+    );
+  }
+  async purgeObject(r: Revision) {
+    return this.authority().normalSend(
+      { PurgeObject: { vault: r.vault, object: r.object } },
+      this.generation(),
+    );
+  }
+  cleanup(
+    header: Header,
+    purge = false,
+    progress?: (value: CleanupProgress) => void,
+  ) {
+    return this.authority().cleanup(
+      purge ? { Purge: null } : { Expired: null },
+      [header],
+      undefined,
+      progress,
+    );
+  }
+  async cancelSetup(entry: UnfinishedVault) {
+    const ticket = this.session.capture();
+    if (!("Pending" in entry.state)) throw Error("Unauthorized");
+    const credentials = ok(await this.actor.list_credentials());
+    this.session.check(ticket);
+    if (!credentials.length) {
+      // Server permits only a never-activated, never-registered bootstrap here.
+      // The immutable attempt remains mandatory even before nonce publication.
+      ok(await this.actor.cancel_vault_setup(entry.vault, entry.attempt));
+      this.session.check(ticket);
+      return;
+    }
+    return this.authority().cleanup(
+      { CancelSetup: { attempt: entry.attempt } },
+      [],
+      entry,
+    );
   }
   async items() {
     const g = this.session.capture();
@@ -327,6 +362,9 @@ export class VaultClient {
           bytes(source.object),
           source.revision,
           bytes(source.manifest),
+          this.header.generation[0]
+            ? cryptoGeneration(this.header.generation[0])
+            : undefined,
         );
         this.session.check(g);
         let searchText = parsed.metadata.title;
@@ -353,61 +391,62 @@ export class VaultClient {
   ) {
     const g = this.session.capture();
     if (!this.session.root || !this.header) throw Error("Locked");
-    const v = bytes(this.header.id),
-      object = item ? bytes(item.revision.object) : randomBytes(16),
-      expected = item?.revision.revision ?? 0n;
-    const doc = await encryptDocument(
-      this.session.root,
-      v,
-      object,
-      expected + 1n,
-      metadata,
-      plain,
-    );
-    this.session.check(g);
-    const operation = randomBytes(16);
-    const request = {
-      vault: v,
-      object,
-      expected_revision: expected,
-      operation,
-      plain_size: BigInt(plain.length),
-      manifest: doc.manifest,
-      chunk_hashes: doc.hashes,
-    };
-    await this.retry(() => this.actor.begin_revision(request), g);
-    for (let i = 0; i < doc.chunks.length; i++) {
-      await this.retry(
-        () => this.actor.put_chunk(operation, i, doc.chunks[i]),
-        g,
+    const detach = this.session.addLockCleanup(() => plain.fill(0));
+    try {
+      const v = bytes(this.header.id),
+        object = item ? bytes(item.revision.object) : randomBytes(16),
+        expected = item?.revision.revision ?? 0n;
+      const doc = await encryptDocument(
+        this.session.root,
+        v,
+        object,
+        expected + 1n,
+        metadata,
+        plain,
+        cryptoGeneration(this.generation()),
       );
       this.session.check(g);
-      progress(Math.round(((i + 1) / doc.chunks.length) * 100));
-    }
-    const r = await this.retry(() => this.actor.commit_revision(operation), g);
-    this.session.check(g);
-    const header = ok(await this.actor.get_vault_header(v));
-    this.session.check(g);
-    this.header = header;
-    return r;
-  }
-  private async retry<T>(
-    call: () => Promise<{ Ok: T } | { Err: unknown }>,
-    g: number,
-  ) {
-    for (let i = 0; ; i++) {
-      this.session.check(g);
-      let response;
-      try {
-        response = await call();
-      } catch (e) {
-        if (i >= 2) throw Error("ConnectionInterrupted");
-        continue;
+      const operation = randomBytes(16);
+      const request = {
+        vault: v,
+        object,
+        expected_revision: expected,
+        operation,
+        plain_size: BigInt(plain.length),
+        manifest: doc.manifest,
+        chunk_hashes: doc.hashes,
+      };
+      await this.authority().normalSend(
+        { BeginRevision: request },
+        this.generation(),
+      );
+      for (let i = 0; i < doc.chunks.length; i++) {
+        await this.authority().send({
+          PutChunk: {
+            vault: v,
+            upload: operation,
+            index: i,
+            data: doc.chunks[i],
+          },
+        });
+        this.session.check(g);
+        progress(Math.round(((i + 1) / doc.chunks.length) * 100));
       }
+      const result = await this.authority().send({
+        CommitRevision: { vault: v, upload: operation },
+      });
+      if (!("Revision" in result)) throw Error("MissingRevision");
+      const r = result.Revision;
       this.session.check(g);
-      return ok(response);
+      const header = ok(await this.actor.get_vault_header(v));
+      this.session.check(g);
+      this.header = header;
+      return r;
+    } finally {
+      detach();
     }
   }
+
   async read(r: Revision) {
     const g = this.session.capture();
     if (!this.session.root) throw Error("Locked");
@@ -427,6 +466,9 @@ export class VaultClient {
       bytes(r.manifest),
       chunks,
       r.chunk_hashes.map(bytes),
+      this.header?.generation[0]
+        ? cryptoGeneration(this.header.generation[0])
+        : undefined,
     );
     try {
       this.session.check(g);
@@ -436,26 +478,70 @@ export class VaultClient {
       throw e;
     }
   }
+  recoveryKit(kit: Awaited<ReturnType<VaultClient["createKit"]>>) {
+    this.session.check(kit.generation);
+    return utf8.encode(
+      JSON.stringify({
+        version: 2,
+        generation: b64(generationBytes(cryptoGeneration(this.generation()))),
+        secret: kit.secret,
+      }),
+    );
+  }
+  async backupWithKit(header: Header, data: Uint8Array) {
+    if (data.length > 4096 || !header.generation[0]) throw Error("InvalidKit");
+    const kit = strictJSON(
+      new TextDecoder("utf-8", { fatal: true }).decode(data),
+    ) as Record<string, unknown>;
+    if (
+      !kit ||
+      Object.keys(kit).sort().join(",") !== "generation,secret,version" ||
+      kit.version !== 2 ||
+      typeof kit.secret !== "string" ||
+      kit.generation !==
+        b64(generationBytes(cryptoGeneration(header.generation[0])))
+    )
+      throw Error("InvalidKit");
+    return this.backupWithRecovery(header, kit.secret);
+  }
   async backupWithRecovery(header: Header, secretText: string) {
     const g = this.session.capture();
     const secret = unb64(secretText);
     let raw: Uint8Array | undefined;
+    const detach = this.session.addLockCleanup(() => {
+      secret.fill(0);
+      raw?.fill(0);
+    });
     try {
       const current = ok(await this.actor.get_vault_header(header.id));
       this.session.check(g);
       if (!current.recovery[0]) throw Error("InvalidEnvelope");
-      raw = await open(
-        await deriveKey(secret, "recovery"),
-        {
-          version: current.recovery[0].version,
-          nonce: bytes(current.recovery[0].nonce),
-          ciphertext: bytes(current.recovery[0].ciphertext),
-        },
-        aad(bytes(current.id), ZERO, current.epoch, "recovery"),
-      );
+      const recovery = {
+        ...current.recovery[0],
+        nonce: bytes(current.recovery[0].nonce),
+        ciphertext: bytes(current.recovery[0].ciphertext),
+      };
+      const key = await deriveKey(secret, "recovery");
+      raw = current.generation[0]
+        ? await openV2(
+            key,
+            recovery,
+            generationAAD(
+              cryptoGeneration(current.generation[0]),
+              ZERO,
+              0n,
+              "recovery",
+            ),
+          )
+        : await open(
+            key,
+            recovery,
+            aad(bytes(current.id), ZERO, current.epoch, "recovery"),
+          );
       this.session.check(g);
       return await this.buildBackup(current, raw, g);
     } finally {
+      detach();
       secret.fill(0);
       raw?.fill(0);
     }
@@ -514,200 +600,33 @@ export class VaultClient {
     this.header = header;
   }
   async addCredential() {
-    const g = this.session.capture();
+    const ticket = this.session.capture();
     if (!this.header || !this.session.root) throw Error("Locked");
-    const v = bytes(this.header.id),
-      ch = await this.challenge(v, "AddCredential");
-    this.session.check(g);
+    await this.authorize({ Credentials: null }, []);
+    const scope = { Global: null },
+      vault = this.header.id;
+    const ch = await this.authority().send({
+      BeginRegistration: { vault, scope },
+    });
+    if (!("Challenge" in ch)) throw Error("MissingChallenge");
     const registration = await this.registerPasskey(
-      ch,
+      ch.Challenge,
       this.identity.getPrincipal().toUint8Array(),
     );
-    this.session.check(g);
-    const target = bytes(
-      ok(await this.actor.prepare_unlock_credential(v, registration)),
-    );
-    this.session.check(g);
-    const auth = await this.challenge(v, "AddCredential", TRANSPORT, target);
-    this.session.check(g);
-    const assertion = await this.assertPasskey(auth);
-    this.session.check(g);
-    ok(
-      await this.actor.manage_unlock_credential({
-        vault: v,
-        remove: [],
-        registration: [registration],
-        assertion,
-      }),
-    );
-    this.session.check(g);
+    this.session.check(ticket);
+    await this.authority().send({
+      RegisterCredential: { vault, scope, registration },
+    });
   }
   async removeCredential(id: Uint8Array) {
-    const g = this.session.capture();
     if (!this.header || !this.session.root) throw Error("Locked");
-    const v = bytes(this.header.id),
-      ch = await this.challenge(v, "RemoveCredential", TRANSPORT, id);
-    this.session.check(g);
-    const assertion = await this.assertPasskey(ch);
-    this.session.check(g);
-    ok(
-      await this.actor.manage_unlock_credential({
-        vault: v,
-        remove: [id],
-        registration: [],
-        assertion,
-      }),
-    );
-    this.session.check(g);
-  }
-  async restore(data: Uint8Array, secretText: string, resetSession = true) {
-    if (resetSession) this.session.lock();
-    const g = this.session.capture();
-    const secret = unb64(secretText);
-    let archive;
-    let completed = false;
-    try {
-      archive = await openArchive(data, secret);
-      this.session.check(g);
-      this.session.raw = archive.rootRaw;
-      this.session.root = archive.root;
-      archive.root = undefined as never;
-      const h = archive.header;
-      const original: Header = {
-        published_slot: [], generation: [], recovery_verifier: [],
-        id: unb64(h.vault),
-        epoch: BigInt(h.epoch),
-        sequence: BigInt(h.sequence),
-        state: { Active: null },
-        normal: [unpack(h.normal)],
-        recovery: [unpack(h.recovery)],
-        backup_sequence: [],
-        backup_at: [],
-        key_name: h.key_name,
-      };
-      // Conservative reservation covers SQL metadata and chunk/page overhead. Backend independently checks every byte.
-      const reserved =
-        archive.records.reduce(
-          (n, r) =>
-            n +
-            Number(r.plain_size) +
-            r.hashes.length * (16 + 4096) +
-            unb64(r.manifest).length +
-            JSON.stringify(r.hashes.map(unb64).map((x) => Array.from(x)))
-              .length +
-            4096,
-          0,
-        ) +
-        new Set(archive.records.map((r) => r.object)).size * 4096 +
-        1048576;
-      const attempt = randomBytes(16);
-      const restoring = ok(
-        await this.actor.begin_restore({
-          header: original,
-          operation: attempt,
-          count: BigInt(archive.records.length),
-          root: archive.restoreRoot,
-          reserved_bytes: BigInt(reserved),
-        }),
-      );
-      this.session.check(g);
-      this.header = restoring;
-      for (let i = 0; i < archive.records.length; i++) {
-        const r = archive.records[i];
-        ok(
-          await this.actor.begin_restore_revision(original.id, wireRecord(r), [
-            attempt,
-          ]),
-        );
-        this.session.check(g);
-        for (let j = 0; j < archive.chunks[i].length; j++) {
-          ok(
-            await this.actor.put_restore_chunk(
-              original.id,
-              j,
-              archive.chunks[i][j],
-              [attempt],
-            ),
-          );
-          this.session.check(g);
-        }
-        ok(
-          await this.actor.commit_restore_revision(
-            original.id,
-            BigInt(r.sequence),
-            [attempt],
-          ),
-        );
-        this.session.check(g);
-      }
-      this.session.transport = TransportSecretKey.random();
-      const transportPublic = this.session.transport.publicKeyBytes();
-      const reply = ok(
-        await this.actor.derive_vault_key({
-          vault: original.id,
-          epoch: original.epoch,
-          transport: transportPublic,
-          assertion: [],
-          attempt: [attempt],
-        }),
-      );
-      this.session.check(g);
-      const pendingKey = verifiedKEK(
-        bytes(reply.encrypted_key),
-        this.session.transport!,
-        this.canister,
-        bytes(original.id),
-        original.epoch,
-        this.local,
-        this.identity.getPrincipal().toUint8Array(),
-        restoring.key_name,
-      );
-      this.session.transport = undefined;
-      const kek = await pendingKey;
-      const normal = await seal(
-        kek,
-        archive.rootRaw,
-        aad(bytes(original.id), ZERO, original.epoch, "normal"),
-      );
-      this.session.check(g);
-      const ch = await this.challenge(
-        bytes(original.id),
-        "Activate",
-        undefined,
-        undefined,
-        attempt,
-      );
-      this.session.check(g);
-      const registration = ch.registration
-        ? await this.registerPasskey(
-            ch,
-            this.identity.getPrincipal().toUint8Array(),
-          )
-        : undefined;
-      const assertion = ch.registration
-        ? undefined
-        : await this.assertPasskey(ch);
-      this.session.check(g);
-      const restored = ok(
-        await this.actor.commit_restore({
-          vault: original.id,
-          attempt: [attempt],
-          operation: randomBytes(16),
-          normal,
-          recovery: unpack(h.recovery),
-          registration: registration ? [registration] : [],
-          assertion: assertion ? [assertion] : [],
-        }),
-      );
-      this.session.check(g);
-      this.header = restored;
-      this.session.raw = new Uint8Array(archive.rootRaw);
-      completed = true;
-    } finally {
-      if (!completed && this.session.capture() === g) this.session.lock();
-      secret.fill(0);
-      archive?.rootRaw.fill(0);
-    }
+    await this.authorize({ Credentials: null }, []);
+    await this.authority().send({ RemoveCredential: { credential: id } });
+    if (
+      this.authority().credential &&
+      b64(this.authority().credential!) === b64(id)
+    )
+      this.authority().credential = undefined;
   }
 }
 export function portableHeader(
@@ -723,7 +642,21 @@ export function portableHeader(
     });
   return {
     version: h.generation[0] ? 2 : 1,
-    ...(h.generation[0] ? {generation:{version:2 as const,canister:h.generation[0].canister.toText(),owner:h.generation[0].owner.toText(),vault:b64(bytes(h.generation[0].vault)),epoch:String(h.generation[0].epoch),nonce:b64(bytes(h.generation[0].nonce)),key_name:h.generation[0].key_name},recovery_verifier:b64(bytes(h.recovery_verifier))} : {}),
+    ...(h.generation[0]
+      ? {
+          envelope_revision: "0",
+          generation: {
+            version: 2 as const,
+            canister: h.generation[0].canister.toText(),
+            owner: h.generation[0].owner.toText(),
+            vault: b64(bytes(h.generation[0].vault)),
+            epoch: String(h.generation[0].epoch),
+            nonce: b64(bytes(h.generation[0].nonce)),
+            key_name: h.generation[0].key_name,
+          },
+          recovery_verifier: b64(bytes(h.recovery_verifier)),
+        }
+      : {}),
     ...stats,
     vault: b64(bytes(h.id)),
     epoch: String(h.epoch),

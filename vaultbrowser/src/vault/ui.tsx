@@ -33,13 +33,16 @@ export function VaultField({
 export function VaultPanel({
   children,
   label,
+  sensitive = false,
 }: {
+  sensitive?: boolean;
   children: ReactNode;
   label: string;
 }) {
   return (
     <section
       aria-label={label}
+      data-vault-sensitive={sensitive ? "true" : undefined}
       className="grid min-w-0 content-start gap-4 rounded-xl border border-line bg-white p-4"
     >
       {children}
@@ -47,6 +50,17 @@ export function VaultPanel({
   );
 }
 const errors: Record<string, string> = {
+  ChoosePasskey:
+    "Choose the registered passkey that authorizes this Vault or account action.",
+  FreshProofRequired: "Unlock with a registered passkey before making changes.",
+  GrantExpired: "The passkey session expired. Lock and unlock the Vault again.",
+  LegacyRecoveryRequired:
+    "This legacy Vault requires the recovery workflow. Encrypted backup remains available.",
+  ResolvePendingMutation:
+    "Retry the pending signed request before starting another change.",
+  NoPendingMutation: "There is no signed request waiting for a retry.",
+  InvalidKit:
+    "Select the recovery kit for this exact Vault generation, or enter its recovery secret.",
   TitleRequired: "Enter a document title before saving.",
   Unauthorized:
     "This action requires the Vault owner. Check your sign-in and Vault sign-in.",
@@ -56,7 +70,7 @@ const errors: Record<string, string> = {
     "A storage, operation or cycles limit was reached. Check your prepaid cycles balance.",
   SizeLimit:
     "Attachments are limited to 10 MiB; notes and credentials to 256 KiB.",
-  Busy: "An operation is pending. Check interrupted setup or clear an interrupted key request.",
+  Busy: "An operation is pending. Continue the same cleanup action or retry the pending signed request.",
   Expired: "This operation expired. Start it again.",
   Locked: "Vault locked. Unlock it again to continue.",
   RecoveryConfirmationMismatch:

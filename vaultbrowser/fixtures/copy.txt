@@ -1,7 +1,12 @@
 Private Vault
-Payer database
+Prepaid balance
+Shared capacity
+Authorizing passkey
 Vaults
 Lock Vault
 Create Vault
 Encrypted backup
-Clear interrupted key request
+Retry signed request
+Encrypted storage cleanup
+Collect expired data
+Permanently purge entire Vault

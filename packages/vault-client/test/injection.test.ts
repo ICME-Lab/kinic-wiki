@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { VaultClient } from "../src/api";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
-it("uses an injected Wiki identity and destroys its private session immediately", () => {
+it("uses an injected dedicated identity and destroys its private session immediately", () => {
   const identity = Ed25519KeyIdentity.generate();
   const actor = {} as never;
   const client = new VaultClient({
@@ -12,6 +12,7 @@ it("uses an injected Wiki identity and destroys its private session immediately"
   });
   expect(client.identity).toBe(identity);
   expect(client.actor).toBe(actor);
+  client.selectCredential(new Uint8Array([1]));
   const raw = new Uint8Array(32).fill(9);
   client.session.raw = raw;
   const generation = client.session.capture();
@@ -19,6 +20,9 @@ it("uses an injected Wiki identity and destroys its private session immediately"
   expect(raw.every((x) => x === 0)).toBe(true);
   expect(() => client.session.check(generation)).toThrow("Locked");
   expect(() => client.actor).toThrow("NotSignedIn");
+  expect(() => client.selectCredential(new Uint8Array([2]))).toThrow(
+    "NotSignedIn",
+  );
 });
 it("fences a read that resolves after the owning session is destroyed", async () => {
   let resolve!: (value: { Ok: Uint8Array }) => void;

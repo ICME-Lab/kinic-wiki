@@ -28,7 +28,13 @@ export class Session {
   }
   lock() {
     this.generation++;
-    for (const cleanup of this.lockCleanups) cleanup();
+    for (const cleanup of this.lockCleanups) {
+      try {
+        cleanup();
+      } catch {
+        /* A detached view cannot prevent other private state from being cleared. */
+      }
+    }
     this.controller.abort();
     this.controller = new AbortController();
     this.lastActivity = Date.now();

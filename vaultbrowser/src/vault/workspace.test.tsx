@@ -31,7 +31,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 const header: Header = {
-        published_slot: [], generation: [], recovery_verifier: [],
+  published_slot: [],
+  generation: [],
+  recovery_verifier: [],
   id: new Uint8Array(16),
   epoch: 0n,
   sequence: 1n,
@@ -44,6 +46,18 @@ const header: Header = {
 };
 async function mounted() {
   const actor = {
+    global_capacity: vi.fn(async () => ({
+      Ok: {
+        used: 16777216n,
+        limit: 209715200n,
+        accounting_reserved: 16777216n,
+        overcommitted: false,
+        overage: 0n,
+        legacy_excess: 0n,
+      },
+    })),
+    list_credentials: vi.fn(async () => ({ Ok: [] })),
+    cleanup_status: vi.fn(async () => ({ Ok: [] })),
     list_payments: vi.fn(async () => ({ Ok: [] })),
     get_config: vi.fn(async () => ({
       Ok: [
@@ -142,26 +156,71 @@ it("rejects late local search results after a lock", async () => {
     await Promise.resolve();
   });
   fireEvent.click(screen.getByRole("button", { name: "Lock Vault" }));
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Unlock with passkey",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
   await act(async () => {
     resolve([]);
     await Promise.resolve();
   });
   expect(screen.queryByLabelText("Private note body")).toBeNull();
 });
-it('clears recovery secrets, create kit and restore file input on every lock', async () => {
+it("clears recovery secret setup on every lock and excludes legacy restore controls", async () => {
   const { client } = await mounted();
-  vi.spyOn(client, 'createKit').mockImplementation(async () => {
+  vi.spyOn(client, "createKit").mockImplementation(async () => {
     client.session.lock();
-    return { vault: new Uint8Array(16), attempt: new Uint8Array(16), normal: { version: 1, nonce: new Uint8Array(12), ciphertext: new Uint8Array(48) }, recovery: { version: 1, nonce: new Uint8Array(12), ciphertext: new Uint8Array(48) }, secret: 'synthetic-kit-secret', generation: client.session.capture() };
+    return {
+      vault: new Uint8Array(16),
+      attempt: new Uint8Array(16),
+      normal: {
+        version: 1,
+        nonce: new Uint8Array(12),
+        ciphertext: new Uint8Array(48),
+      },
+      recovery: {
+        version: 1,
+        nonce: new Uint8Array(12),
+        ciphertext: new Uint8Array(48),
+      },
+      secret: "synthetic-kit-secret",
+      recoveryVerifier: new Uint8Array(32),
+      generation: client.session.capture(),
+    };
   });
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create Vault' })); });
-  expect(screen.getByLabelText('New recovery secret').textContent).toBe('synthetic-kit-secret');
-  fireEvent.change(screen.getByLabelText('Re-enter saved recovery secret'), { target: { value: 'synthetic-kit-confirmation' } });
-  fireEvent.change(screen.getByLabelText('Restore recovery secret'), { target: { value: 'synthetic-restore-secret' } });
-  fireEvent.change(screen.getByLabelText('Backup file'), { target: { files: [new File(['synthetic'], 'synthetic.kvault')] } });
-  fireEvent.click(screen.getByRole('button', { name: 'Lock Vault' }));
-  expect(screen.queryByLabelText('New recovery secret')).toBeNull();
-  expect(screen.queryByDisplayValue('synthetic-kit-confirmation')).toBeNull();
-  expect(screen.getByLabelText('Restore recovery secret')).toHaveProperty('value', '');
-  expect((screen.getByLabelText('Backup file') as HTMLInputElement).files?.length).toBe(0);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Create Vault" }));
+  });
+  expect(screen.getByLabelText("New recovery secret").textContent).toBe(
+    "synthetic-kit-secret",
+  );
+  fireEvent.change(screen.getByLabelText("Re-enter saved recovery secret"), {
+    target: { value: "synthetic-kit-confirmation" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Lock Vault" }));
+  expect(screen.queryByLabelText("New recovery secret")).toBeNull();
+  expect(screen.queryByDisplayValue("synthetic-kit-confirmation")).toBeNull();
+  expect(screen.queryByLabelText("Restore recovery secret")).toBeNull();
+  expect(screen.queryByLabelText("Backup file")).toBeNull();
+});
+it("shows a sanitized unlock failure without restoring keys or private content", async () => {
+  const { client } = await mounted();
+  vi.mocked(client.unlock).mockRestore();
+  header.generation = [{} as never];
+  vi.spyOn(client, "authorize").mockRejectedValue(Error("InvalidProof"));
+  fireEvent.click(screen.getByRole("button", { name: "Lock Vault" }));
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Unlock with passkey" }),
+    );
+  });
+  header.generation = [];
+  expect(screen.getByRole("alert").textContent).toContain(
+    "Passkey verification failed",
+  );
+  expect(screen.queryByLabelText("Private note body")).toBeNull();
+  expect(client.session.raw).toBeUndefined();
 });

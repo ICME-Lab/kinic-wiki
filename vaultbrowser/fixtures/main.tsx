@@ -1,6 +1,8 @@
+import { EditorView } from "../../packages/vault-ui/node_modules/@codemirror/view";
 // Synthetic actor and identity exist only in this separate fixture entry, never in the product route.
 import { createRoot } from "react-dom/client";
 import { useEffect } from "react";
+import { Principal } from "@icp-sdk/core/principal";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { VaultClient } from "@kinic/vault-client";
 import type {
@@ -10,7 +12,21 @@ import type {
 } from "@kinic/vault-client/contracts";
 import { VaultWorkspace } from "../src/vault/workspace";
 import "../src/style.css";
+const fixtureIdentity = Ed25519KeyIdentity.generate();
 const header: Header = {
+  published_slot: [],
+  generation: [
+    {
+      version: 2,
+      canister: Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+      owner: fixtureIdentity.getPrincipal(),
+      vault: new Uint8Array(16),
+      nonce: new Uint8Array(32).fill(1),
+      epoch: 0n,
+      key_name: "test_key_1",
+    },
+  ],
+  recovery_verifier: [],
   id: new Uint8Array(16),
   epoch: 0n,
   sequence: 1n,
@@ -42,7 +58,18 @@ const actor = {
       },
     ],
   }),
+  global_capacity: async () => ({
+    Ok: {
+      used: 16777216n,
+      limit: 209715200n,
+      accounting_reserved: 16777216n,
+      overcommitted: false,
+      overage: 0n,
+      legacy_excess: 0n,
+    },
+  }),
   account_balance: async () => ({ Ok: 1_000_000_000n }),
+  cleanup_status: async () => ({ Ok: [] }),
   list_payments: async () => ({ Ok: [] }),
   list_vaults: async () => ({ Ok: [header] }),
   list_unfinished_vaults: async () => ({ Ok: [] }),
@@ -91,9 +118,18 @@ class SyntheticClient extends VaultClient {
 }
 const client = new SyntheticClient({
   actor,
-  identity: Ed25519KeyIdentity.generate(),
-  canister: "aaaaa-aa",
+  identity: fixtureIdentity,
+  canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
   local: true,
+});
+Object.assign(window, {
+  vaultFixture: {
+    editor: () => {
+      const el = document.querySelector(".cm-content");
+      return el ? EditorView.findFromDOM(el as HTMLElement) : undefined;
+    },
+    session: client.session,
+  },
 });
 function Fixture() {
   useEffect(() => {

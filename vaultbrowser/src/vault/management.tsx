@@ -20,6 +20,8 @@ export function VaultBackups({
   onChanged: () => Promise<void>;
 }) {
   const [secret, setSecret] = useState("");
+  const [kit, setKit] = useState<File>();
+  const [kitInput, setKitInput] = useState(0);
   const [backup, setBackup] =
     useState<Awaited<ReturnType<VaultClient["backup"]>>>();
   const backupRef = useRef(backup);
@@ -39,24 +41,58 @@ export function VaultBackups({
         Vault key.
       </p>
       {!unlocked ? (
-        <VaultField
-          label="Export recovery secret"
-          type="password"
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-        />
+        <>
+          <VaultField
+            label="Export recovery secret"
+            type="password"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+          />
+          <VaultField
+            key={kitInput}
+            label="Or select recovery kit"
+            type="file"
+            accept=".json"
+            onChange={(e) => setKit(e.target.files?.[0])}
+          />
+        </>
       ) : null}
+      <p className="text-sm text-muted">
+        Portable v1 and v2 archives can also be opened with the supplied offline
+        recovery tool. Keep the recovery kit separate from the encrypted
+        archive.
+      </p>
       <div className="flex flex-wrap gap-2">
         <VaultButton
-          disabled={disabled || (!unlocked && !secret)}
+          disabled={disabled || (!unlocked && !secret && !kit)}
           onClick={() =>
             run(async () => {
               const g = client.session.capture();
               const secretText = secret;
               setSecret("");
-              const next = unlocked
-                ? await client.backup()
-                : await client.backupWithRecovery(selected, secretText);
+              const selectedKit = kit;
+              setKit(undefined);
+              setKitInput((k) => k + 1);
+              let kitData: Uint8Array | undefined;
+              const detach = client.session.addLockCleanup(() =>
+                kitData?.fill(0),
+              );
+              let next;
+              try {
+                if (selectedKit) {
+                  if (selectedKit.size > 4096) throw Error("InvalidKit");
+                  kitData = new Uint8Array(await selectedKit.arrayBuffer());
+                  client.session.check(g);
+                }
+                next = unlocked
+                  ? await client.backup()
+                  : kitData
+                    ? await client.backupWithKit(selected, kitData)
+                    : await client.backupWithRecovery(selected, secretText);
+              } finally {
+                detach();
+                kitData?.fill(0);
+              }
               try {
                 client.session.check(g);
               } catch (cause) {
@@ -137,10 +173,12 @@ export function VaultPasskeys({
   client,
   disabled,
   run,
+  onChanged,
 }: {
   client: VaultClient;
   disabled: boolean;
   run: VaultWork;
+  onChanged: () => Promise<void>;
 }) {
   const [credentials, setCredentials] = useState<CredentialInfo[]>([]);
   const refresh = async () => {
@@ -148,6 +186,7 @@ export function VaultPasskeys({
     const list = ok(await client.actor.list_credentials());
     client.session.check(g);
     setCredentials(list);
+    await onChanged();
   };
   return (
     <VaultPanel label="Unlock passkeys">
@@ -158,7 +197,9 @@ export function VaultPasskeys({
         <div className="mt-3 grid gap-3">
           <p className="text-sm text-muted">
             Adding or removing a passkey requires an existing passkey. The final
-            passkey cannot be removed.
+            passkey cannot be removed. Ordinary removal does not rotate the
+            Vault root key or replace recovery material. Use the incident
+            workflow for a compromised passkey.
           </p>
           <div className="flex flex-wrap gap-2">
             <VaultButton
@@ -214,88 +255,85 @@ export function VaultEncryptedCleanup({
   run: VaultWork;
   onChanged: () => Promise<void>;
 }) {
-  const [objects, setObjects] = useState<
-    { object: Uint8Array | number[]; deleted: boolean }[]
-  >([]);
-  const [cursor, setCursor] = useState<Uint8Array>(new Uint8Array());
-  const [loaded, setLoaded] = useState(false);
-  const load = async (after: Uint8Array, append: boolean) => {
-    const g = client.session.capture();
-    const page = ok(await client.actor.list_objects(selected.id, after));
-    client.session.check(g);
-    const rows = page.entries.map((entry) => ({
-      object: entry.object,
-      deleted: entry.deleted,
-    }));
-    setObjects((previous) => (append ? [...previous, ...rows] : rows));
-    setCursor(page.next[0] ? bytes(page.next[0]) : new Uint8Array());
-    setLoaded(true);
-  };
+  const [progress, setProgress] = useState("");
+  useEffect(() => {
+    let active = true;
+    const ticket = client.session.capture();
+    void client.actor
+      .cleanup_status()
+      .then((reply) => {
+        client.session.check(ticket);
+        const pending = ok(reply)[0];
+        if (active && pending && !pending.complete)
+          setProgress(
+            `Pending cleanup batch ${pending.cursor} — resume the original Vault and action`,
+          );
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [client]);
   return (
     <VaultPanel label="Encrypted storage cleanup">
       <details className="[&:not([open])>div]:hidden">
         <summary className="cursor-pointer font-semibold">
           Encrypted storage cleanup
         </summary>
-        <div className="mt-3 grid min-w-0 gap-3">
-          <p className="text-sm text-muted">
-            Without unlocking, titles remain hidden. Permanently deleting an
-            encrypted object removes every version. Existing backup files remain
-            unchanged. This cleanup is available when cycles are low.
+        <div className="mt-3 grid min-w-0 gap-3 text-sm">
+          <p>
+            Cleanup requires a registered passkey and does not request a Vault
+            key. It remains available with insufficient prepaid balance. Full
+            purge permanently deletes this Vault and every version; existing
+            backup files remain unchanged.
+          </p>
+          <p>
+            Cleanup runs in bounded batches under one passkey grant. If locked
+            or interrupted, select the same Vault and action to resume its
+            stored progress.
           </p>
           <VaultButton
             disabled={disabled}
-            onClick={() => run(() => load(new Uint8Array(), false))}
+            onClick={() =>
+              run(async () => {
+                const g = client.session.capture(),
+                  result = await client.cleanup(selected, false, (value) =>
+                    setProgress(`Cleanup batch ${value.cursor}`),
+                  );
+                client.session.check(g);
+                setProgress(
+                  result.complete
+                    ? "Cleanup complete"
+                    : "Cleanup pending — continue the same action",
+                );
+                await onChanged();
+              })
+            }
           >
-            List encrypted object IDs
+            Collect expired data
           </VaultButton>
-          {loaded && !objects.length ? (
-            <p className="text-sm text-muted">No encrypted objects.</p>
-          ) : null}
-          {objects.map((object) => {
-            const id = b64(bytes(object.object));
-            return (
-              <div className="grid min-w-0 gap-2 text-sm" key={id}>
-                <span className="break-all font-mono">
-                  {id}
-                  {object.deleted ? " (deleted)" : ""}
-                </span>
-                <VaultButton
-                  disabled={disabled}
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        `Permanently delete encrypted object ${id} and all its history? This cannot be undone.`,
-                      )
-                    )
-                      return;
-                    run(async () => {
-                      const g = client.session.capture();
-                      ok(
-                        await client.actor.purge_object(
-                          selected.id,
-                          object.object,
-                        ),
-                      );
-                      client.session.check(g);
-                      await load(new Uint8Array(), false);
-                      await onChanged();
-                    });
-                  }}
-                >
-                  Purge object {id}
-                </VaultButton>
-              </div>
-            );
-          })}
-          {cursor.length ? (
-            <VaultButton
-              disabled={disabled}
-              onClick={() => run(() => load(cursor, true))}
-            >
-              Load more encrypted objects
-            </VaultButton>
-          ) : null}
+          <VaultButton
+            disabled={disabled}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "Permanently purge this Vault and all its history? This cannot be undone.",
+                )
+              )
+                return;
+              run(async () => {
+                const result = await client.cleanup(selected, true, (value) =>
+                  setProgress(`Purge batch ${value.cursor}`),
+                );
+                client.session.lock();
+                if (result.complete) client.header = undefined;
+                await onChanged();
+              });
+            }}
+          >
+            Permanently purge entire Vault
+          </VaultButton>
+          {progress ? <output>{progress}</output> : null}
         </div>
       </details>
     </VaultPanel>

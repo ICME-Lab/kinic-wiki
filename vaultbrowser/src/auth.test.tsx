@@ -1,32 +1,44 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { afterEach, it, expect, vi } from 'vitest';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+} from "@testing-library/react";
+import { afterEach, it, expect, vi } from "vitest";
 const mock = vi.hoisted(() => ({
   create: vi.fn(),
-  load: vi.fn()
+  load: vi.fn(),
 }));
-vi.mock('@icp-sdk/auth/client', () => ({
+vi.mock("@icp-sdk/auth/client", () => ({
   AuthClient: {
-    create: mock.create
-  }
+    create: mock.create,
+  },
 }));
-vi.mock('./config', () => ({
-  loadConfig: mock.load
+vi.mock("./config", () => ({
+  loadConfig: mock.load,
 }));
-import { VaultAuthProvider, useVaultAuth } from './auth';
+import { VaultAuthProvider, useVaultAuth } from "./auth";
 function Child() {
   const s = useVaultAuth();
-  return <><span>{s.identity ? 'signed' : 'unsigned'}</span><button onClick={s.login}>login</button><button onClick={s.logout}>logout</button></>;
+  return (
+    <>
+      <span>{s.identity ? "signed" : "unsigned"}</span>
+      <button onClick={s.login}>login</button>
+      <button onClick={s.logout}>logout</button>
+    </>
+  );
 }
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
-it('opens II with only its own certified derivation origin and removes identity before async logout completes', async () => {
+it("opens II with only its own certified derivation origin and removes identity before async logout completes", async () => {
   const identity = {
     getPrincipal: () => ({
-      toText: () => 'vault-principal'
-    })
+      toText: () => "vault-principal",
+    }),
   };
   const login = vi.fn();
   let finish!: () => void;
@@ -34,47 +46,96 @@ it('opens II with only its own certified derivation origin and removes identity 
     isAuthenticated: async () => false,
     getIdentity: () => identity,
     login,
-    logout: vi.fn(() => new Promise<void>(r => {
-      finish = r;
-    })),
+    logout: vi.fn(
+      () =>
+        new Promise<void>((r) => {
+          finish = r;
+        }),
+    ),
     idleManager: {
-      registerCallback: vi.fn()
-    }
+      registerCallback: vi.fn(),
+    },
   };
   mock.create.mockResolvedValue(c);
   mock.load.mockResolvedValue({
-    identityProvider: 'https://id.ai',
-    derivationOrigin: 'https://rrkah-fqaaa-aaaaa-aaaaq-cai.icp0.io'
+    identityProvider: "https://id.ai",
+    derivationOrigin: "https://rrkah-fqaaa-aaaaa-aaaaq-cai.icp0.io",
   });
-  render(<VaultAuthProvider><Child /></VaultAuthProvider>);
+  render(
+    <VaultAuthProvider>
+      <Child />
+    </VaultAuthProvider>,
+  );
   await waitFor(() => expect(mock.create).toHaveBeenCalled());
-  await waitFor(() => expect(c.idleManager.registerCallback).toHaveBeenCalled());
-  fireEvent.click(screen.getByText('login'));
+  await waitFor(() =>
+    expect(c.idleManager.registerCallback).toHaveBeenCalled(),
+  );
+  fireEvent.click(screen.getByText("login"));
   await waitFor(() => expect(login).toHaveBeenCalled());
   const args = login.mock.calls[0][0];
-  expect(args.derivationOrigin).toBe('https://rrkah-fqaaa-aaaaa-aaaaq-cai.icp0.io');
-  expect(args.identityProvider).toBe('https://id.ai');
+  expect(args.derivationOrigin).toBe(
+    "https://rrkah-fqaaa-aaaaa-aaaaq-cai.icp0.io",
+  );
+  expect(args.identityProvider).toBe("https://id.ai");
   args.onSuccess();
-  await screen.findByText('signed');
-  fireEvent.click(screen.getByText('logout'));
-  expect(screen.queryByText('signed')).toBeNull();
-  expect(screen.getByText('unsigned')).toBeTruthy();
+  await screen.findByText("signed");
+  fireEvent.click(screen.getByText("logout"));
+  expect(screen.queryByText("signed")).toBeNull();
+  expect(screen.getByText("unsigned")).toBeTruthy();
   finish();
 });
-it('never authenticates when certified configuration fails validation', async () => {
+it("never authenticates when certified configuration fails validation", async () => {
   const login = vi.fn();
   mock.create.mockResolvedValue({
     isAuthenticated: async () => false,
     login,
     idleManager: {
-      registerCallback: vi.fn()
-    }
+      registerCallback: vi.fn(),
+    },
   });
-  mock.load.mockRejectedValue(Error('wrong origin'));
-  render(<VaultAuthProvider><Child /></VaultAuthProvider>);
+  mock.load.mockRejectedValue(Error("wrong origin"));
+  render(
+    <VaultAuthProvider>
+      <Child />
+    </VaultAuthProvider>,
+  );
   await waitFor(() => expect(mock.create).toHaveBeenCalled());
-  fireEvent.click(screen.getByText('login'));
+  fireEvent.click(screen.getByText("login"));
   await waitFor(() => expect(mock.load).toHaveBeenCalled());
   expect(login).not.toHaveBeenCalled();
-  expect(screen.getByText('unsigned')).toBeTruthy();
+  expect(screen.getByText("unsigned")).toBeTruthy();
+});
+it("does not open an obsolete II login after logout while configuration is loading", async () => {
+  const login = vi.fn(),
+    logout = vi.fn(async () => {});
+  let resolve!: (v: unknown) => void;
+  mock.create.mockResolvedValue({
+    isAuthenticated: async () => false,
+    login,
+    logout,
+    idleManager: { registerCallback: vi.fn() },
+  });
+  mock.load.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  render(
+    <VaultAuthProvider>
+      <Child />
+    </VaultAuthProvider>,
+  );
+  await waitFor(() => expect(screen.getByText("unsigned")).toBeTruthy());
+  await waitFor(() => expect(mock.create).toHaveBeenCalled());
+  fireEvent.click(screen.getByText("login"));
+  await waitFor(() => expect(mock.load).toHaveBeenCalled());
+  fireEvent.click(screen.getByText("logout"));
+  resolve({
+    identityProvider: "https://id.ai",
+    derivationOrigin: "https://rrkah-fqaaa-aaaaa-aaaaq-cai.icp0.io",
+  });
+  await waitFor(() => expect(logout).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(login).not.toHaveBeenCalled();
 });

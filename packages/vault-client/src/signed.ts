@@ -41,6 +41,9 @@ export class SignedMutations {
     this.key = keys.privateKey;
     this.counter = grant.next_counter;
   }
+  get hasPending() {
+    return !!this.pending;
+  }
   destroy() {
     this.key = undefined;
     this.pending?.payload.fill(0);

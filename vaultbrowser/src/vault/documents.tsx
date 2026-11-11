@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
-import { randomBytes, utf8 } from "@kinic/vault-crypto";
+import { utf8 } from "@kinic/vault-crypto";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/vault-ui/editor";
@@ -22,6 +22,10 @@ export function VaultDocuments({
   run: VaultWork;
   refresh: () => Promise<void>;
 }) {
+  const sensitiveCleanup = useCallback(
+    (wipe: () => void) => client.session.addLockCleanup(wipe),
+    [client],
+  );
   const [query, setQuery] = useState("");
   const [current, setCurrent] = useState<Item>();
   const [kind, setKind] = useState<Metadata["kind"]>("note");
@@ -35,6 +39,7 @@ export function VaultDocuments({
   const [file, setFile] = useState<File>();
   const [editorKey, setEditorKey] = useState(0);
   const [history, setHistory] = useState<Revision[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<bigint>();
   const [progress, setProgress] = useState(0);
   const [dirty, setDirty] = useState(false);
   const reset = () => {
@@ -48,6 +53,7 @@ export function VaultDocuments({
     setReveal(false);
     setFile(undefined);
     setHistory([]);
+    setHistoryCursor(undefined);
     setProgress(0);
     setDirty(false);
     setEditorKey((k) => k + 1);
@@ -139,7 +145,7 @@ export function VaultDocuments({
   const readOnly = disabled || writesDisabled || !!current?.revision.deleted;
   const byteCount = utf8.encode(body).length;
   return (
-    <VaultPanel label="Private documents">
+    <VaultPanel label="Private documents" sensitive>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">Private documents</h2>
         <VaultButton disabled={disabled} onClick={() => run(refresh)}>
@@ -215,7 +221,8 @@ export function VaultDocuments({
                     <MarkdownEditor
                       key={editorKey}
                       content={body}
-                    indentWithTab={false}
+                      indentWithTab={false}
+                      sensitiveCleanup={sensitiveCleanup}
                       disabled={readOnly}
                       lineCount={body.split("\n").length}
                       byteCount={byteCount}
@@ -358,6 +365,7 @@ export function VaultDocuments({
                       );
                       client.session.check(g);
                       setHistory(page.entries);
+                      setHistoryCursor(page.next[0]);
                     })
                   }
                 >
@@ -376,14 +384,7 @@ export function VaultDocuments({
                       onClick={() =>
                         run(async () => {
                           const g = client.session.capture();
-                          ok(
-                            await client.actor.delete_object(
-                              current.revision.vault,
-                              current.revision.object,
-                              current.revision.revision,
-                              randomBytes(16),
-                            ),
-                          );
+                          await client.deleteObject(current.revision);
                           client.session.check(g);
                           reset();
                           await refresh();
@@ -395,7 +396,7 @@ export function VaultDocuments({
                   </>
                 ) : null}
                 <VaultButton
-                  disabled={disabled}
+                  disabled={disabled || writesDisabled}
                   onClick={() => {
                     if (
                       !window.confirm(
@@ -405,12 +406,7 @@ export function VaultDocuments({
                       return;
                     run(async () => {
                       const g = client.session.capture();
-                      ok(
-                        await client.actor.purge_object(
-                          current.revision.vault,
-                          current.revision.object,
-                        ),
-                      );
+                      await client.purgeObject(current.revision);
                       client.session.check(g);
                       reset();
                       await refresh();
@@ -423,6 +419,31 @@ export function VaultDocuments({
               {history.length ? (
                 <div className="grid gap-2">
                   <h3 className="font-medium">Version history</h3>
+                  {historyCursor !== undefined ? (
+                    <VaultButton
+                      disabled={disabled}
+                      onClick={() =>
+                        run(async () => {
+                          const g = client.session.capture(),
+                            page = ok(
+                              await client.actor.list_history(
+                                current.revision.vault,
+                                current.revision.object,
+                                historyCursor,
+                              ),
+                            );
+                          client.session.check(g);
+                          setHistory((previous) => [
+                            ...previous,
+                            ...page.entries,
+                          ]);
+                          setHistoryCursor(page.next[0]);
+                        })
+                      }
+                    >
+                      Load more history
+                    </VaultButton>
+                  ) : null}
                   {history.map((revision) => (
                     <div
                       className="flex flex-wrap items-center justify-between gap-2 text-sm"

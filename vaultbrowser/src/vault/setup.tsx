@@ -17,7 +17,7 @@ export function VaultSetup({
 }) {
   const [confirmation, setConfirmation] = useState("");
   return (
-    <VaultPanel label="Recovery secret setup">
+    <VaultPanel label="Recovery secret setup" sensitive>
       <h2 className="font-semibold">Save your recovery secret</h2>
       <p className="text-sm text-muted">
         Store it separately from your encrypted backup, then re-enter it to
@@ -29,6 +29,21 @@ export function VaultSetup({
       >
         {kit.secret}
       </output>
+      <VaultButton
+        disabled={disabled}
+        onClick={() =>
+          run(async () => {
+            const data = client.recoveryKit(kit);
+            try {
+              client.session.download(data, "vault-recovery-kit.json");
+            } finally {
+              data.fill(0);
+            }
+          })
+        }
+      >
+        Download recovery kit
+      </VaultButton>
       <VaultButton
         disabled={disabled}
         onClick={() =>
@@ -60,72 +75,8 @@ export function VaultSetup({
           })
         }
       >
-        Confirm and register passkey
+        Confirm and activate Vault
       </VaultButton>
     </VaultPanel>
-  );
-}
-export function VaultRestore({
-  client,
-  disabled,
-  run,
-  onRestored,
-}: {
-  client: VaultClient;
-  disabled: boolean;
-  run: VaultWork;
-  onRestored: () => Promise<void>;
-}) {
-  const [file, setFile] = useState<File>();
-  const [secret, setSecret] = useState("");
-  return (
-    <details className="min-w-0 text-sm [&:not([open])>div]:hidden">
-      <summary className="cursor-pointer font-medium">
-        Restore encrypted backup
-      </summary>
-      <div className="mt-3 grid min-w-0 gap-3">
-        <p className="text-muted">
-          Restore to a new Vault. Existing Vaults are never overwritten.
-        </p>
-        <VaultField
-          label="Backup file"
-          type="file"
-          accept=".kvault"
-          onChange={(e) => setFile(e.target.files?.[0])}
-        />
-        <VaultField
-          label="Restore recovery secret"
-          type="password"
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-        />
-        <VaultButton
-          disabled={disabled || !file || !secret}
-          onClick={() =>
-            run(async () => {
-              if (!file || file.size > 256 * 1024 * 1024)
-                throw Error("SizeLimit");
-              client.session.lock();
-              const g = client.session.capture();
-              const secretText = secret;
-              setSecret("");
-              const data = new Uint8Array(await file.arrayBuffer());
-              client.session.check(g);
-              const pending = client.restore(data, secretText, false);
-              const restoring = client.session.capture();
-              try {
-                await pending;
-                client.session.check(restoring);
-                await onRestored();
-              } finally {
-                data.fill(0);
-              }
-            })
-          }
-        >
-          Verify and restore
-        </VaultButton>
-      </div>
-    </details>
   );
 }
