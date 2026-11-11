@@ -26,6 +26,11 @@ function Child() {
   return (
     <>
       <span>{s.identity ? "signed" : "unsigned"}</span>
+      <span>{s.loading ? "loading" : "ready"}</span>
+      <output data-testid="auth-error">{s.error}</output>
+      <output data-testid="auth-principal">
+        {s.identity?.getPrincipal().toText() ?? "anonymous"}
+      </output>
       <button onClick={s.login}>login</button>
       <button onClick={s.logout}>logout</button>
     </>
@@ -235,3 +240,152 @@ it("clears a restored identity on idle and prevents a pending configuration resp
   expect(c.idleManager.registerCallback).not.toHaveBeenCalled();
   expect(c.logout).toHaveBeenCalledTimes(1);
 });
+
+it.each(["idle", "manual"] as const)(
+  "serializes %s logout storage removal before another login on the same SDK client",
+  async (reason) => {
+    const identity = (name: string) => ({
+      getPrincipal: () => ({ toText: () => name }),
+    });
+    let sdkIdentity = identity("old"),
+      options: any;
+    const storage = new Map([
+      ["key", "old"],
+      ["delegation", "old"],
+      ["vector", "old"],
+    ]);
+    const removals: Array<() => void> = [];
+    const c = {
+      isAuthenticated: async () => true,
+      getIdentity: () => sdkIdentity,
+      // Installed AuthClient.logout awaits these three removals before resetting identity.
+      logout: vi.fn(async () => {
+        for (const key of ["key", "delegation", "vector"])
+          await new Promise<void>((resolve) =>
+            removals.push(() => {
+              storage.delete(key);
+              resolve();
+            }),
+          );
+        sdkIdentity = identity("anonymous");
+      }),
+      login: vi.fn(async (o: any) => {
+        storage.set("delegation", "new");
+        sdkIdentity = identity("new");
+        o.onSuccess();
+      }),
+    };
+    mock.create.mockImplementation(async (o) => {
+      options = o;
+      return c;
+    });
+    mock.load.mockResolvedValue({
+      identityProvider: "https://id.ai",
+      derivationOrigin: "https://vault.example",
+    });
+    render(
+      <VaultAuthProvider>
+        <Child />
+      </VaultAuthProvider>,
+    );
+    await screen.findByText("signed");
+    await act(async () => {
+      if (reason === "idle") options.idleOptions.onIdle();
+      else fireEvent.click(screen.getByText("logout"));
+    });
+    expect(screen.getByText("unsigned")).toBeTruthy();
+    expect(screen.getByText("loading")).toBeTruthy();
+    for (let index = 0; index < 3; index++) {
+      // Deliberately bypass a disabled UI control: the provider API must guard entry too.
+      await act(async () => fireEvent.click(screen.getByText("login")));
+      expect(c.login).not.toHaveBeenCalled();
+      expect(mock.load).not.toHaveBeenCalled();
+      // Repeated logout notifications must not launch another storage deletion.
+      await act(async () => options.idleOptions.onIdle());
+      expect(c.logout).toHaveBeenCalledTimes(1);
+      await act(async () => removals[index]());
+      if (index < 2) expect(screen.getByText("loading")).toBeTruthy();
+    }
+    expect(screen.getByText("ready")).toBeTruthy();
+    expect(screen.getByTestId("auth-principal").textContent).toBe("anonymous");
+    expect(c.getIdentity().getPrincipal().toText()).toBe("anonymous");
+    await act(async () => fireEvent.click(screen.getByText("login")));
+    expect(c.login).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("auth-principal").textContent).toBe("new");
+    expect(c.getIdentity().getPrincipal().toText()).toBe("new");
+    expect(storage.get("delegation")).toBe("new");
+  },
+);
+
+it.each(["resolve", "reject"] as const)(
+  "ignores stale logout %s and idle callbacks after unmount while a new provider is signing in",
+  async (completion) => {
+    let oldOptions: any,
+      finish!: () => void,
+      resolveConfig!: (value: unknown) => void;
+    const old = {
+      isAuthenticated: async () => true,
+      getIdentity: () => ({ getPrincipal: () => ({ toText: () => "old" }) }),
+      logout: vi.fn(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finish = () =>
+              completion === "resolve"
+                ? resolve()
+                : reject(Error("delayed storage failure"));
+          }),
+      ),
+    };
+    const next = {
+      isAuthenticated: async () => false,
+      getIdentity: () => ({ getPrincipal: () => ({ toText: () => "new" }) }),
+      login: vi.fn(async (o: any) => o.onSuccess()),
+      logout: vi.fn(async () => {}),
+    };
+    mock.create
+      .mockImplementationOnce(async (options) => {
+        oldOptions = options;
+        return old;
+      })
+      .mockResolvedValueOnce(next);
+    mock.load.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveConfig = resolve;
+        }),
+    );
+    const first = render(
+      <VaultAuthProvider>
+        <Child />
+      </VaultAuthProvider>,
+    );
+    await screen.findByText("signed");
+    await act(async () => oldOptions.idleOptions.onIdle());
+    first.unmount();
+    render(
+      <VaultAuthProvider>
+        <Child />
+      </VaultAuthProvider>,
+    );
+    await screen.findByText("ready");
+    fireEvent.click(screen.getByText("login"));
+    await waitFor(() => expect(mock.load).toHaveBeenCalled());
+    await act(async () => {
+      finish();
+      oldOptions.idleOptions.onIdle();
+    });
+    expect(screen.getByText("loading")).toBeTruthy();
+    expect(screen.getByText("unsigned")).toBeTruthy();
+    expect(screen.getByTestId("auth-error").textContent).toBe("");
+    expect(old.logout).toHaveBeenCalledTimes(1);
+    expect(next.logout).not.toHaveBeenCalled();
+    await act(async () =>
+      resolveConfig({
+        identityProvider: "https://id.ai",
+        derivationOrigin: "https://vault.example",
+      }),
+    );
+    expect(screen.getByTestId("auth-principal").textContent).toBe("new");
+    expect(screen.getByText("ready")).toBeTruthy();
+  },
+);

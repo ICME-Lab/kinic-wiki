@@ -30,6 +30,37 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   const client = useRef<AuthClient | undefined>(undefined);
   const live = useRef(true);
   const serial = useRef(0);
+  const logoutPending = useRef<
+    { client: AuthClient; token: number } | undefined
+  >(undefined);
+  const logout = () => {
+    if (!live.current || logoutPending.current) return;
+    const c = client.current;
+    const token = ++serial.current;
+    setIdentity(undefined);
+    setError("");
+    setLoading(true);
+    if (!c) {
+      setLoading(false);
+      return;
+    }
+    const transition = { client: c, token };
+    logoutPending.current = transition;
+    const current = () =>
+      live.current && client.current === c && serial.current === token;
+    // SDK logout deletes stored delegation/key data before resetting its identity.
+    // Block another login until every asynchronous logout effect has settled.
+    void c
+      .logout()
+      .catch(() => {
+        if (current()) setError("Sign-out did not complete. Close this tab.");
+      })
+      .finally(() => {
+        if (logoutPending.current !== transition) return;
+        logoutPending.current = undefined;
+        if (current()) setLoading(false);
+      });
+  };
   useEffect(() => {
     live.current = true;
     let disposed = false;
@@ -49,13 +80,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
             client.current !== ownedClient
           )
             return;
-          serial.current++;
-          setIdentity(undefined);
-          setLoading(false);
-          void ownedClient.logout().catch(() => {
-            if (!disposed && live.current && client.current === ownedClient)
-              setError("Sign-out did not complete. Close this tab.");
-          });
+          logout();
         },
       },
     })
@@ -83,7 +108,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   }, []);
   const login = () => {
     const c = client.current;
-    if (!c) return;
+    if (!live.current || !c || logoutPending.current) return;
     const token = ++serial.current;
     setIdentity(undefined);
     setError("");
@@ -116,21 +141,6 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
           );
           setLoading(false);
         }
-      });
-  };
-  const logout = () => {
-    serial.current++;
-    setIdentity(undefined);
-    setError("");
-    setLoading(true);
-    void client.current
-      ?.logout()
-      .catch(() => {
-        if (live.current)
-          setError("Sign-out did not complete. Close this tab.");
-      })
-      .finally(() => {
-        if (live.current) setLoading(false);
       });
   };
   return (
