@@ -7,7 +7,8 @@ use vault_types::*;
 pub use kinic_sqlite_compat;
 pub const SCHEMA: &str = concat!(
     include_str!("schema.sql"),
-    include_str!("wrapper-schema.sql")
+    include_str!("wrapper-schema.sql"),
+    include_str!("key-capacity-schema.sql")
 );
 pub const WRAPPER_SCHEMA: &str = include_str!("wrapper-schema.sql");
 
@@ -121,6 +122,7 @@ pub fn active(db: &Connection, vault: &[u8]) -> Result<Header> {
     Ok(h)
 }
 pub fn reserve(db: &Connection, caller: Principal, r: Reserve, now: u64) -> Result<Header> {
+    incident::owner_change_allowed(db)?;
     let c = authorize(db, caller)?;
     id(&r.vault)?;
     id(&r.operation)?;
@@ -270,3 +272,7 @@ pub mod cleanup;
 pub mod format;
 
 pub mod overlays;
+
+pub mod incident;
+
+pub const KEY_CAPACITY_SCHEMA: &str = include_str!("key-capacity-schema.sql");

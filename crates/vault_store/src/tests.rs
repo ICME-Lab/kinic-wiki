@@ -846,7 +846,7 @@ fn key_service_global_eight_flights_and_thousand_derivations_are_not_per_owner()
         params![],
     )
     .unwrap();
-    db.execute_batch("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<992) INSERT INTO key_flights(owner,token,day,reserved,actual,created,settled,in_flight) SELECT x'ff',x,0,30000000000,30000000000,1,1,0 FROM n;").unwrap();
+    db.execute_batch("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<992) INSERT INTO key_flights(owner,token,day,reserved,actual,created,settled,in_flight) SELECT CAST(printf('load-%d',(x-1)/100) AS BLOB),x,0,30000000000,30000000000,1,1,0 FROM n;").unwrap();
     assert_eq!(
         keys::reserve(&db, 1, 1, 30_000_000_000),
         Err(Error::QuotaExceeded)
@@ -1297,4 +1297,95 @@ fn published_wrapper_is_required_and_preserves_content_ciphertext() {
             .manifest
             .is_empty()
     );
+}
+
+#[test]
+fn key_pool_derivation_at_full_global_content_quota_does_not_grow_global_usage() {
+    let db = fixture();
+    db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,?3,'[]',1,0)",params![vec![1u8;16],vec![2u8;16],Vec::<u8>::new()]).unwrap();
+    let remaining = TOTAL_MAX - content::global_usage(&db).unwrap();
+    db.execute("UPDATE revisions SET charge=?1", params![remaining as i64])
+        .unwrap();
+    assert_eq!(content::global_usage(&db).unwrap(), TOTAL_MAX);
+    keys::reserve(&db, 1, 1, 30_000_000_000).unwrap();
+    keys::mark_sent(&db, 1, 30_000_000_000).unwrap();
+    keys::settle(&db, 1, 2, 30_000_000_000).unwrap();
+    keys::settle(&db, 1, 2, 30_000_000_000).unwrap();
+    keys::reserve(&db, 2, 2, 30_000_000_000).unwrap();
+    assert_eq!(content::global_usage(&db).unwrap(), TOTAL_MAX);
+}
+
+#[test]
+fn key_pool_count_caps_and_protected_cancellation_survive_day_rollover() {
+    let db = fixture();
+    let owner = config(&db).unwrap().owner;
+    for i in 0..512 {
+        db.execute("INSERT INTO key_flights(owner,token,day,reserved,actual,created,settled,phase,in_flight) VALUES(?1,?2,0,30000000000,0,1,1,'cancelled',0)",params![owner.as_slice(),i as i64]).unwrap();
+    }
+    assert_eq!(
+        keys::reserve(&db, 999, DAY * 2, 0),
+        Err(Error::QuotaExceeded)
+    );
+    assert!(
+        db.execute(
+            "INSERT INTO key_flights(owner,token,day,reserved,created) VALUES(?1,999,0,0,0)",
+            params![owner.as_slice()]
+        )
+        .is_err()
+    );
+    assert!(
+        db.execute(
+            "UPDATE key_flights SET phase=?1 WHERE token=0",
+            params!["x".repeat(33)]
+        )
+        .is_err()
+    );
+    // A same-token terminal callback is permitted even with a full journal; it alone
+    // retires the pending financial cancellation, then bounded GC makes room.
+    keys::settle(&db, 0, DAY * 2, 0).unwrap();
+    keys::settle(&db, 0, DAY * 2, 0).unwrap();
+    assert_eq!(
+        keys::reserve(&db, 999, DAY * 2, 0),
+        Err(Error::QuotaExceeded)
+    );
+    keys::collect_completed(&db, DAY * 3 + 1).unwrap();
+    keys::reserve(&db, 999, DAY * 3 + 1, 0).unwrap();
+    let count: i64 = db
+        .query_row("SELECT count(*) FROM key_flights", params![], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 512);
+    let before = content::global_usage(&db).unwrap();
+    db.execute_batch("DROP TRIGGER key_pool_insert_size; DROP TRIGGER key_pool_update_size; DROP TRIGGER key_pool_count;").unwrap();
+    db.execute(
+        "UPDATE key_flights SET phase=?1 WHERE token=1",
+        params!["x".repeat(300)],
+    )
+    .unwrap();
+    let excess = 80 + owner.as_slice().len() + 300 - 256;
+    assert_eq!(content::global_usage(&db).unwrap() - before, excess as u64);
+    db.execute_batch(KEY_CAPACITY_SCHEMA).unwrap();
+    keys::settle(&db, 1, DAY * 3 + 1, 0).unwrap();
+}
+#[test]
+fn key_pool_global_bound_counts_all_owners_and_never_expands_accounting_floor() {
+    let db = fixture();
+    for n in 0u32..8 {
+        let owner = Principal::self_authenticating(n.to_be_bytes());
+        for i in 0..512 {
+            db.execute("INSERT INTO key_flights(owner,token,day,reserved,actual,created,settled,phase,in_flight) VALUES(?1,?2,0,30000000000,0,1,1,'cancelled',0)",params![owner.as_slice(),i as i64]).unwrap();
+        }
+    }
+    let before = content::global_usage(&db).unwrap();
+    assert_eq!(keys::admit_rows(&db, 1), Err(Error::QuotaExceeded));
+    assert_eq!(content::global_usage(&db).unwrap(), before);
+    db.execute_batch("DROP TRIGGER key_pool_count;").unwrap();
+    let owner = config(&db).unwrap().owner;
+    db.execute(
+        "INSERT INTO key_flights(owner,token,day,reserved,created) VALUES(?1,999,0,0,0)",
+        params![owner.as_slice()],
+    )
+    .unwrap();
+    assert_eq!(content::global_usage(&db).unwrap() - before, 256);
+    db.execute_batch(KEY_CAPACITY_SCHEMA).unwrap();
+    keys::settle(&db, 999, DAY * 10, 0).unwrap();
 }

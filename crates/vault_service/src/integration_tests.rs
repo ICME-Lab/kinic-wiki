@@ -1903,3 +1903,77 @@ fn signed_derivation_settles_own_global_reservation_after_revocation_at_each_awa
         }
     }
 }
+
+#[test]
+fn incident_admission_freezes_atomically_and_invalidates_global_empty_grants() {
+    let (env, key, normal) = signed_fixture(GrantPurpose::Normal);
+    env.transaction(|db| {
+        grants::prepay(db)?;
+        let mut all = authorization::authorities(db)?;
+        all.credentials.push(authorization::Authority {
+            id: vec![42],
+            version: 1,
+            revoked: false,
+            scope: CredentialScope::Global,
+        });
+        store::save(db, "authorities", &all)
+    })
+    .unwrap();
+    let request = IncidentPreparation {
+        job: vec![70; 16],
+        namespace: vec![51; 32],
+        compromised: vec![CredentialRevocation {
+            credential: vec![42],
+            version: 1,
+        }],
+        sources: normal.generations.clone(),
+        targets: vec![PendingCreation {
+            namespace: vec![51; 32],
+            vault: vec![1; 16],
+            attempt: vec![71; 16],
+        }],
+    };
+    let pre = env
+        .transaction(|db| {
+            let mut g = grants::load(db, &normal.id)?;
+            g.info.id = vec![72; 32];
+            g.info.purpose = GrantPurpose::IncidentPrepare(request.clone());
+            grants::save(db, &g)?;
+            Ok(g.info)
+        })
+        .unwrap();
+    signed_call(&env, &key, &pre, 0, MutationOperation::IncidentStart).unwrap();
+    let job = incident::status(&env).unwrap().unwrap();
+    assert!(!job.complete);
+    assert_eq!(job.targets.len(), 1);
+    env.transaction(|db| {
+        assert!(authorization::authority(db, &[42])?.revoked);
+        assert_eq!(
+            store::header(db, &[1; 16])?.state,
+            VaultState::IncidentRequired
+        );
+        assert!(grants::current(db, &env, &grants::load(db, &normal.id)?).is_err());
+        let mut old = grants::load(db, &normal.id)?;
+        old.info.generations.clear();
+        old.revoked = false;
+        assert!(grants::current(db, &env, &old).is_err());
+        assert!(
+            store::reserve(
+                db,
+                env.owner(),
+                Reserve {
+                    vault: vec![2; 16],
+                    operation: vec![3; 16]
+                },
+                env.now()
+            )
+            .is_err()
+        );
+        Ok(())
+    })
+    .unwrap();
+    signed_call(&env, &key, &pre, 0, MutationOperation::IncidentStart).unwrap();
+}
+
+#[path = "incident_tests.rs"]
+mod incident_tests;

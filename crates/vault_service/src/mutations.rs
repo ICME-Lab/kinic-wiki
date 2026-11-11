@@ -31,6 +31,16 @@ pub async fn mutate(
     // Capture policy outside the borrowed store transaction; never reenter canister state.
     let spending =
         matches!(m.operation, MutationOperation::Cleanup { .. }) || env.require_spending().is_ok();
+    if spending && matches!(m.operation, MutationOperation::IncidentStart) {
+        env.transaction(|db| {
+            let g = grants::load(db, &m.grant)?;
+            grants::authenticate(db, env, &m, &payload, &signature, &g)?;
+            if !matches!(g.info.purpose, GrantPurpose::IncidentPrepare(_)) {
+                return Err(Error::Unauthorized);
+            }
+            runtime::collect_completed_key_rows(db, env)
+        })?;
+    }
     let (result, work) = env.transaction(|db| {
         store::authorize(db, env.owner())?;
         let mut n = store::load::<cleanup::Namespace>(db, "cleanup")?;
@@ -88,6 +98,14 @@ pub async fn mutate(
             grant: m.grant.clone(),
         };
         let completion = match work.request.clone() {
+            WorkRequest::IncidentAllocate { vault, attempt } => {
+                incident_flights::allocate(&authorized, vault, attempt)
+                    .await
+                    .map(|_| MutationResult::Unit)
+            }
+            WorkRequest::IncidentDerive(r) => incident_flights::derive(&authorized, r)
+                .await
+                .map(MutationResult::Key),
             WorkRequest::Derive(r) => derive_vault_key(&authorized, r)
                 .await
                 .map(MutationResult::Key),
@@ -139,7 +157,61 @@ fn ordinary(
 ) -> Result<MutationResult> {
     let a = authorization::authority(db, &g.credential)?;
     let normal = matches!(g.info.purpose, GrantPurpose::Normal);
+    let incident_grant = matches!(g.info.purpose, GrantPurpose::Incident { .. });
+    let preparation = matches!(g.info.purpose, GrantPurpose::IncidentPrepare(_));
     match op {
+        MutationOperation::IncidentStart if preparation => {
+            incident::start(db, env, g).map(|_| MutationResult::Unit)
+        }
+        MutationOperation::IncidentAllocate { vault, attempt } if preparation => {
+            let mut j = incident::load(db, env)?;
+            let t = incident::target(&mut j, vault, attempt)?;
+            if t.target.is_some() {
+                return Ok(MutationResult::Unit);
+            }
+            work(
+                g,
+                env,
+                WorkRequest::IncidentAllocate {
+                    vault: vault.clone(),
+                    attempt: attempt.clone(),
+                },
+            )
+        }
+        MutationOperation::IncidentDerive(r) if incident_grant => {
+            incident::role(db, env, r)?;
+            if !valid_transport(&r.transport) {
+                return Err(Error::InvalidInput);
+            }
+            work(g, env, WorkRequest::IncidentDerive(r.clone()))
+        }
+        MutationOperation::IncidentStage {
+            vault,
+            attempt,
+            normal,
+            recovery,
+            recovery_verifier,
+        } if incident_grant => {
+            incident::stage(db, env, vault, attempt, normal, recovery, recovery_verifier)
+                .map(|_| MutationResult::Unit)
+        }
+        MutationOperation::IncidentConfirmKit {
+            vault,
+            attempt,
+            envelope_digest,
+        } if incident_grant => incident::confirm(db, env, vault, attempt, envelope_digest)
+            .map(|_| MutationResult::Unit),
+        MutationOperation::IncidentReset {
+            vault,
+            attempt,
+            next_attempt,
+        } if incident_grant => {
+            incident::reset(db, env, vault, attempt, next_attempt).map(|_| MutationResult::Unit)
+        }
+        // Cancellation ends no source obligation. Durable ciphertext and pins remain resumable.
+        MutationOperation::IncidentCancel if incident_grant || preparation => {
+            incident::load(db, env).map(|_| MutationResult::Unit)
+        }
         MutationOperation::Create(r) => {
             if g.info.purpose != GrantPurpose::Create || a.scope != CredentialScope::Global {
                 return Err(Error::Unauthorized);
@@ -282,6 +354,7 @@ fn ordinary(
         MutationOperation::RemoveCredential { credential }
             if g.info.purpose == GrantPurpose::Credentials =>
         {
+            store::incident::owner_change_allowed(db)?;
             authorization::remove(db, &a, credential)?;
             Ok(MutationResult::Unit)
         }
@@ -428,6 +501,9 @@ impl<E: Environment> Environment for Authorized<'_, E> {
     fn require_spending(&self) -> Result<()> {
         self.env.require_spending()
     }
+    fn reconcile_key_gc(&self, db: &Connection, owners: &[candid::Principal]) -> Result<()> {
+        self.env.reconcile_key_gc(db, owners)
+    }
     fn reserve_challenge(&self, t: u64) -> Result<()> {
         self.env.reserve_challenge(t)
     }
@@ -527,6 +603,15 @@ fn cleanup_operation(
         return Err(Error::Conflict);
     }
     n.action = digest;
+    if let Some(j) = store::incident::status(db)?.filter(|j| !j.complete) {
+        if matches!(action, CleanupAction::Purge)
+            && j.targets.iter().any(|t| targets.contains(&t.source.id))
+            && (targets.len() != j.targets.len()
+                || j.targets.iter().any(|t| !targets.contains(&t.source.id)))
+        {
+            return Err(Error::Conflict);
+        }
+    }
     let settled = env.cleanup_existing_flights(
         db,
         &targets,
@@ -571,6 +656,14 @@ fn cleanup_operation(
             true
         }
     };
+    if complete && matches!(action, CleanupAction::Purge) {
+        if let Some(mut j) = store::incident::status(db)?.filter(|j| !j.complete) {
+            if j.targets.iter().all(|t| targets.contains(&t.source.id)) {
+                j.complete = true;
+                store::save(db, "transition", &j)?;
+            }
+        }
+    }
     progress.cursor = progress.cursor.checked_add(1).ok_or(Error::QuotaExceeded)?;
     progress.complete = complete;
     if complete

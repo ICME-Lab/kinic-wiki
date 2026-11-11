@@ -53,6 +53,12 @@ export interface CleanupProgress {
   'complete' : boolean,
 }
 export interface CredentialInfo { 'id' : Uint8Array | number[] }
+export interface CredentialRevocation {
+  'credential' : Uint8Array | number[],
+  'version' : bigint,
+}
+export type CredentialScope = { 'Global' : null } |
+  { 'Instances' : Array<Instance> };
 export interface Derive {
   'attempt' : [] | [Uint8Array | number[]],
   'vault' : Uint8Array | number[],
@@ -134,8 +140,14 @@ export type GrantPurpose = { 'Restore' : { 'job' : Uint8Array | number[] } } |
   { 'Credentials' : null } |
   { 'Normal' : null } |
   { 'Cleanup' : { 'job' : Uint8Array | number[] } } |
-  { 'Incident' : { 'job' : Uint8Array | number[] } } |
-  { 'Create' : null };
+  {
+    'Incident' : {
+      'job' : Uint8Array | number[],
+      'vector_digest' : Uint8Array | number[],
+    }
+  } |
+  { 'Create' : null } |
+  { 'IncidentPrepare' : IncidentPreparation };
 export interface GrantRequest {
   'credential' : Uint8Array | number[],
   'public_key' : Uint8Array | number[],
@@ -169,6 +181,50 @@ export interface HttpResponse {
   'headers' : Array<[string, string]>,
   'upgrade' : [] | [boolean],
   'status_code' : number,
+}
+export interface IncidentContext {
+  'credentials' : Array<IncidentCredential>,
+  'namespace' : Uint8Array | number[],
+}
+export interface IncidentCredential {
+  'credential' : Uint8Array | number[],
+  'scope' : CredentialScope,
+  'version' : bigint,
+}
+export interface IncidentPreparation {
+  'job' : Uint8Array | number[],
+  'targets' : Array<PendingCreation>,
+  'sources' : Array<Generation>,
+  'namespace' : Uint8Array | number[],
+  'compromised' : Array<CredentialRevocation>,
+}
+export interface IncidentStatus {
+  'job' : Uint8Array | number[],
+  'vector_digest' : Uint8Array | number[],
+  'complete' : boolean,
+  'targets' : Array<IncidentTarget>,
+  'semantic_config' : Uint8Array | number[],
+  'namespace' : Uint8Array | number[],
+  'compromised' : Array<CredentialRevocation>,
+}
+export interface IncidentTarget {
+  'normal' : [] | [Envelope],
+  'attempt' : Uint8Array | number[],
+  'source' : Header,
+  'envelope_digest' : Uint8Array | number[],
+  'snapshot_sequence' : bigint,
+  'kit_ack' : [] | [Uint8Array | number[]],
+  'target' : [] | [Generation],
+  'recovery_verifier' : Uint8Array | number[],
+  'recovery' : [] | [Envelope],
+  'reset_attempt' : [] | [Uint8Array | number[]],
+  'phase' : PreparationPhase,
+  'next_epoch' : bigint,
+  'snapshot_time' : bigint,
+}
+export interface Instance {
+  'vault' : Uint8Array | number[],
+  'nonce' : Uint8Array | number[],
 }
 export interface KeyReply {
   'encrypted_key' : Uint8Array | number[],
@@ -214,6 +270,11 @@ export interface PendingCreation {
   'vault' : Uint8Array | number[],
   'namespace' : Uint8Array | number[],
 }
+export type PreparationPhase = { 'PendingNonce' : null } |
+  { 'Resetting' : null } |
+  { 'EnvelopesStaged' : null } |
+  { 'KitConfirmed' : null } |
+  { 'Allocated' : null };
 export interface PurchaseRequest {
   'beneficiary' : Principal,
   'amount_e8s' : bigint,
@@ -262,21 +323,25 @@ export type Result_17 = { 'Ok' : Quota } |
   { 'Err' : Error };
 export type Result_18 = { 'Ok' : GlobalCapacity } |
   { 'Err' : Error };
-export type Result_19 = { 'Ok' : Array<CredentialInfo> } |
+export type Result_19 = { 'Ok' : [] | [IncidentContext] } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : Challenge } |
   { 'Err' : Error };
-export type Result_20 = { 'Ok' : ObjectPage } |
+export type Result_20 = { 'Ok' : [] | [IncidentStatus] } |
   { 'Err' : Error };
-export type Result_21 = { 'Ok' : Array<Payment> } |
+export type Result_21 = { 'Ok' : Array<CredentialInfo> } |
   { 'Err' : Error };
-export type Result_22 = { 'Ok' : Array<UnfinishedVault> } |
+export type Result_22 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_23 = { 'Ok' : Array<Header> } |
+export type Result_23 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_24 = { 'Ok' : MutationResult } |
+export type Result_24 = { 'Ok' : Array<UnfinishedVault> } |
   { 'Err' : Error };
-export type Result_25 = { 'Ok' : [] | [Payment] } |
+export type Result_25 = { 'Ok' : Array<Header> } |
+  { 'Err' : Error };
+export type Result_26 = { 'Ok' : MutationResult } |
+  { 'Err' : Error };
+export type Result_27 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
 export type Result_3 = { 'Ok' : Export } |
   { 'Err' : Error };
@@ -336,7 +401,8 @@ export interface VaultConfig {
 export type VaultState = { 'Active' : null } |
   { 'Restoring' : null } |
   { 'Purging' : null } |
-  { 'Pending' : null };
+  { 'Pending' : null } |
+  { 'IncidentRequired' : null };
 export interface _SERVICE {
   'abort_export' : ActorMethod<[Uint8Array | number[]], Result>,
   'account_balance' : ActorMethod<[], Result_1>,
@@ -408,25 +474,30 @@ export interface _SERVICE {
    */
   'global_capacity' : ActorMethod<[], Result_18>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
-  'list_credentials' : ActorMethod<[], Result_19>,
+  'incident_context' : ActorMethod<[], Result_19>,
+  /**
+   * Owner-only encrypted status remains available when configuration is absent or incompatible.
+   */
+  'incident_status' : ActorMethod<[], Result_20>,
+  'list_credentials' : ActorMethod<[], Result_21>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
     Result_12
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_20
+    Result_22
   >,
-  'list_payments' : ActorMethod<[], Result_21>,
-  'list_unfinished_vaults' : ActorMethod<[], Result_22>,
-  'list_vaults' : ActorMethod<[], Result_23>,
+  'list_payments' : ActorMethod<[], Result_23>,
+  'list_unfinished_vaults' : ActorMethod<[], Result_24>,
+  'list_vaults' : ActorMethod<[], Result_25>,
   'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_4>,
   'mutate' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_24
+    Result_26
   >,
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_7>,
-  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_25>,
+  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_27>,
   'prepare_unlock_credential' : ActorMethod<
     [Uint8Array | number[], string],
     Result_15

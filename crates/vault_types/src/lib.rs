@@ -40,6 +40,7 @@ pub enum VaultState {
     Pending,
     Active,
     Restoring,
+    IncidentRequired,
     Purging,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -294,3 +295,6 @@ pub struct GlobalCapacity {
     pub overcommitted: bool,
     pub overage: u64,
 }
+
+mod incident;
+pub use incident::*;

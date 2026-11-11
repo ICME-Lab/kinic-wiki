@@ -40,6 +40,24 @@ export interface Envelope {
   'version' : number,
   'nonce' : Uint8Array | number[],
 }
+export interface Generation {
+  'vault' : Uint8Array | number[],
+  'owner' : Principal,
+  'epoch' : bigint,
+  'version' : number,
+  'canister' : Principal,
+  'nonce' : Uint8Array | number[],
+  'key_name' : string,
+}
+export interface IncidentDerive {
+  'job' : Uint8Array | number[],
+  'attempt' : Uint8Array | number[],
+  'role' : IncidentRole,
+  'transport' : Uint8Array | number[],
+  'generation' : Generation,
+}
+export type IncidentRole = { 'Source' : null } |
+  { 'Target' : null };
 export interface Instance {
   'vault' : Uint8Array | number[],
   'nonce' : Uint8Array | number[],
@@ -60,6 +78,17 @@ export type MutationOperation = {
       'index' : number,
     }
   } |
+  {
+    'IncidentStage' : {
+      'normal' : Envelope,
+      'attempt' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+      'recovery_verifier' : Uint8Array | number[],
+      'recovery' : Envelope,
+    }
+  } |
+  { 'IncidentStart' : null } |
+  { 'IncidentDerive' : IncidentDerive } |
   {
     'BeginRegistration' : {
       'vault' : Uint8Array | number[],
@@ -88,6 +117,7 @@ export type MutationOperation = {
       'scope' : CredentialScope,
     }
   } |
+  { 'IncidentCancel' : null } |
   {
     'Cleanup' : {
       'job' : Uint8Array | number[],
@@ -95,8 +125,22 @@ export type MutationOperation = {
       'cursor' : bigint,
     }
   } |
+  {
+    'IncidentReset' : {
+      'attempt' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+      'next_attempt' : Uint8Array | number[],
+    }
+  } |
   { 'Derive' : Derive } |
   { 'Create' : Reserve } |
+  {
+    'IncidentConfirmKit' : {
+      'attempt' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+      'envelope_digest' : Uint8Array | number[],
+    }
+  } |
   {
     'Activate' : {
       'request' : Activate,
@@ -106,6 +150,12 @@ export type MutationOperation = {
   {
     'PurgeObject' : {
       'object' : Uint8Array | number[],
+      'vault' : Uint8Array | number[],
+    }
+  } |
+  {
+    'IncidentAllocate' : {
+      'attempt' : Uint8Array | number[],
       'vault' : Uint8Array | number[],
     }
   } |

@@ -35,5 +35,7 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
     if !matches!(version, 1 | 2 | 3 | 4) {
         return Err(vault_types::Error::Storage);
     }
+    db.execute_batch(vault_store::KEY_CAPACITY_SCHEMA)
+        .map_err(|_| vault_types::Error::Storage)?;
     Ok(())
 }

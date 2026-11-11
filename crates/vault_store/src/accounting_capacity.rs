@@ -52,15 +52,24 @@ pub(crate) fn legacy_excess(db: &Connection) -> Result<u64> {
             |r| sql::row_get(r, 0),
         )
         .map_err(|_| Error::Storage)?;
+    let key_excess = excess(
+        db,
+        "key_flights",
+        &["owner", "phase"],
+        9,
+        Some(KEY_ROWS),
+        KEY_ROW,
+    )?;
     if exists == 0 {
-        return Ok(0);
+        return Ok(key_excess);
     }
     let commitments:i64=db.query_row("SELECT count(*) FROM (SELECT owner FROM accounts UNION SELECT json_extract(record,'$.request.beneficiary') FROM payments WHERE json_extract(record,'$.status') IN ('InFlight','Unknown'))",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
     // Pending absent beneficiaries already reserve their full future account row;
     // a callback replacing membership with a funded account cannot grow excess.
     let mut total = (commitments as u64)
         .saturating_sub(ACCOUNTS as u64)
-        .saturating_mul(SMALL_ROW as u64);
+        .saturating_mul(SMALL_ROW as u64)
+        .saturating_add(key_excess);
     // Account counts were charged by the commitment union; charge only their
     // oversized encoded values here, without counting existing accounts twice.
     total = total.saturating_add(excess(db, "accounts", &["owner"], 3, None, SMALL_ROW)?);

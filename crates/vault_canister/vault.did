@@ -41,6 +41,8 @@ type Challenge = record {
 };
 type CleanupProgress = record { job : blob; cursor : nat64; complete : bool };
 type CredentialInfo = record { id : blob };
+type CredentialRevocation = record { credential : blob; version : nat64 };
+type CredentialScope = variant { Global; Instances : vec Instance };
 type Derive = record {
   attempt : opt blob;
   vault : blob;
@@ -111,8 +113,9 @@ type GrantPurpose = variant {
   Credentials;
   Normal;
   Cleanup : record { job : blob };
-  Incident : record { job : blob };
+  Incident : record { job : blob; vector_digest : blob };
   Create;
+  IncidentPrepare : IncidentPreparation;
 };
 type GrantRequest = record {
   credential : blob;
@@ -148,6 +151,47 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
+type IncidentContext = record {
+  credentials : vec IncidentCredential;
+  namespace : blob;
+};
+type IncidentCredential = record {
+  credential : blob;
+  scope : CredentialScope;
+  version : nat64;
+};
+type IncidentPreparation = record {
+  job : blob;
+  targets : vec PendingCreation;
+  sources : vec Generation;
+  namespace : blob;
+  compromised : vec CredentialRevocation;
+};
+type IncidentStatus = record {
+  job : blob;
+  vector_digest : blob;
+  complete : bool;
+  targets : vec IncidentTarget;
+  semantic_config : blob;
+  namespace : blob;
+  compromised : vec CredentialRevocation;
+};
+type IncidentTarget = record {
+  normal : opt Envelope;
+  attempt : blob;
+  source : Header;
+  envelope_digest : blob;
+  snapshot_sequence : nat64;
+  kit_ack : opt blob;
+  target : opt Generation;
+  recovery_verifier : blob;
+  recovery : opt Envelope;
+  reset_attempt : opt blob;
+  phase : PreparationPhase;
+  next_epoch : nat64;
+  snapshot_time : nat64;
+};
+type Instance = record { vault : blob; nonce : blob };
 type KeyReply = record { encrypted_key : blob; public_key : blob };
 type ManageCredential = record {
   remove : opt blob;
@@ -186,6 +230,13 @@ type PendingCreation = record {
   vault : blob;
   namespace : blob;
 };
+type PreparationPhase = variant {
+  PendingNonce;
+  Resetting;
+  EnvelopesStaged;
+  KitConfirmed;
+  Allocated;
+};
 type PurchaseRequest = record {
   beneficiary : principal;
   amount_e8s : nat64;
@@ -213,14 +264,16 @@ type Result_15 = variant { Ok : blob; Err : Error };
 type Result_16 = variant { Ok : opt VaultConfig; Err : Error };
 type Result_17 = variant { Ok : Quota; Err : Error };
 type Result_18 = variant { Ok : GlobalCapacity; Err : Error };
-type Result_19 = variant { Ok : vec CredentialInfo; Err : Error };
+type Result_19 = variant { Ok : opt IncidentContext; Err : Error };
 type Result_2 = variant { Ok : Challenge; Err : Error };
-type Result_20 = variant { Ok : ObjectPage; Err : Error };
-type Result_21 = variant { Ok : vec Payment; Err : Error };
-type Result_22 = variant { Ok : vec UnfinishedVault; Err : Error };
-type Result_23 = variant { Ok : vec Header; Err : Error };
-type Result_24 = variant { Ok : MutationResult; Err : Error };
-type Result_25 = variant { Ok : opt Payment; Err : Error };
+type Result_20 = variant { Ok : opt IncidentStatus; Err : Error };
+type Result_21 = variant { Ok : vec CredentialInfo; Err : Error };
+type Result_22 = variant { Ok : ObjectPage; Err : Error };
+type Result_23 = variant { Ok : vec Payment; Err : Error };
+type Result_24 = variant { Ok : vec UnfinishedVault; Err : Error };
+type Result_25 = variant { Ok : vec Header; Err : Error };
+type Result_26 = variant { Ok : MutationResult; Err : Error };
+type Result_27 = variant { Ok : opt Payment; Err : Error };
 type Result_3 = variant { Ok : Export; Err : Error };
 type Result_4 = variant { Ok; Err : Error };
 type Result_5 = variant { Ok : Upload; Err : Error };
@@ -265,7 +318,13 @@ type VaultConfig = record {
   key_name : text;
   rp_id : text;
 };
-type VaultState = variant { Active; Restoring; Purging; Pending };
+type VaultState = variant {
+  Active;
+  Restoring;
+  Purging;
+  Pending;
+  IncidentRequired;
+};
 service : () -> {
   abort_export : (blob) -> (Result);
   account_balance : () -> (Result_1) query;
@@ -303,16 +362,19 @@ service : () -> {
   // Aggregate capacity is public metadata; it never allocates an owner or account.
   global_capacity : () -> (Result_18) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
-  list_credentials : () -> (Result_19);
+  incident_context : () -> (Result_19) query;
+  // Owner-only encrypted status remains available when configuration is absent or incompatible.
+  incident_status : () -> (Result_20) query;
+  list_credentials : () -> (Result_21);
   list_history : (blob, blob, nat64) -> (Result_12);
-  list_objects : (blob, blob) -> (Result_20);
-  list_payments : () -> (Result_21) query;
-  list_unfinished_vaults : () -> (Result_22);
-  list_vaults : () -> (Result_23);
+  list_objects : (blob, blob) -> (Result_22);
+  list_payments : () -> (Result_23) query;
+  list_unfinished_vaults : () -> (Result_24);
+  list_vaults : () -> (Result_25);
   manage_unlock_credential : (ManageCredential) -> (Result_4);
-  mutate : (blob, blob) -> (Result_24);
+  mutate : (blob, blob) -> (Result_26);
   pay_purchase : (blob) -> (Result_7);
-  payment_status : (blob) -> (Result_25) query;
+  payment_status : (blob) -> (Result_27) query;
   prepare_unlock_credential : (blob, text) -> (Result_15);
   purge_object : (blob, blob) -> (Result_4);
   put_chunk : (blob, nat32, blob) -> (Result_4);

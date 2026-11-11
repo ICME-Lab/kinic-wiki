@@ -24,6 +24,11 @@ pub trait Environment {
     ) -> Result<bool> {
         Ok(true)
     }
+    /// Called only for principals selected from server-owned completed key rows.
+    /// Embedders with account tables settle old cached storage through now, then refresh usage.
+    fn reconcile_key_gc(&self, _db: &Connection, _owners: &[Principal]) -> Result<()> {
+        Ok(())
+    }
     fn reserve_challenge(&self, _token: u64) -> Result<()> {
         Ok(())
     }
@@ -78,4 +83,9 @@ pub fn settle_key_reservation_in(
         vault_store::save(db, "control", &c)?;
     }
     Ok(current)
+}
+
+pub(crate) fn collect_completed_key_rows(db: &Connection, env: &impl Environment) -> Result<()> {
+    let owners = vault_store::keys::collect_completed(db, env.now())?;
+    env.reconcile_key_gc(db, &owners)
 }

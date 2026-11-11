@@ -52,7 +52,7 @@ fn next_sequence(sequence: u64) -> Result<u64> {
     Ok(sequence + 1)
 }
 pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
-    active(db, v)?;
+    incident::readable(db, v)?;
     let current = num(
         db,
         "SELECT COALESCE(sum(r.plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.deleted=0",
@@ -73,7 +73,7 @@ pub fn usage(db: &Connection) -> Result<u64> {
     Ok(n as u64)
 }
 pub fn global_usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights)+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','transition','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+    let n:i64=db.query_row("SELECT 262144+(SELECT COALESCE(sum(CASE WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','transition','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+length(pending)),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     Ok((n as u64)
         .saturating_add(capacity::ACCOUNTING_POOL)
         .saturating_add(crate::accounting_capacity::legacy_excess(db)?))
@@ -457,7 +457,7 @@ fn row(r: &sql::Row<'_>) -> sql::Result<Revision> {
 }
 const COLS: &str = "r.vault,r.object,r.revision,r.plain_size,r.manifest,r.hashes,r.deleted,r.born";
 pub fn manifest(db: &Connection, v: &[u8], o: &[u8], revision: u64) -> Result<Revision> {
-    let header = active(db, v)?;
+    let header = incident::readable(db, v)?;
     id(o)?;
     let rev = if revision == 0 {
         head(db, v, o)?
@@ -484,7 +484,7 @@ pub fn chunk(db: &Connection, v: &[u8], o: &[u8], revision: u64, index: u32) -> 
     .ok_or(Error::NotFound)
 }
 pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<RevisionPage> {
-    let header = active(db, v)?;
+    let header = incident::readable(db, v)?;
     id(o)?;
     let mut s=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision<?3 AND r.retired IS NULL ORDER BY r.revision DESC LIMIT 11")).map_err(db_error)?;
     let entries = sql::query_map(
@@ -517,7 +517,7 @@ pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<Revis
     })
 }
 pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
-    let header = active(db, v)?;
+    let header = incident::readable(db, v)?;
     if !after.is_empty() {
         id(after)?
     }
@@ -677,6 +677,9 @@ pub(crate) fn remove_revision(
     object: &[u8],
     revision: i64,
 ) -> Result<()> {
+    if incident::pinned(db, vault)? {
+        return Err(Error::Conflict);
+    }
     db.execute(
         "DELETE FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision=?3)",
         params![vault, object, revision],
@@ -695,7 +698,7 @@ fn collect_retired_revision(db: &Connection, now: u64) -> Result<u64> {
     let revision: Option<(Id, Id, i64)> = db
         .query_row(
             "SELECT r.vault,r.object,r.revision FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r
-         WHERE r.retired IS NOT NULL AND NOT EXISTS(
+         WHERE r.retired IS NOT NULL AND NOT EXISTS(SELECT 1 FROM vaults v WHERE v.owner=r.owner AND v.id=r.vault AND json_extract(v.header,'$.state')='IncidentRequired') AND NOT EXISTS(
            SELECT 1 FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) e WHERE e.vault=r.vault AND e.state='Active' AND e.expires>?1
          ) LIMIT 1",
             params![now as i64],
@@ -730,7 +733,7 @@ pub fn gc(db: &Connection, now: u64) -> Result<u64> {
     }
 }
 pub fn begin_export(db: &Connection, vault: &[u8], export: &[u8], now: u64) -> Result<Export> {
-    let header = active(db, vault)?;
+    let header = incident::readable(db, vault)?;
     id(export)?;
     let previous: Option<String> = db
         .query_row(
@@ -943,7 +946,7 @@ pub fn maintain_expired(db: &Connection, now: u64) -> Result<Option<(Principal, 
         UNION ALL SELECT owner,expires FROM uploads WHERE expires<=?1
         UNION ALL SELECT owner,expires FROM vaults WHERE expires>0 AND expires<=?1
         UNION ALL SELECT owner,expires FROM exports WHERE expires<=?1
-        UNION ALL SELECT r.owner,0 AS expires FROM revisions r WHERE r.retired IS NOT NULL AND NOT EXISTS(
+        UNION ALL SELECT r.owner,0 AS expires FROM revisions r WHERE r.retired IS NOT NULL AND NOT EXISTS(SELECT 1 FROM vaults v WHERE v.owner=r.owner AND v.id=r.vault AND json_extract(v.header,'$.state')='IncidentRequired') AND NOT EXISTS(
             SELECT 1 FROM exports e WHERE e.owner=r.owner AND e.vault=r.vault AND e.state='Active' AND e.expires>?1)
         ) ORDER BY expires,owner LIMIT 1",params![now as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
     let Some(owner) = owner else { return Ok(None) };

@@ -28,6 +28,8 @@ pub(crate) struct Work {
 pub(crate) enum WorkRequest {
     Derive(Derive),
     Create(Reserve),
+    IncidentAllocate { vault: Id, attempt: Id },
+    IncidentDerive(IncidentDerive),
 }
 pub(crate) fn key(id: &[u8]) -> String {
     format!(
@@ -175,6 +177,24 @@ pub(crate) fn current(db: &Connection, env: &impl Environment, g: &Grant) -> Res
     }
     let authority = crate::authorization::authority(db, &g.credential)?;
     if authority.revoked || authority.version != g.credential_version {
+        return Err(Error::Unauthorized);
+    }
+    if matches!(
+        g.info.purpose,
+        GrantPurpose::Incident { .. } | GrantPurpose::IncidentPrepare(_)
+    ) {
+        return incident::validate(db, env, &g.credential, &g.info.purpose, &g.info.generations);
+    }
+    if matches!(g.info.purpose, GrantPurpose::Restore { .. }) {
+        return Err(Error::Conflict);
+    }
+    if matches!(
+        g.info.purpose,
+        GrantPurpose::Create | GrantPurpose::Credentials
+    ) {
+        store::incident::owner_change_allowed(db)?;
+    }
+    if matches!(g.info.purpose, GrantPurpose::Normal) && g.info.generations.is_empty() {
         return Err(Error::Unauthorized);
     }
     if let GrantPurpose::CancelCreation { job, target } = &g.info.purpose {

@@ -1,5 +1,10 @@
 import type { TransportSecretKey } from "../../vault-crypto/src/index.ts";
 export class Session {
+  private lockCleanups = new Set<() => void>();
+  addLockCleanup(cleanup: () => void) {
+    this.lockCleanups.add(cleanup);
+    return () => this.lockCleanups.delete(cleanup);
+  }
   private controller = new AbortController();
   get signal() {
     return this.controller.signal;
@@ -23,6 +28,7 @@ export class Session {
   }
   lock() {
     this.generation++;
+    for (const cleanup of this.lockCleanups) cleanup();
     this.controller.abort();
     this.controller = new AbortController();
     this.lastActivity = Date.now();

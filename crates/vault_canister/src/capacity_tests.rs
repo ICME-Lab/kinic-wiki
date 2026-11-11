@@ -461,3 +461,31 @@ fn capacity_legacy_oversized_whole_row_is_charged_until_normalized() {
         0
     );
 }
+
+#[test]
+fn key_gc_refreshes_offline_other_owner_billing_and_restores_caller_scope() {
+    state::initialize().unwrap();
+    let caller = principal(7001);
+    let other = principal(7002);
+    state::transaction(|db|{
+        let now=3*vault_types::DAY;
+        let account=other.to_text();
+        db.execute("INSERT INTO accounts VALUES(?1,1000000000,0,0)",params![account]).unwrap();
+        vault_store::OwnerContext::authenticated(other)?.run(db,|db|{
+            vault_store::keys::reserve(db,1,1,0)?;
+            vault_store::keys::settle(db,1,2,0)?;
+            db.execute("UPDATE accounts SET storage_bytes=?1 WHERE owner=?2",params![vault_store::content::usage(db)? as i64,account]).unwrap();Ok(())
+        })?;
+        let old:i64=db.query_row("SELECT storage_bytes FROM accounts WHERE owner=?1",params![account],|r|r.get(0)).unwrap();
+        vault_store::OwnerContext::authenticated(caller)?.run(db,|db|{
+            let owners=vault_store::keys::collect_completed(db,now)?;assert_eq!(owners,vec![other]);
+            accounting::reconcile_key_gc_in(db,caller,&owners,(now*1000) as i64)?;
+            let active:Vec<u8>=db.query_row("SELECT owner FROM owner_scope",params![],|r|r.get(0)).unwrap();assert_eq!(active,caller.as_slice());
+            let (usage,balance,at):(i64,i64,i64)=db.query_row("SELECT storage_bytes,balance_cycles,storage_charged_at_ms FROM accounts WHERE owner=?1",params![account],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+            assert_eq!(usage,old-4096);
+            let expected=(old as u128*now as u128*127000/1073741824) as i64;
+            assert_eq!(balance,1_000_000_000-expected);assert_eq!(at,(now*1000) as i64);
+            let count:i64=db.query_row("SELECT count(*) FROM accounts",params![],|r|r.get(0)).unwrap();assert_eq!(count,1);Ok(())
+        })
+    }).unwrap();
+}

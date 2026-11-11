@@ -31,6 +31,23 @@ type Derive = record {
   assertion : opt text;
 };
 type Envelope = record { ciphertext : blob; version : nat8; nonce : blob };
+type Generation = record {
+  vault : blob;
+  owner : principal;
+  epoch : nat64;
+  version : nat8;
+  canister : principal;
+  nonce : blob;
+  key_name : text;
+};
+type IncidentDerive = record {
+  job : blob;
+  attempt : blob;
+  role : IncidentRole;
+  transport : blob;
+  generation : Generation;
+};
+type IncidentRole = variant { Source; Target };
 type Instance = record { vault : blob; nonce : blob };
 type Mutation = record {
   counter : nat64;
@@ -42,6 +59,15 @@ type Mutation = record {
 };
 type MutationOperation = variant {
   PutChunk : record { vault : blob; data : blob; upload : blob; index : nat32 };
+  IncidentStage : record {
+    normal : Envelope;
+    attempt : blob;
+    vault : blob;
+    recovery_verifier : blob;
+    recovery : Envelope;
+  };
+  IncidentStart;
+  IncidentDerive : IncidentDerive;
   BeginRegistration : record { vault : blob; scope : CredentialScope };
   CommitRevision : record { vault : blob; upload : blob };
   KeyResult : record { handle : blob };
@@ -56,11 +82,19 @@ type MutationOperation = variant {
     registration : text;
     scope : CredentialScope;
   };
+  IncidentCancel;
   Cleanup : record { job : blob; action : CleanupAction; cursor : nat64 };
+  IncidentReset : record { attempt : blob; vault : blob; next_attempt : blob };
   Derive : Derive;
   Create : Reserve;
+  IncidentConfirmKit : record {
+    attempt : blob;
+    vault : blob;
+    envelope_digest : blob;
+  };
   Activate : record { request : Activate; recovery_verifier : blob };
   PurgeObject : record { object : blob; vault : blob };
+  IncidentAllocate : record { attempt : blob; vault : blob };
   BeginRevision : BeginRevision;
   RemoveCredential : record { credential : blob };
   CancelSetup : record { attempt : blob; vault : blob };

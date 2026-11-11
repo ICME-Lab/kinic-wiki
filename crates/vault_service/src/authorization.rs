@@ -190,6 +190,7 @@ fn registration_authority(
     vault: &Id,
     scope: &CredentialScope,
 ) -> Result<()> {
+    store::incident::owner_change_allowed(db)?;
     let source = authority(db, &g.credential)?;
     if !subset(scope, &source.scope) {
         return Err(Error::Unauthorized);
@@ -253,4 +254,39 @@ pub(crate) fn register(
     insert(db, &c, scope.clone())?;
     store::save(db, "candidate", &())?;
     Ok(())
+}
+
+/// Admission has computed the exact union of selected physical credentials' live scopes.
+pub(crate) fn revoke_incident(
+    db: &Connection,
+    issuer: &Authority,
+    selected: &[CredentialRevocation],
+    sources: &[Generation],
+) -> Result<()> {
+    if issuer.revoked || sources.iter().any(|g| !covers(&issuer.scope, g)) {
+        return Err(Error::Unauthorized);
+    }
+    let mut all = authorities(db)?;
+    for c in selected {
+        let a = all
+            .credentials
+            .iter_mut()
+            .find(|a| a.id == c.credential && a.version == c.version && !a.revoked)
+            .ok_or(Error::Unauthorized)?;
+        if a.id == issuer.id {
+            return Err(Error::Unauthorized);
+        }
+        a.version = a.version.checked_add(1).ok_or(Error::QuotaExceeded)?;
+        a.revoked = true;
+        db.execute("DELETE FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![a.id]).map_err(|_|Error::Storage)?;
+        for n in 0..10 {
+            let key = format!("credential-slot:{n}");
+            let exists:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1)",params![key],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
+            if exists == 0 {
+                store::save(db, &key, &())?;
+                break;
+            }
+        }
+    }
+    store::save(db, "authorities", &all)
 }

@@ -87,6 +87,9 @@ impl Environment for Vault {
     ) -> Result<bool> {
         crate::accounting::recover_pending_in(db, self.owner(), targets, cancel_live, self.now())
     }
+    fn reconcile_key_gc(&self, db: &Connection, owners: &[Principal]) -> Result<()> {
+        crate::accounting::reconcile_key_gc_in(db, self.owner(), owners, now_millis())
+    }
     fn canister(&self) -> Principal {
         ic_cdk::api::canister_self()
     }
@@ -635,4 +638,16 @@ pub(crate) fn settle_key_reservation_for_owner(
     actual: u64,
 ) -> Result<bool> {
     crate::state::State.vault_settle_key_flight(owner, token, now, actual)
+}
+
+/// Owner-only encrypted status remains available when configuration is absent or incompatible.
+#[ic_cdk::query]
+fn incident_status() -> vault_types::Result<Option<vault_types::IncidentStatus>> {
+    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
+    crate::state::transaction(|db| owner.run(db, vault_store::incident::status))
+}
+#[ic_cdk::query]
+fn incident_context() -> vault_types::Result<Option<vault_types::IncidentContext>> {
+    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
+    crate::state::transaction(|db| owner.run(db, vault_service::incident::context_in))
 }

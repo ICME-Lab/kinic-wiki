@@ -90,6 +90,42 @@ test("all generated JS Candid mutation variants and generation bytes match froze
       ] as const
     ).map((action) => ({ Cleanup: { job: op, cursor: 0n, action } })),
   ];
+  const generation = {
+    version: 2,
+    canister: Principal.fromUint8Array(new Uint8Array([1])),
+    owner: Principal.fromUint8Array(new Uint8Array([2])),
+    vault: v,
+    epoch: 1n,
+    nonce: b(20, 32),
+    key_name: "key_1",
+  };
+  operations.push(
+    { IncidentStart: null },
+    { IncidentAllocate: { vault: v, attempt: op } },
+    ...([{ Source: null }, { Target: null }] as const).map((role) => ({
+      IncidentDerive: {
+        job: op,
+        attempt: op,
+        role,
+        generation,
+        transport: b(8, 48),
+      },
+    })),
+    {
+      IncidentStage: {
+        vault: v,
+        attempt: op,
+        normal: env,
+        recovery: env,
+        recovery_verifier: b(7, 32),
+      },
+    },
+    {
+      IncidentConfirmKit: { vault: v, attempt: op, envelope_digest: b(8, 32) },
+    },
+    { IncidentReset: { vault: v, attempt: op, next_attempt: b(21) } },
+    { IncidentCancel: null },
+  );
   const key = Ed25519KeyIdentity.generate(b(15, 32));
   const owner = Principal.fromUint8Array(new Uint8Array([2])),
     canister = Principal.fromUint8Array(new Uint8Array([1]));

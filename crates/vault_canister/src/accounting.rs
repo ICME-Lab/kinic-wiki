@@ -606,3 +606,20 @@ pub(crate) fn recover_pending_in(
     let pending:i64=db.query_row("SELECT (SELECT count(*) FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled'))+(SELECT count(*) FROM vault_cycle_reservations WHERE owner=?2 AND generation<?3 AND (in_flight=1 OR execution_checkpoint>execution_billed))",params![owner.as_slice(),text,runtime],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
     Ok(pending == 0)
 }
+
+/// Server-selected expired journal owners only; this bridge allocates no account or authority.
+/// It executes inside the caller's authenticated transaction and restores that SQL scope.
+pub(crate) fn reconcile_key_gc_in(
+    db: &Connection,
+    caller: candid::Principal,
+    owners: &[candid::Principal],
+    now: i64,
+) -> vault_types::Result<()> {
+    for owner in owners {
+        vault_store::OwnerContext::authenticated(*owner)?.run(db, |db| {
+            track_storage_in(db, &owner.to_text(), vault_store::content::usage(db)?, now)
+        })?;
+    }
+    db.execute("INSERT INTO owner_scope(slot,owner) VALUES(1,?1) ON CONFLICT(slot) DO UPDATE SET owner=excluded.owner",params![caller.as_slice()]).map_err(|_|Error::Storage)?;
+    Ok(())
+}

@@ -1,7 +1,11 @@
 //! Global key-service admission, with durable reservations surviving UTC rollover/upgrades.
 use super::*;
+use vault_types::capacity::{KEY_OWNER_CHARGE, KEY_OWNER_ROWS, KEY_ROW, KEY_ROWS};
 pub const DERIVE_RESERVATION: u64 = 30_000_000_000;
 pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<()> {
+    if token > i64::MAX as u64 || now > i64::MAX as u64 {
+        return Err(Error::InvalidInput);
+    }
     if required > DERIVE_RESERVATION {
         return Err(Error::QuotaExceeded);
     }
@@ -25,12 +29,21 @@ pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<(
     if budget as u64 + DERIVE_RESERVATION > 30_000_000_000_000 {
         return Err(Error::QuotaExceeded);
     }
-    db.execute(
-        "DELETE FROM key_flights WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2",
-        params![now.saturating_sub(DAY) as i64, (now / DAY) as i64],
-    )
-    .map_err(|_| Error::Storage)?;
-    content::check_capacity(db, 4096)?;
+    admit_rows(db, 1)?;
+    if owner.len() > 29
+        || vault_types::capacity::row_size(&[owner.len(), "reserved".len()], 9)
+            .is_none_or(|n| n > KEY_ROW)
+    {
+        return Err(Error::InvalidInput);
+    }
+    // The global 16 MiB pool already prepays this row. The historical owner billing charge remains 4096 B.
+    if content::usage(db)?
+        .checked_add(KEY_OWNER_CHARGE)
+        .ok_or(Error::QuotaExceeded)?
+        > TOTAL_MAX
+    {
+        return Err(Error::QuotaExceeded);
+    }
     db.execute("INSERT INTO key_flights(owner,token,day,reserved,created,payment,generation) VALUES(?1,?2,?3,?4,?5,?6,COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0))",params![owner,token as i64,(now/DAY) as i64,DERIVE_RESERVATION as i64,now as i64,required as i64]).map_err(|_|Error::Storage)?;
     Ok(())
 }
@@ -83,4 +96,37 @@ pub fn cancel_pending(db: &Connection, now: u64) -> Result<Option<(u64, u64, boo
 pub fn acknowledge_cancel(db: &Connection, token: u64) -> Result<()> {
     db.execute("UPDATE key_flights SET phase='cancelled_done' WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND token=?1 AND in_flight=0 AND phase='cancelled'",params![token as i64]).map_err(|_|Error::Storage)?;
     Ok(())
+}
+
+/// Stored-row admission only. The service commits bounded GC separately before calling this.
+pub fn admit_rows(db: &Connection, additional: usize) -> Result<()> {
+    if additional == 0 || additional > KEY_OWNER_ROWS {
+        return Err(Error::InvalidInput);
+    }
+    let (mine,total):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM key_flights",params![],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
+    if mine as usize + additional > KEY_OWNER_ROWS || total as usize + additional > KEY_ROWS {
+        return Err(Error::QuotaExceeded);
+    }
+    Ok(())
+}
+
+/// One bounded batch. Service callers commit a batch before fallible admission so
+/// legacy journals above the new cap can make progress even when admission fails.
+pub fn collect_completed(db: &Connection, now: u64) -> Result<Vec<Principal>> {
+    const SELECT: &str = "SELECT rowid,owner FROM key_flights WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2 ORDER BY CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 0 ELSE 1 END,settled,owner,token LIMIT 128";
+    let mut statement = db.prepare(SELECT).map_err(|_| Error::Storage)?;
+    let rows: Vec<(i64, Vec<u8>)> = sql::query_map(
+        &mut statement,
+        params![now.saturating_sub(DAY) as i64, (now / DAY) as i64],
+        |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+    )
+    .map_err(|_| Error::Storage)?;
+    let mut owners = std::collections::BTreeSet::new();
+    for (row, owner) in rows {
+        let owner = Principal::try_from_slice(&owner).map_err(|_| Error::Storage)?;
+        owners.insert(owner);
+        db.execute("DELETE FROM key_flights WHERE rowid=?1", params![row])
+            .map_err(|_| Error::Storage)?;
+    }
+    Ok(owners.into_iter().collect())
 }

@@ -25,6 +25,15 @@ pub(crate) fn validate_request(
     if a.revoked {
         return Err(Error::Unauthorized);
     }
+    if matches!(
+        r.purpose,
+        GrantPurpose::Incident { .. } | GrantPurpose::IncidentPrepare(_)
+    ) {
+        return incident::validate(db, env, &r.credential, &r.purpose, &r.generations);
+    }
+    if matches!(r.purpose, GrantPurpose::Create | GrantPurpose::Credentials) {
+        store::incident::owner_change_allowed(db)?;
+    }
     if let GrantPurpose::CancelCreation { target, .. } = &r.purpose {
         if a.scope != CredentialScope::Global || !r.generations.is_empty() {
             return Err(Error::Unauthorized);
@@ -36,10 +45,7 @@ pub(crate) fn validate_request(
     {
         return Err(Error::Unauthorized);
     }
-    if matches!(
-        r.purpose,
-        GrantPurpose::Restore { .. } | GrantPurpose::Incident { .. }
-    ) {
+    if matches!(r.purpose, GrantPurpose::Restore { .. }) {
         return Err(Error::Conflict);
     } // Task7 transition authorization.
     if r.generations.is_empty()

@@ -217,7 +217,7 @@ pub fn cancel_vault_setup(env: &impl Environment, vault: Id, attempt: Id) -> Res
 pub fn get_vault_header(env: &impl Environment, vault: Id) -> Result<Header> {
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
-        store::active(db, &vault)
+        store::incident::readable(db, &vault)
     })
 }
 pub fn list_vaults(env: &impl Environment) -> Result<Vec<Header>> {
@@ -370,6 +370,12 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         return Err(Error::Unauthorized);
     }
     env.require_spending()?;
+    env.transaction(|db| {
+        let h = live(db, &request.vault, env.now())?;
+        epoch(&h, request.epoch)?;
+        store::setup::check_attempt(db, &h, request.attempt.as_deref())?;
+        runtime::collect_completed_key_rows(db, env)
+    })?;
     let (cfg, token, flight) = env.transaction(|db| {
         let mut cfg = store::authorize(db, env.owner())?;
         let configuration = hash(&cfg)?;
@@ -664,7 +670,7 @@ pub fn prepare_unlock_credential(
     env.require_spending()?;
     env.transaction(|db| {
         let cfg = store::authorize(db, env.owner())?;
-        store::active(db, &vault)?;
+        store::incident::readable(db, &vault)?;
         let ch = ceremony(
             db,
             env.now(),
@@ -958,3 +964,6 @@ pub fn get_active_export_for_vault(env: &impl Environment, vault: Id) -> Result<
         store::content::active_export_for_vault(db, &vault, env.now())
     })
 }
+
+pub mod incident;
+mod incident_flights;

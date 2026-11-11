@@ -1,4 +1,29 @@
 export const idlFactory = ({ IDL }) => {
+  const Envelope = IDL.Record({
+    'ciphertext' : IDL.Vec(IDL.Nat8),
+    'version' : IDL.Nat8,
+    'nonce' : IDL.Vec(IDL.Nat8),
+  });
+  const IncidentRole = IDL.Variant({
+    'Source' : IDL.Null,
+    'Target' : IDL.Null,
+  });
+  const Generation = IDL.Record({
+    'vault' : IDL.Vec(IDL.Nat8),
+    'owner' : IDL.Principal,
+    'epoch' : IDL.Nat64,
+    'version' : IDL.Nat8,
+    'canister' : IDL.Principal,
+    'nonce' : IDL.Vec(IDL.Nat8),
+    'key_name' : IDL.Text,
+  });
+  const IncidentDerive = IDL.Record({
+    'job' : IDL.Vec(IDL.Nat8),
+    'attempt' : IDL.Vec(IDL.Nat8),
+    'role' : IncidentRole,
+    'transport' : IDL.Vec(IDL.Nat8),
+    'generation' : Generation,
+  });
   const Instance = IDL.Record({
     'vault' : IDL.Vec(IDL.Nat8),
     'nonce' : IDL.Vec(IDL.Nat8),
@@ -23,11 +48,6 @@ export const idlFactory = ({ IDL }) => {
   const Reserve = IDL.Record({
     'vault' : IDL.Vec(IDL.Nat8),
     'operation' : IDL.Vec(IDL.Nat8),
-  });
-  const Envelope = IDL.Record({
-    'ciphertext' : IDL.Vec(IDL.Nat8),
-    'version' : IDL.Nat8,
-    'nonce' : IDL.Vec(IDL.Nat8),
   });
   const Activate = IDL.Record({
     'normal' : Envelope,
@@ -54,6 +74,15 @@ export const idlFactory = ({ IDL }) => {
       'upload' : IDL.Vec(IDL.Nat8),
       'index' : IDL.Nat32,
     }),
+    'IncidentStage' : IDL.Record({
+      'normal' : Envelope,
+      'attempt' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+      'recovery_verifier' : IDL.Vec(IDL.Nat8),
+      'recovery' : Envelope,
+    }),
+    'IncidentStart' : IDL.Null,
+    'IncidentDerive' : IncidentDerive,
     'BeginRegistration' : IDL.Record({
       'vault' : IDL.Vec(IDL.Nat8),
       'scope' : CredentialScope,
@@ -74,19 +103,34 @@ export const idlFactory = ({ IDL }) => {
       'registration' : IDL.Text,
       'scope' : CredentialScope,
     }),
+    'IncidentCancel' : IDL.Null,
     'Cleanup' : IDL.Record({
       'job' : IDL.Vec(IDL.Nat8),
       'action' : CleanupAction,
       'cursor' : IDL.Nat64,
     }),
+    'IncidentReset' : IDL.Record({
+      'attempt' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+      'next_attempt' : IDL.Vec(IDL.Nat8),
+    }),
     'Derive' : Derive,
     'Create' : Reserve,
+    'IncidentConfirmKit' : IDL.Record({
+      'attempt' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+      'envelope_digest' : IDL.Vec(IDL.Nat8),
+    }),
     'Activate' : IDL.Record({
       'request' : Activate,
       'recovery_verifier' : IDL.Vec(IDL.Nat8),
     }),
     'PurgeObject' : IDL.Record({
       'object' : IDL.Vec(IDL.Nat8),
+      'vault' : IDL.Vec(IDL.Nat8),
+    }),
+    'IncidentAllocate' : IDL.Record({
+      'attempt' : IDL.Vec(IDL.Nat8),
       'vault' : IDL.Vec(IDL.Nat8),
     }),
     'BeginRevision' : BeginRevision,

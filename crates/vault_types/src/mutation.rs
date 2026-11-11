@@ -21,7 +21,8 @@ pub enum GrantPurpose {
     Credentials,
     Create,
     Restore { job: Id },
-    Incident { job: Id },
+    Incident { job: Id, vector_digest: Vec<u8> },
+    IncidentPrepare(IncidentPreparation),
     Cleanup { job: Id },
     CancelCreation { job: Id, target: PendingCreation },
 }
@@ -69,6 +70,31 @@ pub struct Mutation {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum MutationOperation {
+    IncidentStart,
+    IncidentAllocate {
+        vault: Id,
+        attempt: Id,
+    },
+    IncidentDerive(IncidentDerive),
+    IncidentStage {
+        vault: Id,
+        attempt: Id,
+        normal: Envelope,
+        recovery: Envelope,
+        recovery_verifier: Vec<u8>,
+    },
+    IncidentConfirmKit {
+        vault: Id,
+        attempt: Id,
+        envelope_digest: Vec<u8>,
+    },
+    IncidentReset {
+        vault: Id,
+        attempt: Id,
+        next_attempt: Id,
+    },
+    IncidentCancel,
+
     Create(Reserve),
     Activate {
         request: Activate,
