@@ -1,4 +1,3 @@
-import { vaultTypeOrder, vaultMethodOrder } from "./vault-shapes.mjs";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -289,9 +288,6 @@ const methodOrder = [
   "write_nodes",
   "write_source_for_generation"
 ];
-
-typeOrder.push(...vaultTypeOrder);
-methodOrder.push(...vaultMethodOrder);
 
 export function generateVfsIdlFromDid(didSource) {
   validateDidSubset(didSource);

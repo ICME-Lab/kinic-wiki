@@ -1,0 +1,296 @@
+use super::*;
+use candid::Principal;
+use funding::*;
+fn p(n: u8) -> Principal {
+    Principal::from_slice(&[n])
+}
+#[test]
+fn prepaid_payment_is_caller_bound_idempotent_and_no_read_allocation() {
+    state::initialize().unwrap();
+    for n in 1..100 {
+        assert_eq!(state::State.balance(&p(n).to_text()).unwrap(), 0);
+    }
+    state::transaction(|db| {
+        let count: i64 = db
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        Ok(())
+    })
+    .unwrap();
+    let req = PurchaseRequest {
+        operation: vec![1; 16],
+        beneficiary: p(2),
+        amount_e8s: 100_000_000,
+        min_credits: 100,
+        created_at_time: 1_000_000_000,
+    };
+    let cfg = FundingConfig {
+        ledger: p(3),
+        recipient: p(4),
+        cycles_per_kinic: 1_000_000_000,
+    };
+    let quote = record_quote(p(1), req.clone(), cfg.clone(), 10, 1_000_000_000).unwrap();
+    assert_eq!(quote.wallet, p(1));
+    assert!(begin_payment(p(2), &req.operation, 1_000_000_000).is_err());
+    let sent = begin_payment(p(1), &req.operation, 1_000_000_000).unwrap();
+    assert_eq!(sent.wallet, p(1));
+    assert!(begin_payment(p(1), &req.operation, 1_000_000_000).is_err());
+    complete_payment(&sent, Outcome::Unknown).unwrap();
+    let retried = begin_payment(p(1), &req.operation, 2_000_000_000).unwrap();
+    assert_eq!(sent.memo, retried.memo);
+    assert_eq!(sent.created_at_time, retried.created_at_time);
+    complete_payment(&retried, Outcome::Paid(7)).unwrap();
+    complete_payment(&retried, Outcome::Paid(7)).unwrap();
+    assert_eq!(
+        state::State.balance(&p(2).to_text()).unwrap(),
+        1_000_000_000
+    );
+    assert_eq!(state::State.balance(&p(1).to_text()).unwrap(), 0);
+    assert!(begin_payment(p(1), &req.operation, 2_000_000_000).is_err());
+    let mut conflicting = req.clone();
+    conflicting.beneficiary = p(5);
+    assert!(record_quote(p(1), conflicting, cfg, 10, 1_000_000_000).is_err());
+}
+#[test]
+fn exact_origin_validation() {
+    for (origin, rp, valid) in [
+        ("https://vault.kinic.xyz", "vault.kinic.xyz", true),
+        ("https://wiki.kinic.xyz", "kinic.xyz", false),
+        ("https://vault.kinic.xyz", "kinic.xyz", false),
+        ("http://vault.localhost:3024", "vault.localhost", true),
+    ] {
+        assert_eq!(
+            accounting::validate_vault_config(&vault_types::VaultConfig {
+                origin: origin.into(),
+                rp_id: rp.into(),
+                key_name: "test_key_1".into(),
+                minimum_cycles: 100_000_000_000
+            })
+            .is_ok(),
+            valid
+        );
+    }
+}
+fn fund(owner: Principal, amount: u64) {
+    let req = PurchaseRequest {
+        operation: vec![owner.as_slice()[0]; 16],
+        beneficiary: owner,
+        amount_e8s: 100_000_000,
+        min_credits: 1,
+        created_at_time: 0,
+    };
+    let q = record_quote(
+        owner,
+        req,
+        FundingConfig {
+            ledger: p(80),
+            recipient: p(81),
+            cycles_per_kinic: amount,
+        },
+        10,
+        0,
+    )
+    .unwrap();
+    let sent = begin_payment(owner, &q.request.operation, 0).unwrap();
+    complete_payment(&sent, Outcome::Paid(1)).unwrap();
+}
+#[test]
+fn reservations_checkpoint_refund_generation_and_storage_are_exact() {
+    state::initialize().unwrap();
+    let owner = p(10).to_text();
+    fund(p(10), 1_000_000_000);
+    let s = state::State;
+    s.vault_reserve_cycles(&owner, "challenge:1", 20_000_000, 0)
+        .unwrap();
+    s.vault_reserve_cycles(&owner, "challenge:1", 20_000_000, 0)
+        .unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 980_000_000);
+    s.vault_checkpoint_execution(&owner, "challenge:1", 7_000_000)
+        .unwrap();
+    s.vault_start_generation().unwrap();
+    assert_eq!(
+        s.vault_recover_orphan_execution(&owner, 1000).unwrap(),
+        vec![1]
+    );
+    assert_eq!(s.balance(&owner).unwrap(), 993_000_000);
+    s.vault_recover_orphan_execution(&owner, 1000).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 993_000_000);
+    s.vault_reserve_cycles(&owner, "derive:2", 100_000_000, 1000)
+        .unwrap();
+    s.vault_cancel_reserved_cycles(&owner, "derive:2", 80_000_000, false, 1100)
+        .unwrap();
+    s.vault_reconcile_refunded_cycles(&owner, "derive:2", 40_000_000, 1200)
+        .unwrap();
+    s.vault_reconcile_refunded_cycles(&owner, "derive:2", 40_000_000, 1200)
+        .unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 953_000_000);
+    s.vault_track_storage(&owner, 1_073_741_824, 2000).unwrap();
+    s.vault_settle_storage_timer_batch(3000).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 952_873_000);
+}
+#[test]
+fn uncertain_payment_never_becomes_safe_to_reissue_after_error_or_upgrade() {
+    state::initialize().unwrap();
+    let req = PurchaseRequest {
+        operation: vec![44; 16],
+        beneficiary: p(22),
+        amount_e8s: 100_000_000,
+        min_credits: 1,
+        created_at_time: 1_000_000_000,
+    };
+    record_quote(
+        p(21),
+        req.clone(),
+        FundingConfig {
+            ledger: p(80),
+            recipient: p(81),
+            cycles_per_kinic: 90_000_000,
+        },
+        10,
+        1_000_000_000,
+    )
+    .unwrap();
+    let first = begin_payment(p(21), &req.operation, 1_000_000_000).unwrap();
+    state::State.vault_start_generation().unwrap();
+    let retry = begin_payment(p(21), &req.operation, 2_000_000_000).unwrap();
+    assert!(retry.uncertain);
+    assert!(complete_payment(&first, Outcome::Paid(1)).is_err());
+    let unknown = complete_payment(&retry, Outcome::Rejected(Status::BadFee(20))).unwrap();
+    assert_eq!(unknown.status, Status::Unknown);
+    assert!(begin_payment(p(21), &req.operation, 24 * 3600 * 1_000_000_000).is_err());
+    assert_eq!(state::State.balance(&p(22).to_text()).unwrap(), 0);
+}
+#[test]
+fn quota_limits_pin_quotes_and_fee_failures_do_not_credit() {
+    state::initialize().unwrap();
+    for i in 0..16 {
+        let req = PurchaseRequest {
+            operation: vec![i; 16],
+            beneficiary: p(52),
+            amount_e8s: 100_000_000,
+            min_credits: 100,
+            created_at_time: 0,
+        };
+        record_quote(
+            p(51),
+            req,
+            FundingConfig {
+                ledger: p(80),
+                recipient: p(81),
+                cycles_per_kinic: 100_000_000,
+            },
+            10,
+            0,
+        )
+        .unwrap();
+    }
+    let req = PurchaseRequest {
+        operation: vec![17; 16],
+        beneficiary: p(52),
+        amount_e8s: 100_000_000,
+        min_credits: 100,
+        created_at_time: 0,
+    };
+    assert!(
+        record_quote(
+            p(51),
+            req,
+            FundingConfig {
+                ledger: p(80),
+                recipient: p(81),
+                cycles_per_kinic: 100_000_000
+            },
+            10,
+            0
+        )
+        .is_err()
+    );
+    let sent = begin_payment(p(51), &[0; 16], 0).unwrap();
+    assert_eq!(
+        complete_payment(&sent, Outcome::Rejected(Status::BadFee(20)))
+            .unwrap()
+            .status,
+        Status::BadFee(20)
+    );
+    assert_eq!(state::State.balance(&p(52).to_text()).unwrap(), 0);
+    assert!(begin_payment(p(51), &[0; 16], 0).is_err());
+}
+#[test]
+fn private_state_owner_isolation_and_usage_commit_atomically() {
+    use kinic_sqlite_compat::params;
+    use vault_types::{Error, Reserve, VaultConfig};
+    state::initialize().unwrap();
+    fund(p(61), 100_000_000);
+    fund(p(62), 100_000_000);
+    state::State
+        .vault_set_config(Some(VaultConfig {
+            origin: "https://vault.kinic.xyz".into(),
+            rp_id: "vault.kinic.xyz".into(),
+            key_name: "key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    let a = vault_store::OwnerContext::authenticated(p(61)).unwrap();
+    let b = vault_store::OwnerContext::authenticated(p(62)).unwrap();
+    let reserve = || Reserve {
+        vault: vec![8; 16],
+        operation: vec![9; 16],
+    };
+    let failure: Result<(), Error> = state::transaction(|db| {
+        a.run(db, |db| {
+            vault_store::reserve(db, p(61), reserve(), 1)?;
+            accounting::track_storage_in(db, &p(61).to_text(), 123, 1000)?;
+            Err(Error::Conflict)
+        })
+    });
+    assert!(failure.is_err());
+    state::transaction(|db| {
+        a.run(db, |db| {
+            assert!(vault_store::header(db, &[8; 16]).is_err());
+            let bytes: i64 = db
+                .query_row(
+                    "SELECT storage_bytes FROM accounts WHERE owner=?1",
+                    params![p(61).to_text()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(bytes, 0);
+            vault_store::reserve(db, p(61), reserve(), 1)?;
+            Ok(())
+        })
+    })
+    .unwrap();
+    state::transaction(|db| {
+        b.run(db, |db| {
+            assert!(vault_store::header(db, &[8; 16]).is_err());
+            vault_store::reserve(db, p(62), reserve(), 1)?;
+            Ok(())
+        })
+    })
+    .unwrap();
+    state::State.vault_start_generation().unwrap();
+    for context in [a, b] {
+        state::transaction(|db| {
+            context.run(db, |db| {
+                assert_eq!(vault_store::header(db, &[8; 16])?.id, vec![8; 16]);
+                Ok(())
+            })
+        })
+        .unwrap();
+    }
+}
+#[test]
+fn certified_asset_policy_rejects_embedding_without_breaking_ii_popup() {
+    let h = http::security_headers();
+    let header = |name: &str| h.iter().find(|(n, _)| n == name).unwrap().1.as_str();
+    assert!(header("Content-Security-Policy").contains("frame-ancestors 'none'"));
+    assert_eq!(header("Referrer-Policy"), "no-referrer");
+    assert_eq!(
+        header("Cross-Origin-Opener-Policy"),
+        "same-origin-allow-popups"
+    );
+    for (_, _, bytes) in http::ASSETS {
+        assert!(bytes.len() < 1_900_000, "asset needs streaming");
+    }
+}

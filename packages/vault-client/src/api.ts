@@ -63,8 +63,6 @@ export class VaultClient {
   header?: Header;
   private local = false;
   private rpId = "";
-  payerDatabases: () => Promise<{ id: string; name: string }[]> =
-    async () => [];
   constructor(options?: {
     actor: VaultActor;
     identity: Identity;
@@ -88,7 +86,6 @@ export class VaultClient {
     this.header = undefined;
     this.actorValue = undefined;
     this.identityValue = undefined;
-    this.payerDatabases = async () => [];
     this.rpId = "";
   }
   private assertPasskey(ch: Parameters<typeof assertCredential>[0]) {

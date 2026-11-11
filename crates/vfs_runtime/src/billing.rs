@@ -23,7 +23,6 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<StorageBillingBatchResult, String> {
-        self.vault_settle_storage_timer_batch(now)?;
         let state = self.write_index(|tx| load_or_create_storage_billing_timer_state(tx, now))?;
         let batch = self.read_index(|conn| {
             load_active_databases_for_storage_billing_batch(

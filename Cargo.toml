@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/vault_canister",
     "crates/vault_service",
     "crates/vault_types",
     "crates/vault_store",

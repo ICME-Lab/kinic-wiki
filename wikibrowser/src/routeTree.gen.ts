@@ -27,7 +27,6 @@ import { Route as SupportRouteImport } from './routes/support'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known.apple-app-site-association'
 import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
-import { Route as DashboardVaultRouteImport } from './routes/dashboard.vault'
 import { Route as DbDatabaseIdRouteImport } from './routes/db.$databaseId'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
@@ -142,11 +141,6 @@ const DotwellKnownIiAuthCallbacksRoute =
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => DashboardRoute,
-} as any)
-const DashboardVaultRoute = DashboardVaultRouteImport.update({
-  id: '/vault',
-  path: '/vault',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DbDatabaseIdRoute = DbDatabaseIdRouteImport.update({
@@ -287,7 +281,6 @@ export interface FileRoutesByFullPath {
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
-  '/dashboard/vault': typeof DashboardVaultRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -328,7 +321,6 @@ export interface FileRoutesByTo {
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
-  '/dashboard/vault': typeof DashboardVaultRoute
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
@@ -371,7 +363,6 @@ export interface FileRoutesById {
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
-  '/dashboard/vault': typeof DashboardVaultRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -417,7 +408,6 @@ export interface FileRouteTypes {
     | '/support'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
-    | '/dashboard/vault'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -458,7 +448,6 @@ export interface FileRouteTypes {
     | '/support'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
-    | '/dashboard/vault'
     | '/docs/canister-api'
     | '/docs/cli'
     | '/docs/clipper'
@@ -500,7 +489,6 @@ export interface FileRouteTypes {
     | '/support'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
-    | '/dashboard/vault'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -682,13 +670,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof DashboardRoute
     }
-    '/dashboard/vault': {
-      id: '/dashboard/vault'
-      path: '/vault'
-      fullPath: '/dashboard/vault'
-      preLoaderRoute: typeof DashboardVaultRouteImport
-      parentRoute: typeof DashboardRoute
-    }
     '/db/$databaseId': {
       id: '/db/$databaseId'
       path: '/db/$databaseId'
@@ -854,13 +835,11 @@ declare module '@tanstack/react-router' {
 }
 
 interface DashboardRouteChildren {
-  DashboardVaultRoute: typeof DashboardVaultRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardProjectDatabaseIdRoute: typeof DashboardProjectDatabaseIdRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
-  DashboardVaultRoute: DashboardVaultRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardProjectDatabaseIdRoute: DashboardProjectDatabaseIdRoute,
 }

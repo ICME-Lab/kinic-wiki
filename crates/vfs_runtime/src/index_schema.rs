@@ -73,8 +73,6 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     apply_voice_migration(&tx)?;
     apply_maintenance_migration(&tx)?;
-    apply_vault_migration(&tx)?;
-    apply_vault_execution_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -117,8 +115,6 @@ fn run_index_migrations_in_tx(
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     apply_voice_migration(conn)?;
     apply_maintenance_migration(conn)?;
-    apply_vault_migration(conn)?;
-    apply_vault_execution_migration(conn)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -190,16 +186,9 @@ fn apply_pending_index_migrations(
     if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS {
         return Ok(());
     }
-    if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS[..6] {
-        apply_vault_migration(conn)?;
-        return apply_vault_execution_migration(conn);
-    }
-    if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS[..7] {
-        return apply_vault_execution_migration(conn);
-    }
     if versions
         .iter()
-        .any(|v| v == INDEX_SCHEMA_VERSION_MAINTENANCE || v == INDEX_SCHEMA_VERSION_VAULT)
+        .any(|v| v == INDEX_SCHEMA_VERSION_MAINTENANCE)
     {
         return Err(format!(
             "unsupported index schema version: {}",
@@ -207,31 +196,8 @@ fn apply_pending_index_migrations(
         ));
     }
     apply_index_migrations_through_voice(conn, config)?;
-    apply_maintenance_migration(conn)?;
-    apply_vault_migration(conn)?;
-    apply_vault_execution_migration(conn)
+    apply_maintenance_migration(conn)
 }
-fn apply_vault_execution_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(include_str!(
-        "../migrations/index_db/008_vault_execution_checkpoints.sql"
-    ))
-    .map_err(|e| e.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_VAULT_EXECUTION)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_VAULT_EXECUTION)?;
-    Ok(())
-}
-fn apply_vault_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(include_str!("../migrations/index_db/007_private_vault.sql"))
-        .map_err(|e| e.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_VAULT)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_VAULT)?;
-    Ok(())
-}
-
 fn apply_maintenance_migration(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(include_str!(
         "../migrations/index_db/006_database_maintenance.sql"
@@ -650,16 +616,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in ["database_restore_chunks", "database_restore_sessions"] {
         if tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: stale table {table}"));
-        }
-    }
-    for table in [
-        "internal_mounts",
-        "vault_payers",
-        "vault_cycle_reservations",
-        "vault_storage_billing_state",
-    ] {
-        if !tx_sqlite_master_entry_exists(conn, "table", table)? {
-            return Err(format!("unsupported index schema: missing table {table}"));
         }
     }
     for index in [

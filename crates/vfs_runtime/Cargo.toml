@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-vault-store = { path = "../vault_store" }
-vault-types = { path = "../vault_types" }
-url = "2"
 candid = "0.10.26"
 kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }
 serde_json = "1.0.145"

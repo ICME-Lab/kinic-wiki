@@ -82,7 +82,6 @@ mod api_doc;
 mod bekko_refill;
 mod candid_normalization;
 mod public_http;
-mod vault;
 
 #[cfg(not(target_arch = "wasm32"))]
 const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
@@ -1629,9 +1628,6 @@ fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result
     }
     service.recover_pending_publication_mutations()?;
     service.initialize_bekko_refill(now_nanos())?;
-    service
-        .vault_start_generation()
-        .map_err(|_| "Vault generation initialization failed".to_string())?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }
@@ -1649,9 +1645,6 @@ fn initialize_service_for_upgrade(config: Option<CyclesBillingConfig>) -> Result
     }
     service.recover_pending_publication_mutations()?;
     service.initialize_bekko_refill(now_nanos())?;
-    service
-        .vault_start_generation()
-        .map_err(|_| "Vault generation initialization failed".to_string())?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }

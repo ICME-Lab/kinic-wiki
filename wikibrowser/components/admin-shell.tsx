@@ -24,7 +24,7 @@ type AdminNavItem = AdminNavChild & {
 
 const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/vault", label: "Private Vault", icon: LockKeyhole },
+  { href: "https://vault.kinic.xyz", label: "Private Vault", icon: LockKeyhole },
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/cycles", label: "Cycles", icon: Wallet },
   { href: "/profile", label: "My Profile", icon: UserRound },
@@ -135,6 +135,7 @@ function AdminSidebar({ pathname }: { pathname: string }) {
               </Collapsible.Root>
             );
           }
+          if (item.href === "https://vault.kinic.xyz") return <a key={item.href} href={item.href} rel="noreferrer noopener" referrerPolicy="no-referrer" className="flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold text-muted"><Icon aria-hidden size={17} />{item.label}</a>;
           const active = isActiveAdminPath(pathname, item.href);
           return (
             <div className="grid gap-1" key={item.href}>
@@ -205,7 +206,7 @@ function isDocsPath(pathname: string): boolean {
 }
 
 function isActiveAdminPath(pathname: string, href: string): boolean {
-  if (href === "/dashboard") return pathname === "/dashboard" || (pathname.startsWith("/dashboard/") && pathname !== "/dashboard/vault");
+  if (href === "/dashboard") return pathname === "/dashboard" || (pathname.startsWith("/dashboard/"));
   if (href === "/metrics") return pathname === "/metrics";
   if (href === "/marketplace") return pathname === "/marketplace" || pathname.startsWith("/marketplace/");
   if (href === "/docs") return pathname === "/docs";

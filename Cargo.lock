@@ -4053,6 +4053,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
+name = "vault-canister"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "ic-cdk 0.20.1",
+ "ic-cdk-management-canister",
+ "ic-cdk-timers",
+ "ic-http-certification",
+ "ic-sqlite-vfs",
+ "kinic-sqlite-compat",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
+ "vault-service",
+ "vault-store",
+ "vault-types",
+]
+
+[[package]]
 name = "vault-service"
 version = "0.1.0"
 dependencies = [
@@ -4111,19 +4131,14 @@ dependencies = [
  "canbench-rs",
  "candid",
  "ic-cdk 0.20.1",
- "ic-cdk-management-canister",
  "ic-cdk-timers",
  "ic-http-certification",
  "ic-sqlite-vfs",
- "kinic-sqlite-compat",
  "kinic-vfs-types",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "vault-service",
- "vault-store",
- "vault-types",
  "vfs-runtime",
 ]
 
@@ -4141,9 +4156,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "url",
- "vault-store",
- "vault-types",
  "vfs-store",
 ]
 
