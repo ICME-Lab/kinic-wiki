@@ -10,7 +10,7 @@ const js = execFileSync('didc', ['bind', did, '--target', 'js'], {
   encoding: 'utf8'
 });
 const outputs = {
-  'packages/vault-client/src/contracts.ts': '// Generated from dedicated vault.did.\n' + ts + '\nexport type VaultActor = _SERVICE;\n',
+  'packages/vault-client/src/contracts.ts': '// Shared declarations generated from dedicated vault.did.\nexport type * from "@kinic/vault-candid";\nexport type { _SERVICE as VaultActor } from "@kinic/vault-candid";\n',
   'packages/vault-candid/index.js': js,
   'packages/vault-candid/index.d.ts': ts
 };

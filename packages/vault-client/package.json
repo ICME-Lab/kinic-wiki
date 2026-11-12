@@ -16,7 +16,8 @@
   "dependencies": {
     "@icp-sdk/core": "5.4.0",
     "@kinic/vault-crypto": "workspace:*",
-    "@kinic/vault-backup": "workspace:*"
+    "@kinic/vault-backup": "workspace:*",
+    "@kinic/vault-candid": "workspace:*"
   },
   "devDependencies": {
     "vitest": "4.1.12",

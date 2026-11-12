@@ -131,6 +131,9 @@ importers:
       '@kinic/vault-backup':
         specifier: workspace:*
         version: link:../vault-backup
+      '@kinic/vault-candid':
+        specifier: workspace:*
+        version: link:../vault-candid
       '@kinic/vault-crypto':
         specifier: workspace:*
         version: link:../vault-crypto
