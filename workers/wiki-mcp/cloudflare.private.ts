@@ -31,7 +31,7 @@ export default defineConfig({
 			MCP_REVIEW_LOGIN_ENABLED: bindings.text("false"),
 			MCP_REVIEW_ACCESS_VERSION: bindings.text("review-closed-20261014"),
 			MCP_REVIEW_WRITE_PREFIX: bindings.text("/OpenAIReview/scratch"),
-			MUSE_CHALLENGE_TOKEN: bindings.text("0129745c2e46164a5448a20c1f20ba74877141e775db04dab5c8cfab5ad0e831"),
+			MUSE_CHALLENGE_TOKEN: bindings.text("fb7d2c4bccd7058b17705f1a5f2801d7dd54276d902601fc56c4d63c568ca78b"),
 			OPENAI_APPS_CHALLENGE_TOKEN: bindings.text("eegi6ZKN5pqSVhGk_gLEED4Xa7R5gwHfYc5ej5v8Mj0"),
 			MCP_AUTH_STATE: bindings.durableObject({
 				worker: "kinic-wiki-mcp-private",
