@@ -154,7 +154,10 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
   return null;
 }
 
-const MUSE_OAUTH_REDIRECT_URI = "https://agent.meta.ai/api/hatch/oauth/callback";
+const MUSE_OAUTH_REDIRECT_URIS = new Set([
+  "https://agent.meta.ai/api/hatch/oauth/callback",
+  "https://muse.ai/api/hatch/oauth/callback"
+]);
 
 export async function authenticateMcpRequest(
   request: Request,
@@ -226,7 +229,7 @@ export async function authenticateMcpRequest(
     identitySource: authenticated.identitySource,
     // Muse ignores app-only tool metadata. Derive its tool surface from the
     // validated OAuth session, never a spoofable User-Agent or clientInfo.
-    includeConnectionProfile: authenticated.clientRedirectUri !== MUSE_OAUTH_REDIRECT_URI
+    includeConnectionProfile: !MUSE_OAUTH_REDIRECT_URIS.has(authenticated.clientRedirectUri ?? "")
   };
 }
 
@@ -1008,9 +1011,9 @@ function isAllowedRedirectUri(value: string): boolean {
     if (url.username || url.password || url.hash) {
       return false;
     }
-    // Observed in the personal Muse app's custom connector setup. Keep this
-    // callback exact rather than trusting all paths or subdomains on Meta.
-    if (value === MUSE_OAUTH_REDIRECT_URI) {
+    // Observed in the personal Muse app and submission portal. Keep these
+    // callbacks exact rather than trusting other paths or subdomains.
+    if (MUSE_OAUTH_REDIRECT_URIS.has(value)) {
       return true;
     }
     if (url.protocol === "https:" && (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com")) {
