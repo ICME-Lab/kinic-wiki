@@ -1,3 +1,4 @@
+import { Principal } from "@icp-sdk/core/principal";
 import type { Generation } from "./contracts";
 import { authorityContext } from "./signed";
 import type { TransportSecretKey } from "../../vault-crypto/src/index.ts";
@@ -26,6 +27,10 @@ export class Session {
   private copyGeneration(g: Generation): Generation {
     return {
       ...g,
+      canister: Principal.fromUint8Array(
+        new Uint8Array(g.canister.toUint8Array()),
+      ),
+      owner: Principal.fromUint8Array(new Uint8Array(g.owner.toUint8Array())),
       vault: new Uint8Array(g.vault),
       nonce: new Uint8Array(g.nonce),
     };

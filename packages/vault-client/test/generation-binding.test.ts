@@ -120,3 +120,15 @@ it("replacing a bound key cannot retain another key's raw backup bytes", async (
   expect(f.client.session.raw).toBeUndefined();
   expect(f.raw.every((x) => x === 0)).toBe(true);
 });
+it("Principal bytes obtained from a copied generation cannot mutate its private binding", async () => {
+  const f = await fixture(),
+    original = f.client.session.keyGeneration!;
+  const expectedOwner = original.owner.toText(),
+    expectedCanister = original.canister.toText();
+  original.owner.toUint8Array()[0] ^= 1;
+  original.canister.toUint8Array()[0] ^= 1;
+  expect(f.client.session.keyGeneration!.owner.toText()).toBe(expectedOwner);
+  expect(f.client.session.keyGeneration!.canister.toText()).toBe(
+    expectedCanister,
+  );
+});

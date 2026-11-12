@@ -54,11 +54,7 @@ export class SaveWorkflow {
     this.job = {
       request,
       chunks,
-      generation: {
-        ...generation,
-        vault: new Uint8Array(generation.vault),
-        nonce: new Uint8Array(generation.nonce),
-      },
+      generation: this.session.requireGeneration(generation),
       ticket: this.session.capture(),
       phase: "begin",
       next: 0,
@@ -101,13 +97,64 @@ export class SaveWorkflow {
     }
   }
   markCancelling() {
-    if (this.job) this.job.cancelling = true;
+    if (this.job) {
+      this.job.cancelling = true;
+      this.job.reconcile = true;
+    }
+  }
+  private async reconcile(j: Job) {
+    const status = ok(
+      await this.actor().get_upload_status(j.request.operation),
+    );
+    this.check(j);
+    if ("Pending" in status) {
+      const p = status.Pending;
+      if (authorityContext(p.request) !== authorityContext(j.request))
+        throw Error("UploadConflict");
+      if (p.cancel_job.length) {
+        j.cancelling = true;
+        throw Error("UploadCancelling");
+      }
+      j.cancelling = false;
+      const have = new Set(p.received);
+      j.next = 0;
+      while (have.has(j.next)) j.next++;
+      if (
+        j.next > j.chunks.length ||
+        p.received.some((i) => i >= j.chunks.length)
+      )
+        throw Error("InvalidUploadStatus");
+      j.phase = j.next === j.chunks.length ? "commit" : "chunks";
+    } else if ("Committed" in status) {
+      const c = status.Committed;
+      if (
+        authorityContext(c.vault) !== authorityContext(j.request.vault) ||
+        authorityContext(c.object) !== authorityContext(j.request.object) ||
+        c.revision !== j.request.expected_revision + 1n
+      )
+        throw Error("UploadConflict");
+      // The receipt outlives readable history. Match ordinary commit's compact result.
+      j.revision = {
+        vault: new Uint8Array(c.vault),
+        object: new Uint8Array(c.object),
+        revision: c.revision,
+        sequence: c.sequence,
+        plain_size: j.request.plain_size,
+        deleted: false,
+        manifest: new Uint8Array(),
+        chunk_hashes: [],
+      };
+      j.phase = "refresh";
+    } else if ("Absent" in status) {
+      j.phase = "begin";
+      j.next = 0;
+    } else
+      throw Error("Cancelled" in status ? "UploadCancelled" : "UploadExpired");
   }
   async resume(progress: (n: number) => void = () => {}): Promise<Revision> {
     const j = this.job;
     if (!j) throw Error("NoPendingSave");
     if (this.flight) throw Error("SaveInProgress");
-    if (j.cancelling) throw Error("UploadCancelling");
     const flight = {};
     this.flight = flight;
     try {
@@ -115,52 +162,17 @@ export class SaveWorkflow {
       await this.resolvePending();
       await this.refresh();
       this.check(j);
-      if (j.reconcile && j.phase !== "refresh") {
-        const status = ok(
-          await this.actor().get_upload_status(j.request.operation),
-        );
-        this.check(j);
-        if ("Pending" in status) {
-          const p = status.Pending;
-          if (authorityContext(p.request) !== authorityContext(j.request))
-            throw Error("UploadConflict");
-          if (p.cancel_job.length) {
-            j.cancelling = true;
-            throw Error("UploadCancelling");
-          }
-          const have = new Set(p.received);
-          j.next = 0;
-          while (have.has(j.next)) j.next++;
-          if (
-            j.next > j.chunks.length ||
-            p.received.some((i) => i >= j.chunks.length)
-          )
-            throw Error("InvalidUploadStatus");
-          j.phase = j.next === j.chunks.length ? "commit" : "chunks";
-        } else if ("Committed" in status) {
-          const c = status.Committed;
-          if (
-            authorityContext(c.vault) !== authorityContext(j.request.vault) ||
-            authorityContext(c.object) !== authorityContext(j.request.object) ||
-            c.revision !== j.request.expected_revision + 1n
-          )
-            throw Error("UploadConflict");
-          j.revision = ok(
-            await this.actor().get_manifest(c.vault, c.object, c.revision),
-          );
-          this.check(j);
-          j.phase = "refresh";
-        } else if ("Absent" in status) {
-          j.phase = "begin";
-          j.next = 0;
-        } else
-          throw Error(
-            "Cancelled" in status ? "UploadCancelled" : "UploadExpired",
-          );
-      }
+      if (j.reconcile && j.phase !== "refresh") await this.reconcile(j);
       j.reconcile = false;
       for (;;) {
         this.check(j);
+        if (
+          j.phase !== "refresh" &&
+          !this.authority().canReuseNormal(j.generation)
+        ) {
+          await this.reconcile(j);
+          this.check(j);
+        }
         if (j.phase === "chunks" && j.next === j.chunks.length)
           j.phase = "commit";
         if (j.phase === "refresh") {

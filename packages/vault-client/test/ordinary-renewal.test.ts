@@ -701,3 +701,109 @@ it("cancels a paused save through fresh signed cleanup, then drops the session j
   expect(f.commits()).toBe(0);
   f.client.session.lock();
 });
+it("authoritative committed status completes a save even when its manifest has left retained history", async () => {
+  const f = durableUploadFixture();
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), generation);
+  await f.client.authorize({ Normal: null }, [generation]);
+  f.actor.mutate.mockImplementation(async (payload) => {
+    const r = await f.execute(payload);
+    if (
+      "CommitRevision" in
+      (IDL.decode([mutationIDL], payload)[0] as unknown as Mutation).operation
+    )
+      throw Error("lost commit");
+    return r as never;
+  });
+  await expect(
+    f.client.save(
+      { kind: "note", title: "retired" },
+      new Uint8Array([3]),
+      undefined,
+      () => {},
+    ),
+  ).rejects.toThrow("lost commit");
+  // Old signer is definitively expired/revoked; commit receipt is still authoritative.
+  f.actor.mutate.mockResolvedValueOnce({ Err: { Expired: null } } as never);
+  Object.assign(f.actor, {
+    get_manifest: async () => ({ Err: { NotFound: null } }),
+  });
+  await expect(f.client.resumeSave()).resolves.toMatchObject({
+    revision: 1n,
+    sequence: 2n,
+  });
+  expect(f.commits()).toBe(1);
+  expect(f.client.hasPendingSave).toBe(false);
+  f.client.session.lock();
+});
+it("dismissing cancellation UV leaves an unfenced paused upload resumable", async () => {
+  const f = durableUploadFixture();
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), generation);
+  await f.client.authorize({ Normal: null }, [generation]);
+  f.actor.mutate.mockImplementation(async (payload) => {
+    const r = await f.execute(payload);
+    if (
+      "PutChunk" in
+      (IDL.decode([mutationIDL], payload)[0] as unknown as Mutation).operation
+    )
+      throw Error("lost chunk");
+    return r as never;
+  });
+  await expect(
+    f.client.save(
+      { kind: "note", title: "keep" },
+      new Uint8Array([3]),
+      undefined,
+      () => {},
+    ),
+  ).rejects.toThrow("lost chunk");
+  f.actor.mutate.mockImplementation(f.execute as never);
+  Object.assign(f.actor, {
+    cleanup_status: async () => ({ Ok: [] }),
+    begin_cleanup: async () => ({
+      Ok: {
+        bytes: new Uint8Array(32),
+        expires: 1000n,
+        registration: false,
+        credential_ids: [new Uint8Array([9])],
+      },
+    }),
+  });
+  vi.mocked(assertCredential).mockRejectedValueOnce(Error("NotAllowedError"));
+  await expect(f.client.cancelSave()).rejects.toThrow("NotAllowedError");
+  await expect(f.client.resumeSave()).resolves.toMatchObject({ revision: 1n });
+  expect(f.commits()).toBe(1);
+  expect(f.client.hasPendingSave).toBe(false);
+  f.client.session.lock();
+});
+it("checks authoritative upload status before expiry-driven chunk reauthorization", async () => {
+  const f = durableUploadFixture();
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), generation);
+  await f.client.authorize({ Normal: null }, [generation]);
+  let advanced = false;
+  f.actor.mutate.mockImplementation(async (payload) => {
+    const r = await f.execute(payload);
+    if (
+      !advanced &&
+      "PutChunk" in
+        (IDL.decode([mutationIDL], payload)[0] as unknown as Mutation).operation
+    ) {
+      advanced = true;
+      expire(f);
+      f.actor.get_upload_status.mockResolvedValue({
+        Ok: { Cancelled: null },
+      } as never);
+    }
+    return r as never;
+  });
+  await expect(
+    f.client.save(
+      { kind: "attachment", title: "terminated remotely" },
+      new Uint8Array(1048577),
+      undefined,
+      () => {},
+    ),
+  ).rejects.toThrow("UploadCancelled");
+  expect(f.actor.begin_grant).toHaveBeenCalledTimes(1);
+  expect(f.commits()).toBe(0);
+  f.client.session.lock();
+});

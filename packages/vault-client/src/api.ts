@@ -140,9 +140,23 @@ export class VaultClient {
       b64(bytes(this.header.id)) === b64(bytes(header.id))
     )
       this.header = current;
-    if (this.saves.upload && b64(this.saves.upload) === b64(upload))
-      this.saves.markCancelling();
-    await this.authority().cleanup({ CancelUpload: { upload } }, [current]);
+    const markCancelling = () => {
+      if (this.saves.upload && b64(this.saves.upload) === b64(upload))
+        this.saves.markCancelling();
+    };
+    try {
+      await this.authority().cleanup(
+        { CancelUpload: { upload } },
+        [current],
+        undefined,
+        markCancelling,
+      );
+    } catch (error) {
+      // An unknown signed cancellation may already have fenced the server upload.
+      // A dismissed proof before dispatch has no such effect and must remain resumable.
+      if (this.authority().hasPending) markCancelling();
+      throw error;
+    }
     this.session.check(ticket);
     const terminal = ok(await this.actor.get_upload_status(upload));
     this.session.check(ticket);

@@ -159,6 +159,11 @@ export class OrdinaryAuthority {
     this.session.check(ticket);
     return result;
   }
+  canReuseNormal(generation: Generation) {
+    return (
+      !!this.signer?.reusable && this.normal === authorityContext([generation])
+    );
+  }
   async normalSend(operation: MutationOperation, generation: Generation) {
     // Unresolved requests retain their exact bytes even after expiry or generation changes.
     if (this.signer?.hasPending || this.authorizing)
