@@ -90,7 +90,7 @@ function fixture() {
 
 async function unlocked() {
   const f = fixture();
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   await f.client.authorize({ Normal: null }, [generation]);
   return f;
 }
@@ -137,7 +137,7 @@ it("generation changed before renewal rejects stale encrypted draft writes", asy
   f.actor.get_vault_header.mockResolvedValue({ Ok: { ...header, generation: [{ ...generation, nonce: new Uint8Array(32).fill(7) }] } });
   await expect(save(f)).rejects.toThrow("TargetChanged");
   expect(f.actor.mutate).not.toHaveBeenCalled();
-  expect(f.client.session.root).toBe(root);
+  expect(f.client.session.root).toBeUndefined();
   f.client.session.lock();
 });
 it("generation changed during UV cannot publish or reuse the old generation", async () => {
@@ -148,7 +148,7 @@ it("generation changed during UV cannot publish or reuse the old generation", as
     return "proof";
   });
   await expect(save(f)).rejects.toThrow("TargetChanged");
-  await expect(save(f)).rejects.toThrow("TargetChanged");
+  await expect(save(f)).rejects.toThrow("Locked");
   expect(f.actor.begin_grant).toHaveBeenCalledTimes(2);
   expect(f.actor.mutate).not.toHaveBeenCalled();
   f.client.session.lock();
@@ -189,7 +189,7 @@ it("grant-cap Busy preserves the active draft and does not send", async () => {
 
 it("absent normal authority requests fresh UV for the exact current generation", async () => {
   const f = fixture();
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   await expect(save(f)).resolves.toEqual({ revision: 1n });
   expect(f.actor.begin_grant).toHaveBeenCalledTimes(1);
   expect(f.actor.begin_grant.mock.calls[0][0]).toMatchObject({ purpose: { Normal: null }, generations: [generation] });
@@ -206,7 +206,7 @@ it("a late renewal proof after lock cannot block or replace a newly authorized s
   await vi.waitFor(() => expect(release).toBeDefined());
   f.client.session.lock();
   f.client.header = header;
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   await f.client.authorize({ Normal: null }, [generation]);
   release("late proof");
   await rejected;
@@ -225,11 +225,37 @@ it("late header read after a lock cannot clear the new session signer", async ()
   await vi.waitFor(() => expect(release).toBeDefined());
   f.client.session.lock();
   f.client.header = header;
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   await f.client.authorize({ Normal: null }, [generation]);
   release({ Ok: header });
   await rejected;
   await expect(save(f)).resolves.toEqual({ revision: 1n });
-  expect(f.actor.begin_grant).toHaveBeenCalledTimes(3);
+  expect(f.actor.begin_grant).toHaveBeenCalledTimes(2);
+  f.client.session.lock();
+});
+it("after remote rotation the old session locks and re-unlocked writes require the new root", async () => {
+  const f=await unlocked(), oldRoot=f.client.session.root!;
+  const next={...generation,epoch:9n,nonce:new Uint8Array(32).fill(11)}, h={...header,epoch:9n,generation:[next] as [Generation]};
+  f.actor.get_vault_header.mockResolvedValue({Ok:h});
+  Object.assign(f.actor,{list_objects:async()=>({Ok:{entries:[],next:[]}})});
+  await expect(f.client.items()).rejects.toThrow("TargetChanged");
+  expect(f.client.session.root).toBeUndefined();
+  f.client.header=h;
+  const root=await importKey(new Uint8Array(32).fill(19));
+  f.client.session.bindRoot(root,next);
+  f.actor.finish_grant.mockImplementation(async()=>({Ok:{id:new Uint8Array(32),expires:BigInt(Math.floor(Date.now()/1000)+300),next_counter:0n,generations:[next],purpose:{Normal:null}}}));
+  await save(f);
+  const begin=f.operations.find(m=>"BeginRevision" in m.operation)!.operation;
+  if (!("BeginRevision" in begin)) throw Error("missing begin");
+  const put=f.operations.find(m=>"PutChunk" in m.operation)!.operation;
+  if (!("PutChunk" in put)) throw Error("missing chunk");
+  const {decryptDocument}=await import("../../vault-crypto/src/documents");
+  const {cryptoGeneration}=await import("../src/ordinary");
+  const r=begin.BeginRevision, chunks=[new Uint8Array(put.PutChunk.data)];
+  const decode=(key:CryptoKey)=>decryptDocument(key,new Uint8Array(r.vault),new Uint8Array(r.object),1n,new Uint8Array(r.manifest),chunks,r.chunk_hashes.map(x=>new Uint8Array(x)),cryptoGeneration(next));
+  const doc=await decode(root);
+  expect(doc.plaintext).toEqual(new Uint8Array([1,2,3]));
+  doc.plaintext.fill(0);
+  await expect(decode(oldRoot)).rejects.toThrow();
   f.client.session.lock();
 });

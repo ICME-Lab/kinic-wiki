@@ -1,3 +1,5 @@
+import type { Generation } from "./contracts";
+import { authorityContext } from "./signed";
 import type { TransportSecretKey } from "../../vault-crypto/src/index.ts";
 export class Session {
   private lockCleanups = new Set<() => void>();
@@ -14,6 +16,25 @@ export class Session {
   generation = 0;
   root?: CryptoKey;
   raw?: Uint8Array;
+  private keyBinding?: Generation;
+  bindRoot(root: CryptoKey, generation: Generation, raw?: Uint8Array) {
+    this.keyBinding = this.copyGeneration(generation);
+    this.root = root;
+    if (raw) this.raw = raw;
+  }
+  private copyGeneration(g: Generation): Generation {
+    return {...g, vault: new Uint8Array(g.vault), nonce: new Uint8Array(g.nonce)};
+  }
+  get keyGeneration() {
+    return this.keyBinding && this.copyGeneration(this.keyBinding);
+  }
+  requireGeneration(g: Generation | undefined) {
+    if (!this.root || !g || !this.keyBinding || authorityContext(g) !== authorityContext(this.keyBinding)) {
+      this.lock();
+      throw Error("TargetChanged");
+    }
+    return this.copyGeneration(this.keyBinding);
+  }
   lastActivity = Date.now();
   hiddenAt?: number;
   urls = new Set<string>();
@@ -42,6 +63,7 @@ export class Session {
     this.raw?.fill(0);
     this.raw = undefined;
     this.root = undefined;
+    this.keyBinding = undefined;
     this.transport = undefined;
     this.signer?.destroy();
     this.signer = undefined;

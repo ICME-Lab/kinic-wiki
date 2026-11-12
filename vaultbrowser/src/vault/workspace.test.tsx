@@ -1,3 +1,4 @@
+import { Principal } from "@icp-sdk/core/principal";
 // @vitest-environment jsdom
 import {
   act,
@@ -32,7 +33,7 @@ afterEach(() => {
 });
 const header: Header = {
   published_slot: [],
-  generation: [],
+  generation: [{version:2,canister:Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai"),owner:Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai"),vault:new Uint8Array(16),epoch:0n,nonce:new Uint8Array(32),key_name:"test_key_1"}],
   recovery_verifier: [],
   id: new Uint8Array(16),
   epoch: 0n,
@@ -87,7 +88,7 @@ async function mounted() {
     client.session.lock();
     client.header = h;
     client.session.raw = new Uint8Array(32).fill(7);
-    client.session.root = {} as CryptoKey;
+    client.session.bindRoot({} as CryptoKey, client.header!.generation[0]!);
   });
   vi.spyOn(client, "items").mockResolvedValue([]);
   let view!: ReturnType<typeof render>;
@@ -209,6 +210,7 @@ it("clears recovery secret setup on every lock and excludes legacy restore contr
 it("shows a sanitized unlock failure without restoring keys or private content", async () => {
   const { client } = await mounted();
   vi.mocked(client.unlock).mockRestore();
+  const original = header.generation;
   header.generation = [{} as never];
   vi.spyOn(client, "authorize").mockRejectedValue(Error("InvalidProof"));
   fireEvent.click(screen.getByRole("button", { name: "Lock Vault" }));
@@ -217,7 +219,7 @@ it("shows a sanitized unlock failure without restoring keys or private content",
       screen.getByRole("button", { name: "Unlock with passkey" }),
     );
   });
-  header.generation = [];
+  header.generation = original;
   expect(screen.getByRole("alert").textContent).toContain(
     "Passkey verification failed",
   );
@@ -247,3 +249,12 @@ it.each(["InvalidProof", "Busy", "Unauthorized"])(
     expect(savedBody).toBe("synthetic secret draft");
   },
 );
+
+it("wipes the editor and search when refresh discovers another key generation", async () => {
+  const {client}=await mounted();
+  vi.mocked(client.actor.get_vault_header).mockResolvedValue({Ok:{...header,generation:[{...header.generation[0]!,nonce:new Uint8Array(32).fill(9)}]}});
+  await act(async()=>{fireEvent.click(screen.getByRole("button",{name:"Refresh documents"}));});
+  expect(screen.queryByLabelText("Private note body")).toBeNull();
+  expect(document.body.textContent).not.toContain("synthetic secret draft");
+  expect(client.session.root).toBeUndefined();
+});

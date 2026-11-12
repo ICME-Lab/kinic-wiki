@@ -164,13 +164,17 @@ export class OrdinaryAuthority {
     if (!this.signer?.reusable || this.normal !== authorityContext([generation])) {
       const ticket = this.session.capture();
       const current = async () => {
-        const header = ok(await this.actor.get_vault_header(generation.vault));
+        const reply = await this.actor.get_vault_header(generation.vault);
         this.session.check(ticket);
+        if ("Err" in reply && "NotFound" in reply.Err) this.session.lock();
+        const header = ok(reply);
         if (
           !("Active" in header.state) ||
           authorityContext(header.generation) !== authorityContext([generation])
-        )
+        ) {
+          this.session.lock();
           throw Error("TargetChanged");
+        }
       };
       await current();
       await this.authorize({ Normal: null }, [generation]);

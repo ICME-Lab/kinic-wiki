@@ -103,7 +103,7 @@ function fixture() {
 }
 it("signs ordinary v2 content with a target-bound Normal grant and exact network retry", async () => {
   const f = fixture();
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   await f.client.authorize({ Normal: null }, [generation]);
   f.actor.mutate.mockRejectedValueOnce(Error("transport"));
   await f.client.save(
@@ -131,7 +131,7 @@ it("ordinary passkey removal uses Credentials authority and preserves the VRK", 
   const f = fixture(),
     raw = new Uint8Array(32).fill(7);
   f.client.session.raw = raw;
-  f.client.session.root = await importKey(raw);
+  f.client.session.bindRoot(await importKey(raw), f.client.header!.generation[0]!);
   await f.client.removeCredential(new Uint8Array([8]));
   expect(f.actor.begin_grant.mock.calls[0]?.[0]).toMatchObject({
     purpose: { Credentials: null },
@@ -365,7 +365,7 @@ it.each(["note", "credential", "attachment"] as const)(
   "round-trips %s data through signed encrypted revisions and local reads",
   async (kind) => {
     const f = fixture();
-    f.client.session.root = await importKey(new Uint8Array(32).fill(6));
+    f.client.session.bindRoot(await importKey(new Uint8Array(32).fill(6)), f.client.header!.generation[0]!);
     await f.client.authorize({ Normal: null }, [generation]);
     const plaintext = new TextEncoder().encode(
       kind === "credential"
@@ -412,7 +412,7 @@ it.each(["note", "credential", "attachment"] as const)(
 );
 it("wipes an in-flight plaintext upload buffer immediately on lock", async () => {
   const f = fixture();
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   await f.client.authorize({ Normal: null }, [generation]);
   let resolve!: (value: unknown) => void;
   f.actor.mutate.mockImplementation(
@@ -438,7 +438,7 @@ it("wipes an in-flight plaintext upload buffer immediately on lock", async () =>
 });
 it("can authorize with the remaining passkey after ordinarily removing the selected passkey", async () => {
   const f = fixture();
-  f.client.session.root = await importKey(new Uint8Array(32));
+  f.client.session.bindRoot(await importKey(new Uint8Array(32)), f.client.header!.generation[0]!);
   f.client.selectCredential(new Uint8Array([9]));
   await f.client.removeCredential(new Uint8Array([9]));
   f.actor.list_credentials.mockResolvedValue({

@@ -70,7 +70,30 @@ export class VaultClient {
   }
   session = new Session();
   canister = "";
-  header?: Header;
+  private headerValue?: Header;
+  get header() { return this.headerValue; }
+  set header(value: Header | undefined) {
+    if (this.session.root) {
+      if (!value || !("Active" in value.state)) {
+        this.session.lock();
+        throw Error("TargetChanged");
+      }
+      this.session.requireGeneration(value.generation[0]);
+    }
+    this.headerValue = value;
+  }
+  async refreshHeader() {
+    const ticket = this.session.capture(), id = this.header?.id;
+    if (!id) throw Error("Locked");
+    const reply = await this.actor.get_vault_header(id);
+    this.session.check(ticket);
+    if ("Err" in reply) {
+      if ("NotFound" in reply.Err) this.session.lock();
+      return ok<Header>(reply);
+    }
+    this.header = reply.Ok;
+    return reply.Ok;
+  }
   private local = false;
   private rpId = "";
   constructor(options?: {
@@ -132,7 +155,7 @@ export class VaultClient {
   private generation() {
     const g = this.header?.generation[0];
     if (!g) throw Error("LegacyRecoveryRequired");
-    return g;
+    return this.session.root ? this.session.requireGeneration(g) : g;
   }
   async createKit() {
     this.session.lock();
@@ -187,8 +210,7 @@ export class VaultClient {
       const verifier = await recoveryVerifier(secret),
         root = await importKey(raw);
       this.session.check(g);
-      this.session.raw = raw;
-      this.session.root = root;
+      this.session.bindRoot(root, this.generation(), raw);
       return {
         vault,
         attempt,
@@ -233,6 +255,7 @@ export class VaultClient {
         recovery_verifier: kit.recoveryVerifier,
       },
     });
+    this.session.check(kit.generation);
     if (!("Header" in result)) throw Error("MissingHeader");
     this.header = result.Header;
     return result.Header;
@@ -265,8 +288,8 @@ export class VaultClient {
       );
       const root = await importKey(raw);
       this.session.check(g);
-      this.session.raw = raw;
-      this.session.root = root;
+      if (!("Active" in current.state)) throw Error("TargetChanged");
+      this.session.bindRoot(root, current.generation[0], raw);
       this.header = current;
     } catch (e) {
       raw?.fill(0);
@@ -331,8 +354,11 @@ export class VaultClient {
   async items() {
     const g = this.session.capture();
     if (!this.session.root || !this.header) throw Error("Locked");
-    const root = this.session.root,
-      v = bytes(this.header.id),
+    const generation = this.generation();
+    await this.refreshHeader();
+    this.session.check(g);
+    const root = this.session.root!,
+      v = bytes(generation.vault),
       items: Item[] = [];
     let cursor: Uint8Array = new Uint8Array();
     do {
@@ -365,9 +391,7 @@ export class VaultClient {
           bytes(source.object),
           source.revision,
           bytes(source.manifest),
-          this.header.generation[0]
-            ? cryptoGeneration(this.header.generation[0])
-            : undefined,
+          cryptoGeneration(generation),
         );
         this.session.check(g);
         let searchText = parsed.metadata.title;
@@ -384,6 +408,8 @@ export class VaultClient {
       }
       cursor = p.next[0] ? bytes(p.next[0]) : new Uint8Array();
     } while (cursor.length);
+    await this.refreshHeader();
+    this.session.check(g);
     return items;
   }
   async save(
@@ -396,17 +422,20 @@ export class VaultClient {
     if (!this.session.root || !this.header) throw Error("Locked");
     const detach = this.session.addLockCleanup(() => plain.fill(0));
     try {
-      const v = bytes(this.header.id),
+      const generation = this.generation(), root = this.session.root;
+      await this.refreshHeader();
+      this.session.check(g);
+      const v = bytes(generation.vault),
         object = item ? bytes(item.revision.object) : randomBytes(16),
         expected = item?.revision.revision ?? 0n;
       const doc = await encryptDocument(
-        this.session.root,
+        root,
         v,
         object,
         expected + 1n,
         metadata,
         plain,
-        cryptoGeneration(this.generation()),
+        cryptoGeneration(generation),
       );
       this.session.check(g);
       const operation = randomBytes(16);
@@ -453,7 +482,10 @@ export class VaultClient {
   async read(r: Revision) {
     const g = this.session.capture();
     if (!this.session.root) throw Error("Locked");
-    const root = this.session.root,
+    const generation = this.generation();
+    await this.refreshHeader();
+    this.session.check(g);
+    const root = this.session.root!,
       chunks: Uint8Array[] = [];
     for (let i = 0; i < r.chunk_hashes.length; i++) {
       chunks.push(
@@ -469,9 +501,7 @@ export class VaultClient {
       bytes(r.manifest),
       chunks,
       r.chunk_hashes.map(bytes),
-      this.header?.generation[0]
-        ? cryptoGeneration(this.header.generation[0])
-        : undefined,
+      cryptoGeneration(generation),
     );
     try {
       this.session.check(g);
@@ -552,7 +582,10 @@ export class VaultClient {
   async backup() {
     const g = this.session.capture();
     if (!this.session.raw || !this.header) throw Error("Locked");
-    return this.buildBackup(this.header, this.session.raw, g);
+    this.generation();
+    const header = await this.refreshHeader();
+    this.session.check(g);
+    return this.buildBackup(header, this.session.raw!, g);
   }
   private async buildBackup(headerValue: Header, raw: Uint8Array, g: number) {
     const v = bytes(headerValue.id);
@@ -561,6 +594,7 @@ export class VaultClient {
     if (active && b64(bytes(active.vault)) !== b64(v)) throw Error("Busy");
     const e = active ?? ok(await this.actor.begin_export(v, randomBytes(16)));
     this.session.check(g);
+    if (this.session.root) this.header = e.header;
     const records: PortableRecord[] = [];
     let after = 0n;
     do {
