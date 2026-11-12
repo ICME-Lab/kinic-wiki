@@ -95,6 +95,7 @@ for (const [name, commit] of Object.entries(baselines)) {
       "--target",
       "wasm32-unknown-unknown",
       "--release",
+      ...(name === "vault-dedicated-upload-v5" ? ["--features", "synthetic-funding-test-only"] : []),
     ],
     { cwd: dir, env },
   );
@@ -111,6 +112,7 @@ for (const [name, commit] of Object.entries(baselines)) {
     JSON.stringify(
       {
         source_commit: commit,
+        ...(name === "vault-dedicated-upload-v5" ? {funding_mode:"synthetic-test-only",deployable:false} : {}),
         source_archive_sha256: digest(archive),
         wasm_sha256: digest(output),
         cargo_lock_sha256: digest(join(dir, "Cargo.lock")),

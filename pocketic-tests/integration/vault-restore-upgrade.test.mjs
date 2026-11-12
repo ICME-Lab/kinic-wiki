@@ -155,3 +155,34 @@ try {
 } finally {
   await f.close();
 }
+
+
+// The reviewed PR head used schema v5. Keep its source pinned and exercise an
+// actually in-flight upload and committed receipt, not a fabricated SQLite row.
+const uploadBaseline="target/vault-dedicated-upload-v5.wasm";
+verifyVaultBaseline(uploadBaseline);
+const u=await restoreFixture(uploadBaseline);
+try {
+  const {encryptDocument}=await import("../../packages/vault-crypto/src/documents.ts");
+  const plain=new Uint8Array(1048577).fill(77), object=b(240), operation=b(241);
+  const doc=await encryptDocument(u.sourceRoot,u.sourceG.vault,object,1n,{kind:"attachment",title:"v5 pending"},plain,u.cryptoG(u.sourceG));
+  const request={vault:u.sourceG.vault,object,operation,expected_revision:0n,plain_size:BigInt(plain.length),manifest:doc.manifest,chunk_hashes:doc.hashes};
+  const normal=await u.fresh({Normal:null});
+  ok((await u.send(normal,{BeginRevision:request})).result);
+  ok((await u.send(normal,{PutChunk:{vault:request.vault,upload:operation,index:0,data:doc.chunks[0]}})).result);
+  const reserved=ok(await u.actor.get_quota(request.vault)).reserved;
+  const header=ok(await u.actor.get_vault_header(request.vault));
+  await u.pic.upgradeCanister({sender:owner,canisterId:u.canisterId,wasm:u.wasm,arg:IDL.encode([],[])});
+  assert.equal(ok(await u.actor.get_quota(request.vault)).reserved,reserved);
+  const pending=ok(await u.actor.get_upload_status(operation)).Pending;
+  assert.deepEqual(pending.request,request);assert.deepEqual(pending.received,[0]);assert.deepEqual(pending.cancel_job,[]);
+  assert.ok("Committed" in ok(await u.actor.get_upload_status(b(21))));
+  assert.ok("Err" in (await u.send(normal,{PutChunk:{vault:request.vault,upload:operation,index:1,data:doc.chunks[1]}})).result);
+  const fresh=await u.fresh({Normal:null});
+  ok((await u.send(fresh,{PutChunk:{vault:request.vault,upload:operation,index:1,data:doc.chunks[1]}})).result);
+  const committed=ok((await u.send(fresh,{CommitRevision:{vault:request.vault,upload:operation}})).result).Revision;
+  assert.equal(committed.sequence,header.sequence+1n);
+  assert.equal(ok(await u.actor.get_upload_status(operation)).Committed.sequence,committed.sequence);
+  assert.equal(ok(await u.actor.list_pending_uploads(new Uint8Array())).entries.length,0);
+  console.log("PASS actual schema-v5 PR177 source -> current Wasm: pending ciphertext/chunk/receipt/reservation preserved; old grant fenced; fresh same-generation proof finishes the same upload exactly once");
+} finally {await u.close();}

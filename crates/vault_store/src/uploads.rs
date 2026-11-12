@@ -16,19 +16,15 @@ pub fn pending_uploads(db: &Connection, after: &[u8]) -> Result<PendingUploads> 
         id(after)?;
     }
     let mut stmt=db.prepare("SELECT id,vault,expires,cancel_job FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id>?1 ORDER BY id LIMIT 11").map_err(storage)?;
-    let rows = stmt
-        .query_map(params![after], |r| {
-            Ok(PendingUploadSummary {
-                upload: sql::row_get(r, 0)?,
-                vault: sql::row_get(r, 1)?,
-                expires: sql::row_get::<i64>(r, 2)? as u64,
-                cancel_job: sql::row_get(r, 3)?,
-            })
+    let mut entries = sql::query_map(&mut stmt, params![after], |r| {
+        Ok(PendingUploadSummary {
+            upload: sql::row_get(r, 0)?,
+            vault: sql::row_get(r, 1)?,
+            expires: sql::row_get::<i64>(r, 2)? as u64,
+            cancel_job: sql::row_get(r, 3)?,
         })
-        .map_err(storage)?;
-    let mut entries = rows
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(storage)?;
+    })
+    .map_err(storage)?;
     let next = if entries.len() > 10 {
         entries.truncate(10);
         entries.last().map(|x| x.upload.clone())
@@ -46,12 +42,10 @@ pub fn upload_status(db: &Connection, upload: &[u8], now: u64) -> Result<UploadS
         }
         let request: BeginRevision = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
         let mut stmt=db.prepare("SELECT idx FROM chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND upload=?1 ORDER BY idx LIMIT 10").map_err(storage)?;
-        let rows = stmt
-            .query_map(params![upload], |r| Ok(sql::row_get::<i64>(r, 0)? as u32))
-            .map_err(storage)?;
-        let received = rows
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(storage)?;
+        let received = sql::query_map(&mut stmt, params![upload], |r| {
+            Ok(sql::row_get::<i64>(r, 0)? as u32)
+        })
+        .map_err(storage)?;
         return Ok(UploadStatus::Pending(PendingUpload {
             request,
             expires: expires as u64,
