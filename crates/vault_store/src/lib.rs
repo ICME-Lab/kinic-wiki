@@ -10,7 +10,6 @@ pub const SCHEMA: &str = concat!(
     include_str!("wrapper-schema.sql"),
     include_str!("key-capacity-schema.sql")
 );
-pub const WRAPPER_SCHEMA: &str = include_str!("wrapper-schema.sql");
 
 // Store functions are synchronous. The caller must provide one transaction per operation.
 pub fn load<T: DeserializeOwned>(db: &Connection, key: &str) -> Result<Option<T>> {
@@ -255,7 +254,6 @@ pub mod content;
 mod tests;
 pub const CONTENT_SCHEMA: &str = include_str!("content-schema.sql");
 pub mod restore;
-pub const RESTORE_WORKING_SCHEMA: &str = include_str!("restore-working-schema.sql");
 pub const RESTORE_SCHEMA: &str = concat!(
     include_str!("restore-schema.sql"),
     include_str!("restore-working-schema.sql")

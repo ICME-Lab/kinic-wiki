@@ -1,3 +1,4 @@
+import { b, cat, hash, b64, key, ok, passkeys } from "../helpers/vault-passkeys.mjs";
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
 import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 import { realpathSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateKeyPairSync, sign, createHash } from "node:crypto";
+import { sign } from "node:crypto";
 import { idlFactory as vaultIDL } from "../../packages/vault-candid/index.js";
 import { idlFactory as mutationFactory } from "../../packages/vault-candid/mutation.js";
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -17,93 +18,13 @@ const { PocketIc, PocketIcServer } = req("@dfinity/pic"),
   { Principal } = req("@icp-sdk/core/principal");
 if (process.env.POCKET_IC_BIN)
   PocketIcServer.getBinPath = () => process.env.POCKET_IC_BIN;
-const b = (n, len = 16) => new Uint8Array(len).fill(n),
-  cat = (...x) => Buffer.concat(x.map((v) => Buffer.from(v))),
-  hash = (x) => createHash("sha256").update(x).digest(),
-  b64 = (x) => Buffer.from(x).toString("base64url");
-const key = () => {
-  const pair = generateKeyPairSync("ed25519");
-  return {
-    ...pair,
-    public: Buffer.from(
-      pair.publicKey.export({ format: "jwk" }).x,
-      "base64url",
-    ),
-  };
-};
 const owner = Principal.selfAuthenticating(b(90, 32)),
   other = Principal.selfAuthenticating(b(91, 32));
-const ok = (x) => {
-  assert.ok(
-    "Ok" in x,
-    JSON.stringify(x, (_, v) => (typeof v === "bigint" ? v.toString() : v)),
-  );
-  return x.Ok;
-};
+const { registration, assertion } = passkeys(owner, { monotonicCounter: false });
 const mutationType = mutationFactory({ IDL })._fields.find(
   ([n]) => n === "encode",
 )[1].argTypes[0];
-// Tiny deterministic CBOR encoder for the standard WebAuthn none attestation fixture.
-const cb = (major, n) =>
-  n < 24
-    ? Buffer.from([major * 32 + n])
-    : n < 256
-      ? Buffer.from([major * 32 + 24, n])
-      : Buffer.from([major * 32 + 25, n >> 8, n & 255]);
-const cbor = (x) =>
-  typeof x === "string"
-    ? cat(cb(3, Buffer.byteLength(x)), Buffer.from(x))
-    : Buffer.isBuffer(x)
-      ? cat(cb(2, x.length), x)
-      : cat(
-          cb(5, Object.keys(x).length),
-          ...Object.entries(x).flatMap(([k, v]) => [cbor(k), cbor(v)]),
-        );
-function registration(ch, credential) {
-  const cose = cat(
-    Buffer.from([0xa4, 1, 1, 3, 0x27, 0x20, 6, 0x21, 0x58, 0x20]),
-    credential.public,
-  );
-  const auth = cat(
-    hash("vault.kinic.xyz"),
-    [0x45],
-    [0, 0, 0, 0],
-    b(0),
-    [0, 16],
-    credential.id,
-    cose,
-  );
-  const client = JSON.stringify({
-    type: "webauthn.create",
-    challenge: b64(ch.bytes),
-    origin: "https://vault.kinic.xyz",
-    crossOrigin: false,
-  });
-  return JSON.stringify({
-    id: b64(credential.id),
-    transports: ["internal"],
-    clientDataJSON: b64(Buffer.from(client)),
-    attestationObject: b64(cbor({ fmt: "none", attStmt: {}, authData: auth })),
-  });
-}
-function assertion(ch, credential) {
-  const client = Buffer.from(
-    JSON.stringify({
-      type: "webauthn.get",
-      challenge: b64(ch.bytes),
-      origin: "https://vault.kinic.xyz",
-      crossOrigin: false,
-    }),
-  );
-  const auth = cat(hash("vault.kinic.xyz"), [5], [0, 0, 0, 0]);
-  return JSON.stringify({
-    id: b64(credential.id),
-    clientDataJSON: b64(client),
-    authenticatorData: b64(auth),
-    signature: b64(sign(null, cat(auth, hash(client)), credential.privateKey)),
-    userHandle: b64(owner.toUint8Array()),
-  });
-}
+
 verifyVaultBaseline("target/vault-v6-baseline.wasm");
 const cryptoLib = await import(
   new URL("../../packages/vault-crypto/src/index.ts", import.meta.url)

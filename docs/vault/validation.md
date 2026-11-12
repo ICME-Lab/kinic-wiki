@@ -77,3 +77,21 @@ Trusted Vault JavaScript and canister updaters can access or change security-cri
 Client regression tests cover empty-Vault remote rotation, immutable complete generation snapshots, lock/late responses, new-root future writes rejecting an old root, exact encrypted upload replay after lost begin/chunk/commit replies, chunk-level expiry/UV cancellation, cancelled cleanup UV, committed history retirement and lock-discarded jobs. UI tests cover paused-form controls and zero-balance cleanup after lock. The generations Wasm process now cancels an upload at zero balance, upgrades during cancellation, resumes its persisted job/cursor with fresh proof and checks terminal receipt replay without changing Vault sequence. The restore-upgrade process additionally upgrades a pinned v6 pending upload to current v6 and completes the same ciphertext under fresh authority. The browser forwards a real chunk ingress, drops only its HTTP replies through the exact retry budget, then verifies frozen editing and explicit whole-save resumption; actors, authentication and effects remain real.
 
 Full-quota tests use the current-source isolated quota fixture. No production seeding hook exists. Schema6 initializes only an empty unversioned DB, validates an existing complete6 without repairing missing schema objects, and rejects unsupported/foreign/partial stores before initialization. No downgrade or pre-release schema migration is supported.
+
+## Initial-release simplification coverage
+
+Canister support starts at complete schema6. This changes canister-state compatibility, not v1/v2 backup compatibility or cryptographic domains.
+
+| Retired development-only coverage | Retained or replacement release coverage |
+| --- | --- |
+| Unit transition-slot, restore-workspace and upload-column migrations (3 cases) | Fresh complete6, unchanged6 reopen, unsupported/foreign refusal and partial/missing-object refusal (4 cases) |
+| Unit grandfathered over-cap account union, 5000-account excess and oversized legacy row (3 cases) | Existing current-cap admission, exact Unknown settlement, bounded rows and cancellation tests remain |
+| Nine Task4–12/schema5 backend baselines | One pinned pre-refactor complete6 baseline; current6 comparison includes saved data and pending operations |
+| Capacity process grandfathered1025/5000-account/old allowance subscenarios | Legal1024-account limit, concurrent same beneficiary, bounded errors and Unknown transfer persistence/exact settlement through upgrade |
+| Generation process old reservation backfill | Already-prepaid namespace and pending creation retain exactly the same capacity through repeated6 upgrades |
+| Restore process migration-created512KiB overage | Full-quota staged restore keeps its existing reservation, fresh proof, reads/export/cleanup and growth refusal through6 upgrade |
+| Schema5 pending upload migration | Pinned6 pending ciphertext/chunk/receipt/reservation survives6 upgrade and finishes once with fresh authority |
+
+The aggregate still has18 independently torn-down processes; that count is not a claim that retired migration scenarios remain. Five protocol fixtures share real Ed25519/CBOR registration/assertion setup, preserving zero versus monotonic authenticator counters. Scenario assertions and mutation signing remain at call sites; ten recovery scenarios already consume the shared encrypted source/target fixture. No authorization/crypto/ledger effect is mocked by this extraction.
+
+The neutral `packages/ui` owns CSS, the Tailwind preset and primitives. Wiki’s existing exports remain compatible, Vault keeps its private renderer and input defaults, and CI watches shared changes for both apps. UI regressions verify native refs/events and exact custom classes. Anonymous before/after Chromium pixels match390/1280 under OSlight/dark; the shipped app remains light-only with dormant dark tokens. Vlmkit0.23 integrity passes3viewports; the same existing generic React root drag handler inventory suspect/warning appears before and after and is not suppressed. Actual II/private workflow acceptance is separate and still required.
