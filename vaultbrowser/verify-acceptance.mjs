@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { idlFactory as mutationFactory } from "../packages/vault-candid/mutation.js";
 // Real current UI + local canisters + one actual II provider. No actor or auth stubs.
 import assert from "node:assert/strict";
 import { chromium } from "../wikibrowser/node_modules/@playwright/test/index.mjs";
@@ -6,6 +8,9 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { Ed25519KeyIdentity } = require("@icp-sdk/core/identity");
+const {Cbor}=require("@icp-sdk/core/agent");
+const {IDL}=require("@icp-sdk/core/candid");
+const mutationType=mutationFactory({IDL})._fields.find(([n])=>n==="encode")[1].argTypes[0];
 const vaultURL =
   process.env.VAULT_ACCEPTANCE_URL ??
   "http://4fbx2-kt777-77775-aaabq-cai.localhost:8034";
@@ -98,6 +103,23 @@ async function signIn(page, button, create = false) {
 try {
   const vault = await context.newPage();
   const vaultAuth = await authenticator(vault);
+  let loseChunkReplies=false;
+  const droppedMutations=[];
+  // Forward real ingress first, then lose only the HTTP reply. Never replace actor,
+  // authentication, WebAuthn, canister execution or encrypted data with a fake.
+  await vault.route("**/api/v*/canister/**/call",async route=>{
+    const body=route.request().postDataBuffer();
+    const content=body?Cbor.decode(body).content:undefined;
+    if(loseChunkReplies && content?.method_name==="mutate") {
+      const [payload]=IDL.decode([mutationType], IDL.decode([IDL.Vec(IDL.Nat8),IDL.Vec(IDL.Nat8)],content.arg)[0]);
+      if("PutChunk" in payload.operation) {
+        await route.fetch();
+        droppedMutations.push(createHash("sha256").update(content.arg).digest("hex"));
+        await route.abort("failed");return;
+      }
+    }
+    await route.continue();
+  });
   const idle = async () => {
     await vault
       .getByText("Processing Vault operation…", { exact: true })
@@ -312,9 +334,20 @@ try {
     .getByLabel("Document title")
     .fill("Actual acceptance private note");
   await vault.locator(".cm-content").fill("actual-browser-private-payload");
+  loseChunkReplies=true;
   await vault
     .getByRole("button", { name: "Save document", exact: true })
     .click();
+  const resumeSave=vault.getByRole("button",{name:"Resume save",exact:true});
+  await resumeSave.waitFor({timeout:120000});
+  await vault.getByText("Processing Vault operation…",{exact:true}).waitFor({state:"hidden",timeout:120000});
+  assert.ok(droppedMutations.length>=3,"real chunk replies must exhaust the client's exact retry budget");
+  assert.equal(new Set(droppedMutations).size,1,"all lost requests must retain identical signed mutation arguments");
+  assert.equal(await vault.getByLabel("Document title").isDisabled(),true);
+  assert.equal(await vault.getByRole("button",{name:"New document",exact:true}).isDisabled(),true);
+  loseChunkReplies=false;
+  await resumeSave.click();await idle();
+  console.log("PASS actual browser: lost committed chunk replies exhaust retries; paused form is frozen; explicit Resume save keeps exact signed ciphertext and completes the revision");
   await vault
     .getByRole("button", {
       name: "Actual acceptance private note",

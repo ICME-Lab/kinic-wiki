@@ -439,7 +439,15 @@ try {
   };
   ok(await actor.quote_purchase(secondRefill));
   ok(await actor.pay_purchase(secondRefill.operation));
-  await newGrant(10);
+  const uploadGrant=await newGrant(10);
+  const interrupted={vault:b(1),object:b(118),operation:b(119),expected_revision:0n,plain_size:1n,manifest:b(99,1),chunk_hashes:[hash(b(7,17))]};
+  ok((await send(uploadGrant,0n,{BeginRevision:interrupted})).result);
+  ok((await send(uploadGrant,1n,{PutChunk:{vault:b(1),upload:interrupted.operation,index:0,data:b(7,17)}})).result);
+  assert.equal(ok(await actor.list_pending_uploads(new Uint8Array())).entries.length,1);
+  actor.setPrincipal(other);
+  const foreignUpload=await actor.get_upload_status(interrupted.operation);
+  assert.ok("Err" in foreignUpload || "Absent" in foreignUpload.Ok);
+  actor.setPrincipal(owner);
   await newGrant(11);
   assert.ok(
     "Err" in
@@ -466,6 +474,12 @@ try {
   const cleanupGrant = ok(
     await actor.finish_cleanup(b(20), assertion(ch, credential)),
   );
+  const cancelAction={CancelUpload:{upload:interrupted.operation}};
+  const firstCancel=await send(cleanupGrant,0n,{Cleanup:{job:b(21),cursor:0n,action:cancelAction}});
+  assert.equal(ok(firstCancel.result).Cleanup.complete,false);
+  const cancelling=ok(await actor.get_upload_status(interrupted.operation)).Pending;
+  assert.deepEqual(cancelling.cancel_job,[b(21)]);
+  assert.equal(cancelling.received.length,0);
   await pic.upgradeCanister({
     sender: owner,
     canisterId,
@@ -475,8 +489,8 @@ try {
   assert.ok(
     "Err" in
       (
-        await send(cleanupGrant, 0n, {
-          Cleanup: { job: b(21), cursor: 0n, action: { Purge: null } },
+        await send(cleanupGrant, 1n, {
+          Cleanup: { job: b(21), cursor: 1n, action: cancelAction },
         })
       ).result,
   );
@@ -485,8 +499,19 @@ try {
     await actor.finish_cleanup(b(20), assertion(ch2, credential)),
   );
   assert.notDeepEqual(cleanupGrant.id, cleanup2.id);
-  const purge = await send(cleanup2, 0n, {
-    Cleanup: { job: b(21), cursor: 0n, action: { Purge: null } },
+  const finalCancel=await send(cleanup2,0n,{Cleanup:{job:b(21),cursor:1n,action:cancelAction}});
+  assert.equal(ok(finalCancel.result).Cleanup.complete,true);
+  assert.deepEqual(ok(await actor.get_upload_status(interrupted.operation)),{Cancelled:null});
+  assert.equal(ok(await actor.list_pending_uploads(new Uint8Array())).entries.length,0);
+  assert.deepEqual(await actor.mutate(finalCancel.payload,finalCancel.signature),finalCancel.result);
+  assert.equal(ok(await actor.get_vault_header(b(1))).sequence,header.sequence);
+  assert.equal(ok(await actor.account_balance()),0n);
+  console.log("PASS actual Wasm: owner-only encrypted upload status/list, zero-balance signed cancellation, per-chunk fencing, upgrade during cancellation, fresh proof resumes same job/cursor, terminal receipt and unchanged Vault sequence");
+  const purgeReq={...cleanupReq,operation:b(122),purpose:{Cleanup:{job:b(123)}}};
+  const purgeChallenge=ok(await actor.begin_cleanup(purgeReq));
+  const purgeGrant=ok(await actor.finish_cleanup(purgeReq.operation,assertion(purgeChallenge,credential)));
+  const purge = await send(purgeGrant, 0n, {
+    Cleanup: { job: b(123), cursor: 0n, action: { Purge: null } },
   });
   assert.equal(ok(purge.result).Cleanup.complete, true);
   assert.deepEqual(
