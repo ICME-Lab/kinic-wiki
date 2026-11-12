@@ -727,8 +727,6 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
     ] {
         let db = Connection::open_in_memory().unwrap();
         crate::schema::initialize_vault_schema(&db).unwrap();
-        db.execute_batch(include_str!("accounts.sql")).unwrap();
-        crate::capacity::initialize(&db).unwrap();
         db.execute_batch(damage).unwrap();
         let before: i64 = db
             .query_row("SELECT count(*) FROM sqlite_master", params![], |r| {
@@ -791,4 +789,98 @@ fn initial_release_creates_v6_and_reopens_without_rewriting_data() {
         )
         .unwrap();
     assert_eq!(account, (123, 456, 789));
+}
+
+#[test]
+fn initial_release_rejects_sqlite_similar_foreign_names_without_changes() {
+    use kinic_sqlite_compat::{Connection, params};
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TABLE sqliteXforeign(secret BLOB); INSERT INTO sqliteXforeign VALUES(X'0102');",
+    )
+    .unwrap();
+    assert_eq!(
+        crate::schema::initialize_vault_schema(&db),
+        Err(vault_types::Error::Storage)
+    );
+    let version: i64 = db
+        .query_row("PRAGMA user_version", params![], |r| {
+            kinic_sqlite_compat::row_get(r, 0)
+        })
+        .unwrap();
+    assert_eq!(version, 0);
+    let tables: i64 = db
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table'",
+            params![],
+            |r| kinic_sqlite_compat::row_get(r, 0),
+        )
+        .unwrap();
+    assert_eq!(tables, 1);
+}
+
+#[test]
+fn initial_release_rejects_changed_v6_contract_without_repair() {
+    use kinic_sqlite_compat::{Connection, params};
+    for damage in [
+        "ALTER TABLE restores ADD COLUMN future_column TEXT",
+        "DROP INDEX one_upload_per_vault; CREATE INDEX one_upload_per_vault ON uploads(owner,vault)",
+        "DROP TRIGGER key_pool_count; CREATE TRIGGER key_pool_count BEFORE INSERT ON key_flights BEGIN SELECT 1; END;",
+    ] {
+        let db = Connection::open_in_memory().unwrap();
+        crate::schema::initialize_vault_schema(&db).unwrap();
+        db.execute_batch(damage).unwrap();
+        let before: i64 = db
+            .query_row("SELECT total_changes()", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(
+            crate::schema::initialize_vault_schema(&db),
+            Err(vault_types::Error::Storage),
+            "changed contract: {damage}"
+        );
+        let after: i64 = db
+            .query_row("SELECT total_changes()", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(before, after);
+    }
+}
+
+#[test]
+fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
+    use kinic_sqlite_compat::{Connection, params};
+    let path = std::env::temp_dir().join(format!(
+        "vault-v6-policy-{}-{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    {
+        let db = Connection::open(&path).unwrap();
+        crate::schema::initialize_vault_schema(&db).unwrap();
+    }
+    let db = Connection::open(&path).unwrap();
+    let before: i64 = db
+        .query_row("PRAGMA max_page_count", params![], |r| {
+            kinic_sqlite_compat::row_get(r, 0)
+        })
+        .unwrap();
+    assert_ne!(
+        before, 262144,
+        "reopen must really lose connection-local policy"
+    );
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    let after: i64 = db
+        .query_row("PRAGMA max_page_count", params![], |r| {
+            kinic_sqlite_compat::row_get(r, 0)
+        })
+        .unwrap();
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(after, 262144);
 }
