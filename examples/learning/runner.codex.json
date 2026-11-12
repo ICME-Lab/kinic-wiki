@@ -1,0 +1,6 @@
+{
+  "engine": "codex",
+  "executable": "codex",
+  "timeout_seconds": 600,
+  "max_output_bytes": 8388608
+}
