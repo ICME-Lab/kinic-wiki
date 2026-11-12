@@ -57,7 +57,7 @@ const errors: Record<string, string> = {
   CurrentLiveKitRequired:
     "Select the recovery kit for the current live Vault, separately from an older source backup kit.",
   TargetChanged:
-    "The recovery target changed. Refresh its status and select the files for the current attempt.",
+    "The Vault or recovery target changed. Unlock the current generation again before continuing.",
   PreparedArchiveMismatch:
     "The prepared backup does not match this restoration attempt. Select its exact saved target backup and new kit.",
   ExplicitCancelRequired:
@@ -71,7 +71,21 @@ const errors: Record<string, string> = {
   ChoosePasskey:
     "Choose the registered passkey that authorizes this Vault or account action.",
   FreshProofRequired: "Unlock with a registered passkey before making changes.",
-  GrantExpired: "The passkey authorization expired. Save again to verify your passkey; your draft is still open.",
+  SavePending:
+    "Resume or cancel the pending encrypted save before editing or saving again.",
+  SaveInProgress: "A save is already running.",
+  NoPendingSave:
+    "There is no encrypted save waiting in this session. Refresh interrupted saves to cancel an upload left before locking.",
+  UploadCancelling:
+    "Cancellation is in progress. Continue cancelling this upload.",
+  UploadExpired:
+    "This upload expired. Cancel its unfinished upload, then save again.",
+  UploadCancelled:
+    "This upload was cancelled. Cancel the local save job, then save again.",
+  UploadConflict:
+    "The server upload does not match this save. Cancel it before saving again.",
+  GrantExpired:
+    "The passkey authorization expired. Save again to verify your passkey; your draft is still open.",
   LegacyRecoveryRequired:
     "This legacy Vault requires the recovery workflow. Encrypted backup remains available.",
   ResolvePendingMutation:

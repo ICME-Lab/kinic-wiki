@@ -64,7 +64,9 @@ export class OrdinaryAuthority {
       keys,
     );
     this.normal =
-      "Normal" in grant.purpose ? authorityContext(grant.generations) : undefined;
+      "Normal" in grant.purpose
+        ? authorityContext(grant.generations)
+        : undefined;
   }
   async authorize(purpose: GrantPurpose, generations: Generation[]) {
     if (this.signer?.hasPending || this.authorizing)
@@ -161,7 +163,10 @@ export class OrdinaryAuthority {
     // Unresolved requests retain their exact bytes even after expiry or generation changes.
     if (this.signer?.hasPending || this.authorizing)
       throw Error("ResolvePendingMutation");
-    if (!this.signer?.reusable || this.normal !== authorityContext([generation])) {
+    if (
+      !this.signer?.reusable ||
+      this.normal !== authorityContext([generation])
+    ) {
       const ticket = this.session.capture();
       const current = async () => {
         const reply = await this.actor.get_vault_header(generation.vault);
@@ -194,6 +199,9 @@ export class OrdinaryAuthority {
       }
     }
     return this.send(operation);
+  }
+  get hasPending() {
+    return this.signer?.hasPending ?? false;
   }
   async retry() {
     if (!this.signer) throw Error("FreshProofRequired");

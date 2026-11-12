@@ -33,7 +33,17 @@ afterEach(() => {
 });
 const header: Header = {
   published_slot: [],
-  generation: [{version:2,canister:Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai"),owner:Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai"),vault:new Uint8Array(16),epoch:0n,nonce:new Uint8Array(32),key_name:"test_key_1"}],
+  generation: [
+    {
+      version: 2,
+      canister: Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai"),
+      owner: Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai"),
+      vault: new Uint8Array(16),
+      epoch: 0n,
+      nonce: new Uint8Array(32),
+      key_name: "test_key_1",
+    },
+  ],
   recovery_verifier: [],
   id: new Uint8Array(16),
   epoch: 0n,
@@ -72,6 +82,9 @@ async function mounted() {
     })),
     account_balance: vi.fn(async () => ({ Ok: 1_000_000_000n })),
     list_vaults: vi.fn(async () => ({ Ok: [header] })),
+    list_pending_uploads: vi.fn(async () => ({
+      Ok: { entries: [], next: [] },
+    })),
     list_unfinished_vaults: vi.fn(async () => ({ Ok: [] })),
     get_quota: vi.fn(async () => ({
       Ok: { current: 0n, charged: 0n, reserved: 0n, limit: 100n },
@@ -88,7 +101,11 @@ async function mounted() {
     client.session.lock();
     client.header = h;
     client.session.raw = new Uint8Array(32).fill(7);
-    client.session.bindRoot({} as CryptoKey, client.header!.generation[0]!);
+    client.session.bindRoot(
+      {} as CryptoKey,
+      client.header!.generation[0]!,
+      client.session.raw,
+    );
   });
   vi.spyOn(client, "items").mockResolvedValue([]);
   let view!: ReturnType<typeof render>;
@@ -230,20 +247,39 @@ it.each(["InvalidProof", "Busy", "Unauthorized"])(
   "retains the active editor draft after %s so a fresh explicit save can succeed",
   async (error) => {
     const { client } = await mounted();
-    fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "unsaved title" } });
-    let savedBody = "";
-    const save = vi.spyOn(client, "save").mockRejectedValueOnce(Error(error)).mockImplementation(async (_metadata, plain) => {
-      savedBody = new TextDecoder().decode(plain);
-      return {
-        revision: 1n, deleted: false, object: new Uint8Array(16), vault: header.id,
-        chunk_hashes: [], sequence: 1n, manifest: new Uint8Array(), plain_size: 1n,
-      };
+    fireEvent.change(screen.getByLabelText("Document title"), {
+      target: { value: "unsaved title" },
     });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save document" })); });
-    expect((screen.getByLabelText("Private note body") as HTMLTextAreaElement).value).toBe("synthetic secret draft");
-    expect((screen.getByLabelText("Document title") as HTMLInputElement).value).toBe("unsaved title");
+    let savedBody = "";
+    const save = vi
+      .spyOn(client, "save")
+      .mockRejectedValueOnce(Error(error))
+      .mockImplementation(async (_metadata, plain) => {
+        savedBody = new TextDecoder().decode(plain);
+        return {
+          revision: 1n,
+          deleted: false,
+          object: new Uint8Array(16),
+          vault: header.id,
+          chunk_hashes: [],
+          sequence: 1n,
+          manifest: new Uint8Array(),
+          plain_size: 1n,
+        };
+      });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+    });
+    expect(
+      (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
+    ).toBe("synthetic secret draft");
+    expect(
+      (screen.getByLabelText("Document title") as HTMLInputElement).value,
+    ).toBe("unsaved title");
     expect(client.session.root).toBeDefined();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save document" })); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+    });
     expect(save).toHaveBeenCalledTimes(2);
     expect(save.mock.calls[1][0].title).toBe("unsaved title");
     expect(savedBody).toBe("synthetic secret draft");
@@ -251,10 +287,89 @@ it.each(["InvalidProof", "Busy", "Unauthorized"])(
 );
 
 it("wipes the editor and search when refresh discovers another key generation", async () => {
-  const {client}=await mounted();
-  vi.mocked(client.actor.get_vault_header).mockResolvedValue({Ok:{...header,generation:[{...header.generation[0]!,nonce:new Uint8Array(32).fill(9)}]}});
-  await act(async()=>{fireEvent.click(screen.getByRole("button",{name:"Refresh documents"}));});
+  const { client } = await mounted();
+  vi.mocked(client.actor.get_vault_header).mockResolvedValue({
+    Ok: {
+      ...header,
+      generation: [
+        { ...header.generation[0]!, nonce: new Uint8Array(32).fill(9) },
+      ],
+    },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Refresh documents" }));
+  });
   expect(screen.queryByLabelText("Private note body")).toBeNull();
   expect(document.body.textContent).not.toContain("synthetic secret draft");
   expect(client.session.root).toBeUndefined();
+});
+it("freezes the pending save form and resumes the whole save from its visible control", async () => {
+  const { client } = await mounted();
+  let pending = false;
+  vi.spyOn(client, "hasPendingSave", "get").mockImplementation(() => pending);
+  vi.spyOn(client, "save").mockImplementation(async () => {
+    pending = true;
+    throw Error("offline");
+  });
+  const resume = vi.spyOn(client, "resumeSave").mockImplementation(async () => {
+    pending = false;
+    return { revision: 1n } as never;
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+  });
+  expect(
+    (screen.getByLabelText("Document title") as HTMLInputElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("button", { name: "New document" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(screen.getByRole("button", { name: "Cancel save" })).toBeDefined();
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Resume save" }));
+  });
+  expect(resume).toHaveBeenCalledOnce();
+  expect(
+    (screen.getByLabelText("Document title") as HTMLInputElement).disabled,
+  ).toBe(false);
+});
+it("lists and cancels a server upload after lock with a zero prepaid balance", async () => {
+  const { client } = await mounted();
+  const upload = new Uint8Array(16).fill(8);
+  vi.mocked(client.actor.list_pending_uploads).mockResolvedValue({
+    Ok: {
+      entries: [{ upload, vault: header.id, expires: 86400n, cancel_job: [] }],
+      next: [],
+    },
+  });
+  vi.mocked(client.actor.account_balance).mockResolvedValue({ Ok: 0n });
+  const cancel = vi
+    .spyOn(client, "cancelUpload")
+    .mockImplementation(async () => {
+      vi.mocked(client.actor.list_pending_uploads).mockResolvedValue({
+        Ok: { entries: [], next: [] },
+      });
+      return { Cancelled: null };
+    });
+  await act(async () => {
+    client.session.lock();
+  });
+  expect(screen.queryByLabelText("Private note body")).toBeNull();
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Cancel interrupted save",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel interrupted save" }),
+    );
+  });
+  expect(cancel).toHaveBeenCalledWith(header, upload);
+  expect(
+    screen.queryByRole("button", { name: "Cancel interrupted save" }),
+  ).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { SaveWorkflow } from "./save-job";
 import { strictJSON } from "../../vault-crypto/src/strict-json";
 import { Principal } from "@icp-sdk/core/principal";
 import { OrdinaryAuthority, cryptoGeneration } from "./ordinary";
@@ -71,7 +72,9 @@ export class VaultClient {
   session = new Session();
   canister = "";
   private headerValue?: Header;
-  get header() { return this.headerValue; }
+  get header() {
+    return this.headerValue;
+  }
   set header(value: Header | undefined) {
     if (this.session.root) {
       if (!value || !("Active" in value.state)) {
@@ -83,7 +86,8 @@ export class VaultClient {
     this.headerValue = value;
   }
   async refreshHeader() {
-    const ticket = this.session.capture(), id = this.header?.id;
+    const ticket = this.session.capture(),
+      id = this.header?.id;
     if (!id) throw Error("Locked");
     const reply = await this.actor.get_vault_header(id);
     this.session.check(ticket);
@@ -93,6 +97,64 @@ export class VaultClient {
     }
     this.header = reply.Ok;
     return reply.Ok;
+  }
+  private saves = new SaveWorkflow(
+    this.session,
+    () => this.actor,
+    () => this.authority(),
+    () => this.refreshHeader(),
+  );
+  get hasPendingSave() {
+    return this.saves.pending;
+  }
+  resumeSave(progress: (n: number) => void = () => {}) {
+    return this.saves.resume(progress);
+  }
+  async cancelUpload(header: Header, upload: Uint8Array) {
+    const ticket = this.session.capture();
+    if (
+      this.saves.pending &&
+      this.saves.upload &&
+      b64(this.saves.upload) === b64(upload)
+    )
+      await this.saves.resolvePending();
+    else if (this.authority().hasPending) await this.authority().retry();
+    this.session.check(ticket);
+    const status = ok(await this.actor.get_upload_status(upload));
+    this.session.check(ticket);
+    if ("Committed" in status || "Cancelled" in status || "Absent" in status) {
+      if (this.saves.upload && b64(this.saves.upload) === b64(upload))
+        this.saves.clear();
+      return status;
+    }
+    if (
+      "Pending" in status &&
+      b64(bytes(status.Pending.request.vault)) !== b64(bytes(header.id))
+    )
+      throw Error("Unauthorized");
+    const current = ok(await this.actor.get_vault_header(header.id));
+    this.session.check(ticket);
+    if (
+      this.session.root &&
+      this.header &&
+      b64(bytes(this.header.id)) === b64(bytes(header.id))
+    )
+      this.header = current;
+    if (this.saves.upload && b64(this.saves.upload) === b64(upload))
+      this.saves.markCancelling();
+    await this.authority().cleanup({ CancelUpload: { upload } }, [current]);
+    this.session.check(ticket);
+    const terminal = ok(await this.actor.get_upload_status(upload));
+    this.session.check(ticket);
+    if ("Pending" in terminal) throw Error("UploadCancelling");
+    if (this.saves.upload && b64(this.saves.upload) === b64(upload))
+      this.saves.clear();
+    return terminal;
+  }
+  async cancelSave() {
+    const upload = this.saves.upload;
+    if (!upload || !this.header) throw Error("NoPendingSave");
+    return this.cancelUpload(this.header, upload);
   }
   private local = false;
   private rpId = "";
@@ -150,7 +212,7 @@ export class VaultClient {
     return this.authority().authorize(purpose, generations);
   }
   retryMutation() {
-    return this.authority().retry();
+    return this.saves.pending ? this.resumeSave() : this.authority().retry();
   }
   private generation() {
     const g = this.header?.generation[0];
@@ -420,9 +482,12 @@ export class VaultClient {
   ) {
     const g = this.session.capture();
     if (!this.session.root || !this.header) throw Error("Locked");
+    if (this.saves.pending) throw Error("SavePending");
+    if (this.authority().hasPending) throw Error("ResolvePendingMutation");
     const detach = this.session.addLockCleanup(() => plain.fill(0));
     try {
-      const generation = this.generation(), root = this.session.root;
+      const generation = this.generation(),
+        root = this.session.root;
       await this.refreshHeader();
       this.session.check(g);
       const v = bytes(generation.vault),
@@ -448,32 +513,8 @@ export class VaultClient {
         manifest: doc.manifest,
         chunk_hashes: doc.hashes,
       };
-      await this.authority().normalSend(
-        { BeginRevision: request },
-        this.generation(),
-      );
-      for (let i = 0; i < doc.chunks.length; i++) {
-        await this.authority().send({
-          PutChunk: {
-            vault: v,
-            upload: operation,
-            index: i,
-            data: doc.chunks[i],
-          },
-        });
-        this.session.check(g);
-        progress(Math.round(((i + 1) / doc.chunks.length) * 100));
-      }
-      const result = await this.authority().send({
-        CommitRevision: { vault: v, upload: operation },
-      });
-      if (!("Revision" in result)) throw Error("MissingRevision");
-      const r = result.Revision;
-      this.session.check(g);
-      const header = ok(await this.actor.get_vault_header(v));
-      this.session.check(g);
-      this.header = header;
-      return r;
+      this.saves.start(request, doc.chunks, generation);
+      return await this.saves.resume(progress);
     } finally {
       detach();
     }

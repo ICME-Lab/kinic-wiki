@@ -142,7 +142,9 @@ export function VaultDocuments({
     }
   };
   const changed = () => setDirty(true);
-  const readOnly = disabled || writesDisabled || !!current?.revision.deleted;
+  const pendingSave = client.hasPendingSave;
+  const readOnly =
+    disabled || writesDisabled || pendingSave || !!current?.revision.deleted;
   const byteCount = utf8.encode(body).length;
   return (
     <VaultPanel label="Private documents" sensitive>
@@ -152,6 +154,46 @@ export function VaultDocuments({
           Refresh documents
         </VaultButton>
       </div>
+      {pendingSave ? (
+        <div className="grid gap-2 rounded-lg border border-line p-3">
+          <output>
+            {disabled
+              ? "An encrypted save is in progress."
+              : "The encrypted save is paused. Resume this save, or cancel its unfinished upload before editing. Locking discards the local save job."}
+          </output>
+          <div className="flex flex-wrap gap-2">
+            <VaultButton
+              disabled={disabled || writesDisabled}
+              onClick={() =>
+                run(async () => {
+                  const ticket = client.session.capture();
+                  await client.resumeSave(setProgress);
+                  client.session.check(ticket);
+                  reset();
+                  await refresh();
+                })
+              }
+            >
+              Resume save
+            </VaultButton>
+            <VaultButton
+              disabled={disabled}
+              onClick={() =>
+                run(async () => {
+                  const ticket = client.session.capture();
+                  const result = await client.cancelSave();
+                  client.session.check(ticket);
+                  if ("Committed" in result) reset();
+                  else setProgress(0);
+                  await refresh();
+                })
+              }
+            >
+              Cancel save
+            </VaultButton>
+          </div>
+        </div>
+      ) : null}
       <VaultField
         label="Search this Vault locally"
         type="search"
@@ -160,7 +202,7 @@ export function VaultDocuments({
       />
       <div className="grid min-w-0 gap-4 xl:grid-cols-[200px_minmax(0,1fr)]">
         <div className="grid min-w-0 content-start gap-2">
-          <VaultButton disabled={disabled} onClick={reset}>
+          <VaultButton disabled={disabled || pendingSave} onClick={reset}>
             New document
           </VaultButton>
           {items
@@ -172,7 +214,7 @@ export function VaultDocuments({
             .map((item) => (
               <VaultButton
                 key={b64(bytes(item.revision.object))}
-                disabled={disabled}
+                disabled={disabled || pendingSave}
                 onClick={() => run(() => open(item))}
                 className="break-words text-left"
               >
@@ -380,7 +422,7 @@ export function VaultDocuments({
                       Download document
                     </VaultButton>
                     <VaultButton
-                      disabled={disabled || writesDisabled}
+                      disabled={disabled || writesDisabled || pendingSave}
                       onClick={() =>
                         run(async () => {
                           const g = client.session.capture();
@@ -396,7 +438,7 @@ export function VaultDocuments({
                   </>
                 ) : null}
                 <VaultButton
-                  disabled={disabled || writesDisabled}
+                  disabled={disabled || writesDisabled || pendingSave}
                   onClick={() => {
                     if (
                       !window.confirm(

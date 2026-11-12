@@ -99,6 +99,11 @@ pub fn cancel_upload_batch(
     let Some((target, digest, prior_job)) = row else {
         let prior:Option<String>=db.query_row("SELECT result FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1 AND expires>?2",params![upload,now as i64],|r|sql::row_get(r,0)).optional().map_err(storage)?;
         if let Some(raw) = prior {
+            // GC may have finished between the authoritative status read and cleanup.
+            // This terminal operation cannot be recreated; cancellation is a no-op.
+            if raw == "\"Expired\"" {
+                return Ok(true);
+            }
             if let Some(r) = cancelled(&raw) {
                 return if r.cancelled_vault == vault && r.job == job {
                     Ok(true)

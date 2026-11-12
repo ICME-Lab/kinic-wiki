@@ -20,16 +20,26 @@ export class Session {
   bindRoot(root: CryptoKey, generation: Generation, raw?: Uint8Array) {
     this.keyBinding = this.copyGeneration(generation);
     this.root = root;
-    if (raw) this.raw = raw;
+    if (this.raw && this.raw !== raw) this.raw.fill(0);
+    this.raw = raw;
   }
   private copyGeneration(g: Generation): Generation {
-    return {...g, vault: new Uint8Array(g.vault), nonce: new Uint8Array(g.nonce)};
+    return {
+      ...g,
+      vault: new Uint8Array(g.vault),
+      nonce: new Uint8Array(g.nonce),
+    };
   }
   get keyGeneration() {
     return this.keyBinding && this.copyGeneration(this.keyBinding);
   }
   requireGeneration(g: Generation | undefined) {
-    if (!this.root || !g || !this.keyBinding || authorityContext(g) !== authorityContext(this.keyBinding)) {
+    if (
+      !this.root ||
+      !g ||
+      !this.keyBinding ||
+      authorityContext(g) !== authorityContext(this.keyBinding)
+    ) {
       this.lock();
       throw Error("TargetChanged");
     }

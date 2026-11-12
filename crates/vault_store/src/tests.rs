@@ -1535,3 +1535,17 @@ fn cancelling_upload_survives_expiry_and_can_finish_in_legacy_overcommit() {
         UploadStatus::Cancelled
     ));
 }
+#[test]
+fn cancel_after_expiry_gc_resolves_terminal_receipt_without_recreating_upload() {
+    let (db, r, _) = unfinished_upload_fixture();
+    content::gc(&db, DAY + 5).unwrap();
+    assert!(matches!(
+        content::upload_status(&db, &r.operation, DAY + 5).unwrap(),
+        UploadStatus::Expired
+    ));
+    assert!(content::cancel_upload_batch(&db, &r.vault, &r.operation, &[5; 16], DAY + 5).unwrap());
+    assert!(matches!(
+        content::begin(&db, r, DAY + 5),
+        Err(Error::Expired)
+    ));
+}

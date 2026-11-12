@@ -15,6 +15,7 @@ import type {
   VaultConfig,
   GlobalCapacity,
   CredentialInfo,
+  PendingUploadSummary,
 } from "@kinic/vault-client/contracts";
 import { b64, unb64 } from "@kinic/vault-crypto/documents";
 import { VaultButton, VaultPanel, vaultError } from "./ui";
@@ -31,6 +32,10 @@ export type VaultWork = (operation: () => Promise<void>) => void;
 export function VaultWorkspace({ client }: { client: VaultClient }) {
   const [vaults, setVaults] = useState<Header[]>([]);
   const [unfinished, setUnfinished] = useState<UnfinishedVault[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUploadSummary[]>(
+    [],
+  );
+  const [uploadAfter, setUploadAfter] = useState<Uint8Array>();
   const [selected, setSelected] = useState<Header>();
   const [items, setItems] = useState<Item[]>([]);
   const [quota, setQuota] = useState<Quota>();
@@ -123,14 +128,25 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       });
   };
   const refreshLists = useCallback(async () => {
-    const g = client.session.capture();
-    const [list, setup] = await Promise.all([
+    const g = client.session.capture(),
+      root = client.session.root;
+    const [list, setup, uploads] = await Promise.all([
       client.actor.list_vaults(),
       client.actor.list_unfinished_vaults(),
+      client.actor.list_pending_uploads(new Uint8Array()),
     ]);
     client.session.check(g);
     if (!alive.current) return;
     const currentVaults = ok(list);
+    if (root && client.session.root === root && client.header) {
+      client.header = currentVaults.find(
+        (h) => b64(bytes(h.id)) === b64(bytes(client.header!.id)),
+      );
+      client.session.check(g);
+    }
+    const pending = ok(uploads);
+    setPendingUploads(pending.entries);
+    setUploadAfter(pending.next[0] ? bytes(pending.next[0]) : undefined);
     setVaults(currentVaults);
     setSelected((previous) =>
       previous
@@ -191,7 +207,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
           setError(vaultError(cause));
       },
     );
-  }, [client, refreshConfiguration, refreshLists]);
+  }, [client, refreshConfiguration, refreshLists, generation]);
   const eligible =
     !!config && config.origin === location.origin && balance >= 20_000_000n;
   return (
@@ -366,7 +382,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
             Refresh Vaults
           </VaultButton>
           <VaultButton
-            disabled={busy}
+            disabled={busy || client.hasPendingSave}
             onClick={() =>
               run(async () => {
                 await client.retryMutation();
@@ -376,6 +392,54 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
           >
             Retry signed request
           </VaultButton>
+          {pendingUploads.map((entry) => (
+            <div
+              className="grid gap-2 border-t border-line pt-3 text-sm"
+              key={b64(bytes(entry.upload))}
+            >
+              <p>
+                {entry.cancel_job.length
+                  ? "Save cancellation in progress"
+                  : "Interrupted encrypted save"}
+                . No document names are stored in this list.
+              </p>
+              <VaultButton
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    const h = vaults.find(
+                      (v) => b64(bytes(v.id)) === b64(bytes(entry.vault)),
+                    );
+                    if (!h) throw Error("TargetChanged");
+                    await client.cancelUpload(h, bytes(entry.upload));
+                    await refreshLists();
+                  })
+                }
+              >
+                Cancel interrupted save
+              </VaultButton>
+            </div>
+          ))}
+          {uploadAfter ? (
+            <VaultButton
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const ticket = client.session.capture();
+                  const page = ok(
+                    await client.actor.list_pending_uploads(uploadAfter),
+                  );
+                  client.session.check(ticket);
+                  setPendingUploads(page.entries);
+                  setUploadAfter(
+                    page.next[0] ? bytes(page.next[0]) : undefined,
+                  );
+                })
+              }
+            >
+              More interrupted saves
+            </VaultButton>
+          ) : null}
           {unfinished.map((entry) => (
             <div
               className="grid gap-2 border-t border-line pt-3 text-sm"
@@ -467,7 +531,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                 client={client}
                 selected={selected}
                 unlocked={unlocked}
-                disabled={busy}
+                disabled={busy || client.hasPendingSave}
                 run={run}
                 onChanged={async () => {
                   if (client.header) setSelected(client.header);
@@ -479,7 +543,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                   key={`cleanup-${generation}`}
                   client={client}
                   selected={selected}
-                  disabled={busy}
+                  disabled={busy || client.hasPendingSave}
                   run={run}
                   onChanged={async () => {
                     await refreshLists();
@@ -500,7 +564,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                   <VaultPasskeys
                     key={`passkeys-${generation}`}
                     client={client}
-                    disabled={busy || !eligible}
+                    disabled={busy || !eligible || client.hasPendingSave}
                     run={run}
                     onChanged={refreshConfiguration}
                   />

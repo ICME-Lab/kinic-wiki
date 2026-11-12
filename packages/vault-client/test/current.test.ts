@@ -131,7 +131,7 @@ it("ordinary passkey removal uses Credentials authority and preserves the VRK", 
   const f = fixture(),
     raw = new Uint8Array(32).fill(7);
   f.client.session.raw = raw;
-  f.client.session.bindRoot(await importKey(raw), f.client.header!.generation[0]!);
+  f.client.session.bindRoot(await importKey(raw), f.client.header!.generation[0]!, raw);
   await f.client.removeCredential(new Uint8Array([8]));
   expect(f.actor.begin_grant.mock.calls[0]?.[0]).toMatchObject({
     purpose: { Credentials: null },
