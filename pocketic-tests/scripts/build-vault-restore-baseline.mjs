@@ -73,6 +73,32 @@ source = source.replace(
 if (!source.includes("let remaining=vault_types::TOTAL_MAX"))
   throw Error("baseline init changed");
 writeFileSync(lib, source);
+const buildEnv = {
+  ...process.env,
+  CARGO_TARGET_DIR: join(root, "target/vault-restore-quota-baseline-build"),
+};
+// git archive restores historical mtimes. The shared target can otherwise reuse
+// current vault-types while compiling an older service (or the reverse).
+// Match the ordinary baseline builder: rebuild every local crate for this source.
+execFileSync(
+  "cargo",
+  [
+    "clean",
+    "--release",
+    "--target",
+    "wasm32-unknown-unknown",
+    "--offline",
+    ...[
+      "vault-types",
+      "vault-store",
+      "vault-service",
+      "vault-canister",
+      "kinic-sqlite-compat",
+      "passkey-auth",
+    ].flatMap((name) => ["-p", name]),
+  ],
+  { cwd: dir, env: buildEnv, stdio: "inherit" },
+);
 execFileSync(
   "cargo",
   [
@@ -86,10 +112,7 @@ execFileSync(
   ],
   {
     cwd: dir,
-    env: {
-      ...process.env,
-      CARGO_TARGET_DIR: join(root, "target/vault-restore-quota-baseline-build"),
-    },
+    env: buildEnv,
     stdio: "inherit",
   },
 );
