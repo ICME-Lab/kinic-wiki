@@ -156,7 +156,8 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
 
 const MUSE_OAUTH_REDIRECT_URIS = new Set([
   "https://agent.meta.ai/api/hatch/oauth/callback",
-  "https://muse.ai/api/hatch/oauth/callback"
+  "https://muse.ai/api/hatch/oauth/callback",
+  "https://platform.muse.ai/oauth/credential-test/callback"
 ]);
 
 export async function authenticateMcpRequest(

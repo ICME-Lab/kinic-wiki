@@ -118,7 +118,7 @@ describe("MCP inside the session Durable Object", () => {
     expect((await entry.fetch(mcpRequest(reconnected.issued.accessToken, "tools/call", params), env)).status).toBe(401);
   });
 
-  it.each(["https://agent.meta.ai/api/hatch/oauth/callback", "https://muse.ai/api/hatch/oauth/callback"])("omits the connection profile for authenticated Muse clients, including after refresh: %s", async (redirectUri) => {
+  it.each(["https://agent.meta.ai/api/hatch/oauth/callback", "https://muse.ai/api/hatch/oauth/callback", "https://platform.muse.ai/oauth/credential-test/callback"])("omits the connection profile for authenticated Muse clients, including after refresh: %s", async (redirectUri) => {
     const muse = await iiSession(`muse-no-profile-${new URL(redirectUri).hostname.replaceAll(".", "-")}`, undefined, "mcp:read", redirectUri);
     const chatgpt = await iiSession(`chatgpt-keeps-profile-${new URL(redirectUri).hostname.replaceAll(".", "-")}`);
     const request = mcpRequest(muse.issued.accessToken);
@@ -304,7 +304,7 @@ describe("staging OAuth discovery and registration", () => {
     await expect(rejected.json()).resolves.toEqual({ error: "invalid_redirect_uri" });
   });
 
-  it.each(["https://agent.meta.ai/api/hatch/oauth/callback", "https://muse.ai/api/hatch/oauth/callback"])("registers the observed Muse callback and starts PKCE authorization: %s", async (redirectUri) => {
+  it.each(["https://agent.meta.ai/api/hatch/oauth/callback", "https://muse.ai/api/hatch/oauth/callback", "https://platform.muse.ai/oauth/credential-test/callback"])("registers the observed Muse callback and starts PKCE authorization: %s", async (redirectUri) => {
     const response = await register([redirectUri]);
     expect(response.status).toBe(201);
     const client = await response.json<{ client_id: string; grant_types: string[] }>();
@@ -328,7 +328,7 @@ describe("staging OAuth discovery and registration", () => {
     "https://user:pass@agent.meta.ai/api/hatch/oauth/callback",
     "https://agent.meta.ai:8443/api/hatch/oauth/callback",
     "https://agent.meta.ai/api/hatch/oauth/other"
-  ].flatMap((uri) => [uri, uri.replaceAll("agent.meta.ai", "muse.ai")]))("rejects unapproved Muse callback variants: %s", async (redirectUri) => {
+  ].flatMap((uri) => [uri, uri.replaceAll("agent.meta.ai", "muse.ai"), uri.replaceAll("agent.meta.ai", "platform.muse.ai").replaceAll("/api/hatch/oauth/", "/oauth/credential-test/")]))("rejects unapproved Muse callback variants: %s", async (redirectUri) => {
     const response = await register([redirectUri]);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "invalid_redirect_uri" });
