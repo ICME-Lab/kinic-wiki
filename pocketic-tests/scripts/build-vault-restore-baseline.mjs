@@ -12,8 +12,9 @@ import {
 } from "node:fs";
 import { resolve, join } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
-const base =
-  process.env.VAULT_RESTORE_BASE ?? "8070858eb6c7168264b18f4a115de4e4f14490cf";
+// Full-quota seeding must remain schema-compatible with the current runtime.
+// Historical upgrade tests explicitly select their immutable old source below.
+const base = process.env.VAULT_RESTORE_BASE ?? "HEAD";
 const commit = execFileSync(
   "git",
   ["-C", root, "rev-parse", `${base}^{commit}`],
@@ -112,6 +113,7 @@ writeFileSync(
   JSON.stringify(
     {
       source_commit: commit,
+      deployable: false,
       source_archive_sha256: digest(archive),
       fixture: "pocketic-tests/fixtures/vault-incident-fill.rs",
       fixture_sha256: digest(
