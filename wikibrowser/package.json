@@ -67,7 +67,7 @@
     "remark-gfm": "4.0.1",
     "tailwind-merge": "3.6.0",
     "zod": "^4.6.6",
-    "@kinic/vault-ui": "workspace:*"
+    "@kinic/ui": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.57.0",

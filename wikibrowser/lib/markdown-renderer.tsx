@@ -1,1 +1,1 @@
-export * from "@kinic/vault-ui/markdown";
+export * from "@kinic/ui/markdown";

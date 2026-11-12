@@ -1,4 +1,4 @@
-import { Markdown, type MarkdownComponents } from "@kinic/vault-ui/markdown";
+import { Markdown, type MarkdownComponents } from "@kinic/ui/markdown";
 const privateComponents: MarkdownComponents = {
   img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : "[Image omitted]"}</span>,
   a: ({ children }) => <span>{children}</span>,

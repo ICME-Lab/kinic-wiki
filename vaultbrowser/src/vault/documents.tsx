@@ -3,7 +3,7 @@ import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
 import { utf8 } from "@kinic/vault-crypto";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
-import { MarkdownEditor } from "@kinic/vault-ui/editor";
+import { MarkdownEditor } from "@kinic/ui/editor";
 import { VaultPreview } from "./preview";
 import { VaultButton, VaultField, VaultPanel } from "./ui";
 import type { VaultWork } from "./workspace";

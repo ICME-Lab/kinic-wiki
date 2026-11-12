@@ -1,3 +1,5 @@
+import { Button } from "@kinic/ui/button";
+import { Input } from "@kinic/ui/input";
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -8,7 +10,8 @@ export function VaultButton({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button
+    <Button
+      unstyled
       type="button"
       className={`min-h-10 rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
       {...props}
@@ -22,7 +25,8 @@ export function VaultField({
   return (
     <label className="grid min-w-0 gap-1 text-sm font-medium">
       {label}
-      <input
+      <Input
+        unstyled
         className="min-h-10 min-w-0 rounded-lg border border-line bg-white px-3 py-2 text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         autoComplete="off"
         {...props}

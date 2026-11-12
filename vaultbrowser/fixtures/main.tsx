@@ -1,4 +1,4 @@
-import { EditorView } from "../../packages/vault-ui/node_modules/@codemirror/view";
+import { EditorView } from "../../packages/ui/node_modules/@codemirror/view";
 // Synthetic actor and identity exist only in this separate fixture entry, never in the product route.
 import { createRoot } from "react-dom/client";
 import { useEffect } from "react";

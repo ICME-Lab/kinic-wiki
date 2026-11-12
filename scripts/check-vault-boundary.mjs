@@ -13,6 +13,10 @@ function walk(path) {
 }
 walk('vaultbrowser/src');
 walk('packages/vault-client/src');
+walk('packages/ui/src');
+for (const file of readdirSync(root + 'packages/ui/src').filter(name => /\.(ts|tsx)$/.test(name))) {
+  assert.doesNotMatch(readFileSync(root + 'packages/ui/src/' + file, 'utf8'), /@icp-sdk\/auth|@kinic\/(?:vault-client|vault-crypto|vault-backup)|localStorage|sessionStorage|indexedDB|\bfetch\s*\(/, file);
+}
 assert.match(readFileSync(root + 'wikibrowser/components/admin-shell.tsx', 'utf8'), /https:\/\/vault\.kinic\.xyz/);
 assert.doesNotMatch(readFileSync(root + 'vaultbrowser/icp.yaml', 'utf8'), /name: wiki/);
 console.log('Wiki/Vault runtime, contract, browser and deployment boundaries PASS');

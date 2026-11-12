@@ -49,7 +49,7 @@ const databaseTwitterImageSource = readFileSync(new URL("../src/routes/db.$datab
 const linkPreviewGeneratorSource = readFileSync(new URL("./generate-link-preview-images.mjs", import.meta.url), "utf8");
 const sourceCapturePanelSource = readFileSync(new URL("../components/source-capture-panel.tsx", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
-const markdownEditorSource = readFileSync(new URL("../../packages/vault-ui/src/editor.tsx", import.meta.url), "utf8");
+const markdownEditorSource = readFileSync(new URL("../../packages/ui/src/editor.tsx", import.meta.url), "utf8");
 const markdownPreviewSource = readFileSync(new URL("../components/markdown-preview.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("../components/search-panel.tsx", import.meta.url), "utf8");
@@ -75,8 +75,8 @@ const vfsClientSource = vfsClientFiles.map((p) => readFileSync(new URL(p, import
 const databasePreviewSource = readFileSync(new URL("../lib/database-preview.ts", import.meta.url), "utf8");
 const wranglerConfigSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const assetsIgnoreSource = readFileSync(new URL("../public/.assetsignore", import.meta.url), "utf8");
-const globalsCss = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta.url), "utf8");
+const globalsCss = readFileSync(new URL("../../packages/ui/src/styles.css", import.meta.url), "utf8");
+const tailwindConfig = readFileSync(new URL("../../packages/ui/tailwind-preset.ts", import.meta.url), "utf8");
 
 assert.match(explorerTreeSource, /childNodesCache\.current\.get\(requestKey\)/);
 assert.match(explorerTreeSource, /childNodesCache\.current\.set\(requestKey, data\)/);
@@ -477,9 +477,9 @@ assert.match(globalsCss, /prefers-reduced-motion/);
 assert.match(globalsCss, /\.markdown-body img \{/);
 assert.match(globalsCss, /max-width: 100%;/);
 assert.match(globalsCss, /height: auto;/);
-// Brand tokens now live in app/globals.css so light and dark share one definition.
+// Brand tokens live in packages/ui/src/styles.css so light and dark share one definition.
 const accentToken = globalsCss.match(/--brand-accent: (\d+) (\d+) (\d+);/);
-assert.ok(accentToken, "Brand accent token must be defined in globals.css");
+assert.ok(accentToken, "Brand accent token must be defined in shared styles.css");
 const toHex = (channels) => `#${channels.map((channel) => Number(channel).toString(16).padStart(2, "0")).join("")}`;
 const readableAccent = toHex(accentToken.slice(1, 4));
 const luminance = (hex) => {

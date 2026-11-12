@@ -16,7 +16,7 @@
     "@kinic/vault-candid": "workspace:*",
     "@kinic/vault-client": "workspace:*",
     "@kinic/vault-crypto": "workspace:*",
-    "@kinic/vault-ui": "workspace:*",
+    "@kinic/ui": "workspace:*",
     "lucide-react": "0.555.0",
     "react": "19.2.5",
     "react-dom": "19.2.5"

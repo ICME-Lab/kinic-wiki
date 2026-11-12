@@ -12,7 +12,7 @@ import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { VaultClient } from "@kinic/vault-client";
 import type { Header, VaultActor } from "@kinic/vault-client/contracts";
 import { VaultWorkspace } from "./workspace";
-vi.mock("@kinic/vault-ui/editor", () => ({
+vi.mock("@kinic/ui/editor", () => ({
   MarkdownEditor: ({
     content,
     onChange,
