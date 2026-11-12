@@ -378,8 +378,12 @@
   ],
   "repository": "https://github.com/humandebri/kinic-vault.git",
   "working_tree_patch": {
-    "path": "source-working-tree.patch",
     "sha256": "52d2bbd7909a444b3d0f7de85840b535de8f3bbf421cb244302f5354d25ab21e",
-    "reconstruction_verified_files": 93
+    "reconstruction_verified_files": 93,
+    "archive": {
+      "repository": "https://github.com/ICME-Lab/kinic-wiki.git",
+      "commit": "56c2b079071b6f17cbd66dfb6b77b94e3c4fefd7",
+      "path": "docs/vault/source-working-tree.patch"
+    }
   }
 }

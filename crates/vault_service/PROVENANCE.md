@@ -17,3 +17,9 @@ Global quotas and key-service journals explicitly use unscoped aggregate queries
 The `vendor/passkey-auth` code retains its upstream licenses and NOTICE. No
 standalone Vault MemoryManager, login, development origin restriction or owner
 init argument is embedded in the Wiki canister.
+
+The original working-tree patch is retained in immutable Git history rather than
+in the current source tree. `source-snapshot.json` records its archive commit,
+path and SHA-256. Retrieve it with `git show <archive.commit>:<archive.path>`;
+verify that SHA-256 before applying it to the upstream base. The original
+93-file reconstruction evidence and per-file digests remain unchanged.
