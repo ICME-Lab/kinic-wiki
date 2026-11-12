@@ -491,8 +491,16 @@ it.each(["BeginRevision", "PutChunk", "CommitRevision"])(
     const request = f.request()!;
     expect(f.client.hasPendingSave).toBe(true);
     expect(lost).toHaveLength(3);
-    expect(lost[1]).toEqual(lost[0]);
-    expect(lost[2]).toEqual(lost[0]);
+    // Compare every byte natively; deep object matchers walk megabytes in JS
+    // and consumed the unchanged 5s CI budget despite successful crypto/replay.
+    for (const retry of lost.slice(1)) {
+      expect(
+        Buffer.from(retry.payload).equals(Buffer.from(lost[0].payload)),
+      ).toBe(true);
+      expect(
+        Buffer.from(retry.signature).equals(Buffer.from(lost[0].signature)),
+      ).toBe(true);
+    }
     await expect(
       f.client.save(
         { kind: "note", title: "another" },
@@ -521,7 +529,7 @@ it.each(["BeginRevision", "PutChunk", "CommitRevision"])(
       request.chunk_hashes.map((x) => new Uint8Array(x)),
       cryptoGeneration(generation),
     );
-    expect(doc.plaintext).toEqual(plain);
+    expect(Buffer.from(doc.plaintext).equals(Buffer.from(plain))).toBe(true);
     doc.plaintext.fill(0);
     f.client.session.lock();
   },
