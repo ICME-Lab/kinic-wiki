@@ -40,6 +40,12 @@ type Challenge = record {
   bytes : blob;
 };
 type CleanupProgress = record { job : blob; cursor : nat64; complete : bool };
+type CommittedUpload = record {
+  object : blob;
+  vault : blob;
+  revision : nat64;
+  sequence : nat64;
+};
 // A new-empty job has no archive, imported record, or unregistered candidate authority.
 type CreateEmptyPhase = variant {
   Admitted;
@@ -298,6 +304,23 @@ type PendingCreation = record {
   vault : blob;
   namespace : blob;
 };
+type PendingUpload = record {
+  expires : nat64;
+  request : BeginRevision;
+  cancel_job : opt blob;
+  received : vec nat32;
+};
+// Bounded owner-only metadata; no document name or plaintext.
+type PendingUploadSummary = record {
+  expires : nat64;
+  vault : blob;
+  upload : blob;
+  cancel_job : opt blob;
+};
+type PendingUploads = record {
+  next : opt blob;
+  entries : vec PendingUploadSummary;
+};
 type PreparationPhase = variant {
   BackupVerified;
   PendingNonce;
@@ -436,20 +459,22 @@ type Result_17 = variant { Ok : blob; Err : Error };
 type Result_18 = variant { Ok : opt VaultConfig; Err : Error };
 type Result_19 = variant { Ok : Quota; Err : Error };
 type Result_2 = variant { Ok : Challenge; Err : Error };
-type Result_20 = variant { Ok : GlobalCapacity; Err : Error };
-type Result_21 = variant { Ok : opt IncidentContext; Err : Error };
-type Result_22 = variant { Ok : StagedExport; Err : Error };
-type Result_23 = variant { Ok : opt IncidentStatus; Err : Error };
-type Result_24 = variant { Ok : vec CredentialInfo; Err : Error };
-type Result_25 = variant { Ok : ObjectPage; Err : Error };
-type Result_26 = variant { Ok : vec Payment; Err : Error };
-type Result_27 = variant { Ok : vec UnfinishedVault; Err : Error };
-type Result_28 = variant { Ok : vec Header; Err : Error };
-type Result_29 = variant { Ok : MutationResult; Err : Error };
+type Result_20 = variant { Ok : UploadStatus; Err : Error };
+type Result_21 = variant { Ok : GlobalCapacity; Err : Error };
+type Result_22 = variant { Ok : opt IncidentContext; Err : Error };
+type Result_23 = variant { Ok : StagedExport; Err : Error };
+type Result_24 = variant { Ok : opt IncidentStatus; Err : Error };
+type Result_25 = variant { Ok : vec CredentialInfo; Err : Error };
+type Result_26 = variant { Ok : ObjectPage; Err : Error };
+type Result_27 = variant { Ok : vec Payment; Err : Error };
+type Result_28 = variant { Ok : PendingUploads; Err : Error };
+type Result_29 = variant { Ok : vec UnfinishedVault; Err : Error };
 type Result_3 = variant { Ok : Export; Err : Error };
-type Result_30 = variant { Ok : opt Payment; Err : Error };
-type Result_31 = variant { Ok : RestoreAdmissionStatus; Err : Error };
-type Result_32 = variant { Ok : opt RestoreAdmissionStatus; Err : Error };
+type Result_30 = variant { Ok : vec Header; Err : Error };
+type Result_31 = variant { Ok : MutationResult; Err : Error };
+type Result_32 = variant { Ok : opt Payment; Err : Error };
+type Result_33 = variant { Ok : RestoreAdmissionStatus; Err : Error };
+type Result_34 = variant { Ok : opt RestoreAdmissionStatus; Err : Error };
 type Result_4 = variant { Ok; Err : Error };
 type Result_5 = variant { Ok : Upload; Err : Error };
 type Result_6 = variant { Ok : BootstrapReply; Err : Error };
@@ -491,6 +516,13 @@ type UnfinishedVault = record {
   namespace : opt blob;
 };
 type Upload = record { id : blob; expires : nat64; revision : nat64 };
+type UploadStatus = variant {
+  Committed : CommittedUpload;
+  Absent;
+  Cancelled;
+  Expired;
+  Pending : PendingUpload;
+};
 // Exact WebAuthn deployment configuration, independent from II derivation origin.
 type VaultConfig = record {
   minimum_cycles : nat64;
@@ -546,34 +578,36 @@ service : () -> {
   get_export_chunk : (blob, blob, nat64, nat32) -> (Result_17);
   get_manifest : (blob, blob, nat64) -> (Result_11);
   get_quota : (blob) -> (Result_19);
+  get_upload_status : (blob) -> (Result_20);
   get_vault_header : (blob) -> (Result);
   // Aggregate capacity is public metadata; it never allocates an owner or account.
-  global_capacity : () -> (Result_20) query;
+  global_capacity : () -> (Result_21) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
-  incident_context : () -> (Result_21) query;
+  incident_context : () -> (Result_22) query;
   incident_cutover_digest : () -> (Result_17) query;
   incident_source_index : (blob, blob, blob, nat64) -> (Result_14) query;
   incident_staged_chunk : (IncidentRead, blob, nat64, nat32) -> (
       Result_17,
     ) query;
-  incident_staged_export : (IncidentRead) -> (Result_22) query;
+  incident_staged_export : (IncidentRead) -> (Result_23) query;
   incident_staged_index : (IncidentRead, nat64) -> (Result_14) query;
   // Owner-only encrypted status remains available when configuration is absent or incompatible.
-  incident_status : () -> (Result_23) query;
+  incident_status : () -> (Result_24) query;
   initialize_restore_namespace : (blob) -> (Result_17);
-  list_credentials : () -> (Result_24);
+  list_credentials : () -> (Result_25);
   list_history : (blob, blob, nat64) -> (Result_14);
-  list_objects : (blob, blob) -> (Result_25);
-  list_payments : () -> (Result_26) query;
-  list_unfinished_vaults : () -> (Result_27);
-  list_vaults : () -> (Result_28);
+  list_objects : (blob, blob) -> (Result_26);
+  list_payments : () -> (Result_27) query;
+  list_pending_uploads : (blob) -> (Result_28);
+  list_unfinished_vaults : () -> (Result_29);
+  list_vaults : () -> (Result_30);
   manage_unlock_credential : (ManageCredential) -> (Result_4);
-  mutate : (blob, blob) -> (Result_29);
+  mutate : (blob, blob) -> (Result_31);
   pay_purchase : (blob) -> (Result_8);
-  payment_status : (blob) -> (Result_30) query;
+  payment_status : (blob) -> (Result_32) query;
   prepare_unlock_credential : (blob, text) -> (Result_17);
-  prove_restore_candidate : (blob, text) -> (Result_31);
-  prove_restore_current : (blob, blob) -> (Result_31);
+  prove_restore_candidate : (blob, text) -> (Result_33);
+  prove_restore_current : (blob, blob) -> (Result_33);
   purge_object : (blob, blob) -> (Result_4);
   put_chunk : (blob, nat32, blob) -> (Result_4);
   put_restore_chunk : (blob, nat32, blob, opt blob) -> (Result_4);
@@ -581,11 +615,11 @@ service : () -> {
   register_bootstrap : (blob, text) -> (Result_15);
   register_restore_candidate : (blob, text) -> (Result_2);
   reserve_vault : (Reserve) -> (Result);
-  restore_admission_status : () -> (Result_32) query;
+  restore_admission_status : () -> (Result_34) query;
   restore_target_chunk : (blob, Generation, blob, nat64, nat32) -> (
       Result_17,
     ) query;
-  restore_target_descriptor : (blob, Generation) -> (Result_22) query;
+  restore_target_descriptor : (blob, Generation) -> (Result_23) query;
   restore_target_index : (blob, Generation, nat64) -> (Result_14) query;
   restore_target_progress : (blob, Generation) -> (Result_10) query;
   resume_restore_admission : (blob) -> (Result_2);

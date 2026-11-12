@@ -50,6 +50,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const CleanupAction = IDL.Variant({
     'AbortExport' : IDL.Record({ 'export' : IDL.Vec(IDL.Nat8) }),
+    'CancelUpload' : IDL.Record({ 'upload' : IDL.Vec(IDL.Nat8) }),
     'Purge' : IDL.Null,
     'CancelIncident' : IDL.Record({
       'vector_digest' : IDL.Vec(IDL.Nat8),

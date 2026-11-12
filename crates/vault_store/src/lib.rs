@@ -309,3 +309,5 @@ pub const KEY_CAPACITY_SCHEMA: &str = include_str!("key-capacity-schema.sql");
 pub mod transition;
 
 pub mod restore_working;
+
+mod uploads;

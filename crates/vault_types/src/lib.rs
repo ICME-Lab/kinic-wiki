@@ -167,6 +167,41 @@ pub struct Upload {
     pub revision: u64,
     pub expires: u64,
 }
+/// Bounded owner-only metadata; no document name or plaintext.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct PendingUploadSummary {
+    pub upload: Id,
+    pub vault: Id,
+    pub expires: u64,
+    pub cancel_job: Option<Id>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct PendingUploads {
+    pub entries: Vec<PendingUploadSummary>,
+    pub next: Option<Id>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct PendingUpload {
+    pub request: BeginRevision,
+    pub expires: u64,
+    pub received: Vec<u32>,
+    pub cancel_job: Option<Id>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct CommittedUpload {
+    pub vault: Id,
+    pub object: Id,
+    pub revision: u64,
+    pub sequence: u64,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub enum UploadStatus {
+    Pending(PendingUpload),
+    Committed(CommittedUpload),
+    Cancelled,
+    Expired,
+    Absent,
+}
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Revision {
     pub vault: Id,

@@ -23,6 +23,7 @@ export interface BeginRevision {
 export type CleanupAction = {
     'AbortExport' : { 'export' : Uint8Array | number[] }
   } |
+  { 'CancelUpload' : { 'upload' : Uint8Array | number[] } } |
   { 'Purge' : null } |
   {
     'CancelIncident' : {

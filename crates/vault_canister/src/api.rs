@@ -835,3 +835,18 @@ fn cancel_create_empty(
     let result = vault_service::create_empty::cancel(&env, job, target, generation, cursor);
     env.finish(result)
 }
+
+#[ic_cdk::update]
+fn list_pending_uploads(
+    after: vault_types::Id,
+) -> vault_types::Result<vault_types::PendingUploads> {
+    let env = Vault::capture_read()?;
+    let result = vault_service::list_pending_uploads(&env, after);
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn get_upload_status(upload: vault_types::Id) -> vault_types::Result<vault_types::UploadStatus> {
+    let env = Vault::capture_read()?;
+    let result = vault_service::get_upload_status(&env, upload);
+    env.finish(result)
+}

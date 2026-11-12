@@ -242,6 +242,9 @@ pub enum MutationOperation {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CleanupAction {
+    CancelUpload {
+        upload: Id,
+    },
     Expired,
     Purge,
     CancelSetup {

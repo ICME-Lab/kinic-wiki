@@ -18,6 +18,7 @@ type BeginRevision = record {
 };
 type CleanupAction = variant {
   AbortExport : record { export : blob };
+  CancelUpload : record { upload : blob };
   Purge;
   CancelIncident : record { vector_digest : blob; incident : blob };
   Expired;

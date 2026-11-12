@@ -988,3 +988,16 @@ mod restore_candidate;
 mod restore_flights;
 pub mod restore_grants;
 pub mod restore_pipeline;
+
+pub fn list_pending_uploads(env: &impl Environment, after: Id) -> Result<PendingUploads> {
+    env.transaction(|db| {
+        store::authorize(db, env.owner())?;
+        store::content::pending_uploads(db, &after)
+    })
+}
+pub fn get_upload_status(env: &impl Environment, upload: Id) -> Result<UploadStatus> {
+    env.transaction(|db| {
+        store::authorize(db, env.owner())?;
+        store::content::upload_status(db, &upload, env.now())
+    })
+}

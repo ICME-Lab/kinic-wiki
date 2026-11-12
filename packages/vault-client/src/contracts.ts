@@ -52,6 +52,12 @@ export interface CleanupProgress {
   'cursor' : bigint,
   'complete' : boolean,
 }
+export interface CommittedUpload {
+  'object' : Uint8Array | number[],
+  'vault' : Uint8Array | number[],
+  'revision' : bigint,
+  'sequence' : bigint,
+}
 /**
  * A new-empty job has no archive, imported record, or unregistered candidate authority.
  */
@@ -362,6 +368,25 @@ export interface PendingCreation {
   'vault' : Uint8Array | number[],
   'namespace' : Uint8Array | number[],
 }
+export interface PendingUpload {
+  'expires' : bigint,
+  'request' : BeginRevision,
+  'cancel_job' : [] | [Uint8Array | number[]],
+  'received' : Uint32Array | number[],
+}
+/**
+ * Bounded owner-only metadata; no document name or plaintext.
+ */
+export interface PendingUploadSummary {
+  'expires' : bigint,
+  'vault' : Uint8Array | number[],
+  'upload' : Uint8Array | number[],
+  'cancel_job' : [] | [Uint8Array | number[]],
+}
+export interface PendingUploads {
+  'next' : [] | [Uint8Array | number[]],
+  'entries' : Array<PendingUploadSummary>,
+}
 export type PreparationPhase = { 'BackupVerified' : null } |
   { 'PendingNonce' : null } |
   { 'Resetting' : null } |
@@ -528,33 +553,37 @@ export type Result_19 = { 'Ok' : Quota } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : Challenge } |
   { 'Err' : Error };
-export type Result_20 = { 'Ok' : GlobalCapacity } |
+export type Result_20 = { 'Ok' : UploadStatus } |
   { 'Err' : Error };
-export type Result_21 = { 'Ok' : [] | [IncidentContext] } |
+export type Result_21 = { 'Ok' : GlobalCapacity } |
   { 'Err' : Error };
-export type Result_22 = { 'Ok' : StagedExport } |
+export type Result_22 = { 'Ok' : [] | [IncidentContext] } |
   { 'Err' : Error };
-export type Result_23 = { 'Ok' : [] | [IncidentStatus] } |
+export type Result_23 = { 'Ok' : StagedExport } |
   { 'Err' : Error };
-export type Result_24 = { 'Ok' : Array<CredentialInfo> } |
+export type Result_24 = { 'Ok' : [] | [IncidentStatus] } |
   { 'Err' : Error };
-export type Result_25 = { 'Ok' : ObjectPage } |
+export type Result_25 = { 'Ok' : Array<CredentialInfo> } |
   { 'Err' : Error };
-export type Result_26 = { 'Ok' : Array<Payment> } |
+export type Result_26 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_27 = { 'Ok' : Array<UnfinishedVault> } |
+export type Result_27 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_28 = { 'Ok' : Array<Header> } |
+export type Result_28 = { 'Ok' : PendingUploads } |
   { 'Err' : Error };
-export type Result_29 = { 'Ok' : MutationResult } |
+export type Result_29 = { 'Ok' : Array<UnfinishedVault> } |
   { 'Err' : Error };
 export type Result_3 = { 'Ok' : Export } |
   { 'Err' : Error };
-export type Result_30 = { 'Ok' : [] | [Payment] } |
+export type Result_30 = { 'Ok' : Array<Header> } |
   { 'Err' : Error };
-export type Result_31 = { 'Ok' : RestoreAdmissionStatus } |
+export type Result_31 = { 'Ok' : MutationResult } |
   { 'Err' : Error };
-export type Result_32 = { 'Ok' : [] | [RestoreAdmissionStatus] } |
+export type Result_32 = { 'Ok' : [] | [Payment] } |
+  { 'Err' : Error };
+export type Result_33 = { 'Ok' : RestoreAdmissionStatus } |
+  { 'Err' : Error };
+export type Result_34 = { 'Ok' : [] | [RestoreAdmissionStatus] } |
   { 'Err' : Error };
 export type Result_4 = { 'Ok' : null } |
   { 'Err' : Error };
@@ -605,6 +634,11 @@ export interface Upload {
   'expires' : bigint,
   'revision' : bigint,
 }
+export type UploadStatus = { 'Committed' : CommittedUpload } |
+  { 'Absent' : null } |
+  { 'Cancelled' : null } |
+  { 'Expired' : null } |
+  { 'Pending' : PendingUpload };
 /**
  * Exact WebAuthn deployment configuration, independent from II derivation origin.
  */
@@ -698,13 +732,14 @@ export interface _SERVICE {
     Result_11
   >,
   'get_quota' : ActorMethod<[Uint8Array | number[]], Result_19>,
+  'get_upload_status' : ActorMethod<[Uint8Array | number[]], Result_20>,
   'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result>,
   /**
    * Aggregate capacity is public metadata; it never allocates an owner or account.
    */
-  'global_capacity' : ActorMethod<[], Result_20>,
+  'global_capacity' : ActorMethod<[], Result_21>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
-  'incident_context' : ActorMethod<[], Result_21>,
+  'incident_context' : ActorMethod<[], Result_22>,
   'incident_cutover_digest' : ActorMethod<[], Result_17>,
   'incident_source_index' : ActorMethod<
     [
@@ -719,46 +754,47 @@ export interface _SERVICE {
     [IncidentRead, Uint8Array | number[], bigint, number],
     Result_17
   >,
-  'incident_staged_export' : ActorMethod<[IncidentRead], Result_22>,
+  'incident_staged_export' : ActorMethod<[IncidentRead], Result_23>,
   'incident_staged_index' : ActorMethod<[IncidentRead, bigint], Result_14>,
   /**
    * Owner-only encrypted status remains available when configuration is absent or incompatible.
    */
-  'incident_status' : ActorMethod<[], Result_23>,
+  'incident_status' : ActorMethod<[], Result_24>,
   'initialize_restore_namespace' : ActorMethod<
     [Uint8Array | number[]],
     Result_17
   >,
-  'list_credentials' : ActorMethod<[], Result_24>,
+  'list_credentials' : ActorMethod<[], Result_25>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
     Result_14
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_25
+    Result_26
   >,
-  'list_payments' : ActorMethod<[], Result_26>,
-  'list_unfinished_vaults' : ActorMethod<[], Result_27>,
-  'list_vaults' : ActorMethod<[], Result_28>,
+  'list_payments' : ActorMethod<[], Result_27>,
+  'list_pending_uploads' : ActorMethod<[Uint8Array | number[]], Result_28>,
+  'list_unfinished_vaults' : ActorMethod<[], Result_29>,
+  'list_vaults' : ActorMethod<[], Result_30>,
   'manage_unlock_credential' : ActorMethod<[ManageCredential], Result_4>,
   'mutate' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_29
+    Result_31
   >,
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_8>,
-  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_30>,
+  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_32>,
   'prepare_unlock_credential' : ActorMethod<
     [Uint8Array | number[], string],
     Result_17
   >,
   'prove_restore_candidate' : ActorMethod<
     [Uint8Array | number[], string],
-    Result_31
+    Result_33
   >,
   'prove_restore_current' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_31
+    Result_33
   >,
   'purge_object' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
@@ -787,14 +823,14 @@ export interface _SERVICE {
     Result_2
   >,
   'reserve_vault' : ActorMethod<[Reserve], Result>,
-  'restore_admission_status' : ActorMethod<[], Result_32>,
+  'restore_admission_status' : ActorMethod<[], Result_34>,
   'restore_target_chunk' : ActorMethod<
     [Uint8Array | number[], Generation, Uint8Array | number[], bigint, number],
     Result_17
   >,
   'restore_target_descriptor' : ActorMethod<
     [Uint8Array | number[], Generation],
-    Result_22
+    Result_23
   >,
   'restore_target_index' : ActorMethod<
     [Uint8Array | number[], Generation, bigint],

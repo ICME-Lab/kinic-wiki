@@ -1392,3 +1392,146 @@ fn key_pool_global_bound_counts_all_owners_and_never_expands_accounting_floor() 
 
 #[path = "restore_working_tests.rs"]
 mod working;
+
+#[test]
+fn cancellation_is_a_typed_signed_cleanup_action() {
+    let parsed = serde_json::from_value::<CleanupAction>(
+        serde_json::json!({"CancelUpload":{"upload":vec![8u8;16]}}),
+    );
+    assert!(
+        parsed.is_ok(),
+        "upload cancellation must be accepted by the exact signed mutation decoder"
+    );
+}
+
+fn unfinished_upload_fixture() -> (Connection, BeginRevision, Vec<u8>) {
+    use sha2::{Digest, Sha256};
+    let db = fixture();
+    let owner = config(&db).unwrap().owner;
+    let mut h = reserve(
+        &db,
+        owner,
+        Reserve {
+            vault: vec![1; 16],
+            operation: vec![2; 16],
+        },
+        1,
+    )
+    .unwrap();
+    h.state = VaultState::Active;
+    put_header(&db, &h).unwrap();
+    db.execute("UPDATE vaults SET expires=0", params![])
+        .unwrap();
+    let bytes = vec![7; 17];
+    let request = BeginRevision {
+        vault: h.id,
+        object: vec![3; 16],
+        operation: vec![4; 16],
+        expected_revision: 0,
+        plain_size: 1,
+        manifest: vec![99],
+        chunk_hashes: vec![Sha256::digest(&bytes).to_vec()],
+    };
+    content::begin(&db, request.clone(), 1).unwrap();
+    content::put(&db, &request.operation, 0, &bytes, 1).unwrap();
+    (db, request, bytes)
+}
+#[test]
+fn upload_cancel_fences_late_writes_reclaims_in_batches_and_retains_terminal_receipt() {
+    let (db, r, bytes) = unfinished_upload_fixture();
+    let before = content::usage(&db).unwrap();
+    assert_eq!(content::pending_uploads(&db, &[]).unwrap().entries.len(), 1);
+    let job = vec![5; 16];
+    assert!(!content::cancel_upload_batch(&db, &r.vault, &r.operation, &job, 2).unwrap());
+    assert_eq!(
+        content::put(&db, &r.operation, 0, &bytes, 2),
+        Err(Error::Conflict)
+    );
+    assert!(matches!(
+        content::commit(&db, &r.operation, 2),
+        Err(Error::Conflict)
+    ));
+    assert!(matches!(
+        content::begin(&db, r.clone(), 2),
+        Err(Error::Conflict)
+    ));
+    assert!(
+        matches!(content::upload_status(&db,&r.operation,2).unwrap(),UploadStatus::Pending(p) if p.cancel_job==Some(job.clone()) && p.received.is_empty())
+    );
+    assert!(content::cancel_upload_batch(&db, &r.vault, &r.operation, &job, 2).unwrap());
+    assert!(
+        content::pending_uploads(&db, &[])
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    assert!(matches!(
+        content::upload_status(&db, &r.operation, 2).unwrap(),
+        UploadStatus::Cancelled
+    ));
+    assert!(matches!(
+        content::begin(&db, r.clone(), 2),
+        Err(Error::Conflict)
+    ));
+    assert!(matches!(
+        content::commit(&db, &r.operation, 2),
+        Err(Error::Conflict)
+    ));
+    assert!(content::usage(&db).unwrap() < before);
+    let mut next = r;
+    next.operation = vec![6; 16];
+    content::begin(&db, next, 2).unwrap();
+}
+#[test]
+fn cancellation_is_owner_vault_and_job_bound_and_preserves_commit_first() {
+    let (db, r, _) = unfinished_upload_fixture();
+    assert!(content::cancel_upload_batch(&db, &[9; 16], &r.operation, &[5; 16], 2).is_err());
+    let owner = config(&db).unwrap().owner;
+    select_owner(&db, Principal::self_authenticating([9; 32])).unwrap();
+    assert!(
+        content::pending_uploads(&db, &[])
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    assert!(matches!(
+        content::upload_status(&db, &r.operation, 2).unwrap(),
+        UploadStatus::Absent
+    ));
+    assert!(content::cancel_upload_batch(&db, &r.vault, &r.operation, &[5; 16], 2).is_err());
+    select_owner(&db, owner).unwrap();
+    let rev = content::commit(&db, &r.operation, 2).unwrap();
+    assert!(content::cancel_upload_batch(&db, &r.vault, &r.operation, &[5; 16], 2).unwrap());
+    assert!(
+        matches!(content::upload_status(&db,&r.operation,2).unwrap(),UploadStatus::Committed(c) if c.sequence==rev.sequence)
+    );
+    assert_eq!(
+        content::manifest(&db, &r.vault, &r.object, 1)
+            .unwrap()
+            .manifest,
+        vec![99]
+    );
+}
+#[test]
+fn cancelling_upload_survives_expiry_and_can_finish_in_legacy_overcommit() {
+    let (db, r, _) = unfinished_upload_fixture();
+    let job = vec![5; 16];
+    assert!(!content::cancel_upload_batch(&db, &r.vault, &r.operation, &job, 2).unwrap());
+    assert_eq!(
+        content::cancel_upload_batch(&db, &r.vault, &r.operation, &[6; 16], 2),
+        Err(Error::Conflict)
+    );
+    content::gc(&db, DAY + 5).unwrap();
+    db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,0,?3,'[]',1,?4)",params![vec![9u8;16],vec![9u8;16],vec![99u8],TOTAL_MAX as i64]).unwrap();
+    assert!(content::global_capacity(&db).unwrap().overcommitted);
+    cleanup::expired_batch(&db, std::slice::from_ref(&r.vault), DAY + 5).unwrap();
+    assert!(matches!(
+        content::upload_status(&db, &r.operation, DAY + 5).unwrap(),
+        UploadStatus::Pending(_)
+    ));
+    assert!(content::cancel_upload_batch(&db, &r.vault, &r.operation, &job, DAY + 5).unwrap());
+    assert!(matches!(
+        content::upload_status(&db, &r.operation, DAY + 5).unwrap(),
+        UploadStatus::Cancelled
+    ));
+}

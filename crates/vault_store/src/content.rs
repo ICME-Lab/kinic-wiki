@@ -1,4 +1,5 @@
 use super::*;
+pub use crate::uploads::{cancel_upload_batch, pending_uploads, upload_status};
 use sha2::{Digest, Sha256};
 const OVERHEAD: u64 = 4096;
 const ROW_MAX: i64 = 10000;
@@ -118,6 +119,9 @@ fn receipt<T: DeserializeOwned>(
             if d != digest {
                 return Err(Error::Conflict);
             }
+            if crate::uploads::cancelled(&s).is_some() {
+                return Err(Error::Conflict);
+            }
             if s == "\"Expired\"" {
                 return Err(Error::Expired);
             }
@@ -217,15 +221,18 @@ pub fn begin_with_budget(
             expires: 0,
         });
     }
-    let prior: Option<(Vec<u8>, i64)> = db
+    let prior: Option<(Vec<u8>, i64, Option<Id>)> = db
         .query_row(
-            "SELECT digest,expires FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
+            "SELECT digest,expires,cancel_job FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
             params![r.operation],
-            |row| Ok((sql::row_get(row, 0)?, sql::row_get(row, 1)?)),
+            |row| Ok((sql::row_get(row, 0)?, sql::row_get(row, 1)?, sql::row_get(row,2)?)),
         )
         .optional()
         .map_err(db_error)?;
-    if let Some((d, e)) = prior {
+    if let Some((d, e, cancel_job)) = prior {
+        if cancel_job.is_some() {
+            return Err(Error::Conflict);
+        }
         if d != digest {
             return Err(Error::Conflict);
         }
@@ -274,7 +281,7 @@ pub fn begin_with_budget(
         + OVERHEAD * 3;
     check_capacity(db, reserved)?;
     db.execute(
-        "INSERT INTO uploads VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,?7,?8)",
+        "INSERT INTO uploads(owner,id,vault,object,expected,expires,digest,request,reserved) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,?7,?8)",
         params![
             r.operation,
             r.vault,
@@ -295,21 +302,25 @@ pub fn begin_with_budget(
 }
 fn upload(db: &Connection, id: &[u8], now: u64) -> Result<(BeginRevision, Vec<u8>, u64)> {
     vault_types::id(id)?;
-    let (raw, d, e): (String, Vec<u8>, i64) = db
+    let (raw, d, e, cancel_job): (String, Vec<u8>, i64, Option<Id>) = db
         .query_row(
-            "SELECT request,digest,expires FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
+            "SELECT request,digest,expires,cancel_job FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
             params![id],
             |row| {
                 Ok((
                     sql::row_get(row, 0)?,
                     sql::row_get(row, 1)?,
                     sql::row_get(row, 2)?,
+                    sql::row_get(row, 3)?,
                 ))
             },
         )
         .optional()
         .map_err(db_error)?
         .ok_or(Error::NotFound)?;
+    if cancel_job.is_some() {
+        return Err(Error::Conflict);
+    }
     if e as u64 <= now {
         return Err(Error::Expired);
     }
@@ -364,6 +375,9 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
         .optional()
         .map_err(db_error)?;
     if let Some(raw) = prior {
+        if crate::uploads::cancelled(&raw).is_some() {
+            return Err(Error::Conflict);
+        }
         if raw == "\"Expired\"" {
             return Err(Error::Expired);
         }
@@ -638,7 +652,7 @@ fn collect_expired_upload(db: &Connection, now: u64) -> Result<()> {
     let upload: Option<(Id, Vec<u8>, i64)> = db
         .query_row(
             "SELECT u.id,u.digest,EXISTS(SELECT 1 FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.operation=u.id)
-         FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) u WHERE u.expires<=?1 LIMIT 1",
+         FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) u WHERE u.expires<=?1 AND u.cancel_job IS NULL LIMIT 1",
             params![now as i64],
             |r| {
                 Ok((
@@ -964,7 +978,7 @@ pub fn active_export_for_vault(db: &Connection, vault: &[u8], now: u64) -> Resul
 pub fn maintain_expired(db: &Connection, now: u64) -> Result<Option<(Principal, u64)>> {
     let owner:Option<Vec<u8>>=db.query_row("SELECT owner FROM (
         SELECT owner,expires FROM receipts WHERE expires<=?1
-        UNION ALL SELECT owner,expires FROM uploads WHERE expires<=?1
+        UNION ALL SELECT owner,expires FROM uploads WHERE expires<=?1 AND cancel_job IS NULL
         UNION ALL SELECT owner,expires FROM vaults WHERE expires>0 AND expires<=?1
         UNION ALL SELECT owner,expires FROM exports WHERE expires<=?1
         UNION ALL SELECT r.owner,0 AS expires FROM revisions r WHERE r.retired IS NOT NULL AND NOT EXISTS(SELECT 1 FROM vaults v WHERE v.owner=r.owner AND v.id=r.vault AND json_extract(v.header,'$.state')='IncidentRequired') AND NOT EXISTS(

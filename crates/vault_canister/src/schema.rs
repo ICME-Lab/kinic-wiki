@@ -51,7 +51,22 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> vault_types::Result<()
     }
     db.execute_batch(vault_store::RESTORE_WORKING_SCHEMA)
         .map_err(|_| vault_types::Error::Storage)?;
-    if !matches!(version, 1..=5) {
+    if matches!(version, 1..=5) {
+        let columns: i64 = db
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('uploads') WHERE name='cancel_job'",
+                params![],
+                |r| sqlite::row_get(r, 0),
+            )
+            .map_err(|_| vault_types::Error::Storage)?;
+        if columns == 0 {
+            db.execute_batch("ALTER TABLE uploads ADD COLUMN cancel_job BLOB;")
+                .map_err(|_| vault_types::Error::Storage)?;
+        }
+        db.execute_batch("PRAGMA user_version=6;")
+            .map_err(|_| vault_types::Error::Storage)?;
+    }
+    if !matches!(version, 1..=6) {
         return Err(vault_types::Error::Storage);
     }
     db.execute_batch(vault_store::KEY_CAPACITY_SCHEMA)

@@ -18,7 +18,7 @@ import {
 import { b64 } from "../../vault-crypto/src/documents.ts";
 const b = (n: number, len = 16) => new Uint8Array(len).fill(n),
   hex = (x: Uint8Array) => Buffer.from(x).toString("hex");
-test("all generated JS Candid mutation variants and generation bytes match frozen Rust vectors", async () => {
+test("current generated JS Candid mutations and generation bytes match the Rust decoder vectors", async () => {
   const v = b(1),
     o = b(2),
     op = b(3),
@@ -242,6 +242,7 @@ test("all generated JS Candid mutation variants and generation bytes match froze
     { RestoreCancel: { cursor: 0n } },
   );
   const key = Ed25519KeyIdentity.generate(b(15, 32));
+  operations.push({Cleanup:{job:op,cursor:0n,action:{CancelUpload:{upload:op}}}});
   const owner = Principal.fromUint8Array(new Uint8Array([2])),
     canister = Principal.fromUint8Array(new Uint8Array([1]));
   const vectors = [];
@@ -296,7 +297,7 @@ test("all generated JS Candid mutation variants and generation bytes match froze
     vectors,
   };
   const path = new URL(
-    "../../../crates/vault_service/tests/fixtures/mutation-v2.json",
+    "../../../crates/vault_service/tests/fixtures/mutation-v2-upload-cancel.json",
     import.meta.url,
   );
   if (process.env.WRITE_VAULT_VECTORS)

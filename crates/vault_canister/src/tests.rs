@@ -758,3 +758,89 @@ fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
     );
     assert_eq!(state::State.balance(&p(215).to_text()).unwrap(), 0);
 }
+
+#[test]
+fn upload_cancel_migration_preserves_legacy_request_digest_reservation_and_receipt() {
+    use kinic_sqlite_compat::{Connection, params};
+    let db = Connection::open_in_memory().unwrap();
+    let old = vault_store::CONTENT_SCHEMA.replace(",cancel_job BLOB", "");
+    db.execute_batch(
+        &[
+            vault_store::SCHEMA,
+            &old,
+            vault_store::RESTORE_SCHEMA,
+            "PRAGMA user_version=5;",
+        ]
+        .concat(),
+    )
+    .unwrap();
+    let owner = p(91);
+    db.execute(
+        "INSERT INTO owner_scope VALUES(1,?1)",
+        params![owner.as_slice()],
+    )
+    .unwrap();
+    let request = vault_types::BeginRevision {
+        vault: vec![1; 16],
+        object: vec![2; 16],
+        operation: vec![3; 16],
+        expected_revision: 0,
+        plain_size: 1,
+        manifest: vec![99],
+        chunk_hashes: vec![vec![7; 32]],
+    };
+    let raw = serde_json::to_string(&request).unwrap();
+    db.execute(
+        "INSERT INTO uploads VALUES(?1,?2,?3,?4,0,86401,?5,?6,65536)",
+        params![
+            owner.as_slice(),
+            request.operation,
+            request.vault,
+            request.object,
+            vec![8u8; 32],
+            raw
+        ],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO receipts VALUES(?1,?2,?3,'\"Expired\"',86401)",
+        params![owner.as_slice(), vec![4u8; 16], vec![5u8; 32]],
+    )
+    .unwrap();
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    let (digest, stored, reserved, cancel): (Vec<u8>, String, i64, Option<Vec<u8>>) = db
+        .query_row(
+            "SELECT digest,request,reserved,cancel_job FROM uploads",
+            params![],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(digest, vec![8u8; 32]);
+    assert_eq!(stored, raw);
+    assert_eq!(reserved, 65536);
+    assert!(cancel.is_none());
+    assert!(matches!(
+        vault_store::content::upload_status(&db, &[4; 16], 1).unwrap(),
+        vault_types::UploadStatus::Expired
+    ));
+    db.execute(
+        "INSERT INTO chunks VALUES(?1,?2,0,?3)",
+        params![owner.as_slice(), vec![3u8; 16], vec![7u8; 17]],
+    )
+    .unwrap();
+    assert!(
+        !vault_store::content::cancel_upload_batch(&db, &[1; 16], &[3; 16], &[6; 16], 1).unwrap()
+    );
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    assert!(
+        matches!(vault_store::content::upload_status(&db,&[3;16],1).unwrap(),vault_types::UploadStatus::Pending(p) if p.cancel_job==Some(vec![6;16]))
+    );
+    assert!(
+        vault_store::content::cancel_upload_batch(&db, &[1; 16], &[3; 16], &[6; 16], 1).unwrap()
+    );
+    assert!(matches!(
+        vault_store::content::upload_status(&db, &[3; 16], 1).unwrap(),
+        vault_types::UploadStatus::Cancelled
+    ));
+}

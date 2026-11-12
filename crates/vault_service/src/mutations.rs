@@ -767,6 +767,12 @@ fn cleanup_operation(
             }
         }
         CleanupAction::Expired => store::cleanup::expired_batch(db, &targets, env.now())?,
+        CleanupAction::CancelUpload { upload } => {
+            if targets.len() != 1 {
+                return Err(Error::InvalidInput);
+            }
+            store::content::cancel_upload_batch(db, &targets[0], upload, job, env.now())?
+        }
         CleanupAction::CancelIncident {
             incident,
             vector_digest,

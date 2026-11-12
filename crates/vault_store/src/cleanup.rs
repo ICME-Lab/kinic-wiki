@@ -53,7 +53,7 @@ pub fn purge_batch(db: &Connection, targets: &[Id]) -> Result<bool> {
 /// or garbage collects frozen source history. A call affects at most one SQL row/1 MiB blob.
 pub fn expired_batch(db: &Connection, targets: &[Id], now: u64) -> Result<bool> {
     for v in targets {
-        let upload:Option<Id>=db.query_row("SELECT id FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND expires<=?2 ORDER BY id LIMIT 1",params![v.as_slice(),now as i64],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
+        let upload:Option<Id>=db.query_row("SELECT id FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND expires<=?2 AND cancel_job IS NULL ORDER BY id LIMIT 1",params![v.as_slice(),now as i64],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
         if let Some(u) = upload {
             db.execute("DELETE FROM chunks WHERE rowid IN (SELECT rowid FROM chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND upload=?1 ORDER BY idx LIMIT 1)",params![u]).map_err(|_|Error::Storage)?;
             let n = changes(db)?;

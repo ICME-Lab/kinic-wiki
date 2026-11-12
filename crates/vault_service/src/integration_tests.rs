@@ -2027,3 +2027,116 @@ mod incident_tests;
 
 #[path = "restore_admission_tests.rs"]
 mod restore_admission_tests;
+
+#[test]
+fn signed_upload_cancel_works_without_funds_and_replay_cannot_publish_late_chunks() {
+    let (env, key, g) = signed_fixture(GrantPurpose::Cleanup { job: vec![8; 16] });
+    let request = BeginRevision {
+        vault: vec![1; 16],
+        object: vec![2; 16],
+        expected_revision: 0,
+        operation: vec![7; 16],
+        plain_size: 1,
+        manifest: vec![99],
+        chunk_hashes: vec![Sha256::digest([7; 17]).to_vec()],
+    };
+    env.transaction(|db| {
+        store::content::begin(db, request.clone(), 1)?;
+        store::content::put(db, &request.operation, 0, &[7; 17], 1)?;
+        let grant = grants::load(db, &g.id)?;
+        let mut n = cleanup::namespace(db)?;
+        n.grant = Some(grant);
+        cleanup::save(db, &n)
+    })
+    .unwrap();
+    env.funded.set(false);
+    let op = |cursor| MutationOperation::Cleanup {
+        job: vec![8; 16],
+        cursor,
+        action: CleanupAction::CancelUpload {
+            upload: request.operation.clone(),
+        },
+    };
+    assert!(matches!(
+        signed_call(&env, &key, &g, 0, op(0)).unwrap(),
+        MutationResult::Cleanup(CleanupProgress {
+            complete: false,
+            cursor: 1,
+            ..
+        })
+    ));
+    assert!(matches!(
+        signed_call(&env, &key, &g, 0, op(0)).unwrap(),
+        MutationResult::Cleanup(CleanupProgress {
+            complete: false,
+            cursor: 1,
+            ..
+        })
+    ));
+    env.transaction(|db| {
+        assert_eq!(
+            store::content::put(db, &request.operation, 0, &[7; 17], 1),
+            Err(Error::Conflict)
+        );
+        assert!(matches!(
+            store::content::commit(db, &request.operation, 1),
+            Err(Error::Conflict)
+        ));
+        Ok(())
+    })
+    .unwrap();
+    assert!(matches!(
+        signed_call(&env, &key, &g, 1, op(1)).unwrap(),
+        MutationResult::Cleanup(CleanupProgress {
+            complete: true,
+            cursor: 2,
+            ..
+        })
+    ));
+    assert!(matches!(
+        get_upload_status(&env, request.operation.clone()).unwrap(),
+        UploadStatus::Cancelled
+    ));
+    assert!(
+        list_pending_uploads(&env, vec![])
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    let old_owner = env.owner();
+    env.owner.set(Principal::self_authenticating([99; 32]));
+    assert!(
+        get_upload_status(&env, request.operation).is_err()
+            || matches!(
+                get_upload_status(&env, vec![7; 16]).unwrap(),
+                UploadStatus::Absent
+            )
+    );
+    env.owner.set(old_owner);
+}
+
+#[test]
+fn current_javascript_mutations_and_cancel_upload_verify_without_changing_legacy_signatures() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../tests/fixtures/mutation-v2-upload-cancel.json"
+    ))
+    .unwrap();
+    let public = hex::decode(fixture["public_key"].as_str().unwrap()).unwrap();
+    let mut saw_cancel = false;
+    for v in fixture["vectors"].as_array().unwrap() {
+        let payload = hex::decode(v["payload"].as_str().unwrap()).unwrap();
+        let signature = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let m = grants::decode(&payload).unwrap();
+        grants::verify(&public, &[MUTATION_DOMAIN, &payload].concat(), &signature).unwrap();
+        if matches!(
+            m.operation,
+            MutationOperation::Cleanup {
+                action: CleanupAction::CancelUpload { .. },
+                ..
+            }
+        ) {
+            saw_cancel = true;
+        }
+    }
+    assert!(saw_cancel);
+}
