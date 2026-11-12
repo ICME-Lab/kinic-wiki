@@ -21,14 +21,6 @@ pub fn initialize() -> Result<()> {
     })?;
     transaction(|db| {
         crate::schema::initialize_vault_schema(db)?;
-        db.execute_batch(include_str!("accounts.sql"))
-            .map_err(|_| Error::Storage)?;
-        crate::capacity::initialize(db)?;
-        #[cfg(target_arch = "wasm32")]
-        let now = crate::now_millis();
-        #[cfg(not(target_arch = "wasm32"))]
-        let now = 0;
-        crate::accounting::migrate_restore_working(db, now)?;
         Ok(())
     })?;
     State.vault_start_generation()

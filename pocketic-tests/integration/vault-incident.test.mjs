@@ -104,7 +104,7 @@ function assertion(ch, credential) {
     userHandle: b64(owner.toUint8Array()),
   });
 }
-verifyVaultBaseline("target/vault-dedicated-task7.wasm");
+verifyVaultBaseline("target/vault-v6-baseline.wasm");
 const cryptoLib = await import(
   new URL("../../packages/vault-crypto/src/index.ts", import.meta.url)
 );
@@ -133,7 +133,7 @@ try {
   const fixture = await pic.setupCanister({
     sender: owner,
     idlFactory: vaultIDL,
-    wasm: resolve(root, "target/vault-dedicated-task7.wasm"),
+    wasm: resolve(root, "target/vault-v6-baseline.wasm"),
     arg: IDL.encode([], []),
     cycles: 100_000_000_000_000n,
   });
@@ -390,7 +390,7 @@ try {
     await pic.upgradeCanister({
       sender: owner,
       canisterId,
-      wasm: resolve(root, "target/vault-incident-quota.wasm"),
+      wasm: resolve(root, "target/vault-restore-quota-baseline.wasm"),
       arg: IDL.encode([], []),
     });
     await pic.upgradeCanister({
@@ -624,7 +624,7 @@ try {
     replaced.targets[0].target[0].nonce,
   );
   console.log(
-    "PASS dedicated Task7 upgrade, exact JS signatures, fresh UV, incident freeze, real vetKD Source/Target, encrypted preparation, kit ack, durable upgrade/resume, explicit reset, authenticated cancellation and fresh restart",
+    "PASS dedicated v6 upgrade, exact JS signatures, fresh UV, incident freeze, real vetKD Source/Target, encrypted preparation, kit ack, durable upgrade/resume, explicit reset, authenticated cancellation and fresh restart",
   );
 } finally {
   await pic?.tearDown();

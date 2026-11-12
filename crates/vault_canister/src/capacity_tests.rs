@@ -110,42 +110,6 @@ fn capacity_oversized_settings_fail_atomically() {
 }
 
 #[test]
-fn capacity_legacy_commitments_survive_upgrade_above_account_cap() {
-    state::initialize().unwrap();
-    seed_accounts(1023);
-    let beneficiary = principal(2000);
-    quote(3000, beneficiary, 1);
-    quote(3001, principal(2001), 2);
-    let first = begin_payment(principal(3000), &[1; 16], 0).unwrap();
-    complete_payment(&first, Outcome::Unknown).unwrap();
-    // Model rows from the unbounded Task5 schema, then install the new guards.
-    state::transaction(|db| {
-        db.execute_batch("DROP TRIGGER accounting_accounts_count")
-            .unwrap();
-        for n in 2100..2103 {
-            db.execute(
-                "INSERT INTO accounts VALUES(?1,7,0,0)",
-                params![principal(n).to_text()],
-            )
-            .unwrap();
-        }
-        Ok(())
-    })
-    .unwrap();
-    state::initialize().unwrap();
-    assert_eq!(
-        begin_payment(principal(3001), &[2; 16], 1).unwrap_err(),
-        vault_types::Error::QuotaExceeded
-    );
-    let retry = begin_payment(principal(3000), &[1; 16], 1).unwrap();
-    complete_payment(&retry, Outcome::Paid(u64::MAX)).unwrap();
-    assert_eq!(
-        state::State.balance(&beneficiary.to_text()).unwrap(),
-        100_000_000
-    );
-    assert_eq!(state::State.balance(&principal(2100).to_text()).unwrap(), 7);
-}
-#[test]
 fn capacity_full_journals_keep_refunds_checkpoints_and_tiny_balance_cleanup_available() {
     state::initialize().unwrap();
     let owner = principal(2000);
@@ -378,88 +342,6 @@ fn capacity_fee_reservation_and_account_fields_reject_one_byte_excess() {
         assert!(db.execute("UPDATE vault_cycle_reservations SET token=?1",params!["x".repeat(129)]).is_err());
         Ok(())
     }).unwrap();
-}
-
-#[test]
-fn capacity_extreme_legacy_excess_is_reported_without_erasing_commitments() {
-    state::initialize().unwrap();
-    quote(30000, principal(20000), 1);
-    let sent = begin_payment(principal(30000), &[1; 16], 0).unwrap();
-    complete_payment(&sent, Outcome::Unknown).unwrap();
-    state::transaction(|db| {
-        db.execute_batch("DROP TRIGGER accounting_accounts_count")
-            .unwrap();
-        for n in 0..5000 {
-            db.execute(
-                "INSERT INTO accounts VALUES(?1,7,0,0)",
-                params![principal(n).to_text()],
-            )
-            .unwrap();
-        }
-        db.execute(
-            "INSERT INTO revisions VALUES(?1,x'ff',x'ff',1,1,NULL,0,x'','[]',1,?2)",
-            params![principal(1).as_slice(), 183i64 * 1024 * 1024],
-        )
-        .unwrap();
-        Ok(())
-    })
-    .unwrap();
-    state::initialize().unwrap();
-    let before = state::transaction(vault_store::content::global_capacity).unwrap();
-    assert_eq!(
-        serde_json::to_value(&before).unwrap().get("legacy_excess"),
-        Some(&serde_json::json!((5001u64 - 1024) * 512))
-    );
-    assert!(before.overcommitted);
-    state::transaction(|db| {
-        vault_store::OwnerContext::authenticated(principal(1))?.run(db, |db| {
-            assert_eq!(
-                vault_store::content::check_capacity(db, 1).unwrap_err(),
-                vault_types::Error::QuotaExceeded
-            );
-            Ok(())
-        })
-    })
-    .unwrap();
-    let retry = begin_payment(sent.wallet, &sent.request.operation, 1).unwrap();
-    complete_payment(&retry, Outcome::Paid(u64::MAX)).unwrap();
-    let after = state::transaction(vault_store::content::global_capacity).unwrap();
-    assert_eq!(before, after); // Future account was already charged before confirmation.
-    assert_eq!(
-        state::State.balance(&principal(20000).to_text()).unwrap(),
-        100_000_000
-    );
-    assert_eq!(state::State.balance(&principal(1).to_text()).unwrap(), 7);
-}
-
-#[test]
-fn capacity_legacy_oversized_whole_row_is_charged_until_normalized() {
-    state::initialize().unwrap();
-    let p = quote(3000, principal(2000), 1);
-    state::transaction(|db| {
-        db.execute_batch("DROP TRIGGER accounting_payments_UPDATE_size")
-            .unwrap();
-        let raw = serde_json::to_string(&p).unwrap();
-        let record_max = 4096 - (4 + p.wallet.to_text().len()) - (4 + 16) - 4 - 8;
-        db.execute(
-            "UPDATE payments SET record=?1",
-            params![format!("{raw}{}", " ".repeat(record_max + 37 - raw.len()))],
-        )
-        .unwrap();
-        Ok(())
-    })
-    .unwrap();
-    state::initialize().unwrap();
-    let before = state::transaction(vault_store::content::global_capacity).unwrap();
-    assert_eq!(before.legacy_excess, 37);
-    let sent = begin_payment(p.wallet, &p.request.operation, 1).unwrap();
-    complete_payment(&sent, Outcome::Paid(u64::MAX)).unwrap();
-    assert_eq!(
-        state::transaction(vault_store::content::global_capacity)
-            .unwrap()
-            .legacy_excess,
-        0
-    );
 }
 
 #[test]

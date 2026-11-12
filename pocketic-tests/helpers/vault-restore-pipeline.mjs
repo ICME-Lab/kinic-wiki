@@ -159,7 +159,6 @@ export async function prepare(
     candidate = { ...key(), id: b(43) },
     existing = false,
     currentSecret = source.secret,
-    legacyCharges = false,
     afterAdmission,
   } = {},
 ) {
@@ -322,9 +321,6 @@ export async function prepare(
     ).result,
   );
   const preflight = summary(request, transformed);
-  if (legacyCharges)
-    preflight.revision_bytes +=
-      BigInt(transformed.records.filter((r) => r.deleted).length) * 2n;
   opened.rootRaw.fill(0);
   return {
     request,

@@ -489,67 +489,6 @@ fn unresolved_creation_rejects_semantic_configuration_change() {
 }
 
 #[test]
-fn transition_reservation_migration_is_idempotent_and_preserves_overcommitted_owners() {
-    use kinic_sqlite_compat::{Connection, params};
-    let db = Connection::open_in_memory().unwrap();
-    db.execute_batch(
-        &[
-            vault_store::SCHEMA,
-            vault_store::CONTENT_SCHEMA,
-            vault_store::RESTORE_SCHEMA,
-            "PRAGMA user_version=3;",
-        ]
-        .concat(),
-    )
-    .unwrap();
-    db.execute(
-        "INSERT INTO settings VALUES(?1,'cleanup','null')",
-        params![p(11).as_slice()],
-    )
-    .unwrap();
-    db.execute(
-        "INSERT INTO settings VALUES(?1,'cleanup','null')",
-        params![p(12).as_slice()],
-    )
-    .unwrap();
-    db.execute(
-        "INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,?4,'[]',1,?5)",
-        params![
-            p(11).as_slice(),
-            vec![1u8; 16],
-            vec![2u8; 16],
-            Vec::<u8>::new(),
-            vault_types::TOTAL_MAX as i64
-        ],
-    )
-    .unwrap();
-    let before = vault_store::content::global_usage(&db).unwrap();
-    crate::schema::initialize_vault_schema(&db).unwrap();
-    assert_eq!(
-        vault_store::content::global_usage(&db).unwrap(),
-        before + 2 * 65536
-    );
-    assert!(
-        vault_store::content::global_capacity(&db)
-            .unwrap()
-            .overcommitted
-    );
-    crate::schema::initialize_vault_schema(&db).unwrap();
-    assert_eq!(
-        vault_store::content::global_usage(&db).unwrap(),
-        before + 2 * 65536
-    );
-    let (count, charge): (i64, i64) = db
-        .query_row(
-            "SELECT count(*),sum(charge) FROM revisions",
-            params![],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!((count, charge), (1, vault_types::TOTAL_MAX as i64));
-}
-
-#[test]
 fn global_key_settlement_survives_configuration_removal_without_allocating_authority() {
     use kinic_sqlite_compat::params;
     state::initialize().unwrap();
@@ -673,41 +612,6 @@ fn restore_challenge_completion_waits_for_exact_owner_token_and_checkpoint() {
 }
 
 #[test]
-fn restore_working_migration_preserves_old_pending_and_bills_only_forward() {
-    use kinic_sqlite_compat::params;
-    state::initialize().unwrap();
-    state::transaction(|db| {
-        let owner=p(17);
-        db.execute("INSERT INTO settings VALUES(?1,'cleanup','null')",params![owner.as_slice()]).unwrap();
-        db.execute("INSERT INTO accounts VALUES(?1,1000000000,1048576,1000)",params![owner.to_text()]).unwrap();
-        db.execute("INSERT INTO restores VALUES(?1,?2,?3,99999,1,?4,?4,0,0,12345,'legacy-pending',?4,0)",params![owner.as_slice(),vec![1u8;16],vec![2u8;16],vec![3u8;32]]).unwrap();
-        let fill=vault_types::TOTAL_MAX-vault_store::content::global_usage(db)?;
-        db.execute("INSERT INTO revisions VALUES(?1,?2,?3,1,1,NULL,0,X'','[]',1,?4)",params![p(18).as_slice(),vec![1u8;16],vec![2u8;16],fill as i64]).unwrap();
-        db.execute("INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms,execution_checkpoint) VALUES(?1,'challenge:77',?1,1234,1000,321)",params![owner.to_text()]).unwrap();
-        crate::accounting::migrate_restore_working(db,11_000)?;
-        let global=vault_store::content::global_capacity(db)?;
-        assert!(global.overcommitted);
-        assert_eq!(global.overage,524288);
-        let protected:(i64,i64,i64)=db.query_row("SELECT reserved,in_flight,execution_checkpoint FROM vault_cycle_reservations",params![],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
-        assert_eq!(protected,(1234,1,321));
-        let row:(i64,i64,i64)=db.query_row("SELECT balance_cycles,storage_bytes,storage_charged_at_ms FROM accounts WHERE owner=?1",params![owner.to_text()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
-        assert_eq!(row.0,999998760); // 1 MiB * 10 s at 127000 cycles/GiB/s.
-        assert_eq!(row.2,11_000);
-        vault_store::OwnerContext::authenticated(owner)?.run(db,|db| {
-            assert_eq!(row.1 as u64,vault_store::content::usage(db)?);
-            assert!(vault_store::restore_working::available(db)?);
-            let old:(i64,String,Vec<u8>,i64)=db.query_row("SELECT reserved,pending,digest,working_prepaid FROM restores",params![],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
-            assert_eq!(old,(12345,"legacy-pending".into(),vec![3u8;32],0));
-            Ok(())
-        })?;
-        crate::accounting::migrate_restore_working(db,21_000)?;
-        let balance:i64=db.query_row("SELECT balance_cycles FROM accounts WHERE owner=?1",params![owner.to_text()],|r|r.get(0)).unwrap();
-        assert_eq!(balance,row.0); // Already migrated: no duplicate boundary charge.
-        Ok(())
-    }).unwrap();
-}
-
-#[test]
 fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
     state::initialize().unwrap();
     let wallet = p(210);
@@ -760,87 +664,131 @@ fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
 }
 
 #[test]
-fn upload_cancel_migration_preserves_legacy_request_digest_reservation_and_receipt() {
+fn initial_release_rejects_unsupported_or_foreign_stores_without_changes() {
+    use kinic_sqlite_compat::{Connection, params};
+    for version in [0, 1, 2, 3, 4, 5, 7] {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(&format!("CREATE TABLE foreign_data(secret BLOB); INSERT INTO foreign_data VALUES(X'0102'); PRAGMA user_version={version};")).unwrap();
+        let before: i64 = db
+            .query_row("SELECT count(*) FROM sqlite_master", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(
+            crate::schema::initialize_vault_schema(&db),
+            Err(vault_types::Error::Storage),
+            "unsupported version {version}"
+        );
+        let after: i64 = db
+            .query_row("SELECT count(*) FROM sqlite_master", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(before, after);
+        let bytes: Vec<u8> = db
+            .query_row("SELECT secret FROM foreign_data", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(bytes, [1, 2]);
+    }
+}
+
+#[test]
+fn initial_release_rejects_partial_v6_without_repairing_it() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
-    let old = vault_store::CONTENT_SCHEMA.replace(",cancel_job BLOB", "");
     db.execute_batch(
-        &[
-            vault_store::SCHEMA,
-            &old,
-            vault_store::RESTORE_SCHEMA,
-            "PRAGMA user_version=5;",
-        ]
-        .concat(),
+        "CREATE TABLE global_settings(key TEXT PRIMARY KEY,value TEXT); PRAGMA user_version=6;",
     )
     .unwrap();
-    let owner = p(91);
-    db.execute(
-        "INSERT INTO owner_scope VALUES(1,?1)",
-        params![owner.as_slice()],
-    )
-    .unwrap();
-    let request = vault_types::BeginRevision {
-        vault: vec![1; 16],
-        object: vec![2; 16],
-        operation: vec![3; 16],
-        expected_revision: 0,
-        plain_size: 1,
-        manifest: vec![99],
-        chunk_hashes: vec![vec![7; 32]],
-    };
-    let raw = serde_json::to_string(&request).unwrap();
-    db.execute(
-        "INSERT INTO uploads VALUES(?1,?2,?3,?4,0,86401,?5,?6,65536)",
-        params![
-            owner.as_slice(),
-            request.operation,
-            request.vault,
-            request.object,
-            vec![8u8; 32],
-            raw
-        ],
-    )
-    .unwrap();
-    db.execute(
-        "INSERT INTO receipts VALUES(?1,?2,?3,'\"Expired\"',86401)",
-        params![owner.as_slice(), vec![4u8; 16], vec![5u8; 32]],
-    )
-    .unwrap();
-    crate::schema::initialize_vault_schema(&db).unwrap();
-    crate::schema::initialize_vault_schema(&db).unwrap();
-    let (digest, stored, reserved, cancel): (Vec<u8>, String, i64, Option<Vec<u8>>) = db
+    assert_eq!(
+        crate::schema::initialize_vault_schema(&db),
+        Err(vault_types::Error::Storage)
+    );
+    let count: i64 = db
         .query_row(
-            "SELECT digest,request,reserved,cancel_job FROM uploads",
+            "SELECT count(*) FROM sqlite_master WHERE type='table'",
             params![],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| kinic_sqlite_compat::row_get(r, 0),
         )
         .unwrap();
-    assert_eq!(digest, vec![8u8; 32]);
-    assert_eq!(stored, raw);
-    assert_eq!(reserved, 65536);
-    assert!(cancel.is_none());
-    assert!(matches!(
-        vault_store::content::upload_status(&db, &[4; 16], 1).unwrap(),
-        vault_types::UploadStatus::Expired
-    ));
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn initial_release_rejects_missing_columns_or_guards_without_repair() {
+    use kinic_sqlite_compat::{Connection, params};
+    for damage in [
+        "DROP TRIGGER key_pool_count",
+        "DROP TABLE accounts",
+        "ALTER TABLE uploads DROP COLUMN cancel_job",
+        "DROP INDEX one_upload_per_vault",
+    ] {
+        let db = Connection::open_in_memory().unwrap();
+        crate::schema::initialize_vault_schema(&db).unwrap();
+        db.execute_batch(include_str!("accounts.sql")).unwrap();
+        crate::capacity::initialize(&db).unwrap();
+        db.execute_batch(damage).unwrap();
+        let before: i64 = db
+            .query_row("SELECT count(*) FROM sqlite_master", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(
+            crate::schema::initialize_vault_schema(&db),
+            Err(vault_types::Error::Storage),
+            "damaged schema: {damage}"
+        );
+        let after: i64 = db
+            .query_row("SELECT count(*) FROM sqlite_master", params![], |r| {
+                kinic_sqlite_compat::row_get(r, 0)
+            })
+            .unwrap();
+        assert_eq!(before, after);
+    }
+}
+
+#[test]
+fn initial_release_creates_v6_and_reopens_without_rewriting_data() {
+    use kinic_sqlite_compat::{Connection, params};
+    let db = Connection::open_in_memory().unwrap();
+    crate::schema::initialize_vault_schema(&db).unwrap();
     db.execute(
-        "INSERT INTO chunks VALUES(?1,?2,0,?3)",
-        params![owner.as_slice(), vec![3u8; 16], vec![7u8; 17]],
+        "INSERT INTO accounts VALUES('owner',123,456,789)",
+        params![],
     )
     .unwrap();
-    assert!(
-        !vault_store::content::cancel_upload_batch(&db, &[1; 16], &[3; 16], &[6; 16], 1).unwrap()
-    );
+    let version: i64 = db
+        .query_row("PRAGMA user_version", params![], |r| {
+            kinic_sqlite_compat::row_get(r, 0)
+        })
+        .unwrap();
+    assert_eq!(version, 6);
+    let before: i64 = db
+        .query_row("SELECT total_changes()", params![], |r| {
+            kinic_sqlite_compat::row_get(r, 0)
+        })
+        .unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
-    assert!(
-        matches!(vault_store::content::upload_status(&db,&[3;16],1).unwrap(),vault_types::UploadStatus::Pending(p) if p.cancel_job==Some(vec![6;16]))
-    );
-    assert!(
-        vault_store::content::cancel_upload_batch(&db, &[1; 16], &[3; 16], &[6; 16], 1).unwrap()
-    );
-    assert!(matches!(
-        vault_store::content::upload_status(&db, &[3; 16], 1).unwrap(),
-        vault_types::UploadStatus::Cancelled
-    ));
+    let after: i64 = db
+        .query_row("SELECT total_changes()", params![], |r| {
+            kinic_sqlite_compat::row_get(r, 0)
+        })
+        .unwrap();
+    assert_eq!(before, after);
+    let account: (i64, i64, i64) = db
+        .query_row(
+            "SELECT balance_cycles,storage_bytes,storage_charged_at_ms FROM accounts",
+            params![],
+            |r| {
+                Ok((
+                    kinic_sqlite_compat::row_get(r, 0)?,
+                    kinic_sqlite_compat::row_get(r, 1)?,
+                    kinic_sqlite_compat::row_get(r, 2)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(account, (123, 456, 789));
 }

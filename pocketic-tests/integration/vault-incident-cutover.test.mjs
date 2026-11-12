@@ -118,7 +118,7 @@ function assertion(ch, credential) {
     userHandle: b64(owner.toUint8Array()),
   });
 }
-verifyVaultBaseline("target/vault-dedicated-task8-fix2.wasm");
+verifyVaultBaseline("target/vault-v6-baseline.wasm");
 const cryptoLib = await import(
   new URL("../../packages/vault-crypto/src/index.ts", import.meta.url)
 );
@@ -147,7 +147,7 @@ try {
   const fixture = await pic.setupCanister({
     sender: owner,
     idlFactory: vaultIDL,
-    wasm: resolve(root, "target/vault-dedicated-task8-fix2.wasm"),
+    wasm: resolve(root, "target/vault-v6-baseline.wasm"),
     arg: IDL.encode([], []),
     cycles: 100_000_000_000_000n,
   });
@@ -462,7 +462,7 @@ try {
     await pic.upgradeCanister({
       sender: owner,
       canisterId,
-      wasm: resolve(root, "target/vault-incident-quota.wasm"),
+      wasm: resolve(root, "target/vault-restore-quota-baseline.wasm"),
       arg: IDL.encode([], []),
     });
     await pic.upgradeCanister({
@@ -702,7 +702,7 @@ try {
       ),
     targetRaw,
   );
-  const dir = await mkdtemp(join(tmpdir(), "vault-task9-staged-"));
+  const dir = await mkdtemp(join(tmpdir(), "vault-v6-staged-"));
   try {
     await writeFile(join(dir, "staged.kvlt"), archive);
     await writeFile(join(dir, "secret"), b64(targetSecret));
@@ -807,7 +807,7 @@ try {
   if (process.env.VAULT_INCIDENT_FULL_QUOTA)
     assert.equal(ok(await actor.global_capacity()).used, 200n * 1024n * 1024n);
   console.log(
-    "PASS Task8 baseline upgrade, actual vetKD, retained deleted-object history, bounded wrapper upload, exact readonly staged pages/chunks, saved/reopened full archive, upgrade/resume, fresh UV atomic cutover, completed receipt, old descriptor/grant denial and old-root future-DEK denial",
+    "PASS v6 baseline upgrade, actual vetKD, retained deleted-object history, bounded wrapper upload, exact readonly staged pages/chunks, saved/reopened full archive, upgrade/resume, fresh UV atomic cutover, completed receipt, old descriptor/grant denial and old-root future-DEK denial",
   );
 } finally {
   await pic?.tearDown();

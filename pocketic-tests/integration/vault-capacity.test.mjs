@@ -1,10 +1,8 @@
-import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
-// Actual Wasm capacity and Task5 migration with a separate synthetic ledger.
+// Actual Wasm current v6 capacity and payment continuity with a separate synthetic ledger.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { realpathSync, readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { idlFactory } from "../../packages/vault-candid/index.js";
 const root = resolve(import.meta.dirname, "../..");
@@ -39,8 +37,6 @@ try {
     "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
   );
   const baseline = resolve(root, "target/vault-capacity-baseline.wasm");
-  const frozen = resolve(root, "target/vault-dedicated-task5-final.wasm");
-  verifyVaultBaseline(frozen);
   const account = IDL.Record({
     owner: IDL.Principal,
     subaccount: IDL.Opt(IDL.Vec(IDL.Nat8)),
@@ -69,12 +65,12 @@ try {
     cycles: 100_000_000_000_000n,
   });
   fake.actor.setPrincipal(owner);
-  const setup = async (count, overcommit = false) => {
+  const setup = async (count) => {
     const v = await pic.setupCanister({
       sender: owner,
       idlFactory,
       wasm: baseline,
-      arg: IDL.encode([IDL.Nat16, IDL.Bool], [count, overcommit]),
+      arg: IDL.encode([IDL.Nat16], [count]),
       cycles: 100_000_000_000_000n,
     });
     v.actor.setPrincipal(owner);
@@ -186,126 +182,23 @@ try {
   console.log(
     "PASS actual Wasm: last-slot distinct beneficiary rejected before ledger; concurrent same beneficiary shares slot; existing-account topup at cap; oversized GenericError persists only bounded typed receipt.",
   );
-  // Genuine frozen final Task5 artifact, including funded account and Unknown row.
-  const migration = await setup(1025);
-  await upgrade(migration, frozen);
-  await configure(migration);
-  await fake.actor.configure(0, 10n);
-  const paid = await quote(migration, p(3100), p(0), 10);
-  ok(await migration.actor.pay_purchase(paid.operation));
   await fake.actor.configure(6, 10n);
-  const pending = await quote(migration, p(3101), p(2100), 11);
-  assert.ok(
-    "Unknown" in
-      ok(await migration.actor.pay_purchase(pending.operation)).status,
-  );
-  await upgrade(migration);
-  const legacyCapacity = ok(await migration.actor.global_capacity());
-  assert.equal(legacyCapacity.legacy_excess, 2n * 512n);
-  migration.actor.setPrincipal(p(0));
-  assert.equal(ok(await migration.actor.account_balance()), 1_000_000_001n);
-  const blocked = await quote(migration, p(3102), p(2101), 12);
-  const before = (await fake.actor.calls()).length;
-  capacityError(await migration.actor.pay_purchase(blocked.operation));
-  assert.equal((await fake.actor.calls()).length, before);
-  migration.actor.setPrincipal(p(3101));
-  assert.ok(
-    "Unknown" in
-      ok(await migration.actor.payment_status(pending.operation))[0].status,
-  );
+  const pending = await quote(v, p(3101), p(0), 11);
+  assert.ok("Unknown" in ok(await v.actor.pay_purchase(pending.operation)).status);
+  const beforeUpgrade = ok(await v.actor.payment_status(pending.operation))[0];
+  v.actor.setPrincipal(p(0));
+  const balanceBefore = ok(await v.actor.account_balance());
+  await upgrade(v);
+  v.actor.setPrincipal(p(3101));
+  assert.deepEqual(ok(await v.actor.payment_status(pending.operation))[0], beforeUpgrade);
   await fake.actor.configure(4, 10n);
-  assert.ok(
-    "Paid" in ok(await migration.actor.pay_purchase(pending.operation)).status,
-  );
-  assert.equal(
-    ok(await migration.actor.global_capacity()).used,
-    legacyCapacity.used,
-  );
-  migration.actor.setPrincipal(p(2100));
-  assert.equal(ok(await migration.actor.account_balance()), 1_000_000_000n);
-  migration.actor.setPrincipal(p(3101));
+  assert.ok("Paid" in ok(await v.actor.pay_purchase(pending.operation)).status);
   const last = (await fake.actor.calls()).slice(-2);
   assert.deepEqual(last[0], last[1]);
-  console.log(
-    "PASS actual Wasm Task5->Task6: balances and exact Unknown payment survive upgrade; legacy protected account/pending union above 1024 settles; new distinct beneficiary dispatches no transfer.",
-  );
-  const crowded = await setup(1024, true);
-  await upgrade(crowded, frozen);
-  await upgrade(crowded);
-  const capacity = ok(await crowded.actor.global_capacity());
-  assert.equal(capacity.overcommitted, true);
-  assert.ok(capacity.overage > 0n);
-  assert.deepEqual(
-    Uint8Array.from(
-      ok(
-        await crowded.actor.get_chunk(
-          new Uint8Array(16).fill(1),
-          new Uint8Array(16).fill(3),
-          1n,
-          0,
-        ),
-      ),
-    ),
-    new Uint8Array(17).fill(7),
-  );
-  const exportId = new Uint8Array(16).fill(7);
-  const exported = ok(
-    await crowded.actor.begin_export(new Uint8Array(16).fill(1), exportId),
-  );
-  assert.equal(exported.record_count, 1n);
-  assert.deepEqual(
-    Uint8Array.from(
-      ok(
-        await crowded.actor.get_export_chunk(
-          exportId,
-          new Uint8Array(16).fill(3),
-          1n,
-          0,
-        ),
-      ),
-    ),
-    new Uint8Array(17).fill(7),
-  );
-  assert.equal(ok(await crowded.actor.global_capacity()).used, capacity.used);
-  ok(await crowded.actor.finish_export(exportId, true));
-  console.log(
-    "PASS actual Wasm legacy logical overcommit: Task5->Task6 initialization survives; aggregate reports excess; ciphertext read and encrypted export reuse finished unexpired snapshots without growth.",
-  );
+  v.actor.setPrincipal(p(0));
+  assert.equal(ok(await v.actor.account_balance()), balanceBefore + 1_000_000_000n);
+  console.log("PASS current v6: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap");
 
-  const extreme = await setup(5000, true);
-  await upgrade(extreme, frozen);
-  await configure(extreme);
-  await fake.actor.configure(6, 10n);
-  const promised = await quote(extreme, p(3200), p(20000), 20);
-  assert.ok(
-    "Unknown" in
-      ok(await extreme.actor.pay_purchase(promised.operation)).status,
-  );
-  await upgrade(extreme);
-  const extremeCapacity = ok(await extreme.actor.global_capacity());
-  assert.equal(extremeCapacity.legacy_excess, (5001n - 1024n) * 512n);
-  assert.equal(extremeCapacity.overcommitted, true);
-  await fake.actor.configure(4, 10n);
-  assert.ok(
-    "Paid" in ok(await extreme.actor.pay_purchase(promised.operation)).status,
-  );
-  assert.equal(
-    ok(await extreme.actor.global_capacity()).used,
-    extremeCapacity.used,
-  );
-  extreme.actor.setPrincipal(owner);
-  assert.equal(
-    ok(
-      await extreme.actor.begin_export(
-        new Uint8Array(16).fill(1),
-        new Uint8Array(16).fill(8),
-      ),
-    ).record_count,
-    1n,
-  );
-  console.log(
-    "PASS actual Wasm extreme legacy: 5000 funded accounts plus pending absent beneficiary are conservatively charged above fixed pool; init preserves all commitments; confirmed callback does not increase excess; encrypted export remains available.",
-  );
 } finally {
   if (pic) await pic.tearDown();
   await server.stop();

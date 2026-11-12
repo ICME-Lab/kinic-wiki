@@ -1,3 +1,4 @@
+import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
 import assert from "node:assert/strict";
@@ -103,6 +104,7 @@ function assertion(ch, credential) {
     userHandle: b64(owner.toUint8Array()),
   });
 }
+verifyVaultBaseline("target/vault-v6-baseline.wasm");
 const server = await startVaultPocketIc(PocketIcServer.getBinPath());
 let pic;
 try {
@@ -114,7 +116,7 @@ try {
   const fixture = await pic.setupCanister({
     sender: owner,
     idlFactory: vaultIDL,
-    wasm: resolve(root, "target/vault-dedicated-task4.wasm"),
+    wasm: resolve(root, "target/vault-v6-baseline.wasm"),
     arg: IDL.encode([], []),
     cycles: 100_000_000_000_000n,
   });
@@ -582,12 +584,12 @@ try {
   assert.equal(ok(await actor.list_vaults()).length, 0);
   assert.equal(ok(await actor.cleanup_status())[0].complete, true);
   assert.equal(ok(await actor.account_balance()), 0n);
-  // Frozen Task6/v3 namespace: migrate the prepaid transition slot without
+  // Current v6 namespace: preserve the prepaid transition slot without
   // changing the durable creation identity or manufacturing fresh authority.
   const previous = await pic.setupCanister({
     sender: owner,
     idlFactory: vaultIDL,
-    wasm: resolve(root, "target/vault-dedicated-task6.wasm"),
+    wasm: resolve(root, "target/vault-v6-baseline.wasm"),
     arg: IDL.encode([], []),
     cycles: 100_000_000_000_000n,
   });
@@ -631,7 +633,7 @@ try {
     arg: IDL.encode([], []),
   });
   const afterUpgrade = ok(await previous.actor.global_capacity());
-  assert.equal(afterUpgrade.used - beforeUpgrade.used, 65_536n + 524_288n);
+  assert.equal(afterUpgrade.used - beforeUpgrade.used, 0n);
   assert.deepEqual(
     ok(await previous.actor.list_unfinished_vaults()),
     unfinishedBefore,
@@ -661,10 +663,10 @@ try {
   assert.equal(ok(await previous.actor.list_unfinished_vaults()).length, 0);
   ok(await previous.actor.set_config([]));
   console.log(
-    "PASS actual Wasm: frozen Task6 namespace gains one 64 KiB transition reservation plus 512 KiB namespace control reservation, repeated upgrade preserves it and the pending identity; incompatible configure/removal is rejected until cancellation completes.",
+    "PASS actual Wasm: current v6 namespace keeps its prepaid reservations, repeated upgrade preserves it and the pending identity; incompatible configure/removal is rejected until cancellation completes.",
   );
   console.log(
-    "PASS actual Wasm: Task4-funded account survives upgrade; independent fresh generation, exact bootstrap retry, legacy key/write denial, fresh passkey grant, signed replay/cross-owner, bounded normal grants, expired pre-nonce second creation survives upgrade and cancels at zero balance, generated Pending creation cancels at zero balance, zero-balance cleanup, upgrade fence and final purge receipt.",
+    "PASS actual Wasm: v6-funded account survives upgrade; independent fresh generation, exact bootstrap retry, legacy key/write denial, fresh passkey grant, signed replay/cross-owner, bounded normal grants, expired pre-nonce second creation survives upgrade and cancels at zero balance, generated Pending creation cancels at zero balance, zero-balance cleanup, upgrade fence and final purge receipt.",
   );
 } finally {
   if (pic) await pic.tearDown();

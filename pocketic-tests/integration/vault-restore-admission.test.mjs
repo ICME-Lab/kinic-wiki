@@ -25,9 +25,7 @@ import { idlFactory as vaultIDL } from "../../packages/vault-candid/index.js";
 import { idlFactory as mutationFactory } from "../../packages/vault-candid/mutation.js";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const reuseSmoke = process.env.VAULT_RESTORE_REUSE_SMOKE === "1";
-const baseline = reuseSmoke
-  ? "target/vault-dedicated-task11-fix1.wasm"
-  : "target/vault-dedicated-task9.wasm";
+const baseline = "target/vault-v6-baseline.wasm";
 const local = createRequire(new URL("../package.json", import.meta.url));
 const req = createRequire(realpathSync(local.resolve("@dfinity/pic")));
 const { PocketIc, PocketIcServer } = req("@dfinity/pic"),
@@ -688,7 +686,7 @@ try {
     );
     assert.deepEqual(ok(await actor.incident_status())[0], parentBefore);
     console.log(
-      "PASS actual Task11 fix1 to Task12 upgrade: legacy new-candidate child resumes, existing Instances UV without registration, physical shared counter survives upgrade and rejects replay, current proof and old grants fenced, fresh resume and exact cancel preserve scoped authority and frozen parent",
+      "PASS current v6 upgrade: new-candidate child resumes, existing Instances UV without registration, physical shared counter survives upgrade and rejects replay, current proof and old grants fenced, fresh resume and exact cancel preserve scoped authority and frozen parent",
     );
   }
   actor.setPrincipal(other);
@@ -696,7 +694,7 @@ try {
   actor.setPrincipal(owner);
   if (!reuseSmoke)
     console.log(
-      "PASS actual Task9 frozen incident upgrade, retained legacy parent, candidate UV possession, current-verifier proof, no candidate Global grant, config guard, persisted child and fresh-proof resume after upgrade",
+      "PASS current v6 frozen incident upgrade, retained parent, candidate UV possession, current-verifier proof, no candidate Global grant, config guard, persisted child and fresh-proof resume after upgrade",
     );
 } finally {
   await pic?.tearDown();

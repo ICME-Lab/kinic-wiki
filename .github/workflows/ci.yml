@@ -685,12 +685,8 @@ jobs:
           node pocketic-tests/scripts/build-vault-synthetic-funding.mjs
           node pocketic-tests/scripts/build-vault-ledger.mjs
           node pocketic-tests/scripts/build-vault-client-acceptance.mjs
-      - name: Rebuild reachable upgrade baselines
-        run: |
-          node pocketic-tests/scripts/build-vault-baselines.mjs
-          node pocketic-tests/scripts/build-vault-capacity-baseline.mjs
-          node pocketic-tests/scripts/build-vault-restore-baseline.mjs
-          VAULT_RESTORE_BASE=97dc47e2280ea207139b6704d0333985ebf73a82 VAULT_RESTORE_OUTPUT=vault-restore-task12-quota node pocketic-tests/scripts/build-vault-restore-baseline.mjs
+      - name: Build current v6 acceptance fixtures
+        run: node pocketic-tests/scripts/build-vault-fixtures.mjs
       - name: Provision PocketIC 16.1
         run: |
           mkdir -p target/tools

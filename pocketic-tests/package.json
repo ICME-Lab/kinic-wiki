@@ -17,8 +17,8 @@
     "test:evidence-capacity": "pnpm run build:evidence-baseline && pnpm run build:wiki && node --test integration/evidence-capacity.test.mjs",
     "build:bekko-refill-faults": "node scripts/build-bekko-refill-faults.mjs",
     "test:bekko-refill-faults": "pnpm run build:wiki && pnpm run build:bekko-refill-faults && node --test integration/bekko-refill-faults.test.mjs",
-    "build:vault-baselines": "node scripts/build-vault-baselines.mjs",
-    "test:vault": "node scripts/run-vault-acceptance.mjs"
+    "test:vault": "node scripts/run-vault-acceptance.mjs",
+    "build:vault-fixtures": "node scripts/build-vault-fixtures.mjs"
   },
   "devDependencies": {
     "@dfinity/candid": "3.4.3",

@@ -19,18 +19,15 @@ import {
   resume,
   revision,
 } from "../helpers/vault-restore-pipeline.mjs";
-const baseline = "target/vault-dedicated-task12.wasm";
+const baseline = "target/vault-v6-baseline.wasm";
 verifyVaultBaseline(baseline);
 const quotaProvenance = JSON.parse(
-  readFileSync(join(root, "target/vault-restore-task12-quota.json"), "utf8"),
+  readFileSync(join(root, "target/vault-restore-quota-baseline.json"), "utf8"),
 );
-assert.equal(
-  quotaProvenance.source_commit,
-  "97dc47e2280ea207139b6704d0333985ebf73a82",
-);
+assert.equal(quotaProvenance.deployable, false);
 assert.equal(
   hash(
-    readFileSync(join(root, "target/vault-restore-task12-quota.wasm")),
+    readFileSync(join(root, "target/vault-restore-quota-baseline.wasm")),
   ).toString("hex"),
   quotaProvenance.wasm_sha256,
 );
@@ -38,14 +35,14 @@ const f = await restoreFixture(baseline);
 try {
   const physicalBefore = ok(await f.actor.list_credentials()).length;
   const source = await sourceArchive(f);
-  const r = await prepare(f, source, { legacyCharges: true });
+  const r = await prepare(f, source);
   await importAndActivate(f, r, {
     afterRecordStage: async (n) => {
       if (n !== 0) return;
       await f.pic.upgradeCanister({
         sender: owner,
         canisterId: f.canisterId,
-        wasm: join(root, "target/vault-restore-task12-quota.wasm"),
+        wasm: join(root, "target/vault-restore-quota-baseline.wasm"),
         arg: IDL.encode([], []),
       });
       assert.equal(ok(await f.actor.global_capacity()).used, 209715200n);
@@ -66,9 +63,9 @@ try {
         arg: IDL.encode([], []),
       });
       const capacity = ok(await f.actor.global_capacity());
-      assert.equal(capacity.used, 209715200n + 524288n);
-      assert.equal(capacity.overage, 524288n);
-      assert.ok(capacity.overcommitted);
+      assert.equal(capacity.used, 209715200n);
+      assert.equal(capacity.overage, 0n);
+      assert.equal(capacity.overcommitted, false);
       assert.deepEqual(ok(await f.actor.restore_admission_status())[0], before);
       assert.deepEqual(
         ok(await f.actor.restore_target_progress(r.request.job, r.target)),
@@ -87,7 +84,7 @@ try {
     },
   });
   assert.equal(ok(await f.actor.list_credentials()).length, physicalBefore + 1);
-  assert.ok(ok(await f.actor.global_capacity()).overcommitted);
+  assert.equal(ok(await f.actor.global_capacity()).overcommitted, false);
   assert.ok(ok(await f.actor.account_balance()) > 0n);
   const normal = await f.fresh({ Normal: null }, [r.target], r.candidate);
   const record = revision(r.transformed.records.find((x) => !x.deleted));
@@ -145,9 +142,9 @@ try {
     ok(await f.actor.get_vault_header(r.target.vault)).generation,
     [r.target],
   );
-  assert.ok(ok(await f.actor.global_capacity()).overcommitted);
+  assert.equal(ok(await f.actor.global_capacity()).overcommitted, false);
   console.log(
-    "PASS exact old-cap Task12→current migration overcommit consumes prepaid grant and NEW credential slots; retains staged encrypted record, old reservation/commitment, source+prepared-target identity, runtime/expiry grant fences and fresh current-proof resume through activation; unreserved growth denied, read/export/prepaid cleanup allowed",
+    "PASS current v6 full-cap upgrade consumes prepaid grant credential slots; retains staged encrypted record, old reservation/commitment, source+prepared-target identity, runtime/expiry grant fences and fresh current-proof resume through activation; unreserved growth denied, read/export/prepaid cleanup allowed",
   );
 } catch (error) {
   console.error(error);
@@ -156,9 +153,9 @@ try {
   await f.close();
 }
 
-// The reviewed PR head used schema v5. Keep its source pinned and exercise an
+// Upgrade the reviewed v6 baseline with an
 // actually in-flight upload and committed receipt, not a fabricated SQLite row.
-const uploadBaseline = "target/vault-dedicated-upload-v5.wasm";
+const uploadBaseline = "target/vault-v6-baseline.wasm";
 verifyVaultBaseline(uploadBaseline);
 const u = await restoreFixture(uploadBaseline);
 try {
@@ -173,7 +170,7 @@ try {
     u.sourceG.vault,
     object,
     1n,
-    { kind: "attachment", title: "v5 pending" },
+    { kind: "attachment", title: "v6 pending" },
     plain,
     u.cryptoG(u.sourceG),
   );
@@ -257,7 +254,7 @@ try {
     0,
   );
   console.log(
-    "PASS actual schema-v5 PR177 source -> current Wasm: pending ciphertext/chunk/receipt/reservation preserved; old grant fenced; fresh same-generation proof finishes the same upload exactly once",
+    "PASS actual schema-v6 baseline -> current Wasm: pending ciphertext/chunk/receipt/reservation preserved; old grant fenced; fresh same-generation proof finishes the same upload exactly once",
   );
 } finally {
   await u.close();
