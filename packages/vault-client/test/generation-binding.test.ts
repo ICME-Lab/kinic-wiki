@@ -102,15 +102,20 @@ it("a late backup confirmation for another generation locks instead of relabelli
   ).rejects.toThrow("TargetChanged");
   expect(f.client.session.root).toBeUndefined();
 });
-it("authoritative disappearance locks and wipes the unlocked session", async () => {
-  const f = await fixture();
-  Object.assign(f.client, {
-    actorValue: { get_vault_header: async () => ({ Err: { NotFound: null } }) },
-  });
-  await expect(f.client.items()).rejects.toThrow("NotFound");
-  expect(f.client.session.root).toBeUndefined();
-  expect(f.raw.every((x) => x === 0)).toBe(true);
-});
+it.each(["NotFound", "Conflict"] as const)(
+  "authoritative %s header rejection locks and wipes the unlocked session",
+  async (error) => {
+    const f = await fixture();
+    Object.assign(f.client, {
+      actorValue: {
+        get_vault_header: async () => ({ Err: { [error]: null } }),
+      },
+    });
+    await expect(f.client.items()).rejects.toThrow(error);
+    expect(f.client.session.root).toBeUndefined();
+    expect(f.raw.every((x) => x === 0)).toBe(true);
+  },
+);
 it("replacing a bound key cannot retain another key's raw backup bytes", async () => {
   const f = await fixture();
   f.client.session.bindRoot(

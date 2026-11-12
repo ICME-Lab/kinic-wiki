@@ -176,7 +176,11 @@ export class OrdinaryAuthority {
       const current = async () => {
         const reply = await this.actor.get_vault_header(generation.vault);
         this.session.check(ticket);
-        if ("Err" in reply && "NotFound" in reply.Err) this.session.lock();
+        if (
+          "Err" in reply &&
+          ("NotFound" in reply.Err || "Conflict" in reply.Err)
+        )
+          this.session.lock();
         const header = ok(reply);
         if (
           !("Active" in header.state) ||

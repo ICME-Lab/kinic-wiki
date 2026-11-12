@@ -815,3 +815,17 @@ it("checks authoritative upload status before expiry-driven chunk reauthorizatio
   expect(f.commits()).toBe(0);
   f.client.session.lock();
 });
+it("a non-readable header during UV renewal locks the old root before sending a write", async () => {
+  const f = await unlocked();
+  expire(f);
+  vi.mocked(assertCredential).mockImplementationOnce(async () => {
+    f.actor.get_vault_header.mockResolvedValue({
+      Err: { Conflict: null },
+    } as never);
+    return "proof";
+  });
+  await expect(save(f)).rejects.toThrow("Conflict");
+  expect(f.client.session.root).toBeUndefined();
+  expect(f.client.hasPendingSave).toBe(false);
+  expect(f.actor.mutate).not.toHaveBeenCalled();
+});

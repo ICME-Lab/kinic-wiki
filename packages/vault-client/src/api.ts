@@ -92,7 +92,8 @@ export class VaultClient {
     const reply = await this.actor.get_vault_header(id);
     this.session.check(ticket);
     if ("Err" in reply) {
-      if ("NotFound" in reply.Err) this.session.lock();
+      if ("NotFound" in reply.Err || "Conflict" in reply.Err)
+        this.session.lock();
       return ok<Header>(reply);
     }
     this.header = reply.Ok;
