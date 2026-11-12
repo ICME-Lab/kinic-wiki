@@ -1315,3 +1315,39 @@ fn maintenance_cli_requires_explicit_target_and_state() {
         .is_err()
     );
 }
+
+/// docs/CLI.md is the operator reference for this binary. Every visible top-level
+/// command must appear in its code (inline code or a fenced block), either with its
+/// own section or with a pointer to the guide that owns it.
+#[test]
+fn cli_reference_mentions_every_top_level_command() {
+    let reference = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/CLI.md"),
+    )
+    .expect("read docs/CLI.md");
+    let mut code = Vec::new();
+    let mut in_fence = false;
+    for line in reference.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if in_fence {
+            code.push(line);
+        } else {
+            code.extend(line.split('`').skip(1).step_by(2));
+        }
+    }
+    let documented: std::collections::BTreeSet<&str> = code
+        .iter()
+        .flat_map(|text| text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')))
+        .collect();
+    let missing: Vec<String> = Cli::command()
+        .get_subcommands()
+        .filter(|command| !command.is_hide_set() && command.get_name() != "help")
+        .map(|command| command.get_name().to_string())
+        .filter(|name| !documented.contains(name.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/CLI.md code never mentions these commands: {missing:?}"
+    );
+}
