@@ -373,3 +373,28 @@ it("lists and cancels a server upload after lock with a zero prepaid balance", a
     screen.queryByRole("button", { name: "Cancel interrupted save" }),
   ).toBeNull();
 });
+
+it("does not retire the private session while initial recovery configuration loads", async () => {
+  let configured!: (value: unknown) => void;
+  const config = new Promise(resolve => { configured = resolve; });
+  const actor = {
+    get_config: async () => config,
+    account_balance: async () => ({ Ok: 0n }),
+    global_capacity: async () => ({ Ok: { used: 0n, limit: 209715200n, accounting_reserved: 16777216n, overcommitted: false, overage: 0n, legacy_excess: 0n } }),
+    list_credentials: async () => ({ Ok: [] }),
+    cleanup_status: async () => ({ Ok: [] }),
+    list_payments: async () => ({ Ok: [] }),
+    list_vaults: async () => ({ Ok: [] }),
+    list_pending_uploads: async () => ({ Ok: { entries: [], next: [] } }),
+    list_unfinished_vaults: async () => ({ Ok: [] }),
+    restore_admission_status: async () => ({ Ok: [] }),
+    incident_context: async () => ({ Ok: [] }),
+  } as unknown as VaultActor;
+  const client = new VaultClient({ actor, identity: Ed25519KeyIdentity.generate(), canister: "aaaaa-aa", local: true });
+  const ticket = client.session.capture();
+  await act(async () => { render(<VaultWorkspace client={client} />); });
+  await act(async () => { configured({ Ok: [{ origin: location.origin, rp_id: "localhost", key_name: "test_key_1", minimum_cycles: 0n }] }); });
+  expect(client.session.capture()).toBe(ticket);
+  // Zero balance must still expose recovery/cleanup after origin/RP initialization.
+  expect(screen.getByRole("button", { name: "Recover after losing all passkeys" })).toBeTruthy();
+});

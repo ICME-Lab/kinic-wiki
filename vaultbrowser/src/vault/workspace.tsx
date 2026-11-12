@@ -319,22 +319,26 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       {busy ? (
         <output className="text-sm">Processing Vault operation…</output>
       ) : null}
-      <VaultRecovery
-        client={client}
-        disabled={busy}
-        enabled={eligible}
-        credential={
-          credential
-            ? unb64(credential)
-            : credentials.length === 1
-              ? bytes(credentials[0].id)
-              : undefined
-        }
-        run={run}
-        onChanged={async () => {
-          await Promise.all([refreshLists(), refreshConfiguration()]);
-        }}
-      />
+      {/* Do not create RP-bound services before the initial configuration is known.
+          Replacing empty-RP services would lock this shared private session. */}
+      {config?.origin === location.origin && client.recoveryConfiguration.rpId ? (
+        <VaultRecovery
+          client={client}
+          disabled={busy}
+          enabled={eligible}
+          credential={
+            credential
+              ? unb64(credential)
+              : credentials.length === 1
+                ? bytes(credentials[0].id)
+                : undefined
+          }
+          run={run}
+          onChanged={async () => {
+            await Promise.all([refreshLists(), refreshConfiguration()]);
+          }}
+        />
+      ) : null}
       <div className="grid min-w-0 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
         <VaultPanel label="Vaults">
           <h2 className="font-semibold">Vaults</h2>
