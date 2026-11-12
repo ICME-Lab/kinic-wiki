@@ -494,11 +494,23 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   if (!pending || pending.sessionId !== sessionId) {
     return connectErrorResponse("expired", 400);
   }
-  const [usernameMatches, passwordMatches] = await Promise.all([
-    secretEquals(env.MCP_REVIEW_USERNAME_HASH!.trim(), username),
-    secretEquals(env.MCP_REVIEW_PASSWORD_HASH!.trim(), password)
-  ]);
-  if (!usernameMatches || !passwordMatches) {
+  const credentialPairs: [string, string][] = [
+    [env.MCP_REVIEW_USERNAME_HASH!.trim(), env.MCP_REVIEW_PASSWORD_HASH!.trim()]
+  ];
+  if (env.MCP_REVIEW_SECONDARY_USERNAME_HASH?.trim()) {
+    credentialPairs.push([
+      env.MCP_REVIEW_SECONDARY_USERNAME_HASH.trim(),
+      env.MCP_REVIEW_SECONDARY_PASSWORD_HASH!.trim()
+    ]);
+  }
+  const matches = await Promise.all(credentialPairs.map(async ([usernameHash, passwordHash]) => {
+    const [usernameMatches, passwordMatches] = await Promise.all([
+      secretEquals(usernameHash, username),
+      secretEquals(passwordHash, password)
+    ]);
+    return usernameMatches && passwordMatches;
+  }));
+  if (!matches.some(Boolean)) {
     return new Response(
       authorizationChoicePage({
         connectState,
@@ -937,7 +949,14 @@ function reviewLoginEnabled(env: RuntimeEnv): boolean {
 function reviewLoginConfigured(env: RuntimeEnv): boolean {
   const reviewDatabaseId = env.MCP_REVIEW_DATABASE_ID?.trim() ?? "";
   const reviewWritePrefix = env.MCP_REVIEW_WRITE_PREFIX?.trim() ?? "";
+  const secondaryUsernameHash = env.MCP_REVIEW_SECONDARY_USERNAME_HASH?.trim() ?? "";
+  const secondaryPasswordHash = env.MCP_REVIEW_SECONDARY_PASSWORD_HASH?.trim() ?? "";
+  const secondaryConfigured = (!secondaryUsernameHash && !secondaryPasswordHash) || (
+    /^[A-Za-z0-9_-]{43}$/u.test(secondaryUsernameHash) &&
+    /^[A-Za-z0-9_-]{43}$/u.test(secondaryPasswordHash)
+  );
   return Boolean(
+    secondaryConfigured &&
     env.MCP_REVIEW_LOGIN_RATE_LIMIT &&
     /^[A-Za-z0-9_-]{43}$/u.test(env.MCP_REVIEW_USERNAME_HASH?.trim() ?? "") &&
     /^[A-Za-z0-9_-]{43}$/u.test(env.MCP_REVIEW_PASSWORD_HASH?.trim() ?? "") &&
