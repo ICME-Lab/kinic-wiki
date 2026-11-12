@@ -61,7 +61,9 @@ for (const [project, mode, fixture, filename] of targets) {
       if (project === "workers/wiki-mcp" && mode === "private" && field === "vars") {
         expected = {
           ...expected,
-          MUSE_CHALLENGE_TOKEN: "fb7d2c4bccd7058b17705f1a5f2801d7dd54276d902601fc56c4d63c568ca78b"
+          MUSE_CHALLENGE_TOKEN: "fb7d2c4bccd7058b17705f1a5f2801d7dd54276d902601fc56c4d63c568ca78b",
+          MCP_REVIEW_LOGIN_ENABLED: "true",
+          MCP_REVIEW_ACCESS_VERSION: "muse-review-20261112-462627c2"
         };
       }
       assert.deepEqual(normalized(field, native[field], native.name), normalized(field, expected, legacy.name), field);
