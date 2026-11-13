@@ -25,10 +25,7 @@ try {
   await pic.setTime(Date.now());
   const { actor, canisterId } = await pic.setupCanister({
     idlFactory,
-    wasm: resolve(
-      root,
-      "target/wasm32-unknown-unknown/release/vault_canister.wasm",
-    ),
+    wasm: resolve(root, "target/vault-ii-acceptance/vault_canister.wasm"),
     cycles: 100_000_000_000_000n,
   });
   const port = await pic.makeLive();
@@ -66,7 +63,30 @@ try {
       new Uint8Array(certified.response.body),
       new Uint8Array(response.body),
     );
-    if (path === "/config.json") assert.equal(JSON.parse(new TextDecoder().decode(response.body)).fundingMode, "unavailable");
+    if (path === "/config.json") {
+      const config = JSON.parse(new TextDecoder().decode(response.body));
+      assert.equal(config.fundingMode, "unavailable");
+      assert.equal(config.local, false);
+      assert.equal(config.origin, "https://vault.kinic.xyz");
+      assert.equal(config.identityProvider, "https://id.ai");
+      assert.equal(
+        config.derivationOrigin,
+        `https://${canisterId.toText()}.icp0.io`,
+      );
+    }
+    const headers = Object.fromEntries(
+      response.headers.map(([k, v]) => [k.toLowerCase(), v]),
+    );
+    assert.equal(headers["x-frame-options"], "DENY");
+    assert.equal(headers["cache-control"], "no-store");
+    assert.ok(
+      headers["content-security-policy"].includes("frame-ancestors 'none'"),
+    );
+    if (path === "/.well-known/ii-alternative-origins")
+      assert.deepEqual(
+        JSON.parse(new TextDecoder().decode(response.body)).alternativeOrigins,
+        ["https://vault.kinic.xyz"],
+      );
     const body = new Uint8Array(response.body);
     body[0] ^= 1;
     assert.throws(() => verify({ ...response, body }));
@@ -94,6 +114,9 @@ try {
     );
   }
 } finally {
-  await pic?.tearDown();
-  await server.stop();
+  try {
+    await pic?.tearDown();
+  } finally {
+    await server.stop();
+  }
 }

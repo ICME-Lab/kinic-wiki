@@ -1,5 +1,5 @@
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
-// Actual Wasm current v6 capacity and payment continuity with a separate synthetic ledger.
+// Actual Wasm current schema7 capacity and payment continuity with a separate synthetic ledger.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
@@ -36,7 +36,7 @@ try {
     root,
     "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
   );
-  const baseline = resolve(root, "target/vault-capacity-baseline.wasm");
+  const baseline = resolve(root, "target/vault-ii-acceptance/vault-state.wasm");
   const account = IDL.Record({
     owner: IDL.Principal,
     subaccount: IDL.Opt(IDL.Vec(IDL.Nat8)),
@@ -70,10 +70,21 @@ try {
       sender: owner,
       idlFactory,
       wasm: baseline,
-      arg: IDL.encode([IDL.Nat16], [count]),
+      arg: IDL.encode([], []),
       cycles: 100_000_000_000_000n,
     });
     v.actor.setPrincipal(owner);
+    const control = pic.createActor(
+      () => IDL.Service({ fixture_execute: IDL.Func([IDL.Text], [], []) }),
+      v.canisterId,
+    );
+    control.setPrincipal(owner);
+    await control.fixture_execute(
+      Array.from(
+        { length: count },
+        (_, n) => `INSERT INTO accounts VALUES('${p(n).toText()}',1,0,0);`,
+      ).join("\n"),
+    );
     return v;
   };
   const upgrade = async (v, path = wasm) => {
@@ -122,7 +133,7 @@ try {
   assert.equal(initial.accounting_reserved, 16n * 1024n * 1024n);
   assert.equal(initial.limit, 200n * 1024n * 1024n);
   assert.equal(initial.overcommitted, false);
-  assert.equal(initial.legacy_excess, 0n);
+  assert.equal(initial.overage, 0n);
   const a = await quote(v, p(3000), p(2000), 1),
     b = await quote(v, p(3001), p(2001), 2),
     same = await quote(v, p(3002), p(2000), 3);
@@ -184,22 +195,34 @@ try {
   );
   await fake.actor.configure(6, 10n);
   const pending = await quote(v, p(3101), p(0), 11);
-  assert.ok("Unknown" in ok(await v.actor.pay_purchase(pending.operation)).status);
+  assert.ok(
+    "Unknown" in ok(await v.actor.pay_purchase(pending.operation)).status,
+  );
   const beforeUpgrade = ok(await v.actor.payment_status(pending.operation))[0];
   v.actor.setPrincipal(p(0));
   const balanceBefore = ok(await v.actor.account_balance());
   await upgrade(v);
   v.actor.setPrincipal(p(3101));
-  assert.deepEqual(ok(await v.actor.payment_status(pending.operation))[0], beforeUpgrade);
+  assert.deepEqual(
+    ok(await v.actor.payment_status(pending.operation))[0],
+    beforeUpgrade,
+  );
   await fake.actor.configure(4, 10n);
   assert.ok("Paid" in ok(await v.actor.pay_purchase(pending.operation)).status);
   const last = (await fake.actor.calls()).slice(-2);
   assert.deepEqual(last[0], last[1]);
   v.actor.setPrincipal(p(0));
-  assert.equal(ok(await v.actor.account_balance()), balanceBefore + 1_000_000_000n);
-  console.log("PASS current v6: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap");
-
+  assert.equal(
+    ok(await v.actor.account_balance()),
+    balanceBefore + 1_000_000_000n,
+  );
+  console.log(
+    "PASS current schema7: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap",
+  );
 } finally {
-  if (pic) await pic.tearDown();
-  await server.stop();
+  try {
+    if (pic) await pic.tearDown();
+  } finally {
+    await server.stop();
+  }
 }

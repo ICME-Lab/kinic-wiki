@@ -18,7 +18,9 @@
     "build:bekko-refill-faults": "node scripts/build-bekko-refill-faults.mjs",
     "test:bekko-refill-faults": "pnpm run build:wiki && pnpm run build:bekko-refill-faults && node --test integration/bekko-refill-faults.test.mjs",
     "test:vault": "node scripts/run-vault-acceptance.mjs",
-    "build:vault-fixtures": "node scripts/build-vault-fixtures.mjs"
+    "build:vault-fixtures": "node scripts/build-vault-fixtures.mjs",
+    "build:vault-current": "node scripts/build-vault-current.mjs",
+    "build:vault-acceptance": "node scripts/build-vault-current.mjs && node scripts/build-vault-synthetic-funding.mjs && node scripts/build-vault-ledger.mjs && node scripts/build-vault-fixtures.mjs && node scripts/build-vault-client-acceptance.mjs"
   },
   "devDependencies": {
     "@dfinity/candid": "3.4.3",
