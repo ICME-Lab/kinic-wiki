@@ -457,3 +457,26 @@ describe("open authoritative invalidation", () => {
     expect(client.session.root).toBe(root);
   });
 });
+
+it("retries only a pending Collect and gives each delivered batch a fresh ID", async () => {
+  const { client, actor } = setup();
+  vi.mocked(actor.mutate).mockRejectedValueOnce(Error("LostResponse"));
+  await expect(client.collect()).rejects.toThrow("LostResponse");
+  const first = vi.mocked(actor.mutate).mock.calls[0][0];
+  await client.collect();
+  expect(actor.mutate).toHaveBeenLastCalledWith(first);
+  await client.collect();
+  expect(vi.mocked(actor.mutate).mock.calls[2][0].operation).not.toEqual(
+    first.operation,
+  );
+  vi.mocked(actor.mutate).mockRejectedValueOnce(Error("LostResponse"));
+  await expect(client.mutate({ DeleteVault: { vault: id } })).rejects.toThrow(
+    "LostResponse",
+  );
+  const count = vi.mocked(actor.mutate).mock.calls.length;
+  await expect(client.collect()).rejects.toThrow("ResolvePendingMutation");
+  expect(actor.mutate).toHaveBeenCalledTimes(count);
+  client.session.lock();
+  await client.collect();
+  expect(actor.mutate).toHaveBeenCalledTimes(count + 1);
+});

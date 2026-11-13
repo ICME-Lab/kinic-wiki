@@ -30,14 +30,14 @@ export function fixtureNetwork() {
   const receipts = new Map<string, MutationResult>();
   const calls: Mutation[] = [];
   const creation: unknown[] = [];
-  let balance = 1_000_000_000n;
+  let balance = 50_000_000_000n;
   let lostPhase = "";
   let keyFailure = false;
   let createFailure = false;
   const result = (value: MutationResult) => ({ Ok: value });
   const actor = {
     get_config: async () => ({
-      Ok: [{ minimum_cycles: 20_000_000n, key_name: "test_key_1" }],
+      Ok: [{ minimum_cycles: 100_000_000_000n, key_name: "test_key_1" }],
     }),
     account_balance: async () => ({ Ok: balance }),
     global_capacity: async () => ({

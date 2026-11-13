@@ -73,6 +73,11 @@ async function save(title = "Secret note", body = "private words") {
   });
   fireEvent.click(screen.getByText("Save document"));
   await screen.findByRole("button", { name: title });
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
 }
 it("opens with II, saves and reads encrypted notes, searches locally, retains drafts and root through refresh", async () => {
   const x = await mounted();
@@ -502,3 +507,135 @@ it("keeps the loss disclosure before create and outside collapsed navigation", a
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
 });
+
+it("allows owner credit below the valid canister reserve and reports server denial", async () => {
+  const x = await mounted();
+  expect((screen.getByText("Create Vault") as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  await x.open();
+  await save("First", "first body");
+  x.lose("PutChunk");
+  fireEvent.change(screen.getByLabelText("Private note body"), {
+    target: { value: "retry body" },
+  });
+  fireEvent.click(screen.getByText("Save document"));
+  await screen.findByRole("alert");
+  expect((screen.getByText("Resume save") as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  fireEvent.click(screen.getByText("Resume save"));
+  await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  x.setBalance(1n);
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByText("Prepaid balance: 1 cycles");
+  // A nonzero balance is advisory: the server owns fee/execution admission.
+  vi.spyOn(x.actor, "create_vault").mockResolvedValue({
+    Err: { QuotaExceeded: null },
+  });
+  fireEvent.click(screen.getByText("Create Vault"));
+  await screen.findByRole("alert");
+  expect(x.actor.create_vault).toHaveBeenCalledOnce();
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  x.setBalance(0n);
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByText("Prepaid balance: 0 cycles");
+  expect(
+    (screen.getByText("Retry Vault creation") as HTMLButtonElement).disabled,
+  ).toBe(true);
+});
+it("purges a selected document and its history at zero credit while retaining another", async () => {
+  const x = await mounted();
+  await x.open();
+  await save("Keep", "retained body");
+  fireEvent.click(screen.getByText("New document"));
+  await save("Remove", "old body");
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await waitFor(() =>
+    expect(
+      (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
+    ).toBe("old body"),
+  );
+  await save("Remove", "new body");
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await screen.findByText("Show version history");
+  x.setBalance(0n);
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByText("Prepaid balance: 0 cycles");
+  expect(
+    (screen.getByText("Delete document") as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByText("Save document") as HTMLButtonElement).disabled,
+  ).toBe(true);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByText("Permanently delete document and history"));
+  await waitFor(() => expect(x.revisions).toHaveLength(1));
+  expect(screen.getByRole("button", { name: "Keep" })).toBeTruthy();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull(),
+  );
+});
+it.each(["Pending", "Deleting", "failed-open"])(
+  "retries lost Collect from a closed %s Vault at zero credit",
+  async (state) => {
+    const x = await mounted();
+    if (state === "failed-open") x.failKey(true);
+    else
+      x.headers[0].state =
+        state === "Pending" ? { Pending: null } : { Deleting: null };
+    x.setBalance(0n);
+    fireEvent.click(screen.getByText("Refresh balance"));
+    await screen.findByText("Prepaid balance: 0 cycles");
+    fireEvent.click(screen.getByText("Refresh Vaults"));
+    await waitFor(() =>
+      expect(
+        (screen.getByText("Refresh Vaults") as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(
+      screen.getByText(
+        `Vault 1 · ${state === "failed-open" ? "Active" : state}`,
+      ),
+    );
+    await screen.findByText("Encrypted storage cleanup");
+    await waitFor(() =>
+      expect(
+        (screen.getByText("Collect expired data") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    x.lose("Collect");
+    fireEvent.click(screen.getByText("Encrypted storage cleanup"));
+    fireEvent.click(screen.getByText("Collect expired data"));
+    await waitFor(() => expect(x.calls).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        (screen.getByText("Collect expired data") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByText("Collect expired data"));
+    await screen.findByText("Cleanup complete");
+    expect(x.calls[0]).toEqual(x.calls[1]);
+    expect(x.client.session.root).toBeUndefined();
+    await waitFor(() =>
+      expect(
+        (screen.getByText("Collect expired data") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByText("Collect expired data"));
+    await waitFor(() => expect(x.calls).toHaveLength(3));
+    expect(x.calls[2].operation).not.toEqual(x.calls[0].operation);
+  },
+);

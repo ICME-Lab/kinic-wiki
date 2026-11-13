@@ -747,7 +747,7 @@ fn review_empty_unfunded_collect_cannot_allocate_cleanup_receipts() {
     let e = Env::new();
     e.funded.set(false);
     for owner in 80..82 {
-        e.owner.set(Principal::from_slice(&[owner]));
+        e.owner.set(Principal::from_slice(&[owner + 10]));
         for n in 0u16..512 {
             let mut operation = vec![0; 16];
             operation[..2].copy_from_slice(&n.to_be_bytes());
@@ -1173,4 +1173,227 @@ fn review_collect_records_progress_when_only_expired_receipt_remains() {
         e.change(61, Action::Collect),
         Err(Error::NotFound)
     ));
+}
+
+#[test]
+fn fresh_key_admission_at_full_shared_content_and_ordinary_receipts() {
+    let e = Env::new();
+    e.create();
+    e.owner.set(Principal::from_slice(&[2]));
+    e.create();
+    e.owner.set(Principal::from_slice(&[1]));
+    e.transaction(|db| {
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9998) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',999999,x+100,0,0 FROM n", []).unwrap();
+        assert_eq!(store::content::check_receipt_capacity(db, e.now()), Err(Error::QuotaExceeded));
+        let extra = TOTAL_MAX - store::content::global_usage(db)?;
+        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
+        assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
+        assert!(store::load::<(u64, Id)>(db, "derive")?.is_none());
+        Ok(())
+    }).unwrap();
+    let request = DeriveKey {
+        vault: vec![1; 16],
+        operation: vec![99; 16],
+        transport: ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
+            .unwrap()
+            .public_key(),
+    };
+    let first = block_on(derive_vault_key(&e, request.clone())).unwrap();
+    assert_eq!(
+        block_on(derive_vault_key(&e, request.clone())).unwrap(),
+        first
+    );
+    assert_eq!(e.derives.get(), 1);
+    assert_eq!(e.paid.get(), 12);
+    let mut changed = request;
+    changed.transport = ic_vetkeys::TransportSecretKey::from_seed(vec![9; 32])
+        .unwrap()
+        .public_key();
+    assert_eq!(
+        block_on(derive_vault_key(&e, changed)),
+        Err(Error::Conflict)
+    );
+    e.transaction(|db| {
+        assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
+        assert!(store::content::usage(db)? <= TOTAL_MAX);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn normal_key_admission_preserves_rates_and_reuses_transient_control_across_owners() {
+    let e = Env::new();
+    let transport = ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
+        .unwrap()
+        .public_key();
+    for owner in 1..=9 {
+        e.owner.set(Principal::from_slice(&[owner + 10]));
+        e.create();
+        for n in 0..if owner == 1 { 100 } else { 1 } {
+            block_on(derive_vault_key(
+                &e,
+                DeriveKey {
+                    vault: vec![1; 16],
+                    operation: vec![n + 20; 16],
+                    transport: transport.clone(),
+                },
+            ))
+            .unwrap();
+            assert!(
+                e.transaction(|db| store::load::<(u64, Id)>(db, "derive"))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    e.owner.set(Principal::from_slice(&[11]));
+    assert_eq!(
+        block_on(derive_vault_key(
+            &e,
+            DeriveKey {
+                vault: vec![1; 16],
+                operation: vec![200; 16],
+                transport
+            }
+        )),
+        Err(Error::QuotaExceeded)
+    );
+    assert_eq!(
+        e.db.borrow()
+            .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn protected_key_callback_is_bounded_and_cannot_publish_after_cancellation() {
+    let e = Env::new();
+    e.create();
+    e.transaction(|db| {
+        let extra = TOTAL_MAX - store::content::global_usage(db)?;
+        db.execute(
+            "INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",
+            params![vec![1u8; 16], vec![3u8; 16], vec![0u8; 64], extra as i64],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    e.hook.replace(Some(Box::new(|e| {
+        e.transaction(|db| {
+            assert_eq!(store::content::global_usage(db)?,TOTAL_MAX);
+            let (token,_)=store::load::<(u64,Id)>(db,"derive")?.unwrap();
+            assert_eq!(store::keys::cancel_pending(db,e.now())?,Some((token,20,false)));
+            db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key='derive'",[]).unwrap();
+            Ok(())
+        }).unwrap();
+    })));
+    let request = DeriveKey {
+        vault: vec![1; 16],
+        operation: vec![90; 16],
+        transport: ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
+            .unwrap()
+            .public_key(),
+    };
+    assert_eq!(
+        block_on(derive_vault_key(&e, request.clone())),
+        Err(Error::Expired)
+    );
+    assert_eq!(e.paid.get(), 12);
+    assert_eq!(
+        e.transaction(|db| ops::replay::<KeyReply>(
+            db,
+            &request.operation,
+            &ops::digest(b"derive-vault-key/v1", &request)?,
+            e.now()
+        ))
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks_atomic() {
+    let e = Env::new();
+    e.create();
+    e.transaction(|db| {
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1000 UNION ALL SELECT x+1 FROM n WHERE x<1098) INSERT INTO key_flights(owner,token,day,reserved,actual,created,settled,in_flight) SELECT X'01',x,0,30000000000,0,100,100,0 FROM n",[]).unwrap();
+        let extra=TOTAL_MAX-store::content::global_usage(db)?;
+        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
+        Ok(())
+    }).unwrap();
+    let request = DeriveKey {
+        vault: vec![1; 16],
+        operation: vec![90; 16],
+        transport: ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
+            .unwrap()
+            .public_key(),
+    };
+    e.funded.set(false);
+    assert_eq!(
+        block_on(derive_vault_key(&e, request.clone())),
+        Err(Error::QuotaExceeded)
+    );
+    e.funded.set(true);
+    e.owner.set(Principal::from_slice(&[2]));
+    assert_eq!(
+        block_on(derive_vault_key(&e, request.clone())),
+        Err(Error::NotFound)
+    );
+    e.owner.set(Principal::anonymous());
+    assert_eq!(
+        block_on(derive_vault_key(&e, request.clone())),
+        Err(Error::Unauthorized)
+    );
+    e.owner.set(Principal::from_slice(&[1]));
+    let mut invalid = request.clone();
+    invalid.transport = vec![0; 48];
+    assert_eq!(
+        block_on(derive_vault_key(&e, invalid)),
+        Err(Error::InvalidInput)
+    );
+    assert_eq!(
+        e.db.borrow()
+            .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    let mut next = request.clone();
+    next.operation = vec![91; 16];
+    let competing = next.clone();
+    e.hook.replace(Some(Box::new(move |e| {
+        assert_eq!(
+            derive_vault_key(e, competing).now_or_never().unwrap(),
+            Err(Error::Busy)
+        );
+        assert_eq!(
+            e.db.borrow()
+                .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    })));
+    block_on(derive_vault_key(&e, request)).unwrap();
+    assert_eq!(
+        block_on(derive_vault_key(&e, next)),
+        Err(Error::QuotaExceeded)
+    );
+    assert_eq!(e.derives.get(), 1);
+    assert_eq!(
+        e.db.borrow()
+            .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert!(
+        e.transaction(|db| store::load::<(u64, Id)>(db, "derive"))
+            .unwrap()
+            .is_none()
+    );
 }

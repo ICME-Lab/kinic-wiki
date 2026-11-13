@@ -224,3 +224,82 @@ fn review_large_result_completion_fits_its_pending_reservation_at_capacity() {
         Ok(())
     });
 }
+
+#[test]
+fn protected_key_pool_bounds_replay_and_result_without_using_content_headroom() {
+    let db = db();
+    for owner in 10..=14 {
+        seed(&db, owner);
+    }
+    scope(&db, 10, |db| {
+        let extra = TOTAL_MAX - content::global_usage(db)?;
+        db.execute(
+            "INSERT INTO revisions VALUES(X'05',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",
+            params![vec![1u8; 16], vec![3u8; 16], vec![0u8; 64], extra as i64],
+        )
+        .unwrap();
+        Ok(())
+    });
+    for owner in 10..=13 {
+        scope(&db, owner, |db| {
+            for n in 0..capacity::KEY_CONTROL_OWNER_ROWS {
+                let operation = vec![n as u8 + 10; 16];
+                let token = operations::begin_key(db, &operation, &[5; 32], 1)?;
+                assert_eq!(
+                    operations::complete(db, &operation, token, &vec![0u8; 1024], 1),
+                    Err(Error::QuotaExceeded)
+                );
+                operations::complete(db, &operation, token, &true, 1)?;
+                assert_eq!(
+                    operations::replay::<bool>(db, &operation, &[5; 32], 2)?,
+                    Some(true)
+                );
+                assert_eq!(
+                    operations::replay::<bool>(db, &operation, &[6; 32], 2),
+                    Err(Error::Conflict)
+                );
+                assert_eq!(content::global_usage(db)?, TOTAL_MAX);
+                assert!(content::usage(db)? <= TOTAL_MAX);
+            }
+            assert_eq!(
+                operations::begin_key(db, &[99; 16], &[5; 32], 2),
+                Err(Error::QuotaExceeded)
+            );
+            Ok(())
+        });
+    }
+    scope(&db, 14, |db| {
+        assert_eq!(
+            operations::begin_key(db, &[99; 16], &[5; 32], DAY),
+            Err(Error::QuotaExceeded)
+        );
+        Ok(())
+    });
+    scope(&db, 10, |db| {
+        operations::collect(db, DAY + 1)?;
+        operations::begin_key(db, &[99; 16], &[5; 32], DAY + 1)?;
+        assert_eq!(content::global_usage(db)?, TOTAL_MAX);
+        Ok(())
+    });
+}
+#[test]
+fn key_control_is_current_flight_bound_and_setting_capacity_is_reused() {
+    let db = db();
+    for owner in 10..=18 {
+        seed(&db, owner);
+        scope(&db, owner, |db| {
+            assert_eq!(
+                save_key_control(db, owner as u64, &[1; 16]),
+                Err(Error::Conflict)
+            );
+            keys::reserve(db, owner as u64, 1, 20)?;
+            let before = content::global_usage(db)?;
+            save_key_control(db, owner as u64, &[1; 16])?;
+            assert_eq!(content::global_usage(db)?, before);
+            // Simulate the same atomic matching-settlement control release used by the service.
+            keys::settle(db, owner as u64, 1, 12)?;
+            db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key='derive'",[]).unwrap();
+            Ok(())
+        });
+    }
+}

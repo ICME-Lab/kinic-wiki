@@ -224,7 +224,8 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     if (!alive.current) return;
     await refresh();
   };
-  const eligible = !!config && balance >= config.minimum_cycles;
+  // The canister reserve is not owner credit. The server checks exact paid admission.
+  const eligible = !!config && balance > 0n;
   return (
     <div ref={privateDOM} className="vault-workspace grid min-w-0 gap-5">
       <div className="vault-workspace-header flex flex-wrap items-center justify-between gap-3">

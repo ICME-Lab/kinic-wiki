@@ -77,7 +77,15 @@ fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
     };
     let mut total = 262144u64;
     for (table, expression) in [
-        ("settings", "length(value)+length(key)+256"),
+        (
+            "settings",
+            if scoped {
+                "length(value)+length(key)+256"
+            } else {
+                // Only the bounded current-flight setting uses the prepaid control pool.
+                "CASE WHEN key='derive' AND length(value)+length(key)+256<=512 AND length(value)+length(key)+length(owner)+12<=512 AND EXISTS(SELECT 1 FROM key_flights k WHERE k.owner=settings.owner AND k.token=json_extract(settings.value,'$[0]') AND k.in_flight=1) THEN 0 ELSE length(value)+length(key)+256 END"
+            },
+        ),
         ("vaults", "8192+cleanup_budget*512"),
         ("revisions", "charge"),
         ("uploads", "reserved"),
@@ -85,7 +93,11 @@ fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
         ("objects", "4096+(1-purged)*512"),
         (
             "operations",
-            "CASE cleanup WHEN 1 THEN 0 WHEN 2 THEN 512 ELSE CASE WHEN result IS NULL THEN 131072 ELSE length(result)+4096 END END",
+            if scoped {
+                "CASE cleanup WHEN 1 THEN 0 WHEN 2 THEN 512 WHEN 3 THEN 2048 ELSE CASE WHEN result IS NULL THEN 131072 ELSE length(result)+4096 END END"
+            } else {
+                "CASE cleanup WHEN 1 THEN 0 WHEN 2 THEN 512 WHEN 3 THEN 0 ELSE CASE WHEN result IS NULL THEN 131072 ELSE length(result)+4096 END END"
+            },
         ),
     ] {
         let n: i64 = db

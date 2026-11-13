@@ -53,6 +53,14 @@ pub fn runtime(db: &Connection) -> Result<i64> {
 pub fn begin(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
     begin_inner(db, operation, digest, now, 0)
 }
+/// Preserve ordinary admission whenever possible; protect fresh access only when
+/// content bytes or ordinary receipt slots are exhausted. Existing rows keep their class.
+pub fn begin_key(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
+    match begin(db, operation, digest, now) {
+        Err(Error::QuotaExceeded) => begin_inner(db, operation, digest, now, 3),
+        result => result,
+    }
+}
 pub fn begin_cleanup(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
     begin_inner(db, operation, digest, now, 1)
 }
@@ -90,6 +98,17 @@ fn begin_inner(
             if mine >= 512 || all >= 1024 {
                 return Err(Error::QuotaExceeded);
             }
+        } else if cleanup == 3 {
+            let (mine, all): (i64, i64) = db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM operations WHERE cleanup=3", params![], |r| Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_| Error::Storage)?;
+            if mine as usize >= capacity::KEY_CONTROL_OWNER_ROWS
+                || all as usize >= capacity::KEY_CONTROL_ROWS
+                || content::usage(db)?
+                    .checked_add(capacity::KEY_CONTROL_ROW as u64)
+                    .ok_or(Error::QuotaExceeded)?
+                    > TOTAL_MAX
+            {
+                return Err(Error::QuotaExceeded);
+            }
         } else if cleanup == 0 {
             content::check_receipt_capacity(db, now)?;
             content::check_capacity(db, CHARGE)?;
@@ -120,7 +139,9 @@ pub fn complete<T: CandidType>(
     let bytes = encode_one(result).map_err(|_| Error::Storage)?;
     let cleanup:i64=db.query_row("SELECT cleanup FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
     if bytes.len()
-        > if cleanup != 0 {
+        > if cleanup == 3 {
+            capacity::KEY_CONTROL_RESULT
+        } else if cleanup != 0 {
             256
         } else {
             CHARGE as usize - 4096

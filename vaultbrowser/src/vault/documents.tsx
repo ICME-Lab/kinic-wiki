@@ -474,7 +474,7 @@ export function VaultDocuments({
                   </>
                 ) : null}
                 <VaultButton
-                  disabled={disabled || writesDisabled || pendingSave}
+                  disabled={disabled || pendingSave}
                   onClick={() => {
                     if (
                       !window.confirm(

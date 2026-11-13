@@ -737,3 +737,26 @@ fn key_and_financial_callback_settlement_roll_back_together() {
     })
     .unwrap();
 }
+
+#[test]
+fn compatible_schema_seven_keeps_protected_key_controls_results_and_financial_rows() {
+    use kinic_sqlite_compat::{Connection, params};
+    let db = Connection::open_in_memory().unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) VALUES(X'01',?1,?2,NULL,300,1,0,3),(X'01',?3,?2,?4,86400,2,0,3)",params![vec![1u8;16],vec![2u8;32],vec![3u8;16],candid::encode_one(true).unwrap()]).unwrap();
+    db.execute("INSERT INTO key_flights(owner,token,day,reserved,created,payment) VALUES(X'01',1,0,30000000000,0,120000000)",[]).unwrap();
+    db.execute(
+        "INSERT INTO settings VALUES(X'01','derive',?1)",
+        params![serde_json::to_string(&(1u64, vec![1u8; 16])).unwrap()],
+    )
+    .unwrap();
+    db.execute("INSERT INTO accounts VALUES('owner',42,7,8)", [])
+        .unwrap();
+    db.execute("INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms) VALUES('owner','derive:1','owner',120000000,0)",[]).unwrap();
+    let snapshot = || {
+        db.query_row("SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||cleanup||':'||hex(result)) FROM operations),'control',(SELECT value FROM settings WHERE key='derive'),'balance',(SELECT balance_cycles FROM accounts),'reserved',(SELECT reserved FROM vault_cycle_reservations),'flight',(SELECT reserved FROM key_flights))",[],|r|r.get::<_,String>(0)).unwrap()
+    };
+    let before = snapshot();
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(snapshot(), before);
+}

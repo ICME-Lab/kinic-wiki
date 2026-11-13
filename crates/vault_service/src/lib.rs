@@ -109,9 +109,9 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
         let h = store::active(db, &r.vault)?;
         let input = key_input(env.canister(), env.owner(), &h)?;
         let payment = env.required_derive_payment(&h.key_name);
-        let token = ops::begin(db, &r.operation, &digest, env.now())?;
+        let token = ops::begin_key(db, &r.operation, &digest, env.now())?;
         store::keys::reserve(db, token, env.now(), payment)?;
-        store::save(db, "derive", &(token, r.vault.clone()))?;
+        store::save_key_control(db, token, &r.vault)?;
         Ok((token, h, input, payment))
     })?;
     if let Err(error) = env.reserve_cycles(token, payment) {

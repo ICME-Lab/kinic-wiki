@@ -651,7 +651,12 @@ export class VaultClient {
   }
   async collect() {
     try {
-      return await this.mutate({ Collect: null });
+      return await this.mutate(
+        { Collect: null },
+        this.pending && "Collect" in this.pending.action
+          ? bytes(this.pending.operation)
+          : undefined,
+      );
     } catch (e) {
       if (e instanceof Error && e.message === "NotFound") return undefined;
       throw e;
