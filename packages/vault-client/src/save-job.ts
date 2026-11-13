@@ -9,7 +9,7 @@ import type {
 import { Session } from "./session";
 import { OrdinaryAuthority } from "./ordinary";
 import { authorityContext } from "./signed";
-import { ok } from "./api";
+import { ok } from "./wire";
 type Job = {
   request: BeginRevision;
   chunks: Uint8Array[];

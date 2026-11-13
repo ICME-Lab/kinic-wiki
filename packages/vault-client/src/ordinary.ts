@@ -18,15 +18,9 @@ import {
   TransportSecretKey,
   verifiedGenerationKEK,
 } from "../../vault-crypto/src/index";
-import { bytes, ok } from "./api";
-export const cryptoGeneration = (g: Generation) => ({
-  ...g,
-  version: 2 as const,
-  canister: g.canister.toText(),
-  owner: g.owner.toText(),
-  vault: bytes(g.vault),
-  nonce: bytes(g.nonce),
-});
+import { bytes, ok } from "./wire";
+export { cryptoGeneration } from "./wire";
+import { cryptoGeneration } from "./wire";
 export class OrdinaryAuthority {
   private signer?: SignedMutations;
   private normal?: string;

@@ -1,3 +1,4 @@
+import { grantProof } from "./grant-proof";
 /** Fresh scoped restore; all files and secrets remain local, all server effects are signed. */
 import { Principal } from "@icp-sdk/core/principal";
 import type {
@@ -9,28 +10,13 @@ import type {
   RestoreCandidateMode,
 } from "./contracts";
 import { Session } from "./session";
-import {
-  SignedMutations,
-  ephemeralSigner,
-  grantBinding,
-  authorityContext,
-} from "./signed";
+import { SignedMutations, grantBinding, authorityContext } from "./signed";
 import { register, assertCredential } from "./webauthn";
-import { bytes, ok } from "./api";
-import {
-  cryptoGeneration,
-  encodeIncidentKit,
-  verifyIncidentKit,
-} from "./incident";
+import { bytes, ok } from "./wire";
+import { cryptoGeneration, encodeIncidentKit, verifyIncidentKit } from "./incident";
 import { portableExport, portableRecord } from "./incident-backup";
 import { restorePreflight, restoreRevision } from "./restore-cost";
-import {
-  b64,
-  unb64,
-  hash,
-  unpack,
-  pack,
-} from "../../vault-crypto/src/documents";
+import { b64, unb64, hash, unpack, pack } from "../../vault-crypto/src/documents";
 import {
   randomBytes,
   generationBytes,
@@ -171,28 +157,11 @@ export class RestoreClient {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     this.reuse = undefined;
     try {
-      const ticket = this.session.capture(),
-        keys = await ephemeralSigner();
-      this.session.check(ticket);
-      const operation = randomBytes(16),
-        ch = ok(
-          await this.actor.begin_restore_grant({
-            operation,
-            public_key: keys.publicKey,
-            credential,
-            purpose,
-            generations: [],
-          }),
-        );
-      this.session.check(ticket);
-      const proof = await assertCredential(ch, this.rpId, this.session.signal);
-      this.session.check(ticket);
-      const g = ok(
-        await this.actor.finish_restore_grant(
-          operation,
-          proof,
-          "RestoreCleanup" in purpose,
-        ),
+      const ticket = this.session.capture();
+      const { grant: g, keys } = await grantProof(
+        this.session, this.rpId, { credential, purpose, generations: [] },
+        this.actor.begin_restore_grant,
+        (operation, proof) => this.actor.finish_restore_grant(operation, proof, "RestoreCleanup" in purpose),
       );
       this.session.check(ticket);
       this.signer?.destroy();
@@ -201,7 +170,7 @@ export class RestoreClient {
         this.owner,
         this.canister,
         g,
-        keys.keys,
+        keys,
       );
       this.reuse = {
         binding: grantBinding(credential, purpose, []),

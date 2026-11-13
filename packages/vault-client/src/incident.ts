@@ -1,3 +1,4 @@
+import { grantProof } from "./grant-proof";
 /** Incident preparation and completion. Every resumed session uses fresh WebAuthn and separate role derives. */
 import { wrapNext, saveAndVerify } from "./incident-backup";
 import { Principal } from "@icp-sdk/core/principal";
@@ -11,9 +12,8 @@ import type {
 } from "./contracts";
 import type { IncidentRole } from "./mutation-contracts";
 import { Session } from "./session";
-import { SignedMutations, ephemeralSigner, grantBinding } from "./signed";
-import { assertCredential } from "./webauthn";
-import { bytes, ok } from "./api";
+import { SignedMutations, grantBinding } from "./signed";
+import { bytes, ok } from "./wire";
 import { b64, unb64 } from "../../vault-crypto/src/documents";
 import { strictJSON } from "../../vault-crypto/src/strict-json";
 import {
@@ -32,14 +32,8 @@ import {
 const zero = new Uint8Array(16);
 const equal = (a: Uint8Array | number[], b: Uint8Array | number[]) =>
   b64(bytes(a)) === b64(bytes(b));
-export const cryptoGeneration = (g: Generation) => ({
-  ...g,
-  version: 2 as const,
-  canister: g.canister.toText(),
-  owner: g.owner.toText(),
-  vault: bytes(g.vault),
-  nonce: bytes(g.nonce),
-});
+export { cryptoGeneration } from "./wire";
+import { cryptoGeneration } from "./wire";
 const envelope = (e: NonNullable<IncidentTarget["normal"][0]>) => ({
   ...e,
   nonce: bytes(e.nonce),
@@ -137,32 +131,12 @@ export class IncidentClient {
   ) {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     this.reuse = undefined;
-    const ticket = this.session.capture(),
-      keys = await ephemeralSigner();
-    this.session.check(ticket);
-    const operation = randomBytes(16);
+    const ticket = this.session.capture();
     const cleanup = "Cleanup" in purpose;
-    const challenge = ok(
-      await (cleanup ? this.actor.begin_cleanup : this.actor.begin_grant)({
-        operation,
-        public_key: keys.publicKey,
-        credential,
-        purpose,
-        generations,
-      }),
-    );
-    this.session.check(ticket);
-    const proof = await assertCredential(
-      challenge,
-      this.rpId,
-      this.session.signal,
-    );
-    this.session.check(ticket);
-    const grant = ok(
-      await (cleanup ? this.actor.finish_cleanup : this.actor.finish_grant)(
-        operation,
-        proof,
-      ),
+    const { grant, keys } = await grantProof(
+      this.session, this.rpId, { credential, purpose, generations },
+      cleanup ? this.actor.begin_cleanup : this.actor.begin_grant,
+      cleanup ? this.actor.finish_cleanup : this.actor.finish_grant,
     );
     this.session.check(ticket);
     this.signer?.destroy();
@@ -171,7 +145,7 @@ export class IncidentClient {
       this.owner,
       this.canister,
       grant,
-      keys.keys,
+      keys,
     );
     this.reuse = {
       binding: grantBinding(credential, purpose, generations),
