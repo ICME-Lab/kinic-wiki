@@ -44,8 +44,16 @@ const {
 export async function restoreFixture(
   baseline = process.env.VAULT_RESTORE_WASM ??
     "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
-  { priorCanisters = 0, credits = 2_000_000_000_000n, testThresholdKeys = false } = {},
+  {
+    priorCanisters = 0,
+    credits = 2_000_000_000_000n,
+    testThresholdKeys = false,
+    monotonicCounter = true,
+    upgradeBeforeBootstrap = false,
+    sourceDocument = true,
+  } = {},
 ) {
+  const { registration, assertion } = passkeys(owner, { monotonicCounter });
   const server = await startVaultPocketIc(PocketIcServer.getBinPath());
   let pic;
   try {
@@ -113,6 +121,11 @@ export async function restoreFixture(
     ok(await actor.quote_purchase(purchase));
     ok(await actor.pay_purchase(purchase.operation));
     const paid = ok(await actor.account_balance());
+    let afterUpgrade;
+    if (upgradeBeforeBootstrap) {
+      await pic.upgradeCanister({ sender: owner, canisterId, wasm, arg: IDL.encode([], []) });
+      afterUpgrade = ok(await actor.account_balance());
+    }
     const ephemeral = key(),
       credential = { ...key(), id: b(41) },
       lost = { ...key(), id: b(42) };
@@ -242,61 +255,63 @@ export async function restoreFixture(
     );
 
     const sourceRoot = await importKey(sourceRaw);
-    const document = await encryptDocument(
-      sourceRoot,
-      b(1),
-      b(20),
-      1n,
-      { kind: "note", title: "retained history" },
-      new TextEncoder().encode("retained encrypted history"),
-      cryptoG(sourceG),
-    );
-    const upload = ok(
-      (
-        await send(bootstrap, {
-          BeginRevision: {
-            vault: b(1),
-            object: b(20),
-            expected_revision: 0n,
-            operation: b(21),
-            plain_size: 26n,
-            manifest: document.manifest,
-            chunk_hashes: document.hashes,
-          },
-        })
-      ).result,
-    ).Upload;
-    ok(
-      (
-        await send(bootstrap, {
-          PutChunk: {
-            vault: b(1),
-            upload: upload.id,
-            index: 0,
-            data: document.chunks[0],
-          },
-        })
-      ).result,
-    );
-    ok(
-      (
-        await send(bootstrap, {
-          CommitRevision: { vault: b(1), upload: upload.id },
-        })
-      ).result,
-    );
-    ok(
-      (
-        await send(bootstrap, {
-          DeleteObject: {
-            vault: b(1),
-            object: b(20),
-            expected_revision: 1n,
-            operation: b(22),
-          },
-        })
-      ).result,
-    );
+    if (sourceDocument) {
+      const document = await encryptDocument(
+        sourceRoot,
+        b(1),
+        b(20),
+        1n,
+        { kind: "note", title: "retained history" },
+        new TextEncoder().encode("retained encrypted history"),
+        cryptoG(sourceG),
+      );
+      const upload = ok(
+        (
+          await send(bootstrap, {
+            BeginRevision: {
+              vault: b(1),
+              object: b(20),
+              expected_revision: 0n,
+              operation: b(21),
+              plain_size: 26n,
+              manifest: document.manifest,
+              chunk_hashes: document.hashes,
+            },
+          })
+        ).result,
+      ).Upload;
+      ok(
+        (
+          await send(bootstrap, {
+            PutChunk: {
+              vault: b(1),
+              upload: upload.id,
+              index: 0,
+              data: document.chunks[0],
+            },
+          })
+        ).result,
+      );
+      ok(
+        (
+          await send(bootstrap, {
+            CommitRevision: { vault: b(1), upload: upload.id },
+          })
+        ).result,
+      );
+      ok(
+        (
+          await send(bootstrap, {
+            DeleteObject: {
+              vault: b(1),
+              object: b(20),
+              expected_revision: 1n,
+              operation: b(22),
+            },
+          })
+        ).result,
+      );
+    }
 
     let operation = 50;
     async function fresh(
@@ -343,6 +358,13 @@ export async function restoreFixture(
       canisterId,
       fake,
       wasm,
+      paid,
+      afterUpgrade,
+      setup,
+      normal,
+      recovery,
+      registration,
+      assertion,
       sourceG,
       sourceRoot,
       sourceRaw,
@@ -356,13 +378,19 @@ export async function restoreFixture(
       derive,
       cryptoG,
       close: async () => {
-        await pic.tearDown();
-        await server.stop();
+        try {
+          await pic.tearDown();
+        } finally {
+          await server.stop();
+        }
       },
     };
   } catch (error) {
-    await pic?.tearDown();
-    await server.stop();
+    try {
+      await pic?.tearDown();
+    } finally {
+      await server.stop();
+    }
     throw error;
   }
 }
