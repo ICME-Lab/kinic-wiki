@@ -4,7 +4,7 @@ import type {
   RestorePreflight,
   RestoreAdmissionStatus,
 } from "./contracts";
-import { bytes } from "./api";
+import { bytes } from "./wire";
 import { b64, unb64 } from "../../vault-crypto/src/documents";
 import type { PortableRecord } from "../../vault-backup/src/index";
 export function restoreRevision(r: PortableRecord): Revision {

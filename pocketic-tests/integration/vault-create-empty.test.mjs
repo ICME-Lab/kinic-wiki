@@ -10,7 +10,6 @@ import {
   other,
   IDL,
   registration,
-  assertion,
   cryptoLib,
 } from "../helpers/vault-restore-fixture.mjs";
 const {
@@ -455,7 +454,7 @@ for (const rounds of [0, 1, 3, 4]) {
           authorizer_instance: f.sourceG,
         },
       };
-    const newer = await f.fresh(purpose, [f.sourceG], c);
+    await f.fresh(purpose, [f.sourceG], c);
     assert.ok(
       "Err" in
         (await f.actor.cancel_create_empty(

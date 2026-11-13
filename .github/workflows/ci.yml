@@ -662,7 +662,7 @@ jobs:
   vault-check:
     needs: changes
     if: needs.changes.outputs.vault == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
@@ -702,6 +702,12 @@ jobs:
           pnpm --dir packages/vault-client typecheck
           pnpm --dir vaultbrowser typecheck
           pnpm --dir wikibrowser exec oxlint --react-plugin --import-plugin --jsdoc-plugin --jsx-a11y-plugin --deny-warnings "$GITHUB_WORKSPACE/vaultbrowser/src" "$GITHUB_WORKSPACE/packages/vault-client/src" "$GITHUB_WORKSPACE/packages/ui/src"
+      - name: Vault protocol fixture correctness
+        run: >-
+          pnpm --dir wikibrowser exec oxlint --config "$GITHUB_WORKSPACE/pocketic-tests/vault-oxlint.json" --deny-warnings
+          "$GITHUB_WORKSPACE"/pocketic-tests/helpers/vault-*.mjs
+          "$GITHUB_WORKSPACE"/pocketic-tests/integration/vault-*.test.mjs
+          "$GITHUB_WORKSPACE"/pocketic-tests/scripts/*vault*.mjs
       - name: Standalone offline archive recovery
         run: node --test tools/vault-recovery/test/offline.test.mjs
       - name: Current standalone assets and canisters

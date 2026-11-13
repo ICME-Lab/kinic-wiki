@@ -1,3 +1,4 @@
+import { grantProof } from "./grant-proof";
 /** Explicit empty creation: fresh scoped UV, target-only keys, and a saved/reopened new kit. */
 import type { Principal } from "@icp-sdk/core/principal";
 import type {
@@ -7,19 +8,9 @@ import type {
   PendingCreation,
 } from "./contracts";
 import { Session } from "./session";
-import {
-  SignedMutations,
-  ephemeralSigner,
-  grantBinding,
-  authorityContext,
-} from "./signed";
-import { assertCredential } from "./webauthn";
-import { bytes, ok } from "./api";
-import {
-  cryptoGeneration,
-  encodeIncidentKit,
-  verifyIncidentKit,
-} from "./incident";
+import { SignedMutations, grantBinding, authorityContext } from "./signed";
+import { bytes, ok } from "./wire";
+import { cryptoGeneration, encodeIncidentKit, verifyIncidentKit } from "./incident";
 import { b64 } from "../../vault-crypto/src/documents";
 import {
   randomBytes,
@@ -84,30 +75,16 @@ export class CreateEmptyClient {
   ) {
     if (this.signer?.hasPending) throw Error("ResolvePendingMutation");
     this.reuse = undefined;
-    const ticket = this.session.capture(),
-      keys = await ephemeralSigner();
-    this.session.check(ticket);
-    const operation = randomBytes(16),
-      purpose = { CreateEmpty: { job, target, authorizer_instance: source } },
-      ch = ok(
-        await this.actor.begin_grant({
-          operation,
-          public_key: keys.publicKey,
-          credential,
-          purpose,
-          generations: [source],
-        }),
-      );
-    this.session.check(ticket);
-    if (
-      ch.registration ||
-      ch.credential_ids.length !== 1 ||
-      !equal(ch.credential_ids[0], credential)
-    )
-      throw Error("CreatorChanged");
-    const proof = await assertCredential(ch, this.rpId, this.session.signal);
-    this.session.check(ticket);
-    const grant = ok(await this.actor.finish_grant(operation, proof));
+    const ticket = this.session.capture();
+    const purpose = { CreateEmpty: { job, target, authorizer_instance: source } };
+    const { grant, keys } = await grantProof(
+      this.session, this.rpId, { credential, purpose, generations: [source] },
+      this.actor.begin_grant, this.actor.finish_grant,
+      (ch) => {
+        if (ch.registration || ch.credential_ids.length !== 1 || !equal(ch.credential_ids[0], credential))
+          throw Error("CreatorChanged");
+      },
+    );
     this.session.check(ticket);
     this.signer?.destroy();
     this.signer = new SignedMutations(
@@ -115,7 +92,7 @@ export class CreateEmptyClient {
       this.owner,
       this.canister,
       grant,
-      keys.keys,
+      keys,
     );
     const current = await this.status();
     this.reuse = {

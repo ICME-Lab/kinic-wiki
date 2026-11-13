@@ -46,12 +46,8 @@ import {
 } from "../../vault-backup/src/index.ts";
 import { register } from "./webauthn.ts";
 import { Session } from "./session.ts";
-export const bytes = (x: Uint8Array | number[]) => new Uint8Array(x);
-export function ok<T>(r: { Ok: T } | { Err: unknown }): T {
-  if ("Ok" in r) return r.Ok;
-  const e = r.Err;
-  throw Error(e && typeof e === "object" ? Object.keys(e)[0] : "RequestFailed");
-}
+import { bytes, ok } from "./wire";
+export { bytes, ok } from "./wire";
 const ZERO = new Uint8Array(16);
 export type Item = {
   revision: Revision;

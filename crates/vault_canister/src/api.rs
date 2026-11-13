@@ -331,27 +331,21 @@ async fn derive_vault_key(
 }
 
 #[ic_cdk::update]
-fn activate_vault(request: vault_types::Activate) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::activate_vault(&env, request);
-    env.finish(result)
+fn activate_vault(_request: vault_types::Activate) -> vault_types::Result<vault_types::Header> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
-fn manage_unlock_credential(request: vault_types::ManageCredential) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::manage_unlock_credential(&env, request);
-    env.finish(result)
+fn manage_unlock_credential(_request: vault_types::ManageCredential) -> vault_types::Result<()> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
 fn prepare_unlock_credential(
-    vault: vault_types::Id,
-    registration: String,
+    _vault: vault_types::Id,
+    _registration: String,
 ) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture()?;
-    let result = vault_service::prepare_unlock_credential(&env, vault, registration);
-    env.finish(result)
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
@@ -362,17 +356,13 @@ fn begin_revision(request: vault_types::BeginRevision) -> vault_types::Result<va
 }
 
 #[ic_cdk::update]
-fn put_chunk(upload: vault_types::Id, index: u32, data: Vec<u8>) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::put_chunk(&env, upload, index, data);
-    env.finish(result)
+fn put_chunk(_upload: vault_types::Id, _index: u32, _data: Vec<u8>) -> vault_types::Result<()> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
-fn commit_revision(upload: vault_types::Id) -> vault_types::Result<vault_types::Revision> {
-    let env = Vault::capture()?;
-    let result = vault_service::commit_revision(&env, upload);
-    env.finish(result)
+fn commit_revision(_upload: vault_types::Id) -> vault_types::Result<vault_types::Revision> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
@@ -428,28 +418,22 @@ fn get_quota(vault: vault_types::Id) -> vault_types::Result<vault_types::Quota> 
 
 #[ic_cdk::update]
 fn delete_object(
-    vault: vault_types::Id,
-    object: vault_types::Id,
-    expected_revision: u64,
-    operation: vault_types::Id,
+    _vault: vault_types::Id,
+    _object: vault_types::Id,
+    _expected_revision: u64,
+    _operation: vault_types::Id,
 ) -> vault_types::Result<vault_types::Revision> {
-    let env = Vault::capture()?;
-    let result = vault_service::delete_object(&env, vault, object, expected_revision, operation);
-    env.finish(result)
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
-fn purge_object(vault: vault_types::Id, object: vault_types::Id) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::purge_object(&env, vault, object);
-    env.finish(result)
+fn purge_object(_vault: vault_types::Id, _object: vault_types::Id) -> vault_types::Result<()> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
 fn collect_garbage() -> vault_types::Result<u64> {
-    let env = Vault::capture()?;
-    let result = vault_service::collect_garbage(&env);
-    env.finish(result)
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
@@ -499,51 +483,41 @@ fn abort_export(export: vault_types::Id) -> vault_types::Result<vault_types::Hea
 }
 
 #[ic_cdk::update]
-fn begin_restore(request: vault_types::BeginRestore) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_restore(&env, request);
-    env.finish(result)
+fn begin_restore(_request: vault_types::BeginRestore) -> vault_types::Result<vault_types::Header> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
 fn begin_restore_revision(
-    vault: vault_types::Id,
-    revision: vault_types::Revision,
-    attempt: Option<vault_types::Id>,
+    _vault: vault_types::Id,
+    _revision: vault_types::Revision,
+    _attempt: Option<vault_types::Id>,
 ) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_restore_revision(&env, vault, revision, attempt);
-    env.finish(result)
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
 fn put_restore_chunk(
-    vault: vault_types::Id,
-    index: u32,
-    data: Vec<u8>,
-    attempt: Option<vault_types::Id>,
+    _vault: vault_types::Id,
+    _index: u32,
+    _data: Vec<u8>,
+    _attempt: Option<vault_types::Id>,
 ) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::put_restore_chunk(&env, vault, index, data, attempt);
-    env.finish(result)
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
 fn commit_restore_revision(
-    vault: vault_types::Id,
-    sequence: u64,
-    attempt: Option<vault_types::Id>,
+    _vault: vault_types::Id,
+    _sequence: u64,
+    _attempt: Option<vault_types::Id>,
 ) -> vault_types::Result<vault_types::RestoreProgress> {
-    let env = Vault::capture()?;
-    let result = vault_service::commit_restore_revision(&env, vault, sequence, attempt);
-    env.finish(result)
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
-fn commit_restore(request: vault_types::Activate) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::commit_restore(&env, request);
-    env.finish(result)
+fn commit_restore(_request: vault_types::Activate) -> vault_types::Result<vault_types::Header> {
+    reject_unsigned_write()
 }
 
 #[ic_cdk::update]
@@ -849,4 +823,11 @@ fn get_upload_status(upload: vault_types::Id) -> vault_types::Result<vault_types
     let env = Vault::capture_read()?;
     let result = vault_service::get_upload_status(&env, upload);
     env.finish(result)
+}
+
+/// Retained Candid compatibility endpoints never acquire mutation authority.
+/// Authenticate and preserve the same uncharged rejection as their former service guards.
+fn reject_unsigned_write<T>() -> Result<T> {
+    let env = Vault::capture()?;
+    env.finish(Err(Error::Unauthorized))
 }

@@ -85,7 +85,7 @@ try {
     );
     if (path === "/") {
       const html = new TextDecoder().decode(response.body);
-      const asset = html.match(/src="(\/assets\/[^\"]+\.js)"/)?.[1];
+      const asset = html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
       assert.ok(asset, "Current production JavaScript asset must be served");
       paths.push(asset);
     }

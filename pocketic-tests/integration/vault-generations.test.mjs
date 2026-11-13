@@ -1,90 +1,21 @@
 import { b, cat, hash, b64, key, ok, passkeys } from "../helpers/vault-passkeys.mjs";
 import { verifyVaultBaseline } from "../helpers/vault-baseline.mjs";
-import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
+import { fundedFixture, IDL, owner, other, root } from "../helpers/vault-restore-fixture.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { sign } from "node:crypto";
 import { idlFactory as vaultIDL } from "../../packages/vault-candid/index.js";
 import { idlFactory as mutationFactory } from "../../packages/vault-candid/mutation.js";
-const root = fileURLToPath(new URL("../../", import.meta.url));
-const local = createRequire(new URL("../package.json", import.meta.url));
-const req = createRequire(realpathSync(local.resolve("@dfinity/pic")));
-const { PocketIc, PocketIcServer } = req("@dfinity/pic"),
-  { IDL } = req("@icp-sdk/core/candid"),
-  { Principal } = req("@icp-sdk/core/principal");
-if (process.env.POCKET_IC_BIN)
-  PocketIcServer.getBinPath = () => process.env.POCKET_IC_BIN;
-const owner = Principal.selfAuthenticating(b(90, 32)),
-  other = Principal.selfAuthenticating(b(91, 32));
 const { registration, assertion } = passkeys(owner, { monotonicCounter: false });
 const mutationType = mutationFactory({ IDL })._fields.find(
   ([n]) => n === "encode",
 )[1].argTypes[0];
 
 verifyVaultBaseline("target/vault-v6-baseline.wasm");
-const server = await startVaultPocketIc(PocketIcServer.getBinPath());
-let pic;
+const f = await fundedFixture("target/vault-v6-baseline.wasm", { credits: 2_000_000_000n });
+const { pic, actor, canisterId, fake, wasm, paid, purchase } = f;
 try {
-  pic = await PocketIc.create(server.getUrl());
-  const wasm = resolve(
-    root,
-    "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
-  );
-  const fixture = await pic.setupCanister({
-    sender: owner,
-    idlFactory: vaultIDL,
-    wasm: resolve(root, "target/vault-v6-baseline.wasm"),
-    arg: IDL.encode([], []),
-    cycles: 100_000_000_000_000n,
-  });
-  const { actor, canisterId } = fixture;
-  actor.setPrincipal(owner);
-  ok(
-    await actor.set_config([
-      {
-        origin: "https://vault.kinic.xyz",
-        rp_id: "vault.kinic.xyz",
-        key_name: "key_1",
-        minimum_cycles: 100_000_000_000n,
-      },
-    ]),
-  );
-  const fake = await pic.setupCanister({
-    sender: owner,
-    idlFactory: () =>
-      IDL.Service({ configure: IDL.Func([IDL.Nat8, IDL.Nat64], [], []) }),
-    wasm: resolve(
-      root,
-      "target/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm",
-    ),
-    arg: IDL.encode([], []),
-    cycles: 10_000_000_000_000n,
-  });
-  fake.actor.setPrincipal(owner);
-  await fake.actor.configure(0, 10n);
-  ok(
-    await actor.set_funding_config([
-      {
-        ledger: fake.canisterId,
-        recipient: canisterId,
-        cycles_per_kinic: 2_000_000_000n,
-      },
-    ]),
-  );
-  const purchase = {
-    operation: b(80),
-    beneficiary: owner,
-    amount_e8s: 100_000_000n,
-    min_credits: 2_000_000_000n,
-    created_at_time: BigInt(await pic.getTime()) * 1_000_000n,
-  };
-  ok(await actor.quote_purchase(purchase));
-  ok(await actor.pay_purchase(purchase.operation));
-  const paid = ok(await actor.account_balance());
   await pic.upgradeCanister({
     sender: owner,
     canisterId,
@@ -92,6 +23,45 @@ try {
     arg: IDL.encode([], []),
   });
   assert.equal(ok(await actor.account_balance()), paid);
+  {
+    // These compatibility entrypoints are intentionally unusable. The signed mutation
+    // protocol is the sole write authority; rejection must not charge or create state.
+    const emptyHeader = {
+      id: b(1), epoch: 0n, key_name: "key_1", state: { Pending: null }, sequence: 0n,
+      normal: [], recovery: [], recovery_verifier: [], generation: [],
+      published_slot: [], backup_sequence: [], backup_at: [],
+    };
+    const envelope = { version: 1, nonce: b(1, 12), ciphertext: b(2, 48) };
+    const activation = {
+      vault: b(1), operation: b(2), attempt: [], normal: envelope, recovery: envelope,
+      registration: [], assertion: [],
+    };
+    const emptyRevision = {
+      vault: b(1), object: b(2), revision: 1n, sequence: 1n, deleted: false,
+      manifest: b(0), chunk_hashes: [], plain_size: 0n,
+    };
+    for (const [method, args] of [
+      ["activate_vault", [activation]],
+      ["manage_unlock_credential", [{ vault: b(1), remove: [], registration: [], assertion: "" }]],
+      ["prepare_unlock_credential", [b(1), ""]],
+      ["begin_revision", [{ vault: b(1), object: b(2), expected_revision: 0n, operation: b(3), plain_size: 0n, manifest: b(0), chunk_hashes: [] }]],
+      ["put_chunk", [b(1), 0, b(0)]],
+      ["commit_revision", [b(1)]],
+      ["delete_object", [b(1), b(2), 0n, b(3)]],
+      ["purge_object", [b(1), b(2)]],
+      ["collect_garbage", []],
+      ["begin_restore", [{ header: emptyHeader, operation: b(2), count: 0n, root: b(0, 32), reserved_bytes: 0n }]],
+      ["begin_restore_revision", [b(1), emptyRevision, []]],
+      ["put_restore_chunk", [b(1), 0, b(0), []]],
+      ["commit_restore_revision", [b(1), 0n, []]],
+      ["commit_restore", [activation]],
+    ]) {
+      assert.deepEqual(await actor[method](...args), { Err: { Unauthorized: null } }, method);
+    }
+    assert.equal(ok(await actor.account_balance()), paid);
+    assert.deepEqual(ok(await actor.list_vaults()), []);
+    console.log("PASS all14 legacy write entrypoints deny without charging or creating state; Candid unchanged");
+  }
   const ephemeral = key(),
     credential = { ...key(), id: b(41) };
   const first = ok(
@@ -590,6 +560,5 @@ try {
     "PASS actual Wasm: v6-funded account survives upgrade; independent fresh generation, exact bootstrap retry, legacy key/write denial, fresh passkey grant, signed replay/cross-owner, bounded normal grants, expired pre-nonce second creation survives upgrade and cancels at zero balance, generated Pending creation cancels at zero balance, zero-balance cleanup, upgrade fence and final purge receipt.",
   );
 } finally {
-  if (pic) await pic.tearDown();
-  await server.stop();
+  await f.close();
 }

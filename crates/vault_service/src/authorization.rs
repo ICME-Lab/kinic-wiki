@@ -99,15 +99,7 @@ pub(crate) fn remove(db: &Connection, issuer: &Authority, id: &[u8]) -> Result<(
         .ok_or(Error::NotFound)?;
     target.version = target.version.checked_add(1).ok_or(Error::QuotaExceeded)?;
     target.revoked = true;
-    db.execute("DELETE FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![id]).map_err(|_|Error::Storage)?;
-    for n in 0..10 {
-        let key = format!("credential-slot:{n}");
-        let exists:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1)",params![key],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
-        if exists == 0 {
-            store::save(db, &key, &())?;
-            break;
-        }
-    }
+    remove_physical(db, id)?;
     store::save(db, "authorities", &all)
 }
 pub(crate) fn assertion(db: &Connection, ch: &Ceremony, id: &[u8], json: &str) -> Result<()> {
@@ -278,15 +270,21 @@ pub(crate) fn revoke_incident(
         }
         a.version = a.version.checked_add(1).ok_or(Error::QuotaExceeded)?;
         a.revoked = true;
-        db.execute("DELETE FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![a.id]).map_err(|_|Error::Storage)?;
-        for n in 0..10 {
-            let key = format!("credential-slot:{n}");
-            let exists:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1)",params![key],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
-            if exists == 0 {
-                store::save(db, &key, &())?;
-                break;
-            }
-        }
+        remove_physical(db, &a.id)?;
     }
     store::save(db, "authorities", &all)
+}
+
+/// The physical row always exchanges its prepaid slot inside the caller's transaction.
+fn remove_physical(db: &Connection, id: &[u8]) -> Result<()> {
+    db.execute("DELETE FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![id]).map_err(|_|Error::Storage)?;
+    for n in 0..10 {
+        let key = format!("credential-slot:{n}");
+        let exists:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1)",params![key],|r|kinic_sqlite_compat::row_get(r,0)).map_err(|_|Error::Storage)?;
+        if exists == 0 {
+            store::save(db, &key, &())?;
+            break;
+        }
+    }
+    Ok(())
 }

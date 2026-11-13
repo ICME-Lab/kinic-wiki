@@ -9,7 +9,7 @@ import type {
 } from "./contracts";
 import type { SignedMutations } from "./signed";
 import type { Session } from "./session";
-import { bytes, ok } from "./api";
+import { bytes, ok } from "./wire";
 import { cryptoGeneration, verifyIncidentKit } from "./incident";
 import {
   b64,

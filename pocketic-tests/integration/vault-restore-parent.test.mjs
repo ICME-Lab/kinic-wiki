@@ -4,7 +4,6 @@ import {
   restoreFixture,
   b,
   b64,
-  key,
   ok,
   owner,
   IDL,
@@ -186,7 +185,7 @@ try {
     f.fresh({ Normal: null }, [C.sourceG], a.candidate),
     /Unauthorized|Conflict/,
   );
-  const currentParent = ok(await f.actor.incident_status())[0];
+  ok(await f.actor.incident_status());
   const resumed = await f.fresh(
     {
       IncidentPrepare: {
