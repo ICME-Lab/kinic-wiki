@@ -56,7 +56,7 @@ pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
     active(db, v)?;
     let current = num(
         db,
-        "SELECT COALESCE(sum(r.plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.deleted=0",
+        "SELECT COALESCE(sum(r.plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.deleted=0 AND o.purged=0",
         v,
     )?;
     let reserved:i64=db.query_row("SELECT COALESCE(sum(reserved),0) FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
@@ -78,12 +78,15 @@ fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
     let mut total = 262144u64;
     for (table, expression) in [
         ("settings", "length(value)+length(key)+256"),
-        ("vaults", "8192"),
+        ("vaults", "8192+cleanup_budget*512"),
         ("revisions", "charge"),
         ("uploads", "reserved"),
         ("receipts", "length(result)+length(digest)+4096"),
-        ("objects", "4096"),
-        ("operations", "CASE WHEN cleanup=1 THEN 0 ELSE 131072 END"),
+        ("objects", "4096+(1-purged)*512"),
+        (
+            "operations",
+            "CASE cleanup WHEN 1 THEN 0 WHEN 2 THEN 512 ELSE CASE WHEN result IS NULL THEN 131072 ELSE length(result)+4096 END END",
+        ),
     ] {
         let n: i64 = db
             .query_row(
@@ -232,6 +235,7 @@ pub fn begin_with_budget(
 ) -> Result<Upload> {
     active(db, &r.vault)?;
     id(&r.object)?;
+    reject_purged(db, &r.vault, &r.object)?;
     id(&r.operation)?;
     if r.expected_revision >= i64::MAX as u64
         || r.plain_size > FILE_MAX
@@ -307,14 +311,17 @@ pub fn begin_with_budget(
     }
     let receipt_budget = (r.chunk_hashes.len() as u64 + 1) * operations::CHARGE;
     check_receipt_capacity_for(db, now, r.chunk_hashes.len() as i64 + 2)?;
+    // Include one separate purge receipt for a newly admitted object.
+    let cleanup_budget = r.chunk_hashes.len() as u64 + 3;
     let reserved = receipt_budget
+        + cleanup_budget * operations::CLEANUP_CHARGE
         + r.plain_size
         + r.chunk_hashes.len() as u64 * (16 + OVERHEAD)
         + raw.len() as u64 * 2
         + OVERHEAD * 3;
     check_capacity(db, reserved)?;
     db.execute(
-        "INSERT INTO uploads(owner,id,vault,object,expected,expires,digest,request,reserved,receipt_budget) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        "INSERT INTO uploads(owner,id,vault,object,expected,expires,digest,request,reserved,receipt_budget,cleanup_budget) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         params![
             r.operation,
             r.vault,
@@ -324,7 +331,8 @@ pub fn begin_with_budget(
             digest,
             raw,
             reserved as i64,
-            receipt_budget as i64
+            receipt_budget as i64,
+            cleanup_budget as i64
         ],
     )
     .map_err(db_error)?;
@@ -437,6 +445,8 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
     if n as usize != r.chunk_hashes.len() {
         return Err(Error::Conflict);
     }
+    let cleanup_credits =
+        r.chunk_hashes.len() as i64 + 1 + if r.expected_revision == 0 { 1 } else { 0 };
     let mut h = active(db, &r.vault)?;
     h.sequence = next_sequence(h.sequence)?;
     let rev = Revision {
@@ -474,7 +484,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
         params![rev.vault, rev.object, rev.revision as i64, id],
     )
     .map_err(db_error)?;
-    db.execute("INSERT INTO objects VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3) ON CONFLICT(owner,vault,object) DO UPDATE SET head=excluded.head",params![rev.vault,rev.object,rev.revision as i64]).map_err(db_error)?;
+    db.execute("INSERT INTO objects(owner,vault,object,head) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3) ON CONFLICT(owner,vault,object) DO UPDATE SET head=excluded.head",params![rev.vault,rev.object,rev.revision as i64]).map_err(db_error)?;
     db.execute("UPDATE revisions SET retired=?3 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision<=?4 AND retired IS NULL)",params![rev.vault,rev.object,rev.sequence as i64,rev.revision.saturating_sub(10) as i64]).map_err(db_error)?;
     db.execute("DELETE FROM chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (upload=?1)", params![id])
         .map_err(db_error)?;
@@ -484,6 +494,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
     )
     .map_err(db_error)?;
 
+    add_cleanup_credits(db, &r.vault, cleanup_credits)?;
     put_header(db, &h)?;
     record(db, id, &d, &rev, now)?;
     Ok(rev)
@@ -567,7 +578,7 @@ pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
     if !after.is_empty() {
         id(after)?
     }
-    let mut s=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.object>?2 ORDER BY r.object LIMIT 101")).map_err(db_error)?;
+    let mut s=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.object>?2 AND o.purged=0 ORDER BY r.object LIMIT 101")).map_err(db_error)?;
     let entries = sql::query_map(&mut s, params![v, after], row).map_err(db_error)?;
     let mut page = Vec::new();
     let mut bytes = 0;
@@ -590,6 +601,39 @@ pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
         entries: page,
         next,
     })
+}
+
+fn reject_purged(db: &Connection, v: &[u8], o: &[u8]) -> Result<()> {
+    let purged:Option<i64>=db.query_row("SELECT purged FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2",params![v,o],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
+    if purged == Some(1) {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+/// Purge consumes the object's separate prepaid receipt credit. Its identity and
+/// head remain permanently fenced, and the existing GC reclaims retired blobs.
+pub fn check_purge(db: &Connection, v: &[u8], o: &[u8], expected: u64) -> Result<()> {
+    active(db, v)?;
+    id(o)?;
+    reject_purged(db, v, o)?;
+    let current = head(db, v, o)?;
+    if current == 0 || current != expected {
+        return Err(Error::Conflict);
+    }
+    let uploading:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2)",params![v,o],|r|sql::row_get(r,0)).map_err(db_error)?;
+    if uploading != 0 {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+pub fn purge(db: &Connection, v: &[u8], o: &[u8], expected: u64) -> Result<()> {
+    check_purge(db, v, o, expected)?;
+    let mut h = active(db, v)?;
+    h.sequence = next_sequence(h.sequence)?;
+    db.execute("UPDATE objects SET purged=1 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2",params![v,o]).map_err(db_error)?;
+    // At most eleven current/history revisions exist; older ones are already retired.
+    db.execute("UPDATE revisions SET retired=?3 WHERE rowid IN (SELECT rowid FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2 AND retired IS NULL ORDER BY revision DESC LIMIT 11)",params![v,o,h.sequence as i64]).map_err(db_error)?;
+    put_header(db, &h)
 }
 pub fn delete(
     db: &Connection,
@@ -637,6 +681,7 @@ pub fn delete(
     )
     .map_err(db_error)?;
     db.execute("UPDATE revisions SET retired=?3 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision<=?4 AND retired IS NULL)",params![v,o,h.sequence as i64,r.revision.saturating_sub(10) as i64]).map_err(db_error)?;
+    add_cleanup_credits(db, v, 1)?;
     put_header(db, &h)?;
     record(db, operation, &d, &r, now)?;
     Ok(r)
@@ -671,6 +716,7 @@ pub(crate) fn remove_revision(
         params![vault, object, revision],
     )
     .map_err(db_error)?;
+    release_cleanup_credits(db, vault, 1)?;
     Ok(())
 }
 
@@ -742,5 +788,29 @@ pub fn remove_ciphertext_batch(
         bytes += size;
         removed += 1;
     }
+    release_cleanup_credits(db, vault, removed as i64)?;
     Ok(removed)
+}
+
+fn add_cleanup_credits(db: &Connection, vault: &[u8], amount: i64) -> Result<()> {
+    db.execute("UPDATE vaults SET cleanup_budget=cleanup_budget+?2 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![vault,amount]).map_err(db_error)?;
+    Ok(())
+}
+/// Release only credits attached to the rows just removed. The same transaction may
+/// replace one such credit with a resource-backed operation receipt of at most 512 bytes.
+pub fn release_cleanup_credits(db: &Connection, vault: &[u8], amount: i64) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+    if amount < 0 {
+        return Err(Error::Storage);
+    }
+    db.execute("UPDATE vaults SET cleanup_budget=cleanup_budget-?2 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1 AND cleanup_budget>=?2",params![vault,amount]).map_err(db_error)?;
+    let changed: i64 = db
+        .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))
+        .map_err(db_error)?;
+    if changed != 1 {
+        return Err(Error::Storage);
+    }
+    Ok(())
 }

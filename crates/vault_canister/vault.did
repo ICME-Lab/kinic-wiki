@@ -9,6 +9,11 @@ type Action = variant {
   };
   DeleteVault : record { vault : blob };
   Collect;
+  PurgeObject : record {
+    object : blob;
+    vault : blob;
+    expected_revision : nat64;
+  };
   BeginRevision : BeginRevision;
 };
 type BeginRevision = record {

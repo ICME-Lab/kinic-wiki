@@ -3,6 +3,24 @@ use super::*;
 use candid::{CandidType, decode_one, encode_one};
 use sha2::{Digest, Sha256};
 pub const CHARGE: u64 = 131072;
+pub const CLEANUP_CHARGE: u64 = 512;
+/// The durable creation identity outlives its async lease and completed receipt.
+fn check_creation_binding(db: &Connection, operation: &[u8], request_digest: &[u8]) -> Result<()> {
+    let vault:Option<Id>=db.query_row("SELECT id FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
+    if let Some(vault) = vault {
+        let bound = digest(
+            b"create-vault/v1",
+            &CreateVault {
+                vault,
+                operation: operation.to_vec(),
+            },
+        )?;
+        if bound != request_digest {
+            return Err(Error::Conflict);
+        }
+    }
+    Ok(())
+}
 pub fn digest<T: CandidType>(domain: &[u8], request: &T) -> Result<Vec<u8>> {
     let wire = encode_one(request).map_err(|_| Error::InvalidInput)?;
     Ok(Sha256::digest([domain, &wire].concat()).to_vec())
@@ -14,6 +32,7 @@ pub fn replay<T: DeserializeOwned + CandidType>(
     now: u64,
 ) -> Result<Option<T>> {
     id(operation)?;
+    check_creation_binding(db, operation, digest)?;
     let prior:Option<(Vec<u8>,Option<Vec<u8>>,i64)>=db.query_row("SELECT digest,result,expires FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))).optional().map_err(|_|Error::Storage)?;
     if let Some((d, result, expires)) = prior {
         if d != digest {
@@ -32,19 +51,28 @@ pub fn runtime(db: &Connection) -> Result<i64> {
     db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)
 }
 pub fn begin(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
-    begin_inner(db, operation, digest, now, false)
+    begin_inner(db, operation, digest, now, 0)
 }
 pub fn begin_cleanup(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
-    begin_inner(db, operation, digest, now, true)
+    begin_inner(db, operation, digest, now, 1)
+}
+pub fn begin_resource_cleanup(
+    db: &Connection,
+    operation: &[u8],
+    digest: &[u8],
+    now: u64,
+) -> Result<u64> {
+    begin_inner(db, operation, digest, now, 2)
 }
 fn begin_inner(
     db: &Connection,
     operation: &[u8],
     digest: &[u8],
     now: u64,
-    cleanup: bool,
+    cleanup: i64,
 ) -> Result<u64> {
     id(operation)?;
+    check_creation_binding(db, operation, digest)?;
     let current = runtime(db)?;
     let pending:Option<(Vec<u8>,i64,i64)>=db.query_row("SELECT digest,expires,runtime FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))).optional().map_err(|_|Error::Storage)?;
     if let Some((d, expires, old)) = &pending {
@@ -57,12 +85,12 @@ fn begin_inner(
     }
     if pending.is_none() {
         collect(db, now)?;
-        if cleanup {
+        if cleanup == 1 {
             let (mine,all):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM operations WHERE cleanup=1",params![],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
             if mine >= 512 || all >= 1024 {
                 return Err(Error::QuotaExceeded);
             }
-        } else {
+        } else if cleanup == 0 {
             content::check_receipt_capacity(db, now)?;
             content::check_capacity(db, CHARGE)?;
         }
@@ -70,7 +98,7 @@ fn begin_inner(
     let serial:i64=db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='serial'),0)",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
     let serial = serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
     db.execute("INSERT INTO global_settings(key,value) VALUES('serial',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serial.to_string()]).map_err(|_|Error::Storage)?;
-    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,NULL,?3,?4,?5,?6) ON CONFLICT(owner,operation) DO UPDATE SET token=excluded.token,runtime=excluded.runtime,expires=excluded.expires",params![operation,digest,(now+300) as i64,serial,current,if cleanup{1i64}else{0i64}]).map_err(|_|Error::Storage)?;
+    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,NULL,?3,?4,?5,?6) ON CONFLICT(owner,operation) DO UPDATE SET token=excluded.token,runtime=excluded.runtime,expires=excluded.expires",params![operation,digest,(now+300) as i64,serial,current,cleanup]).map_err(|_|Error::Storage)?;
     Ok(serial as u64)
 }
 pub fn fence(db: &Connection, operation: &[u8], token: u64) -> Result<()> {
@@ -92,10 +120,10 @@ pub fn complete<T: CandidType>(
     let bytes = encode_one(result).map_err(|_| Error::Storage)?;
     let cleanup:i64=db.query_row("SELECT cleanup FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
     if bytes.len()
-        > if cleanup == 1 {
+        > if cleanup != 0 {
             256
         } else {
-            CHARGE as usize - 512
+            CHARGE as usize - 4096
         }
     {
         return Err(Error::QuotaExceeded);

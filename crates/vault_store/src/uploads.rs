@@ -127,6 +127,13 @@ pub fn cancel_upload_batch(
         .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))
         .map_err(storage)?;
     if changed > 0 {
+        db.execute("UPDATE uploads SET reserved=reserved-512,cleanup_budget=cleanup_budget-1 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1 AND cleanup_budget>0",params![upload]).map_err(storage)?;
+        let changed: i64 = db
+            .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))
+            .map_err(storage)?;
+        if changed != 1 {
+            return Err(Error::Storage);
+        }
         return Ok(false);
     }
     let result = serde_json::to_string(&CancelledUpload {

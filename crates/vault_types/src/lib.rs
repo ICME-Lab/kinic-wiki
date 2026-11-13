@@ -192,6 +192,11 @@ pub enum Action {
         object: Id,
         expected_revision: u64,
     },
+    PurgeObject {
+        vault: Id,
+        object: Id,
+        expected_revision: u64,
+    },
     CancelUpload {
         vault: Id,
         upload: Id,

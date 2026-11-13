@@ -174,7 +174,10 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
     }
     let cleanup = matches!(
         r.action,
-        Action::CancelUpload { .. } | Action::Collect | Action::DeleteVault { .. }
+        Action::CancelUpload { .. }
+            | Action::Collect
+            | Action::DeleteVault { .. }
+            | Action::PurgeObject { .. }
     );
     if !cleanup {
         env.require_spending()?;
@@ -183,8 +186,26 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
         if let Some(result) = ops::replay(db, &r.operation, &digest, env.now())? {
             return Ok(result);
         }
+        let resource_backed = cleanup && cleanup_backing(db, &r.action, env.now())?;
+        // Collect before admitting its receipt: journal admission may itself collect
+        // expired rows, which must count as progress rather than roll back as a no-op.
+        let collected = if matches!(r.action, Action::Collect) {
+            let before = sql_changes(db)?;
+            env.recover_pending(db, None)?;
+            let collected = store::content::gc(db, env.now())?;
+            if sql_changes(db)? == before {
+                return Err(Error::NotFound);
+            }
+            Some(collected)
+        } else {
+            None
+        };
         let token = if cleanup {
-            ops::begin_cleanup(db, &r.operation, &digest, env.now())?
+            if resource_backed {
+                ops::begin_resource_cleanup(db, &r.operation, &digest, env.now())?
+            } else {
+                ops::begin_cleanup(db, &r.operation, &digest, env.now())?
+            }
         } else {
             match &r.action {
                 Action::PutChunk { upload, index, .. } => {
@@ -223,6 +244,14 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
                 &r.operation,
                 env.now(),
             )?),
+            Action::PurgeObject {
+                vault,
+                object,
+                expected_revision,
+            } => {
+                store::content::purge(db, &vault, &object, expected_revision)?;
+                MutationResult::Done
+            }
             Action::CancelUpload { vault, upload, job } => MutationResult::Progress(
                 store::content::cancel_upload_batch(db, &vault, &upload, &job, env.now())?,
             ),
@@ -230,14 +259,64 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
                 env.recover_pending(db, Some(&vault))?;
                 MutationResult::Progress(delete_vault_batch(db, &vault, env.now())?)
             }
-            Action::Collect => {
-                env.recover_pending(db, None)?;
-                MutationResult::Collected(store::content::gc(db, env.now())?)
-            }
+            Action::Collect => MutationResult::Collected(collected.ok_or(Error::Storage)?),
         };
         ops::complete(db, &r.operation, token, &result, env.now())?;
         Ok(result)
     })
+}
+fn sql_changes(db: &sql::Connection) -> Result<i64> {
+    db.query_row("SELECT total_changes()", params![], |r| sql::row_get(r, 0))
+        .map_err(|_| Error::Storage)
+}
+/// Only a retained resource may spend its prepaid completion credit. Terminal
+/// fresh-id requests fail; exact-id retries have already replayed their receipt.
+fn cleanup_backing(db: &sql::Connection, action: &Action, now: u64) -> Result<bool> {
+    match action {
+        Action::PurgeObject {
+            vault,
+            object,
+            expected_revision,
+        } => {
+            store::content::check_purge(db, vault, object, *expected_revision)?;
+            Ok(true)
+        }
+        Action::CancelUpload { vault, upload, .. } => {
+            let row:Option<(Id,i64)>=db.query_row("SELECT vault,cleanup_budget FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![upload.as_slice()],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).optional().map_err(|_|Error::Storage)?;
+            let (target, budget) = row.ok_or(Error::Conflict)?;
+            if target != *vault {
+                return Err(Error::Unauthorized);
+            }
+            if budget <= 0 {
+                return Err(Error::Storage);
+            }
+            Ok(true)
+        }
+        Action::DeleteVault { vault } => {
+            let h = store::header(db, vault)?;
+            if h.state == VaultState::Deleted {
+                return Err(Error::Conflict);
+            }
+            let budget:i64=db.query_row("SELECT cleanup_budget FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![vault.as_slice()],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+            if budget <= 0 {
+                return Err(Error::Storage);
+            }
+            Ok(true)
+        }
+        Action::Collect => {
+            // Every such GC pass releases at least one admitted resource credit.
+            let backed:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND expires<=?1 AND cleanup_budget>0) OR EXISTS(SELECT 1 FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND retired IS NOT NULL)",params![now as i64],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+            if backed != 0 {
+                return Ok(true);
+            }
+            let any:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND json_extract(header,'$.state')<>'Deleted') OR EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+            if any == 0 {
+                return Err(Error::NotFound);
+            }
+            Ok(false)
+        }
+        _ => Err(Error::InvalidInput),
+    }
 }
 fn delete_vault_batch(db: &sql::Connection, v: &[u8], now: u64) -> Result<bool> {
     let mut h = store::header(db, v)?;
@@ -260,9 +339,11 @@ fn delete_vault_batch(db: &sql::Connection, v: &[u8], now: u64) -> Result<bool> 
             .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))
             .map_err(|_| Error::Storage)?;
         if n > 0 {
+            store::content::release_cleanup_credits(db, v, n)?;
             return Ok(false);
         }
     }
+    store::content::release_cleanup_credits(db, v, 1)?;
     h.state = VaultState::Deleted;
     store::put_header(db, &h)?;
     Ok(true)

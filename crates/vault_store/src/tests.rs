@@ -25,7 +25,7 @@ fn seed(db: &Connection, n: u8) {
             public_key: vec![1; 96],
         };
         db.execute(
-            "INSERT INTO vaults VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",
+            "INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",
             params![h.id, vec![2u8; 16], serde_json::to_string(&h).unwrap()],
         )
         .unwrap();
@@ -143,7 +143,7 @@ fn vault_plaintext_and_shared_charged_limits_reject_growth() {
         for n in 0u8..10 {
             let object = vec![n; 16];
             db.execute(
-                "INSERT INTO objects VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)",
+                "INSERT INTO objects(owner,vault,object,head) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)",
                 params![vec![1u8; 16], object],
             )
             .unwrap();
@@ -189,6 +189,38 @@ fn control_row_growth_respects_shared_capacity() {
             save(db, "derive", &(1u64, vec![1u8; 16])),
             Err(Error::QuotaExceeded)
         );
+        Ok(())
+    });
+}
+
+#[test]
+fn review_completed_small_receipts_release_worst_case_reservations() {
+    let db = db();
+    seed(&db, 1);
+    scope(&db, 1, |db| {
+        let before = content::usage(db)?;
+        for n in 0u16..100 {
+            let mut operation = vec![0; 16];
+            operation[..2].copy_from_slice(&n.to_be_bytes());
+            let token = operations::begin(db, &operation, &[3; 32], 1)?;
+            operations::complete(db, &operation, token, &true, 1)?;
+        }
+        assert!(content::usage(db)? - before < 500_000);
+        Ok(())
+    });
+}
+#[test]
+fn review_large_result_completion_fits_its_pending_reservation_at_capacity() {
+    let db = db();
+    seed(&db, 1);
+    scope(&db, 1, |db| {
+        let token = operations::begin(db, &[9; 16], &[3; 32], 1)?;
+        let remaining = TOTAL_MAX - content::global_usage(db)?;
+        db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],remaining as i64]).unwrap();
+        operations::complete(db, &[9; 16], token, &vec![1u8; 120000], 1)?;
+        assert!(content::global_usage(db)? <= TOTAL_MAX);
+        let replay: Option<Vec<u8>> = operations::replay(db, &[9; 16], &[3; 32], 2)?;
+        assert_eq!(replay.unwrap().len(), 120000);
         Ok(())
     });
 }
