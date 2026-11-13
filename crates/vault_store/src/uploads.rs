@@ -1,12 +1,56 @@
 //! Owner-scoped upload reconciliation and bounded direct cancellation.
 use super::*;
+/// Only upload IDs own these terminal results. Ordinary requests replay in operations.
 #[derive(Serialize, serde::Deserialize)]
-pub(crate) struct CancelledUpload {
-    cancelled_vault: Id,
-    job: Id,
+pub(crate) enum UploadOutcome {
+    Committed(Revision),
+    Cancelled { vault: Id, job: Id },
 }
-pub(crate) fn cancelled(raw: &str) -> Option<CancelledUpload> {
-    serde_json::from_str(raw).ok()
+impl UploadOutcome {
+    pub(crate) fn committed(self) -> Result<Revision> {
+        match self {
+            Self::Committed(revision) => Ok(revision),
+            Self::Cancelled { .. } => Err(Error::Conflict),
+        }
+    }
+}
+pub(crate) struct Outcome {
+    pub digest: Vec<u8>,
+    pub result: UploadOutcome,
+    pub expires: u64,
+}
+pub(crate) fn outcome(db: &Connection, upload: &[u8]) -> Result<Option<Outcome>> {
+    let row: Option<(Vec<u8>, String, i64)> = db.query_row(
+        "SELECT digest,result,expires FROM upload_outcomes WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND upload=?1",
+        params![upload], |r| Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))
+    ).optional().map_err(storage)?;
+    row.map(|(digest, raw, expires)| {
+        Ok(Outcome {
+            digest,
+            result: serde_json::from_str(&raw).map_err(|_| Error::Storage)?,
+            expires: expires as u64,
+        })
+    })
+    .transpose()
+}
+fn record(db: &Connection, upload: &[u8], digest: &[u8], encoded: &str, now: u64) -> Result<()> {
+    db.execute("INSERT INTO upload_outcomes(owner,upload,digest,result,expires) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4)",params![upload,digest,encoded,(now+DAY) as i64]).map_err(storage)?;
+    Ok(())
+}
+fn encode(outcome: &UploadOutcome) -> Result<String> {
+    serde_json::to_string(outcome).map_err(|_| Error::Storage)
+}
+pub(crate) fn record_committed(
+    db: &Connection,
+    upload: &[u8],
+    digest: &[u8],
+    revision: &Revision,
+    now: u64,
+) -> Result<()> {
+    let encoded = encode(&UploadOutcome::Committed(revision.clone()))?;
+    content::check_receipt_capacity(db, now)?;
+    content::check_capacity(db, 4096 + encoded.len() as u64 + digest.len() as u64)?;
+    record(db, upload, digest, &encoded, now)
 }
 fn storage(_: sql::Error) -> Error {
     Error::Storage
@@ -53,29 +97,21 @@ pub fn upload_status(db: &Connection, upload: &[u8], now: u64) -> Result<UploadS
             cancel_job,
         }));
     }
-    let prior:Option<String>=db.query_row("SELECT result FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1 AND expires>?2",params![upload,now as i64],|r|sql::row_get(r,0)).optional().map_err(storage)?;
-    let Some(raw) = prior else {
-        return Ok(UploadStatus::Absent);
-    };
-    if cancelled(&raw).is_some() {
-        return Ok(UploadStatus::Cancelled);
-    }
-    if raw == "\"Expired\"" {
-        return Ok(UploadStatus::Expired);
-    }
-    // Receipts also hold unrelated operations; do not misclassify them as committed uploads.
-    let Ok(r) = serde_json::from_str::<Revision>(&raw) else {
-        return Ok(UploadStatus::Absent);
-    };
-    if r.deleted {
-        return Ok(UploadStatus::Absent);
-    }
-    Ok(UploadStatus::Committed(CommittedUpload {
-        vault: r.vault,
-        object: r.object,
-        revision: r.revision,
-        sequence: r.sequence,
-    }))
+    Ok(
+        match outcome(db, upload)?
+            .filter(|o| o.expires > now)
+            .map(|o| o.result)
+        {
+            None => UploadStatus::Absent,
+            Some(UploadOutcome::Cancelled { .. }) => UploadStatus::Cancelled,
+            Some(UploadOutcome::Committed(r)) => UploadStatus::Committed(CommittedUpload {
+                vault: r.vault,
+                object: r.object,
+                revision: r.revision,
+                sequence: r.sequence,
+            }),
+        },
+    )
 }
 /// One transaction per batch, held by the service. Never unreserve until all chunks are gone.
 /// At most one protocol chunk (1 MiB plaintext + 16-byte AEAD tag) is removed per batch.
@@ -91,29 +127,29 @@ pub fn cancel_upload_batch(
     id(job)?;
     let row:Option<(Id,Vec<u8>,Option<Id>)>=db.query_row("SELECT vault,digest,cancel_job FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![upload],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))).optional().map_err(storage)?;
     let Some((target, digest, prior_job)) = row else {
-        let prior:Option<String>=db.query_row("SELECT result FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1 AND expires>?2",params![upload,now as i64],|r|sql::row_get(r,0)).optional().map_err(storage)?;
-        if let Some(raw) = prior {
-            // GC may have finished between the authoritative status read and cleanup.
-            // This terminal operation cannot be recreated; cancellation is a no-op.
-            if raw == "\"Expired\"" {
-                return Ok(true);
-            }
-            if let Some(r) = cancelled(&raw) {
-                return if r.cancelled_vault == vault && r.job == job {
+        return match outcome(db, upload)?
+            .filter(|o| o.expires > now)
+            .map(|o| o.result)
+        {
+            Some(UploadOutcome::Cancelled {
+                vault: target,
+                job: prior_job,
+            }) => {
+                if target == vault && prior_job == job {
                     Ok(true)
                 } else {
                     Err(Error::Conflict)
-                };
+                }
             }
-            if let Ok(r) = serde_json::from_str::<Revision>(&raw) {
-                return if r.vault == vault && !r.deleted {
+            Some(UploadOutcome::Committed(r)) => {
+                if r.vault == vault {
                     Ok(true)
                 } else {
                     Err(Error::Unauthorized)
-                };
+                }
             }
-        }
-        return Err(Error::NotFound);
+            None => Err(Error::NotFound),
+        };
     };
     if target != vault {
         return Err(Error::Unauthorized);
@@ -136,11 +172,10 @@ pub fn cancel_upload_batch(
         }
         return Ok(false);
     }
-    let result = serde_json::to_string(&CancelledUpload {
-        cancelled_vault: vault.to_vec(),
+    let result = encode(&UploadOutcome::Cancelled {
+        vault: vault.to_vec(),
         job: job.to_vec(),
-    })
-    .map_err(|_| Error::Storage)?;
+    })?;
     // Replace the upload's already-reserved receipt slot. Neither new headroom nor
     // receipt admission is required, including when the shared capacity is exhausted.
     db.execute(
@@ -148,6 +183,6 @@ pub fn cancel_upload_batch(
         params![upload],
     )
     .map_err(storage)?;
-    db.execute("INSERT INTO receipts(owner,operation,digest,result,expires) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4)",params![upload,digest,result,(now+DAY) as i64]).map_err(storage)?;
+    record(db, upload, &digest, &result, now)?;
     Ok(true)
 }

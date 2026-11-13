@@ -2,7 +2,8 @@
 use super::*;
 use vault_types::capacity::{KEY_OWNER_CHARGE, KEY_OWNER_ROWS, KEY_ROW, KEY_ROWS};
 pub const DERIVE_RESERVATION: u64 = 30_000_000_000;
-pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<()> {
+pub fn reserve(db: &Connection, vault: &[u8], token: u64, now: u64, required: u64) -> Result<()> {
+    id(vault)?;
     if token > i64::MAX as u64 || now > i64::MAX as u64 {
         return Err(Error::InvalidInput);
     }
@@ -31,7 +32,7 @@ pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<(
     }
     admit_rows(db, 1)?;
     if owner.len() > 29
-        || vault_types::capacity::row_size(&[owner.len(), "reserved".len()], 9)
+        || vault_types::capacity::row_size(&[owner.len(), vault.len(), "reserved".len()], 9)
             .is_none_or(|n| n > KEY_ROW)
     {
         return Err(Error::InvalidInput);
@@ -44,8 +45,16 @@ pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<(
     {
         return Err(Error::QuotaExceeded);
     }
-    db.execute("INSERT INTO key_flights(owner,token,day,reserved,created,payment,generation) VALUES(?1,?2,?3,?4,?5,?6,COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0))",params![owner,token as i64,(now/DAY) as i64,DERIVE_RESERVATION as i64,now as i64,required as i64]).map_err(|_|Error::Storage)?;
+    db.execute("INSERT INTO key_flights(owner,vault,token,day,reserved,created,payment,generation) VALUES(?1,?7,?2,?3,?4,?5,?6,COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0))",params![owner,token as i64,(now/DAY) as i64,DERIVE_RESERVATION as i64,now as i64,required as i64,vault]).map_err(|_|Error::Storage)?;
     Ok(())
+}
+/// Only active, non-cancelled work may publish a key reply. Read before settlement.
+pub fn current(db: &Connection) -> Result<Option<(u64, Id)>> {
+    let row: Option<(i64, Id)> = db.query_row(
+        "SELECT token,vault FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND in_flight=1 AND phase IN ('reserved','sent') ORDER BY token DESC LIMIT 1",
+        params![], |r| Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))
+    ).optional().map_err(|_|Error::Storage)?;
+    Ok(row.map(|(token, vault)| (token as u64, vault)))
 }
 /// Callback completion may reconcile an earlier cancellation's conservative payment downwards.
 pub fn settle(db: &Connection, token: u64, now: u64, actual: u64) -> Result<()> {

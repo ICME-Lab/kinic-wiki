@@ -4,6 +4,54 @@ use candid::{CandidType, decode_one, encode_one};
 use sha2::{Digest, Sha256};
 pub const CHARGE: u64 = 131072;
 pub const CLEANUP_CHARGE: u64 = 512;
+/// Persisted admission classes share one result/count/charge policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i64)]
+pub enum AdmissionClass {
+    Ordinary = 0,
+    Cleanup = 1,
+    ResourceCleanup = 2,
+    ProtectedKey = 3,
+}
+impl AdmissionClass {
+    fn from_sql(value: i64) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Ordinary),
+            1 => Ok(Self::Cleanup),
+            2 => Ok(Self::ResourceCleanup),
+            3 => Ok(Self::ProtectedKey),
+            _ => Err(Error::Storage),
+        }
+    }
+    fn result_limit(self) -> usize {
+        match self {
+            Self::Ordinary => CHARGE as usize - 4096,
+            Self::Cleanup | Self::ResourceCleanup => 256,
+            Self::ProtectedKey => capacity::KEY_CONTROL_RESULT,
+        }
+    }
+    fn count_limits(self) -> Option<(usize, usize)> {
+        match self {
+            Self::Cleanup => Some((512, capacity::CLEANUP_RECEIPTS)),
+            Self::ProtectedKey => {
+                Some((capacity::KEY_CONTROL_OWNER_ROWS, capacity::KEY_CONTROL_ROWS))
+            }
+            Self::Ordinary | Self::ResourceCleanup => None,
+        }
+    }
+    /// Ordinary results release unused reservation; protected pools are prepaid globally.
+    pub(crate) fn charge_sql(scoped: bool) -> String {
+        format!(
+            "CASE admission WHEN {} THEN 0 WHEN {} THEN {} WHEN {} THEN {} ELSE CASE WHEN result IS NULL THEN {} ELSE length(result)+4096 END END",
+            Self::Cleanup as i64,
+            Self::ResourceCleanup as i64,
+            CLEANUP_CHARGE,
+            Self::ProtectedKey as i64,
+            if scoped { capacity::KEY_CONTROL_ROW } else { 0 },
+            CHARGE
+        )
+    }
+}
 /// The durable creation identity outlives its async lease and completed receipt.
 fn check_creation_binding(db: &Connection, operation: &[u8], request_digest: &[u8]) -> Result<()> {
     let vault:Option<Id>=db.query_row("SELECT id FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
@@ -51,18 +99,20 @@ pub fn runtime(db: &Connection) -> Result<i64> {
     db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)
 }
 pub fn begin(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
-    begin_inner(db, operation, digest, now, 0)
+    begin_inner(db, operation, digest, now, AdmissionClass::Ordinary)
 }
 /// Preserve ordinary admission whenever possible; protect fresh access only when
 /// content bytes or ordinary receipt slots are exhausted. Existing rows keep their class.
 pub fn begin_key(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
     match begin(db, operation, digest, now) {
-        Err(Error::QuotaExceeded) => begin_inner(db, operation, digest, now, 3),
+        Err(Error::QuotaExceeded) => {
+            begin_inner(db, operation, digest, now, AdmissionClass::ProtectedKey)
+        }
         result => result,
     }
 }
 pub fn begin_cleanup(db: &Connection, operation: &[u8], digest: &[u8], now: u64) -> Result<u64> {
-    begin_inner(db, operation, digest, now, 1)
+    begin_inner(db, operation, digest, now, AdmissionClass::Cleanup)
 }
 pub fn begin_resource_cleanup(
     db: &Connection,
@@ -70,14 +120,14 @@ pub fn begin_resource_cleanup(
     digest: &[u8],
     now: u64,
 ) -> Result<u64> {
-    begin_inner(db, operation, digest, now, 2)
+    begin_inner(db, operation, digest, now, AdmissionClass::ResourceCleanup)
 }
 fn begin_inner(
     db: &Connection,
     operation: &[u8],
     digest: &[u8],
     now: u64,
-    cleanup: i64,
+    class: AdmissionClass,
 ) -> Result<u64> {
     id(operation)?;
     check_creation_binding(db, operation, digest)?;
@@ -93,31 +143,33 @@ fn begin_inner(
     }
     if pending.is_none() {
         collect(db, now)?;
-        if cleanup == 1 {
-            let (mine,all):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM operations WHERE cleanup=1",params![],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
-            if mine >= 512 || all >= 1024 {
+        if let Some((owner_limit, global_limit)) = class.count_limits() {
+            let (mine,all):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM operations WHERE admission=?1",params![class as i64],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
+            if mine as usize >= owner_limit || all as usize >= global_limit {
                 return Err(Error::QuotaExceeded);
             }
-        } else if cleanup == 3 {
-            let (mine, all): (i64, i64) = db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM operations WHERE cleanup=3", params![], |r| Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_| Error::Storage)?;
-            if mine as usize >= capacity::KEY_CONTROL_OWNER_ROWS
-                || all as usize >= capacity::KEY_CONTROL_ROWS
-                || content::usage(db)?
+        }
+        match class {
+            AdmissionClass::Ordinary => {
+                content::check_receipt_capacity(db, now)?;
+                content::check_capacity(db, CHARGE)?;
+            }
+            AdmissionClass::ProtectedKey => {
+                if content::usage(db)?
                     .checked_add(capacity::KEY_CONTROL_ROW as u64)
                     .ok_or(Error::QuotaExceeded)?
                     > TOTAL_MAX
-            {
-                return Err(Error::QuotaExceeded);
+                {
+                    return Err(Error::QuotaExceeded);
+                }
             }
-        } else if cleanup == 0 {
-            content::check_receipt_capacity(db, now)?;
-            content::check_capacity(db, CHARGE)?;
+            AdmissionClass::Cleanup | AdmissionClass::ResourceCleanup => {}
         }
     }
     let serial:i64=db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='serial'),0)",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
     let serial = serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
     db.execute("INSERT INTO global_settings(key,value) VALUES('serial',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serial.to_string()]).map_err(|_|Error::Storage)?;
-    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,NULL,?3,?4,?5,?6) ON CONFLICT(owner,operation) DO UPDATE SET token=excluded.token,runtime=excluded.runtime,expires=excluded.expires",params![operation,digest,(now+300) as i64,serial,current,cleanup]).map_err(|_|Error::Storage)?;
+    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,NULL,?3,?4,?5,?6) ON CONFLICT(owner,operation) DO UPDATE SET token=excluded.token,runtime=excluded.runtime,expires=excluded.expires",params![operation,digest,(now+300) as i64,serial,current,class as i64]).map_err(|_|Error::Storage)?;
     Ok(serial as u64)
 }
 pub fn fence(db: &Connection, operation: &[u8], token: u64) -> Result<()> {
@@ -137,16 +189,8 @@ pub fn complete<T: CandidType>(
 ) -> Result<()> {
     fence(db, operation, token)?;
     let bytes = encode_one(result).map_err(|_| Error::Storage)?;
-    let cleanup:i64=db.query_row("SELECT cleanup FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
-    if bytes.len()
-        > if cleanup == 3 {
-            capacity::KEY_CONTROL_RESULT
-        } else if cleanup != 0 {
-            256
-        } else {
-            CHARGE as usize - 4096
-        }
-    {
+    let class:i64=db.query_row("SELECT admission FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+    if bytes.len() > AdmissionClass::from_sql(class)?.result_limit() {
         return Err(Error::QuotaExceeded);
     }
     db.execute("UPDATE operations SET result=?3,expires=?4 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1 AND token=?2",params![operation,token as i64,bytes,(now+DAY) as i64]).map_err(|_|Error::Storage)?;

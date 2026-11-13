@@ -84,11 +84,11 @@ pub(crate) fn schema_statements() -> Vec<String> {
     guard(
         &mut statements,
         "vault_cycle_reservations",
-        &["owner", "token", "account_owner"],
+        &["owner", "token"],
         8,
         SMALL_ROW,
         &format!(
-            "OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT} OR length(CAST(NEW.account_owner AS BLOB))>{PRINCIPAL_TEXT} OR length(CAST(NEW.token AS BLOB))>{TOKEN} OR length(NEW.token)=0"
+            "OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT} OR length(CAST(NEW.token AS BLOB))>{TOKEN} OR length(NEW.token)=0"
         ),
     );
     count_guard(

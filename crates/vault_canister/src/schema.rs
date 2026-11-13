@@ -1,4 +1,4 @@
-//! Initial release: create v7 once; validate existing v7 without repairing it.
+//! Initial release: create v8 once; validate existing v8 without repairing it.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
@@ -21,10 +21,10 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         0 if count == 0 => {
             db.execute_batch(&statements.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            db.execute_batch("PRAGMA user_version=7;")
+            db.execute_batch("PRAGMA user_version=8;")
                 .map_err(|_| Error::Storage)?;
         }
-        7 if count == statements.len() as i64 => {
+        8 if count == statements.len() as i64 => {
             let expected: BTreeMap<_, _> = statements
                 .iter()
                 .map(|s| contract(s))

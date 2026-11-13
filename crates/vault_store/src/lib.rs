@@ -15,59 +15,6 @@ pub mod operations;
 #[cfg(test)]
 mod tests;
 mod uploads;
-pub fn load<T: DeserializeOwned>(db: &Connection, key: &str) -> Result<Option<T>> {
-    let raw:Option<String>=db.query_row("SELECT value FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![key],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-    raw.map(|s| serde_json::from_str(&s).map_err(|_| Error::Storage))
-        .transpose()
-}
-pub fn save<T: Serialize>(db: &Connection, key: &str, value: &T) -> Result<()> {
-    let raw = serde_json::to_string(value).map_err(|_| Error::Storage)?;
-    if raw.len() > 4096 || key.len() > 64 {
-        return Err(Error::QuotaExceeded);
-    }
-    let prior:Option<i64>=db.query_row("SELECT length(value)+length(key)+256 FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key=?1",params![key],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-    let extra = (raw.len() + key.len() + 256).saturating_sub(prior.unwrap_or(0) as usize);
-    if extra > 0 {
-        content::check_capacity(db, extra as u64)?;
-    }
-    db.execute("INSERT INTO settings(owner,key,value) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2) ON CONFLICT(owner,key) DO UPDATE SET value=excluded.value",params![key,raw]).map_err(|_|Error::Storage)?;
-    Ok(())
-}
-/// A key's transient owner control is covered by the fixed eight-flight allowance.
-/// The generic settings writer remains subject to ordinary capacity admission.
-pub fn save_key_control(db: &Connection, token: u64, vault: &[u8]) -> Result<()> {
-    id(vault)?;
-    let raw = serde_json::to_string(&(token, vault)).map_err(|_| Error::Storage)?;
-    let (owner, flight, count): (Vec<u8>, i64, i64) = db.query_row(
-        "SELECT owner,EXISTS(SELECT 1 FROM key_flights WHERE owner=owner_scope.owner AND token=?1 AND in_flight=1),(SELECT count(*) FROM settings WHERE key='derive') FROM owner_scope WHERE slot=1",
-        params![token as i64], |r| Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))
-    ).map_err(|_| Error::Storage)?;
-    if flight != 1 || token > i64::MAX as u64 {
-        return Err(Error::Conflict);
-    }
-    let prior: Option<i64> = db
-        .query_row(
-            "SELECT length(value)+length(key)+256 FROM settings WHERE owner=?1 AND key='derive'",
-            params![owner],
-            |r| sql::row_get(r, 0),
-        )
-        .optional()
-        .map_err(|_| Error::Storage)?;
-    let charge = raw.len() + "derive".len() + 256;
-    if charge > capacity::DERIVE_CONTROL_ROW
-        || capacity::row_size(&[owner.len(), "derive".len(), raw.len()], 0)
-            .is_none_or(|n| n > capacity::DERIVE_CONTROL_ROW)
-        || (prior.is_none() && count as usize >= capacity::DERIVE_CONTROLS)
-        || content::usage(db)?
-            .checked_add(charge.saturating_sub(prior.unwrap_or(0) as usize) as u64)
-            .ok_or(Error::QuotaExceeded)?
-            > TOTAL_MAX
-    {
-        return Err(Error::QuotaExceeded);
-    }
-    db.execute("INSERT INTO settings(owner,key,value) VALUES(?1,'derive',?2) ON CONFLICT(owner,key) DO UPDATE SET value=excluded.value",params![owner,raw]).map_err(|_|Error::Storage)?;
-    Ok(())
-}
 pub fn config(db: &Connection) -> Result<VaultConfig> {
     let raw: Option<String> = db
         .query_row(

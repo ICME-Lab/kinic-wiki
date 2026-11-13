@@ -121,7 +121,7 @@ fn capacity_full_journals_keep_refunds_checkpoints_and_tiny_balance_cleanup_avai
         .vault_reserve_cycles(&text, "derive:1", 30_000_000, 0)
         .unwrap();
     state::transaction(|db| {
-        db.execute("WITH RECURSIVE n(x) AS(SELECT 2 UNION ALL SELECT x+1 FROM n WHERE x<10000) INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms) SELECT ?1,'derive:'||x,?1,0,0 FROM n",params![text]).unwrap();
+        db.execute("WITH RECURSIVE n(x) AS(SELECT 2 UNION ALL SELECT x+1 FROM n WHERE x<10000) INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) SELECT ?1,'derive:'||x,0,0 FROM n",params![text]).unwrap();
         db.execute("WITH RECURSIVE n(x) AS(SELECT 2 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO account_ledger(owner,kind,amount_cycles,balance_after,at_ms) SELECT ?1,'charge',0,0,0 FROM n",params![text]).unwrap();
         Ok(())
     }).unwrap();
@@ -337,8 +337,8 @@ fn capacity_fee_reservation_and_account_fields_reject_one_byte_excess() {
         db.execute("UPDATE quote_fee_flights SET record=?1",params![exact]).unwrap();
         assert!(db.execute("UPDATE quote_fee_flights SET record=?1",params![format!("{exact} ")]).is_err());
         assert!(db.execute("INSERT INTO accounts VALUES(?1,0,0,0)",params!["x".repeat(64)]).is_err());
-        assert!(db.execute("INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms) VALUES(?1,?2,?1,0,0)",params![principal(1).to_text(),"x".repeat(129)]).is_err());
-        db.execute("INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms) VALUES(?1,?2,?1,0,0)",params![principal(1).to_text(),"x".repeat(128)]).unwrap();
+        assert!(db.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) VALUES(?1,?2,0,0)",params![principal(1).to_text(),"x".repeat(129)]).is_err());
+        db.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) VALUES(?1,?2,0,0)",params![principal(1).to_text(),"x".repeat(128)]).unwrap();
         assert!(db.execute("UPDATE vault_cycle_reservations SET token=?1",params!["x".repeat(129)]).is_err());
         Ok(())
     }).unwrap();
@@ -354,7 +354,7 @@ fn key_gc_refreshes_offline_other_owner_billing_and_restores_caller_scope() {
         let account=other.to_text();
         db.execute("INSERT INTO accounts VALUES(?1,1000000000,0,0)",params![account]).unwrap();
         vault_store::OwnerContext::authenticated(other)?.run(db,|db|{
-            vault_store::keys::reserve(db,1,1,0)?;
+            vault_store::keys::reserve(db, &[1; 16], 1,1,0)?;
             vault_store::keys::settle(db,1,2,0)?;
             db.execute("UPDATE accounts SET storage_bytes=?1 WHERE owner=?2",params![vault_store::content::usage(db)? as i64,account]).unwrap();Ok(())
         })?;

@@ -21,8 +21,6 @@ pub const KEY_CONTROL_ROWS: usize = 64;
 pub const KEY_CONTROL_OWNER_ROWS: usize = 16;
 pub const KEY_CONTROL_ROW: usize = 2048;
 pub const KEY_CONTROL_RESULT: usize = 1024;
-pub const DERIVE_CONTROLS: usize = 8;
-pub const DERIVE_CONTROL_ROW: usize = 512;
 pub const SETTINGS: usize = 64 * 1024;
 pub const SETTING_SLOTS: usize = 7;
 pub const SETTING_ROW: usize = 8192;
@@ -54,21 +52,20 @@ fn worst_case_pool_and_rows_fit() {
         + SETTINGS
         + KEY_ROWS * KEY_ROW
         + CLEANUP_RECEIPTS * CLEANUP_ROW
-        + KEY_CONTROL_ROWS * KEY_CONTROL_ROW
-        + DERIVE_CONTROLS * DERIVE_CONTROL_ROW;
-    assert_eq!(total, 16_764_928);
+        + KEY_CONTROL_ROWS * KEY_CONTROL_ROW;
+    assert_eq!(total, 16_760_832);
     const { assert!(SETTING_SLOTS * SETTING_ROW + BILLING_CURSOR_ROW <= SETTINGS) };
     assert!(GLOBAL_SETTING_KEYS.len() <= SETTING_SLOTS);
-    assert_eq!(ACCOUNTING_POOL as usize - total, 12_288);
+    assert_eq!(ACCOUNTING_POOL as usize - total, 16_384);
     assert!(row_size(&[29, 16, 32, KEY_CONTROL_RESULT], 4).unwrap() <= KEY_CONTROL_ROW);
     assert!(
         KEY_OWNER_ROWS as u64 * KEY_OWNER_CHARGE
-            + ((KEY_CONTROL_OWNER_ROWS * KEY_CONTROL_ROW + DERIVE_CONTROL_ROW) as u64)
+            + ((KEY_CONTROL_OWNER_ROWS * KEY_CONTROL_ROW) as u64)
             < ACCOUNTING_POOL
     );
-    assert!(row_size(&[PRINCIPAL_TEXT, TOKEN, PRINCIPAL_TEXT], 8).unwrap() <= SMALL_ROW);
+    assert!(row_size(&[PRINCIPAL_TEXT, TOKEN], 8).unwrap() <= SMALL_ROW);
     assert!(row_size(&[PRINCIPAL_TEXT, KIND, 16], 4).unwrap() <= SMALL_ROW);
-    assert!(row_size(&[29, 32], 9).unwrap() <= KEY_ROW);
+    assert!(row_size(&[29, 16, 32], 9).unwrap() <= KEY_ROW);
     assert!((KEY_OWNER_ROWS as u64) * KEY_OWNER_CHARGE < ACCOUNTING_POOL);
     assert_eq!(row_size(&[usize::MAX], 1), None);
 }

@@ -134,7 +134,6 @@ impl Environment for Vault {
             return Err(Error::QuotaExceeded);
         }
         with_service(|s| s.vault_require_spending(&self.owner().to_text(), now_millis()))
-            .map(|_| ())
             .map_err(|_| Error::QuotaExceeded)
     }
     fn checkpoint_execution(&self) -> Result<()> {

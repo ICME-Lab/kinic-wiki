@@ -128,12 +128,11 @@ impl Environment for Env {
     }
     fn recover_pending(&self, db: &Connection, target: Option<&[u8]>) -> Result<bool> {
         if target.is_some_and(|v| {
-            store::load::<(u64, Id)>(db, "derive")
+            store::keys::current(db)
                 .unwrap()
                 .is_some_and(|(_, id)| id == v)
         }) {
             store::keys::cancel_pending(db, self.now())?;
-            db.execute("DELETE FROM settings WHERE key='derive' AND owner=(SELECT owner FROM owner_scope WHERE slot=1)",[]).unwrap();
         }
         Ok(true)
     }
@@ -494,11 +493,7 @@ fn disabling_configuration_during_callbacks_retains_accounting_but_withholds_key
         Err(Error::Unauthorized)
     );
     assert_eq!(e.paid.get(), 12);
-    assert_eq!(
-        e.transaction(|db| store::load::<(u64, Id)>(db, "derive"))
-            .unwrap(),
-        None
-    );
+    assert_eq!(e.transaction(store::keys::current).unwrap(), None);
 }
 #[test]
 fn changing_default_key_does_not_change_existing_vault_context() {
@@ -658,7 +653,7 @@ fn admitted_upload_receipt_slots_survive_full_journal() {
     let e = Env::new();
     e.create();
     let r = e.begin();
-    e.transaction(|db|{let used:i64=db.query_row("SELECT (SELECT count(*) FROM operations WHERE cleanup=0)+(SELECT COALESCE(sum(1+receipt_budget/131072),0) FROM uploads)",[],|r|r.get(0)).unwrap();db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<?1) INSERT INTO receipts SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),'true',?2 FROM n",params![10000-used,(e.now()+DAY) as i64]).unwrap();Ok(())}).unwrap();
+    e.transaction(|db|{let used:i64=db.query_row("SELECT (SELECT count(*) FROM operations WHERE admission=0)+(SELECT COALESCE(sum(1+receipt_budget/131072),0) FROM uploads)",[],|r|r.get(0)).unwrap();db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<?1) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?2,x+100,0,0 FROM n",params![10000-used,(e.now()+DAY) as i64]).unwrap();Ok(())}).unwrap();
     e.change(
         6,
         Action::PutChunk {
@@ -785,7 +780,7 @@ fn review_resource_cleanup_survives_other_owners_full_cleanup_pool() {
         },
     )
     .unwrap();
-    e.transaction(|db|{db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1024) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?1,x,0,1 FROM n",params![(e.now()+DAY) as i64]).unwrap();db.execute("UPDATE uploads SET reserved=?1",params![TOTAL_MAX as i64]).unwrap();Ok(())}).unwrap();
+    e.transaction(|db|{db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1024) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?1,x,0,1 FROM n",params![(e.now()+DAY) as i64]).unwrap();db.execute("UPDATE uploads SET reserved=?1",params![TOTAL_MAX as i64]).unwrap();Ok(())}).unwrap();
     e.funded.set(false);
     let action = Action::CancelUpload {
         vault: r.vault.clone(),
@@ -854,7 +849,7 @@ fn review_expired_upload_collection_survives_full_unreserved_pool() {
     let e = Env::new();
     e.create();
     e.begin();
-    e.transaction(|db|{db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1024) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?1,x,0,1 FROM n",params![(e.now()+3*DAY) as i64]).unwrap();Ok(())}).unwrap();
+    e.transaction(|db|{db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1024) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?1,x,0,1 FROM n",params![(e.now()+3*DAY) as i64]).unwrap();Ok(())}).unwrap();
     e.now.set(e.now() + DAY);
     e.funded.set(false);
     assert!(matches!(
@@ -942,9 +937,11 @@ fn review_cleanup_credits_follow_commit_retirement_tombstone_and_deletion() {
     ));
     let count = || {
         e.transaction(|db| {
-            db.query_row("SELECT count(*) FROM operations WHERE cleanup=2", [], |r| {
-                r.get::<_, i64>(0)
-            })
+            db.query_row(
+                "SELECT count(*) FROM operations WHERE admission=2",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .map_err(|_| Error::Storage)
         })
         .unwrap()
@@ -1011,7 +1008,7 @@ fn review_purge_hides_history_and_reclaims_boundedly_without_credit() {
         object: r.object.clone(),
         expected_revision: 11,
     };
-    e.transaction(|db|{db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1024) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?1,x,0,1 FROM n",params![(e.now()+DAY) as i64]).unwrap();Ok(())}).unwrap();
+    e.transaction(|db|{db.execute("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1024) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',?1,x,0,1 FROM n",params![(e.now()+DAY) as i64]).unwrap();Ok(())}).unwrap();
     e.funded.set(false);
     assert!(matches!(
         e.change(60, action.clone()),
@@ -1186,13 +1183,13 @@ fn fresh_key_admission_at_full_shared_content_and_ordinary_receipts() {
         // Fill both the owner's and global ordinary row limit; the other owner's
         // live revision below consumes the shared content headroom independently.
         db.execute("DELETE FROM operations WHERE owner=X'02'", []).unwrap();
-        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',999999,x+100,0,0 FROM n", []).unwrap();
-        assert_eq!(db.query_row("SELECT count(*) FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND cleanup=0",[],|r|r.get::<_,i64>(0)).unwrap(),10000);
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',999999,x+100,0,0 FROM n", []).unwrap();
+        assert_eq!(db.query_row("SELECT count(*) FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND admission=0",[],|r|r.get::<_,i64>(0)).unwrap(),10000);
         assert_eq!(store::content::check_receipt_capacity(db, e.now()), Err(Error::QuotaExceeded));
         let extra = TOTAL_MAX - store::content::global_usage(db)?;
         db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
         assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
-        assert!(store::load::<(u64, Id)>(db, "derive")?.is_none());
+        assert!(store::keys::current(db)?.is_none());
         Ok(())
     }).unwrap();
     let request = DeriveKey {
@@ -1244,11 +1241,7 @@ fn normal_key_admission_preserves_rates_and_reuses_transient_control_across_owne
                 },
             ))
             .unwrap();
-            assert!(
-                e.transaction(|db| store::load::<(u64, Id)>(db, "derive"))
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(e.transaction(store::keys::current).unwrap().is_none());
         }
     }
     e.owner.set(Principal::from_slice(&[11]));
@@ -1265,8 +1258,11 @@ fn normal_key_admission_preserves_rates_and_reuses_transient_control_across_owne
     );
     assert_eq!(
         e.db.borrow()
-            .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
-                .get::<_, i64>(0))
+            .query_row(
+                "SELECT count(*) FROM operations WHERE admission=3",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
             .unwrap(),
         0
     );
@@ -1288,12 +1284,15 @@ fn protected_key_callback_is_bounded_and_cannot_publish_after_cancellation() {
     .unwrap();
     e.hook.replace(Some(Box::new(|e| {
         e.transaction(|db| {
-            assert_eq!(store::content::global_usage(db)?,TOTAL_MAX);
-            let (token,_)=store::load::<(u64,Id)>(db,"derive")?.unwrap();
-            assert_eq!(store::keys::cancel_pending(db,e.now())?,Some((token,20,false)));
-            db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key='derive'",[]).unwrap();
+            assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
+            let (token, _) = store::keys::current(db)?.unwrap();
+            assert_eq!(
+                store::keys::cancel_pending(db, e.now())?,
+                Some((token, 20, false))
+            );
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     })));
     let request = DeriveKey {
         vault: vec![1; 16],
@@ -1324,7 +1323,7 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
     let e = Env::new();
     e.create();
     e.transaction(|db| {
-        db.execute("WITH RECURSIVE n(x) AS (SELECT 1000 UNION ALL SELECT x+1 FROM n WHERE x<1098) INSERT INTO key_flights(owner,token,day,reserved,actual,created,settled,in_flight) SELECT X'01',x,0,30000000000,0,100,100,0 FROM n",[]).unwrap();
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1000 UNION ALL SELECT x+1 FROM n WHERE x<1098) INSERT INTO key_flights(owner,vault,token,day,reserved,actual,created,settled,in_flight) SELECT X'01',zeroblob(16),x,0,30000000000,0,100,100,0 FROM n",[]).unwrap();
         let extra=TOTAL_MAX-store::content::global_usage(db)?;
         db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
         Ok(())
@@ -1361,8 +1360,11 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
     );
     assert_eq!(
         e.db.borrow()
-            .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
-                .get::<_, i64>(0))
+            .query_row(
+                "SELECT count(*) FROM operations WHERE admission=3",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
             .unwrap(),
         0
     );
@@ -1376,8 +1378,11 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
         );
         assert_eq!(
             e.db.borrow()
-                .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
-                    .get::<_, i64>(0))
+                .query_row(
+                    "SELECT count(*) FROM operations WHERE admission=3",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
                 .unwrap(),
             1
         );
@@ -1390,14 +1395,183 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
     assert_eq!(e.derives.get(), 1);
     assert_eq!(
         e.db.borrow()
-            .query_row("SELECT count(*) FROM operations WHERE cleanup=3", [], |r| r
-                .get::<_, i64>(0))
+            .query_row(
+                "SELECT count(*) FROM operations WHERE admission=3",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
             .unwrap(),
         1
     );
-    assert!(
-        e.transaction(|db| store::load::<(u64, Id)>(db, "derive"))
-            .unwrap()
-            .is_none()
+    assert!(e.transaction(store::keys::current).unwrap().is_none());
+}
+
+#[test]
+fn delete_replays_only_its_request_journal_and_never_becomes_an_upload_outcome() {
+    let e = Env::new();
+    e.create();
+    let r = e.begin();
+    e.change(
+        6,
+        Action::PutChunk {
+            upload: r.operation.clone(),
+            index: 0,
+            bytes: vec![7; 17],
+        },
+    )
+    .unwrap();
+    let committed = e
+        .change(
+            7,
+            Action::CommitRevision {
+                upload: r.operation.clone(),
+            },
+        )
+        .unwrap();
+    let delete = Action::DeleteObject {
+        vault: r.vault.clone(),
+        object: r.object.clone(),
+        expected_revision: 1,
+    };
+    let deleted = e.change(8, delete.clone()).unwrap();
+    assert_eq!(
+        candid::encode_one(e.change(8, delete).unwrap()).unwrap(),
+        candid::encode_one(deleted).unwrap()
     );
+    assert_eq!(
+        e.change(
+            8,
+            Action::DeleteObject {
+                vault: r.vault.clone(),
+                object: r.object.clone(),
+                expected_revision: 2
+            }
+        )
+        .unwrap_err(),
+        Error::Conflict
+    );
+    e.transaction(|db| {
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM operations WHERE operation=?1",
+                params![vec![8u8; 16]],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM upload_outcomes", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(matches!(
+            store::content::upload_status(db, &[8; 16], e.now())?,
+            UploadStatus::Absent
+        ));
+        assert!(matches!(
+            store::content::upload_status(db, &r.operation, e.now())?,
+            UploadStatus::Committed(_)
+        ));
+        Ok(())
+    })
+    .unwrap();
+    // Upload reconciliation returns the original committed revision after the head advances.
+    assert_eq!(
+        candid::encode_one(
+            e.change(
+                9,
+                Action::CommitRevision {
+                    upload: r.operation.clone()
+                }
+            )
+            .unwrap()
+        )
+        .unwrap(),
+        candid::encode_one(committed).unwrap()
+    );
+    assert!(matches!(
+        e.change(10, Action::BeginRevision(r.clone())),
+        Ok(MutationResult::Upload(Upload { expires: 0, .. }))
+    ));
+    let mut changed = r;
+    changed.manifest[0] ^= 1;
+    assert_eq!(
+        e.change(11, Action::BeginRevision(changed)).unwrap_err(),
+        Error::Conflict
+    );
+}
+
+#[test]
+fn expired_upload_gc_keeps_typed_cancellation_and_terminal_retry_binding() {
+    let e = Env::new();
+    e.create();
+    let r = e.begin();
+    e.now.set(e.now() + DAY);
+    e.transaction(|db| {
+        assert!(matches!(
+            store::content::upload_status(db, &r.operation, e.now())?,
+            UploadStatus::Expired
+        ));
+        store::content::gc(db, e.now())?;
+        assert!(matches!(
+            store::content::upload_status(db, &r.operation, e.now())?,
+            UploadStatus::Cancelled
+        ));
+        assert_eq!(
+            store::content::begin(db, r.clone(), e.now()).unwrap_err(),
+            Error::Conflict
+        );
+        assert_eq!(
+            store::content::commit(db, &r.operation, e.now()).unwrap_err(),
+            Error::Conflict
+        );
+        assert!(store::content::cancel_upload_batch(
+            db,
+            &r.vault,
+            &r.operation,
+            &r.operation,
+            e.now()
+        )?);
+        assert_eq!(
+            store::content::cancel_upload_batch(db, &r.vault, &r.operation, &[90; 16], e.now()),
+            Err(Error::Conflict)
+        );
+        let raw: String = db
+            .query_row("SELECT result FROM upload_outcomes", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&raw)
+                .unwrap()
+                .get("Cancelled")
+                .is_some()
+        );
+        assert!(matches!(
+            store::content::upload_status(db, &r.operation, e.now() + DAY)?,
+            UploadStatus::Absent
+        ));
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn settled_old_key_callback_cannot_clear_new_target_after_schema_generation_change() {
+    let e = Env::new();
+    e.transaction(|db| {
+        store::keys::reserve(db, &[1; 16], 1, 1, 20)?;
+        store::keys::mark_sent(db, 1, 20)?;
+        db.execute("INSERT INTO global_settings VALUES('generation','1')", [])
+            .unwrap();
+        assert_eq!(store::keys::cancel_pending(db, 122)?, Some((1, 20, true)));
+        assert!(!runtime::settle_key_reservation_in(db, 1, 123, 12)?);
+        store::keys::reserve(db, &[2; 16], 2, 124, 20)?;
+        assert!(!runtime::settle_key_reservation_in(db, 1, 125, 12)?);
+        assert_eq!(store::keys::current(db)?, Some((2, vec![2; 16])));
+        assert!(runtime::settle_key_reservation_in(db, 2, 126, 12)?);
+        assert_eq!(store::keys::current(db)?, None);
+        Ok(())
+    })
+    .unwrap();
 }

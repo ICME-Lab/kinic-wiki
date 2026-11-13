@@ -302,7 +302,7 @@ fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
 #[test]
 fn initial_release_rejects_unsupported_or_foreign_stores_without_changes() {
     use kinic_sqlite_compat::{Connection, params};
-    for version in [0, 1, 2, 3, 4, 5, 6, 7] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 7, 8] {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(&format!("CREATE TABLE foreign_data(secret BLOB); INSERT INTO foreign_data VALUES(X'0102'); PRAGMA user_version={version};")).unwrap();
         let before: i64 = db
@@ -331,11 +331,11 @@ fn initial_release_rejects_unsupported_or_foreign_stores_without_changes() {
 }
 
 #[test]
-fn initial_release_rejects_partial_v7_without_repairing_it() {
+fn initial_release_rejects_partial_v8_without_repairing_it() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     db.execute_batch(
-        "CREATE TABLE global_settings(key TEXT PRIMARY KEY,value TEXT); PRAGMA user_version=7;",
+        "CREATE TABLE global_settings(key TEXT PRIMARY KEY,value TEXT); PRAGMA user_version=8;",
     )
     .unwrap();
     assert_eq!(
@@ -384,7 +384,7 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v7_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v8_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
@@ -398,7 +398,9 @@ fn initial_release_creates_v7_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
+    assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','receipts')",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('vault_cycle_reservations') WHERE name='account_owner'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let before: i64 = db
         .query_row("SELECT total_changes()", params![], |r| {
             kinic_sqlite_compat::row_get(r, 0)
@@ -456,7 +458,7 @@ fn initial_release_rejects_sqlite_similar_foreign_names_without_changes() {
 }
 
 #[test]
-fn initial_release_rejects_changed_v7_contract_without_repair() {
+fn initial_release_rejects_changed_v8_contract_without_repair() {
     use kinic_sqlite_compat::{Connection, params};
     for damage in [
         "ALTER TABLE operations ADD COLUMN future_column TEXT",
@@ -489,7 +491,7 @@ fn initial_release_rejects_changed_v7_contract_without_repair() {
 fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
     use kinic_sqlite_compat::{Connection, params};
     let path = std::env::temp_dir().join(format!(
-        "vault-v7-policy-{}-{}.sqlite",
+        "vault-v8-policy-{}-{}.sqlite",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -522,20 +524,20 @@ fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
 }
 
 #[test]
-fn ii_only_reopens_seven_and_rejects_six_without_modifying_it() {
+fn ii_only_reopens_eight_and_rejects_seven_without_modifying_it() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
     schema::initialize_vault_schema(&db).unwrap();
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 7, "new installations must use the II-only schema");
+    assert_eq!(version, 8, "new installations must use the II-only schema");
     schema::initialize_vault_schema(&db).unwrap();
-    db.execute_batch("PRAGMA user_version=6").unwrap();
+    db.execute_batch("PRAGMA user_version=7").unwrap();
     assert!(schema::initialize_vault_schema(&db).is_err());
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
 }
 
@@ -591,9 +593,9 @@ fn cancellation_reconciliation_is_atomic_owner_scoped_and_survives_disable() {
     let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
     state::transaction(|db| {
         scope.run(db, |db| {
-            vault_store::keys::reserve(db, 1, 1, 100_000_000)?;
+            vault_store::keys::reserve(db, &[1; 16], 1, 1, 100_000_000)?;
             vault_store::keys::mark_sent(db, 1, 100_000_000)?;
-            vault_store::save(db, "derive", &(1u64, vec![1u8; 16]))
+            Ok(())
         })
     })
     .unwrap();
@@ -610,7 +612,7 @@ fn cancellation_reconciliation_is_atomic_owner_scoped_and_survives_disable() {
                 Some(&[2; 16]),
                 2
             )?);
-            assert!(vault_store::load::<(u64, Vec<u8>)>(db, "derive")?.is_some());
+            assert!(vault_store::keys::current(db)?.is_some());
             accounting::recover_pending_in(db, owner, Some(&[1; 16]), 2)?;
             Ok(())
         })
@@ -637,7 +639,7 @@ fn cancellation_reconciliation_is_atomic_owner_scoped_and_survives_disable() {
     .unwrap();
 }
 #[test]
-fn schema_seven_reopen_preserves_pending_upload_operation_receipt_balance_and_cursor() {
+fn schema_eight_reopen_preserves_pending_upload_operation_receipt_balance_and_cursor() {
     use kinic_sqlite_compat::{Connection, params};
     let path =
         std::env::temp_dir().join(format!("vault-seven-pending-{}.sqlite", std::process::id()));
@@ -649,7 +651,7 @@ fn schema_seven_reopen_preserves_pending_upload_operation_receipt_balance_and_cu
         db.execute("INSERT INTO accounts VALUES('owner',42,7,8)", [])
             .unwrap();
         let scope = vault_store::OwnerContext::authenticated(p(1)).unwrap();
-        scope.run(&db,|db|{let h=vault_types::Header{id:vec![1;16],nonce:vec![2;32],state:vault_types::VaultState::Active,sequence:0,key_name:"test_key_1".into(),public_key:vec![3;96]};db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![h.id,vec![9u8;16],serde_json::to_string(&h).unwrap()]).unwrap();vault_store::content::begin(db,vault_types::BeginRevision{vault:vec![1;16],object:vec![2;16],expected_revision:0,operation:vec![3;16],plain_size:0,manifest:vec![4;64],chunk_hashes:vec![vec![5;32]]},1)?;vault_store::operations::begin(db,&[7;16],&[8;32],1)?;vault_store::keys::reserve(db,1,1,10)?;Ok(())}).unwrap();
+        scope.run(&db,|db|{let h=vault_types::Header{id:vec![1;16],nonce:vec![2;32],state:vault_types::VaultState::Active,sequence:0,key_name:"test_key_1".into(),public_key:vec![3;96]};db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![h.id,vec![9u8;16],serde_json::to_string(&h).unwrap()]).unwrap();vault_store::content::begin(db,vault_types::BeginRevision{vault:vec![1;16],object:vec![2;16],expected_revision:0,operation:vec![3;16],plain_size:0,manifest:vec![4;64],chunk_hashes:vec![vec![5;32]]},1)?;vault_store::operations::begin(db,&[7;16],&[8;32],1)?;vault_store::keys::reserve(db, &[1; 16], 1,1,10)?;Ok(())}).unwrap();
     }
     let db = Connection::open(&path).unwrap();
     schema::initialize_vault_schema(&db).unwrap();
@@ -681,9 +683,9 @@ fn offline_timer_recovers_expired_orphan_key_reservation() {
     let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
     state::transaction(|db| {
         scope.run(db, |db| {
-            vault_store::keys::reserve(db, 1, 1, 100_000_000)?;
+            vault_store::keys::reserve(db, &[1; 16], 1, 1, 100_000_000)?;
             vault_store::keys::mark_sent(db, 1, 100_000_000)?;
-            vault_store::save(db, "derive", &(1u64, vec![1u8; 16]))
+            Ok(())
         })
     })
     .unwrap();
@@ -711,9 +713,9 @@ fn key_and_financial_callback_settlement_roll_back_together() {
     let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
     state::transaction(|db| {
         scope.run(db, |db| {
-            vault_store::keys::reserve(db, 1, 1, 100_000_000)?;
+            vault_store::keys::reserve(db, &[1; 16], 1, 1, 100_000_000)?;
             vault_store::keys::mark_sent(db, 1, 100_000_000)?;
-            vault_store::save(db, "derive", &(1u64, vec![1u8; 16]))
+            Ok(())
         })
     })
     .unwrap();
@@ -739,22 +741,17 @@ fn key_and_financial_callback_settlement_roll_back_together() {
 }
 
 #[test]
-fn compatible_schema_seven_keeps_protected_key_controls_results_and_financial_rows() {
+fn compatible_schema_eight_keeps_key_targets_results_and_financial_rows() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     schema::initialize_vault_schema(&db).unwrap();
-    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) VALUES(X'01',?1,?2,NULL,300,1,0,3),(X'01',?3,?2,?4,86400,2,0,3)",params![vec![1u8;16],vec![2u8;32],vec![3u8;16],candid::encode_one(true).unwrap()]).unwrap();
-    db.execute("INSERT INTO key_flights(owner,token,day,reserved,created,payment) VALUES(X'01',1,0,30000000000,0,120000000)",[]).unwrap();
-    db.execute(
-        "INSERT INTO settings VALUES(X'01','derive',?1)",
-        params![serde_json::to_string(&(1u64, vec![1u8; 16])).unwrap()],
-    )
-    .unwrap();
+    db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) VALUES(X'01',?1,?2,NULL,300,1,0,3),(X'01',?3,?2,?4,86400,2,0,3)",params![vec![1u8;16],vec![2u8;32],vec![3u8;16],candid::encode_one(true).unwrap()]).unwrap();
+    db.execute("INSERT INTO key_flights(owner,vault,token,day,reserved,created,payment) VALUES(X'01',zeroblob(16),1,0,30000000000,0,120000000)",[]).unwrap();
     db.execute("INSERT INTO accounts VALUES('owner',42,7,8)", [])
         .unwrap();
-    db.execute("INSERT INTO vault_cycle_reservations(owner,token,account_owner,reserved,created_at_ms) VALUES('owner','derive:1','owner',120000000,0)",[]).unwrap();
+    db.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) VALUES('owner','derive:1',120000000,0)",[]).unwrap();
     let snapshot = || {
-        db.query_row("SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||cleanup||':'||hex(result)) FROM operations),'control',(SELECT value FROM settings WHERE key='derive'),'balance',(SELECT balance_cycles FROM accounts),'reserved',(SELECT reserved FROM vault_cycle_reservations),'flight',(SELECT reserved FROM key_flights))",[],|r|r.get::<_,String>(0)).unwrap()
+        db.query_row("SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||admission||':'||hex(result)) FROM operations),'target',(SELECT hex(vault) FROM key_flights),'balance',(SELECT balance_cycles FROM accounts),'reserved',(SELECT reserved FROM vault_cycle_reservations),'flight',(SELECT reserved FROM key_flights))",[],|r|r.get::<_,String>(0)).unwrap()
     };
     let before = snapshot();
     schema::initialize_vault_schema(&db).unwrap();

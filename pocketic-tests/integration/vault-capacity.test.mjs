@@ -1,5 +1,5 @@
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
-// Actual Wasm current schema7 capacity and payment continuity with a separate synthetic ledger.
+// Actual Wasm current schema8 capacity and payment continuity with a separate synthetic ledger.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
@@ -217,7 +217,7 @@ try {
     balanceBefore + 1_000_000_000n,
   );
   console.log(
-    "PASS current schema7: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap",
+    "PASS current schema8: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap",
   );
 } finally {
   try {

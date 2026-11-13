@@ -110,8 +110,7 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
         let input = key_input(env.canister(), env.owner(), &h)?;
         let payment = env.required_derive_payment(&h.key_name);
         let token = ops::begin_key(db, &r.operation, &digest, env.now())?;
-        store::keys::reserve(db, token, env.now(), payment)?;
-        store::save_key_control(db, token, &r.vault)?;
+        store::keys::reserve(db, &r.vault, token, env.now(), payment)?;
         Ok((token, h, input, payment))
     })?;
     if let Err(error) = env.reserve_cycles(token, payment) {
@@ -241,8 +240,6 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
                 &vault,
                 &object,
                 expected_revision,
-                &r.operation,
-                env.now(),
             )?),
             Action::PurgeObject {
                 vault,
@@ -309,7 +306,7 @@ fn cleanup_backing(db: &sql::Connection, action: &Action, now: u64) -> Result<bo
             if backed != 0 {
                 return Ok(true);
             }
-            let any:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND json_extract(header,'$.state')<>'Deleted') OR EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+            let any:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND json_extract(header,'$.state')<>'Deleted') OR EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM upload_outcomes WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
             if any == 0 {
                 return Err(Error::NotFound);
             }

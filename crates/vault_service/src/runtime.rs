@@ -1,6 +1,6 @@
 //! The production adapter binds this environment to the authenticated caller.
 use candid::Principal;
-use kinic_sqlite_compat::{Connection, params};
+use kinic_sqlite_compat::Connection;
 use vault_types::*;
 #[allow(async_fn_in_trait)]
 pub trait Environment {
@@ -27,10 +27,7 @@ pub fn settle_key_reservation_in(
     now: u64,
     actual: u64,
 ) -> Result<bool> {
+    let current = vault_store::keys::current(db)?.is_some_and(|(t, _)| t == token);
     vault_store::keys::settle(db, token, now, actual)?;
-    let current = vault_store::load::<(u64, Id)>(db, "derive")?.is_some_and(|(t, _)| t == token);
-    if current {
-        db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key='derive'",params![]).map_err(|_|Error::Storage)?;
-    }
     Ok(current)
 }
