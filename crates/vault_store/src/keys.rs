@@ -36,7 +36,7 @@ pub fn reserve(db: &Connection, token: u64, now: u64, required: u64) -> Result<(
     {
         return Err(Error::InvalidInput);
     }
-    // The global 16 MiB pool already prepays this row. The historical owner billing charge remains 4096 B.
+    // The global 16 MiB pool already prepays this row. The owner billing charge remains 4096 B.
     if content::usage(db)?
         .checked_add(KEY_OWNER_CHARGE)
         .ok_or(Error::QuotaExceeded)?
@@ -112,7 +112,7 @@ pub fn admit_rows(db: &Connection, additional: usize) -> Result<()> {
 }
 
 /// One bounded batch. Service callers commit a batch before fallible admission so
-/// legacy journals above the new cap can make progress even when admission fails.
+/// completed journals make progress even when new admission fails.
 pub fn collect_completed(db: &Connection, now: u64) -> Result<Vec<Principal>> {
     const SELECT: &str = "SELECT rowid,owner FROM key_flights WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2 ORDER BY CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 0 ELSE 1 END,settled,owner,token LIMIT 128";
     let mut statement = db.prepare(SELECT).map_err(|_| Error::Storage)?;
@@ -130,4 +130,10 @@ pub fn collect_completed(db: &Connection, now: u64) -> Result<Vec<Principal>> {
             .map_err(|_| Error::Storage)?;
     }
     Ok(owners.into_iter().collect())
+}
+
+/// Owner-local collection lets the global sweep reconcile this owner's storage fee atomically.
+pub fn collect_owner_completed(db: &Connection, now: u64) -> Result<()> {
+    db.execute("DELETE FROM key_flights WHERE rowid IN (SELECT rowid FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2 ORDER BY settled,token LIMIT 128)",params![now.saturating_sub(DAY) as i64,(now/DAY) as i64]).map_err(|_|Error::Storage)?;
+    Ok(())
 }

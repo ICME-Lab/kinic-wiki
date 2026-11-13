@@ -1,18 +1,15 @@
-type Activate = record {
-  normal : Envelope;
-  attempt : opt blob;
-  vault : blob;
-  registration : opt text;
-  assertion : opt text;
-  operation : blob;
-  recovery : Envelope;
-};
-type BeginRestore = record {
-  count : nat64;
-  root : blob;
-  operation : blob;
-  reserved_bytes : nat64;
-  header : Header;
+type Action = variant {
+  CancelUpload : record { job : blob; vault : blob; upload : blob };
+  PutChunk : record { upload : blob; bytes : blob; index : nat32 };
+  CommitRevision : record { upload : blob };
+  DeleteObject : record {
+    object : blob;
+    vault : blob;
+    expected_revision : nat64;
+  };
+  DeleteVault : record { vault : blob };
+  Collect;
+  BeginRevision : BeginRevision;
 };
 type BeginRevision = record {
   object : blob;
@@ -23,161 +20,44 @@ type BeginRevision = record {
   plain_size : nat64;
   expected_revision : nat64;
 };
-type BeginUnlock = record {
-  attempt : opt blob;
-  vault : blob;
-  transport : blob;
-  epoch : nat64;
-  target : blob;
-  purpose : Purpose;
-};
-type Bootstrap = record { public_key : blob; reserve : Reserve };
-type BootstrapReply = record { challenge : Challenge; header : Header };
-type Challenge = record {
-  expires : nat64;
-  registration : bool;
-  credential_ids : vec blob;
-  bytes : blob;
-};
-type CleanupProgress = record { job : blob; cursor : nat64; complete : bool };
 type CommittedUpload = record {
   object : blob;
   vault : blob;
   revision : nat64;
   sequence : nat64;
 };
-// A new-empty job has no archive, imported record, or unregistered candidate authority.
-type CreateEmptyPhase = variant {
-  Admitted;
-  Active;
-  EnvelopesStaged;
-  KitConfirmed;
-  Cancelling;
-  Cancelled;
-  Allocated;
-};
-type CreateEmptyStatus = record {
-  job : blob;
-  creator : RestoreExistingCandidate;
-  normal : opt Envelope;
-  cleanup_cursor : nat64;
-  envelope_digest : blob;
-  generation : opt Generation;
-  allocation_token : opt nat64;
-  kit_ack : opt blob;
-  target : PendingCreation;
-  recovery_verifier : blob;
-  recovery : opt Envelope;
-  phase : CreateEmptyPhase;
-  key_digest : blob;
-  authorizer_instance : Generation;
-};
-type CredentialInfo = record { id : blob };
-type CredentialRevocation = record { credential : blob; version : nat64 };
-type CredentialScope = variant { Global; Instances : vec Instance };
-type Derive = record {
-  attempt : opt blob;
-  vault : blob;
-  transport : blob;
-  epoch : nat64;
-  assertion : opt text;
-};
-type Envelope = record { ciphertext : blob; version : nat8; nonce : blob };
+type CreateVault = record { vault : blob; operation : blob };
+type DeriveKey = record { vault : blob; transport : blob; operation : blob };
 type Error = variant {
   Storage;
   InvalidInput;
   Busy;
-  InvalidProof;
   KeyService;
   NotFound;
-  ExportInProgress;
   Unauthorized;
-  RateLimited : record { retry_after : nat64 };
   Expired;
   QuotaExceeded;
   Conflict;
 };
-type Export = record {
-  id : blob;
-  expires : nat64;
-  vault : blob;
-  plain_bytes : nat64;
-  state : text;
-  chunk_count : nat64;
-  sequence : nat64;
-  record_count : nat64;
-  header : Header;
-};
-type ExportPage = record { next : opt nat64; entries : vec Revision };
 type FundingConfig = record {
   recipient : principal;
   cycles_per_kinic : nat64;
   ledger : principal;
 };
-type Generation = record {
-  vault : blob;
-  owner : principal;
-  epoch : nat64;
-  version : nat8;
-  canister : principal;
-  nonce : blob;
-  key_name : text;
-};
-// Shared logical capacity; accounting is reserved globally, never billed per owner.
 type GlobalCapacity = record {
   used : nat64;
   overcommitted : bool;
   limit : nat64;
   overage : nat64;
   accounting_reserved : nat64;
-  legacy_excess : nat64;
-};
-type GrantInfo = record {
-  id : blob;
-  expires : nat64;
-  next_counter : nat64;
-  generations : vec Generation;
-  purpose : GrantPurpose;
-};
-type GrantPurpose = variant {
-  RestoreCleanup : record { job : blob; target : PendingCreation };
-  Restore : record { job : blob };
-  CancelCreation : record { job : blob; target : PendingCreation };
-  Credentials;
-  RestoreTarget : record { job : blob; generation : Generation };
-  Normal;
-  Cleanup : record { job : blob };
-  Incident : record { job : blob; vector_digest : blob };
-  CreateEmpty : record {
-    job : blob;
-    target : PendingCreation;
-    authorizer_instance : Generation;
-  };
-  IncidentCutover : record { job : blob; digest : blob };
-  Create;
-  RestorePrepare : record { job : blob; target : PendingCreation };
-  IncidentPrepare : IncidentPreparation;
-};
-type GrantRequest = record {
-  credential : blob;
-  public_key : blob;
-  generations : vec Generation;
-  operation : blob;
-  purpose : GrantPurpose;
 };
 type Header = record {
   id : blob;
-  normal : opt Envelope;
-  generation : opt Generation;
-  epoch : nat64;
-  backup_sequence : opt nat64;
+  public_key : blob;
   state : VaultState;
-  recovery_verifier : blob;
+  nonce : blob;
   key_name : text;
-  recovery : opt Envelope;
-  published_slot : opt nat8;
   sequence : nat64;
-  backup_at : opt nat64;
 };
 type HttpRequest = record {
   url : text;
@@ -192,96 +72,18 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
-type IncidentBackupAck = record {
-  archive_length : nat64;
-  archive_hash : blob;
-  descriptor_digest : blob;
-  recovery_verifier : blob;
-  sequence : nat64;
-  commitment : blob;
+type KeyReply = record {
+  encrypted_key : blob;
+  public_key : blob;
+  input : blob;
 };
-type IncidentContext = record {
-  credentials : vec IncidentCredential;
-  namespace : blob;
-};
-// Constant-size ordered coverage; the frozen source owns membership.
-type IncidentCoverage = record {
-  records : nat64;
-  cursor : nat64;
-  last_batch : blob;
-  plain_bytes : nat64;
-  complete : bool;
-  source_root : blob;
-  chunks : nat64;
-  target_root : blob;
-};
-type IncidentCredential = record {
-  credential : blob;
-  scope : CredentialScope;
-  version : nat64;
-};
-type IncidentPreparation = record {
-  job : blob;
-  targets : vec PendingCreation;
-  sources : vec Generation;
-  namespace : blob;
-  compromised : vec CredentialRevocation;
-};
-type IncidentRead = record {
-  job : blob;
-  attempt : blob;
-  vault : blob;
-  descriptor_digest : blob;
-  export : blob;
-};
-type IncidentStatus = record {
-  job : blob;
-  cancel_digest : opt blob;
-  vector_digest : blob;
-  completed_digest : opt blob;
-  complete : bool;
-  targets : vec IncidentTarget;
-  semantic_config : blob;
-  namespace : blob;
-  compromised : vec CredentialRevocation;
-};
-type IncidentTarget = record {
-  staged_export : opt StagedExport;
-  normal : opt Envelope;
-  attempt : blob;
-  source : Header;
-  envelope_digest : blob;
-  snapshot_sequence : nat64;
-  kit_ack : opt blob;
-  target : opt Generation;
-  backup_ack : opt IncidentBackupAck;
-  restore_child : opt RestoreChildLink;
-  recovery_verifier : blob;
-  recovery : opt Envelope;
-  reset_attempt : opt blob;
-  phase : PreparationPhase;
-  coverage : opt IncidentCoverage;
-  next_epoch : nat64;
-  snapshot_time : nat64;
-};
-type Instance = record { vault : blob; nonce : blob };
-type KeyReply = record { encrypted_key : blob; public_key : blob };
-type ManageCredential = record {
-  remove : opt blob;
-  vault : blob;
-  registration : opt text;
-  assertion : text;
-};
+type Mutation = record { action : Action; operation : blob };
 type MutationResult = variant {
-  Key : KeyReply;
-  Header : Header;
-  Unit;
-  Cleanup : CleanupProgress;
-  InactiveCleanup : record { complete : bool };
+  Collected : nat64;
+  Done;
+  Progress : bool;
   Revision : Revision;
   Upload : Upload;
-  Challenge : Challenge;
-  Handle : blob;
 };
 type ObjectPage = record { next : opt blob; entries : vec Revision };
 type Payment = record {
@@ -297,12 +99,6 @@ type Payment = record {
   wallet : principal;
   created_at_time : nat64;
   config : FundingConfig;
-};
-// Public namespace identity and immutable creation attempt; never a generation or secret.
-type PendingCreation = record {
-  attempt : blob;
-  vault : blob;
-  namespace : blob;
 };
 type PendingUpload = record {
   expires : nat64;
@@ -321,19 +117,6 @@ type PendingUploads = record {
   next : opt blob;
   entries : vec PendingUploadSummary;
 };
-type PreparationPhase = variant {
-  BackupVerified;
-  PendingNonce;
-  Resetting;
-  EnvelopesStaged;
-  Wrapping;
-  Purged;
-  KitConfirmed;
-  Purging;
-  Cancelling;
-  Cancelled;
-  Allocated;
-};
 type PurchaseRequest = record {
   beneficiary : principal;
   amount_e8s : nat64;
@@ -341,146 +124,30 @@ type PurchaseRequest = record {
   min_credits : nat64;
   created_at_time : nat64;
 };
-type Purpose = variant { Unlock; Activate; AddCredential; RemoveCredential };
 type Quota = record {
   "reserved" : nat64;
   limit : nat64;
   current : nat64;
   charged : nat64;
 };
-type Reserve = record { vault : blob; operation : blob };
-type RestoreAdmissionPhase = variant {
-  Registration;
-  Admitted;
-  Possession;
-  CurrentProof;
-};
-type RestoreAdmissionRequest = record {
-  job : blob;
-  source_generation : opt Generation;
-  source_epoch : nat64;
-  records : nat64;
-  archive_length : nat64;
-  archive_digest : blob;
-  candidate_mode : opt RestoreCandidateMode;
-  target : PendingCreation;
-  source_commitment : blob;
-  reserved_bytes : nat64;
-};
-type RestoreAdmissionStatus = record {
-  challenge : Challenge;
-  request : RestoreAdmissionRequest;
-  pipeline : opt RestorePipeline;
-  // Exact bytes to sign, including the recovery proof domain and pre-nonce binding.
-  recovery_message : blob;
-  allocation_token : opt nat64;
-  existing_candidate : opt RestoreExistingCandidate;
-  issued : nat64;
-  cancel_complete : bool;
-  current_verifier : blob;
-  current_live : opt Generation;
-  semantic_config : blob;
-  phase : RestoreAdmissionPhase;
-  // Public credential material only, bounded and checked before persistence.
-  candidate : opt text;
-  proof_fence : blob;
-  candidate_digest : blob;
-  cancel_requested : bool;
-  next_epoch : nat64;
-  parent_job : opt blob;
-};
-// None/New preserves the new physical candidate ceremony, including historical jobs.
-type RestoreCandidateMode = variant { New; ExistingInstances : blob };
-// Immutable replacement audit retained when the single active child slot is reused.
-type RestoreChildLink = record {
-  job : blob;
-  attempt : blob;
-  archive_digest : blob;
-  target : Generation;
-};
-type RestoreExistingCandidate = record {
-  credential : blob;
-  version : nat64;
-  scope_digest : blob;
-};
-type RestorePhase = variant {
-  BackupVerified;
-  Importing;
-  Discarding;
-  Active;
-  EnvelopesStaged;
-  KitConfirmed;
-  Cancelling;
-  Cancelled;
-  Allocated;
-};
-type RestorePipeline = record {
-  discard_started : bool;
-  normal : opt Envelope;
-  cleanup_cursor : nat64;
-  envelope_digest : blob;
-  kit_ack : opt blob;
-  preflight : opt RestorePreflight;
-  target : Generation;
-  backup_ack : opt IncidentBackupAck;
-  old_removed : bool;
-  recovery_verifier : blob;
-  recovery : opt Envelope;
-  phase : RestorePhase;
-};
-// Locally validated archive metadata. This is a signed client assertion, not server AEAD validation.
-type RestorePreflight = record {
-  records : nat64;
-  peak_pending_bytes : nat64;
-  source_saved : bool;
-  current_plain_bytes : nat64;
-  archive_length : nat64;
-  archive_digest : blob;
-  plain_bytes : nat64;
-  objects : nat64;
-  source_fully_verified : bool;
-  target_commitment : blob;
-  source_commitment : blob;
-  revision_bytes : nat64;
-  chunks : nat64;
-  sequence : nat64;
-};
-type RestoreProgress = record { count : nat64; root : blob; sequence : nat64 };
-type Result = variant { Ok : Header; Err : Error };
-type Result_1 = variant { Ok : nat64; Err : Error };
-type Result_10 = variant { Ok : RestoreProgress; Err : Error };
-type Result_11 = variant { Ok : Revision; Err : Error };
-type Result_12 = variant { Ok : opt CreateEmptyStatus; Err : Error };
-type Result_13 = variant { Ok : KeyReply; Err : Error };
-type Result_14 = variant { Ok : ExportPage; Err : Error };
-type Result_15 = variant { Ok : GrantInfo; Err : Error };
-type Result_16 = variant { Ok : opt Export; Err : Error };
-type Result_17 = variant { Ok : blob; Err : Error };
-type Result_18 = variant { Ok : opt VaultConfig; Err : Error };
-type Result_19 = variant { Ok : Quota; Err : Error };
-type Result_2 = variant { Ok : Challenge; Err : Error };
-type Result_20 = variant { Ok : UploadStatus; Err : Error };
-type Result_21 = variant { Ok : GlobalCapacity; Err : Error };
-type Result_22 = variant { Ok : opt IncidentContext; Err : Error };
-type Result_23 = variant { Ok : StagedExport; Err : Error };
-type Result_24 = variant { Ok : opt IncidentStatus; Err : Error };
-type Result_25 = variant { Ok : vec CredentialInfo; Err : Error };
-type Result_26 = variant { Ok : ObjectPage; Err : Error };
-type Result_27 = variant { Ok : vec Payment; Err : Error };
-type Result_28 = variant { Ok : PendingUploads; Err : Error };
-type Result_29 = variant { Ok : vec UnfinishedVault; Err : Error };
-type Result_3 = variant { Ok : Export; Err : Error };
-type Result_30 = variant { Ok : vec Header; Err : Error };
-type Result_31 = variant { Ok : MutationResult; Err : Error };
-type Result_32 = variant { Ok : opt Payment; Err : Error };
-type Result_33 = variant { Ok : RestoreAdmissionStatus; Err : Error };
-type Result_34 = variant { Ok : opt RestoreAdmissionStatus; Err : Error };
-type Result_4 = variant { Ok; Err : Error };
-type Result_5 = variant { Ok : Upload; Err : Error };
-type Result_6 = variant { Ok : BootstrapReply; Err : Error };
-type Result_7 = variant { Ok : CleanupProgress; Err : Error };
-type Result_8 = variant { Ok : Payment; Err : Error };
-type Result_9 = variant { Ok : opt CleanupProgress; Err : Error };
+type Result = variant { Ok : nat64; Err : Error };
+type Result_1 = variant { Ok : Payment; Err : Error };
+type Result_10 = variant { Ok : RevisionPage; Err : Error };
+type Result_11 = variant { Ok : ObjectPage; Err : Error };
+type Result_12 = variant { Ok : vec Payment; Err : Error };
+type Result_13 = variant { Ok : PendingUploads; Err : Error };
+type Result_14 = variant { Ok : vec Header; Err : Error };
+type Result_15 = variant { Ok : MutationResult; Err : Error };
+type Result_16 = variant { Ok : opt Payment; Err : Error };
+type Result_17 = variant { Ok; Err : Error };
+type Result_2 = variant { Ok : Header; Err : Error };
+type Result_3 = variant { Ok : KeyReply; Err : Error };
+type Result_4 = variant { Ok : blob; Err : Error };
+type Result_5 = variant { Ok : opt VaultConfig; Err : Error };
+type Result_6 = variant { Ok : Revision; Err : Error };
+type Result_7 = variant { Ok : Quota; Err : Error };
+type Result_8 = variant { Ok : UploadStatus; Err : Error };
+type Result_9 = variant { Ok : GlobalCapacity; Err : Error };
 type Revision = record {
   deleted : bool;
   object : blob;
@@ -491,11 +158,7 @@ type Revision = record {
   plain_size : nat64;
   sequence : nat64;
 };
-type StagedExport = record {
-  descriptor_digest : blob;
-  export : Export;
-  commitment : blob;
-};
+type RevisionPage = record { next : opt nat64; entries : vec Revision };
 type Status = variant {
   Quoted;
   InsufficientAllowance;
@@ -507,14 +170,6 @@ type Status = variant {
   Expired;
   InsufficientFunds;
 };
-type UnfinishedVault = record {
-  expires : nat64;
-  cleaning : bool;
-  attempt : blob;
-  vault : blob;
-  state : VaultState;
-  namespace : opt blob;
-};
 type Upload = record { id : blob; expires : nat64; revision : nat64 };
 type UploadStatus = variant {
   Committed : CommittedUpload;
@@ -523,106 +178,30 @@ type UploadStatus = variant {
   Expired;
   Pending : PendingUpload;
 };
-// Exact WebAuthn deployment configuration, independent from II derivation origin.
-type VaultConfig = record {
-  minimum_cycles : nat64;
-  origin : text;
-  key_name : text;
-  rp_id : text;
-};
-type VaultState = variant {
-  Active;
-  Restoring;
-  Purging;
-  Pending;
-  IncidentRequired;
-};
+type VaultConfig = record { minimum_cycles : nat64; key_name : text };
+type VaultState = variant { Deleting; Active; Deleted; Pending };
 service : () -> {
-  abort_export : (blob) -> (Result);
-  account_balance : () -> (Result_1) query;
-  activate_vault : (Activate) -> (Result);
-  begin_cleanup : (GrantRequest) -> (Result_2);
-  begin_export : (blob, blob) -> (Result_3);
-  begin_grant : (GrantRequest) -> (Result_2);
-  begin_restore : (BeginRestore) -> (Result);
-  begin_restore_admission : (RestoreAdmissionRequest) -> (Result_2);
-  begin_restore_grant : (GrantRequest) -> (Result_2);
-  begin_restore_revision : (blob, Revision, opt blob) -> (Result_4);
-  begin_revision : (BeginRevision) -> (Result_5);
-  begin_unlock : (BeginUnlock) -> (Result_2);
-  bootstrap : (Bootstrap) -> (Result_6);
-  cancel_create_empty : (blob, PendingCreation, opt Generation, nat64) -> (
-      Result_7,
-    );
-  cancel_pending_key_derivation : () -> (Result_4);
-  cancel_quote : (blob) -> (Result_8);
-  cancel_vault_setup : (blob, blob) -> (Result_4);
-  cleanup_status : () -> (Result_9);
-  collect_garbage : () -> (Result_1);
-  commit_restore : (Activate) -> (Result);
-  commit_restore_revision : (blob, nat64, opt blob) -> (Result_10);
-  commit_revision : (blob) -> (Result_11);
-  // Read-only status resolves activation whose old grant has intentionally been invalidated.
-  create_empty_status : () -> (Result_12) query;
-  delete_object : (blob, blob, nat64, blob) -> (Result_11);
-  derive_vault_key : (Derive) -> (Result_13);
-  export_index : (blob, nat64) -> (Result_14);
-  finish_cleanup : (blob, text) -> (Result_15);
-  finish_export : (blob, bool) -> (Result);
-  finish_grant : (blob, text) -> (Result_15);
-  finish_restore_grant : (blob, text, bool) -> (Result_15);
-  get_active_export : () -> (Result_16);
-  get_active_export_for_vault : (blob) -> (Result_16);
-  get_chunk : (blob, blob, nat64, nat32) -> (Result_17);
-  get_config : () -> (Result_18);
-  get_export_chunk : (blob, blob, nat64, nat32) -> (Result_17);
-  get_manifest : (blob, blob, nat64) -> (Result_11);
-  get_quota : (blob) -> (Result_19);
-  get_upload_status : (blob) -> (Result_20);
-  get_vault_header : (blob) -> (Result);
-  // Aggregate capacity is public metadata; it never allocates an owner or account.
-  global_capacity : () -> (Result_21) query;
+  account_balance : () -> (Result) query;
+  cancel_quote : (blob) -> (Result_1);
+  create_vault : (CreateVault) -> (Result_2);
+  derive_vault_key : (DeriveKey) -> (Result_3);
+  get_chunk : (blob, blob, nat64, nat32) -> (Result_4);
+  get_config : () -> (Result_5);
+  get_manifest : (blob, blob, nat64) -> (Result_6);
+  get_quota : (blob) -> (Result_7);
+  get_upload_status : (blob) -> (Result_8);
+  get_vault_header : (blob) -> (Result_2);
+  global_capacity : () -> (Result_9) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
-  incident_context : () -> (Result_22) query;
-  incident_cutover_digest : () -> (Result_17) query;
-  incident_source_index : (blob, blob, blob, nat64) -> (Result_14) query;
-  incident_staged_chunk : (IncidentRead, blob, nat64, nat32) -> (
-      Result_17,
-    ) query;
-  incident_staged_export : (IncidentRead) -> (Result_23) query;
-  incident_staged_index : (IncidentRead, nat64) -> (Result_14) query;
-  // Owner-only encrypted status remains available when configuration is absent or incompatible.
-  incident_status : () -> (Result_24) query;
-  initialize_restore_namespace : (blob) -> (Result_17);
-  list_credentials : () -> (Result_25);
-  list_history : (blob, blob, nat64) -> (Result_14);
-  list_objects : (blob, blob) -> (Result_26);
-  list_payments : () -> (Result_27) query;
-  list_pending_uploads : (blob) -> (Result_28);
-  list_unfinished_vaults : () -> (Result_29);
-  list_vaults : () -> (Result_30);
-  manage_unlock_credential : (ManageCredential) -> (Result_4);
-  mutate : (blob, blob) -> (Result_31);
-  pay_purchase : (blob) -> (Result_8);
-  payment_status : (blob) -> (Result_32) query;
-  prepare_unlock_credential : (blob, text) -> (Result_17);
-  prove_restore_candidate : (blob, text) -> (Result_33);
-  prove_restore_current : (blob, blob) -> (Result_33);
-  purge_object : (blob, blob) -> (Result_4);
-  put_chunk : (blob, nat32, blob) -> (Result_4);
-  put_restore_chunk : (blob, nat32, blob, opt blob) -> (Result_4);
-  quote_purchase : (PurchaseRequest) -> (Result_8);
-  register_bootstrap : (blob, text) -> (Result_15);
-  register_restore_candidate : (blob, text) -> (Result_2);
-  reserve_vault : (Reserve) -> (Result);
-  restore_admission_status : () -> (Result_34) query;
-  restore_target_chunk : (blob, Generation, blob, nat64, nat32) -> (
-      Result_17,
-    ) query;
-  restore_target_descriptor : (blob, Generation) -> (Result_23) query;
-  restore_target_index : (blob, Generation, nat64) -> (Result_14) query;
-  restore_target_progress : (blob, Generation) -> (Result_10) query;
-  resume_restore_admission : (blob) -> (Result_2);
-  set_config : (opt VaultConfig) -> (Result_4);
-  set_funding_config : (opt FundingConfig) -> (Result_4);
+  list_history : (blob, blob, nat64) -> (Result_10);
+  list_objects : (blob, blob) -> (Result_11);
+  list_payments : () -> (Result_12) query;
+  list_pending_uploads : (blob) -> (Result_13);
+  list_vaults : () -> (Result_14);
+  mutate : (Mutation) -> (Result_15);
+  pay_purchase : (blob) -> (Result_1);
+  payment_status : (blob) -> (Result_16) query;
+  quote_purchase : (PurchaseRequest) -> (Result_1);
+  set_config : (opt VaultConfig) -> (Result_17);
+  set_funding_config : (opt FundingConfig) -> (Result_17);
 }

@@ -1,9 +1,9 @@
-//! Initial release: create v6 once; validate existing v6 without repairing it.
+//! Initial release: create v7 once; validate existing v7 without repairing it.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
 
-const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires); CREATE INDEX exports_expiry ON exports(owner,state,expires); CREATE INDEX restores_expiry ON restores(owner,expires);";
+const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
 
 pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
     let version: i64 = db
@@ -21,10 +21,10 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         0 if count == 0 => {
             db.execute_batch(&statements.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            db.execute_batch("PRAGMA user_version=6;")
+            db.execute_batch("PRAGMA user_version=7;")
                 .map_err(|_| Error::Storage)?;
         }
-        6 if count == statements.len() as i64 => {
+        7 if count == statements.len() as i64 => {
             let expected: BTreeMap<_, _> = statements
                 .iter()
                 .map(|s| contract(s))
@@ -62,7 +62,6 @@ fn schema_statements() -> Vec<String> {
     let script = [
         vault_store::SCHEMA,
         vault_store::CONTENT_SCHEMA,
-        vault_store::RESTORE_SCHEMA,
         vault_store::EXPIRY_SCHEMA,
         include_str!("accounts.sql"),
         INDEXES,

@@ -43,8 +43,7 @@ pub(crate) fn schema_statements() -> Vec<String> {
         SMALL_ROW,
         &format!("OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT}"),
     );
-    // Confirmed credits replace a durable pending membership, including grandfathered
-    // legacy commitments. Ordinary new accounts cannot bypass transfer admission.
+    // Confirmed credits replace a durable pending membership. New accounts cannot bypass transfer admission.
     count_guard(
         &mut statements,
         "accounts",
@@ -110,12 +109,7 @@ pub(crate) fn schema_statements() -> Vec<String> {
         ),
     );
     count_guard(&mut statements, "account_ledger", "id=NEW.id", AUDIT, "");
-    // Seven fixed 8KiB global setting slots plus one prepaid 512B cursor fit
-    // inside 64KiB. Current keys: config, funding, generation, quote_fee_serial,
-    // cleanup-budget (vault_types::capacity::GLOBAL_SETTING_KEYS). Two slots remain
-    // for bounded incident/restore metadata. Extend only while the fixed sum fits
-    // SETTINGS; otherwise repartition this same pool with migration-safe bounds.
-    // Scalar widening never requires another setting slot.
+    // Seven fixed global setting slots plus the billing cursor fit the prepaid pool.
     guard(
         &mut statements,
         "global_settings",
@@ -141,8 +135,7 @@ pub(crate) fn schema_statements() -> Vec<String> {
     );
     statements
 }
-/// All pending rows must be inspected: legacy protected commitments can exceed
-/// the new cap, and must continue settling without admitting another beneficiary.
+/// Pending payments reserve the future beneficiary account before debit.
 pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Result<()> {
     let mut owners = std::collections::BTreeSet::<String>::new();
     let mut stmt = db

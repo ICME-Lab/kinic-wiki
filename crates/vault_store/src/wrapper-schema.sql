@@ -1,2 +1,0 @@
--- Both bounded slots are permanently prepaid in each retained nondeleted revision's charge.
-CREATE TABLE IF NOT EXISTS wrapper_slots(owner BLOB NOT NULL,vault BLOB NOT NULL,object BLOB NOT NULL,revision INTEGER NOT NULL,slot INTEGER NOT NULL CHECK(slot IN (0,1)),generation BLOB NOT NULL,source_digest BLOB NOT NULL CHECK(length(source_digest)=32),wrapper BLOB NOT NULL CHECK(length(wrapper)<=1024),PRIMARY KEY(owner,vault,object,revision,slot));

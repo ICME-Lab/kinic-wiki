@@ -53,83 +53,6 @@ fn prepaid_payment_is_caller_bound_idempotent_and_no_read_allocation() {
     assert!(record_quote(p(1), conflicting, cfg, 10, 1_000_000_000).is_err());
 }
 #[test]
-fn exact_origin_validation() {
-    for (origin, rp, valid) in [
-        ("https://vault.kinic.xyz", "vault.kinic.xyz", true),
-        ("https://wiki.kinic.xyz", "kinic.xyz", false),
-        ("https://vault.kinic.xyz", "kinic.xyz", false),
-        ("http://vault.localhost:3024", "vault.localhost", true),
-    ] {
-        assert_eq!(
-            accounting::validate_vault_config(&vault_types::VaultConfig {
-                origin: origin.into(),
-                rp_id: rp.into(),
-                key_name: "test_key_1".into(),
-                minimum_cycles: 100_000_000_000
-            })
-            .is_ok(),
-            valid
-        );
-    }
-}
-fn fund(owner: Principal, amount: u64) {
-    let req = PurchaseRequest {
-        operation: vec![owner.as_slice()[0]; 16],
-        beneficiary: owner,
-        amount_e8s: 100_000_000,
-        min_credits: 1,
-        created_at_time: 0,
-    };
-    let q = record_quote(
-        owner,
-        req,
-        FundingConfig {
-            ledger: p(80),
-            recipient: p(81),
-            cycles_per_kinic: amount,
-        },
-        10,
-        0,
-    )
-    .unwrap();
-    let sent = begin_payment(owner, &q.request.operation, 0).unwrap();
-    complete_payment(&sent, Outcome::Paid(1)).unwrap();
-}
-#[test]
-fn reservations_checkpoint_refund_generation_and_storage_are_exact() {
-    state::initialize().unwrap();
-    let owner = p(10).to_text();
-    fund(p(10), 1_000_000_000);
-    let s = state::State;
-    s.vault_reserve_cycles(&owner, "challenge:1", 20_000_000, 0)
-        .unwrap();
-    s.vault_reserve_cycles(&owner, "challenge:1", 20_000_000, 0)
-        .unwrap();
-    assert_eq!(s.balance(&owner).unwrap(), 980_000_000);
-    s.vault_checkpoint_execution(&owner, "challenge:1", 7_000_000)
-        .unwrap();
-    s.vault_start_generation().unwrap();
-    assert_eq!(
-        s.vault_recover_orphan_execution(&owner, 1000).unwrap(),
-        vec![1]
-    );
-    assert_eq!(s.balance(&owner).unwrap(), 993_000_000);
-    s.vault_recover_orphan_execution(&owner, 1000).unwrap();
-    assert_eq!(s.balance(&owner).unwrap(), 993_000_000);
-    s.vault_reserve_cycles(&owner, "derive:2", 100_000_000, 1000)
-        .unwrap();
-    s.vault_cancel_reserved_cycles(&owner, "derive:2", 80_000_000, false, 1100)
-        .unwrap();
-    s.vault_reconcile_refunded_cycles(&owner, "derive:2", 40_000_000, 1200)
-        .unwrap();
-    s.vault_reconcile_refunded_cycles(&owner, "derive:2", 40_000_000, 1200)
-        .unwrap();
-    assert_eq!(s.balance(&owner).unwrap(), 953_000_000);
-    s.vault_track_storage(&owner, 1_073_741_824, 2000).unwrap();
-    s.vault_settle_storage_timer_batch(3000).unwrap();
-    assert_eq!(s.balance(&owner).unwrap(), 952_873_000);
-}
-#[test]
 fn uncertain_payment_never_becomes_safe_to_reissue_after_error_or_upgrade() {
     state::initialize().unwrap();
     let req = PurchaseRequest {
@@ -215,70 +138,6 @@ fn quota_limits_pin_quotes_and_fee_failures_do_not_credit() {
     );
     assert_eq!(state::State.balance(&p(52).to_text()).unwrap(), 0);
     assert!(begin_payment(p(51), &[0; 16], 0).is_err());
-}
-#[test]
-fn private_state_owner_isolation_and_usage_commit_atomically() {
-    use kinic_sqlite_compat::params;
-    use vault_types::{Error, Reserve, VaultConfig};
-    state::initialize().unwrap();
-    fund(p(61), 100_000_000);
-    fund(p(62), 100_000_000);
-    state::State
-        .vault_set_config(Some(VaultConfig {
-            origin: "https://vault.kinic.xyz".into(),
-            rp_id: "vault.kinic.xyz".into(),
-            key_name: "key_1".into(),
-            minimum_cycles: 100_000_000_000,
-        }))
-        .unwrap();
-    let a = vault_store::OwnerContext::authenticated(p(61)).unwrap();
-    let b = vault_store::OwnerContext::authenticated(p(62)).unwrap();
-    let reserve = || Reserve {
-        vault: vec![8; 16],
-        operation: vec![9; 16],
-    };
-    let failure: Result<(), Error> = state::transaction(|db| {
-        a.run(db, |db| {
-            vault_store::reserve(db, p(61), reserve(), 1)?;
-            accounting::track_storage_in(db, &p(61).to_text(), 123, 1000)?;
-            Err(Error::Conflict)
-        })
-    });
-    assert!(failure.is_err());
-    state::transaction(|db| {
-        a.run(db, |db| {
-            assert!(vault_store::header(db, &[8; 16]).is_err());
-            let bytes: i64 = db
-                .query_row(
-                    "SELECT storage_bytes FROM accounts WHERE owner=?1",
-                    params![p(61).to_text()],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(bytes, 0);
-            vault_store::reserve(db, p(61), reserve(), 1)?;
-            Ok(())
-        })
-    })
-    .unwrap();
-    state::transaction(|db| {
-        b.run(db, |db| {
-            assert!(vault_store::header(db, &[8; 16]).is_err());
-            vault_store::reserve(db, p(62), reserve(), 1)?;
-            Ok(())
-        })
-    })
-    .unwrap();
-    state::State.vault_start_generation().unwrap();
-    for context in [a, b] {
-        state::transaction(|db| {
-            context.run(db, |db| {
-                assert_eq!(vault_store::header(db, &[8; 16])?.id, vec![8; 16]);
-                Ok(())
-            })
-        })
-        .unwrap();
-    }
 }
 #[test]
 fn certified_asset_policy_rejects_embedding_without_breaking_ii_popup() {
@@ -389,229 +248,6 @@ fn pending_fee_reserves_global_payment_capacity_before_dispatch() {
 }
 
 #[test]
-fn signed_cleanup_accounting_is_atomic_scoped_bounded_and_preserves_sent_cost() {
-    use kinic_sqlite_compat::params;
-    state::initialize().unwrap();
-    let owner = p(95);
-    fund(owner, 100_000_000_000);
-    let context = vault_store::OwnerContext::authenticated(owner).unwrap();
-    state::transaction(|db|context.run(db,|db|{
-  vault_store::keys::reserve(db,1,0,20_000_000_000)?;vault_store::keys::mark_sent(db,1,20_000_000_000)?;
-  vault_store::save(db,"control",&serde_json::json!({"serial":1,"derive":{"token":1,"vault":vec![1;16]},"random":null}))
- })).unwrap();
-    let s = state::State;
-    s.vault_reserve_cycles(&owner.to_text(), "derive:1", 30_000_000_000, 0)
-        .unwrap();
-    s.vault_checkpoint_execution(&owner.to_text(), "derive:1", 2_000_000)
-        .unwrap();
-    state::transaction(|db| {
-        db.execute(
-            "UPDATE accounts SET balance_cycles=0 WHERE owner=?1",
-            params![owner.to_text()],
-        )
-        .unwrap();
-        Ok(())
-    })
-    .unwrap();
-    let run = |targets: &[Vec<u8>], rollback: bool| {
-        state::transaction(|db| {
-            context.run(db, |db| {
-                let result = accounting::recover_pending_in(db, owner, targets, true, 200)?;
-                if rollback {
-                    return Err(vault_types::Error::Conflict);
-                }
-                Ok(result)
-            })
-        })
-    };
-    assert!(!run(&[vec![2; 16]], false).unwrap());
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
-    assert!(run(&[vec![1; 16]], true).is_err());
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
-    assert!(!run(&[vec![1; 16]], false).unwrap());
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 9_998_000_000);
-    assert!(!run(&[vec![1; 16]], false).unwrap());
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 9_998_000_000);
-    s.vault_start_generation().unwrap();
-    assert!(run(&[vec![1; 16]], false).unwrap());
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 9_998_000_000);
-    // Tiny positive cleanup balances cap execution debit; no affordability gate or trap.
-    state::transaction(|db| {
-        db.execute(
-            "UPDATE accounts SET balance_cycles=1 WHERE owner=?1",
-            params![owner.to_text()],
-        )
-        .unwrap();
-        Ok(())
-    })
-    .unwrap();
-    s.vault_charge_execution(&owner.to_text(), 20_000_000, 200_000)
-        .unwrap();
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 0);
-}
-
-#[test]
-fn unresolved_creation_rejects_semantic_configuration_change() {
-    use vault_types::*;
-    state::initialize().unwrap();
-    let config = VaultConfig {
-        origin: "http://localhost:5173".into(),
-        rp_id: "localhost".into(),
-        key_name: "test_key_1".into(),
-        minimum_cycles: 100_000_000_000,
-    };
-    state::State.vault_set_config(Some(config.clone())).unwrap();
-    state::transaction(|db| {
-        vault_store::OwnerContext::authenticated(p(51))?.run(db, |db| {
-            vault_store::reserve(
-                db,
-                p(51),
-                Reserve {
-                    vault: vec![1; 16],
-                    operation: vec![2; 16],
-                },
-                1,
-            )
-            .map(|_| ())
-        })
-    })
-    .unwrap();
-    let mut changed = config.clone();
-    changed.key_name = "other_key".into();
-    assert_eq!(
-        state::State.vault_set_config(Some(changed)),
-        Err(Error::Conflict)
-    );
-    assert_eq!(state::State.vault_set_config(None), Err(Error::Conflict));
-    let mut operational = config;
-    operational.minimum_cycles += 1;
-    assert!(state::State.vault_set_config(Some(operational)).is_ok());
-}
-
-#[test]
-fn global_key_settlement_survives_configuration_removal_without_allocating_authority() {
-    use kinic_sqlite_compat::params;
-    state::initialize().unwrap();
-    state::transaction(|db|{
-        db.execute("INSERT INTO key_flights(owner,token,day,reserved,created,payment) VALUES(?1,7,0,30000000000,1,30000000000)",params![p(15).as_slice()]).unwrap();
-        Ok(())
-    }).unwrap();
-    let owner = vault_store::OwnerContext::authenticated(p(15)).unwrap();
-    assert!(!api::settle_key_reservation_for_owner(owner, 7, 2, 0).unwrap());
-    assert!(!api::settle_key_reservation_for_owner(owner, 7, 2, 0).unwrap());
-    assert_eq!(
-        api::settle_key_reservation_for_owner(
-            vault_store::OwnerContext::authenticated(p(16)).unwrap(),
-            7,
-            2,
-            0
-        ),
-        Err(vault_types::Error::NotFound)
-    );
-    state::transaction(|db| {
-        let (actual, flight): (i64, i64) = db
-            .query_row(
-                "SELECT actual,in_flight FROM key_flights WHERE token=7",
-                params![],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!((actual, flight), (0, 0));
-        let settings: i64 = db
-            .query_row("SELECT count(*) FROM settings", params![], |r| r.get(0))
-            .unwrap();
-        assert_eq!(settings, 0);
-        Ok(())
-    })
-    .unwrap();
-}
-
-#[test]
-fn restore_transition_without_header_blocks_configuration_and_malformed_state_fails_closed() {
-    use vault_types::*;
-    state::initialize().unwrap();
-    let config = VaultConfig {
-        origin: "http://localhost:5173".into(),
-        rp_id: "localhost".into(),
-        key_name: "test_key_1".into(),
-        minimum_cycles: 100_000_000_000,
-    };
-    state::State.vault_set_config(Some(config.clone())).unwrap();
-    state::transaction(|db| {
-        vault_store::OwnerContext::authenticated(p(52))?.run(db, |db| {
-            vault_store::transition::save_state(
-                db,
-                &TransitionState {
-                    namespace_flight: Some(RestoreNamespaceFlight {
-                        operation: vec![1; 16],
-                        token: 1,
-                        expires: 120,
-                        fence: vec![2; 32],
-                        ready: true,
-                    }),
-                    ..Default::default()
-                },
-            )
-        })
-    })
-    .unwrap();
-    assert_eq!(state::State.vault_set_config(None), Err(Error::Conflict));
-    let mut changed = config;
-    changed.key_name = "other_key".into();
-    assert_eq!(
-        state::State.vault_set_config(Some(changed)),
-        Err(Error::Conflict)
-    );
-    state::transaction(|db| {
-        db.execute(
-            "UPDATE settings SET value='{\"version\":1}' WHERE key='transition'",
-            [],
-        )
-        .unwrap();
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(state::State.vault_set_config(None), Err(Error::Storage));
-}
-
-#[test]
-fn restore_challenge_completion_waits_for_exact_owner_token_and_checkpoint() {
-    state::initialize().unwrap();
-    let owner = p(91);
-    fund(owner, 1_000_000_000);
-    let s = state::State;
-    s.vault_reserve_cycles(&owner.to_text(), "challenge:1", 20_000_000, 0)
-        .unwrap();
-    s.vault_reserve_cycles(&owner.to_text(), "challenge:2", 20_000_000, 0)
-        .unwrap();
-    s.vault_checkpoint_execution(&owner.to_text(), "challenge:1", 7_000_000)
-        .unwrap();
-    state::transaction(|db| {
-        assert!(accounting::challenge_pending_in(db, owner, 1)?);
-        assert!(!accounting::challenge_pending_in(db, p(92), 1)?);
-        assert!(!accounting::challenge_pending_in(db, owner, 3)?);
-        Ok(())
-    })
-    .unwrap();
-    s.vault_settle_cycles(&owner.to_text(), "challenge:1", 0, 1000)
-        .unwrap();
-    state::transaction(|db| {
-        assert!(accounting::challenge_pending_in(db, owner, 1)?);
-        Ok(())
-    })
-    .unwrap();
-    s.vault_finish_execution(&owner.to_text(), "challenge:1", 7_000_000, 1000)
-        .unwrap();
-    state::transaction(|db| {
-        assert!(!accounting::challenge_pending_in(db, owner, 1)?);
-        assert!(accounting::challenge_pending_in(db, owner, 2)?);
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(s.balance(&owner.to_text()).unwrap(), 973_000_000);
-}
-
-#[test]
 fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
     state::initialize().unwrap();
     let wallet = p(210);
@@ -666,7 +302,7 @@ fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
 #[test]
 fn initial_release_rejects_unsupported_or_foreign_stores_without_changes() {
     use kinic_sqlite_compat::{Connection, params};
-    for version in [0, 1, 2, 3, 4, 5, 7] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 7] {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(&format!("CREATE TABLE foreign_data(secret BLOB); INSERT INTO foreign_data VALUES(X'0102'); PRAGMA user_version={version};")).unwrap();
         let before: i64 = db
@@ -695,11 +331,11 @@ fn initial_release_rejects_unsupported_or_foreign_stores_without_changes() {
 }
 
 #[test]
-fn initial_release_rejects_partial_v6_without_repairing_it() {
+fn initial_release_rejects_partial_v7_without_repairing_it() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     db.execute_batch(
-        "CREATE TABLE global_settings(key TEXT PRIMARY KEY,value TEXT); PRAGMA user_version=6;",
+        "CREATE TABLE global_settings(key TEXT PRIMARY KEY,value TEXT); PRAGMA user_version=7;",
     )
     .unwrap();
     assert_eq!(
@@ -748,7 +384,7 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v6_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v7_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
@@ -762,7 +398,7 @@ fn initial_release_creates_v6_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     let before: i64 = db
         .query_row("SELECT total_changes()", params![], |r| {
             kinic_sqlite_compat::row_get(r, 0)
@@ -820,10 +456,10 @@ fn initial_release_rejects_sqlite_similar_foreign_names_without_changes() {
 }
 
 #[test]
-fn initial_release_rejects_changed_v6_contract_without_repair() {
+fn initial_release_rejects_changed_v7_contract_without_repair() {
     use kinic_sqlite_compat::{Connection, params};
     for damage in [
-        "ALTER TABLE restores ADD COLUMN future_column TEXT",
+        "ALTER TABLE operations ADD COLUMN future_column TEXT",
         "DROP INDEX one_upload_per_vault; CREATE INDEX one_upload_per_vault ON uploads(owner,vault)",
         "DROP TRIGGER key_pool_count; CREATE TRIGGER key_pool_count BEFORE INSERT ON key_flights BEGIN SELECT 1; END;",
     ] {
@@ -853,7 +489,7 @@ fn initial_release_rejects_changed_v6_contract_without_repair() {
 fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
     use kinic_sqlite_compat::{Connection, params};
     let path = std::env::temp_dir().join(format!(
-        "vault-v6-policy-{}-{}.sqlite",
+        "vault-v7-policy-{}-{}.sqlite",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -883,4 +519,221 @@ fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
     drop(db);
     std::fs::remove_file(path).unwrap();
     assert_eq!(after, 262144);
+}
+
+#[test]
+fn ii_only_reopens_seven_and_rejects_six_without_modifying_it() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 7, "new installations must use the II-only schema");
+    schema::initialize_vault_schema(&db).unwrap();
+    db.execute_batch("PRAGMA user_version=6").unwrap();
+    assert!(schema::initialize_vault_schema(&db).is_err());
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+}
+
+fn credit(owner: Principal, amount: u64) {
+    state::transaction(|db| {
+        db.execute(
+            "INSERT INTO accounts VALUES(?1,?2,0,0)",
+            kinic_sqlite_compat::params![owner.to_text(), amount as i64],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn execution_checkpoints_refunds_and_storage_are_exact() {
+    state::initialize().unwrap();
+    let owner = p(31);
+    credit(owner, 2_000_000_000);
+    let s = state::State;
+    s.vault_reserve_cycles(&owner.to_text(), "derive:1", 200_000_000, 0)
+        .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 1_800_000_000);
+    s.vault_checkpoint_execution(&owner.to_text(), "derive:1", 5_000_000)
+        .unwrap();
+    s.vault_settle_cycles(&owner.to_text(), "derive:1", 100_000_000, 1)
+        .unwrap();
+    s.vault_finish_execution(&owner.to_text(), "derive:1", 7_000_000, 1)
+        .unwrap();
+    let once = s.balance(&owner.to_text()).unwrap();
+    assert_eq!(once, 1_893_000_000);
+    s.vault_settle_cycles(&owner.to_text(), "derive:1", 100_000_000, 1)
+        .unwrap();
+    s.vault_finish_execution(&owner.to_text(), "derive:1", 7_000_000, 1)
+        .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), once);
+    s.vault_reconcile_refunded_cycles(&owner.to_text(), "derive:1", 80_000_000, 2)
+        .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), once + 20_000_000);
+    s.vault_track_storage(&owner.to_text(), 1024 * 1024, 0)
+        .unwrap();
+    s.vault_settle_storage_timer_batch(86400000).unwrap();
+    assert!(s.balance(&owner.to_text()).unwrap() < once + 20_000_000);
+}
+#[test]
+fn cancellation_reconciliation_is_atomic_owner_scoped_and_survives_disable() {
+    use kinic_sqlite_compat::params;
+    state::initialize().unwrap();
+    let owner = p(32);
+    let other = p(33);
+    credit(owner, 2_000_000_000);
+    credit(other, 2_000_000_000);
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| {
+            vault_store::keys::reserve(db, 1, 1, 100_000_000)?;
+            vault_store::keys::mark_sent(db, 1, 100_000_000)?;
+            vault_store::save(db, "derive", &(1u64, vec![1u8; 16]))
+        })
+    })
+    .unwrap();
+    let s = state::State;
+    s.vault_reserve_cycles(&owner.to_text(), "derive:1", 120_000_000, 1000)
+        .unwrap();
+    s.vault_checkpoint_execution(&owner.to_text(), "derive:1", 20_000_000)
+        .unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| {
+            assert!(!accounting::recover_pending_in(
+                db,
+                owner,
+                Some(&[2; 16]),
+                2
+            )?);
+            assert!(vault_store::load::<(u64, Vec<u8>)>(db, "derive")?.is_some());
+            accounting::recover_pending_in(db, owner, Some(&[1; 16]), 2)?;
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 1_880_000_000);
+    assert_eq!(s.balance(&other.to_text()).unwrap(), 2_000_000_000);
+    s.vault_set_config(None).unwrap();
+    assert!(!s.vault_settle_key_flight(scope, 1, 3, 60_000_000).unwrap());
+    s.vault_reconcile_refunded_cycles(&owner.to_text(), "derive:1", 60_000_000, 3000)
+        .unwrap();
+    assert_eq!(s.balance(&owner.to_text()).unwrap(), 1_920_000_000);
+    state::transaction(|db| {
+        let pending: i64 = db
+            .query_row(
+                "SELECT in_flight FROM key_flights WHERE owner=?1",
+                params![owner.as_slice()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 0);
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn schema_seven_reopen_preserves_pending_upload_operation_receipt_balance_and_cursor() {
+    use kinic_sqlite_compat::{Connection, params};
+    let path =
+        std::env::temp_dir().join(format!("vault-seven-pending-{}.sqlite", std::process::id()));
+    {
+        let db = Connection::open(&path).unwrap();
+        schema::initialize_vault_schema(&db).unwrap();
+        db.execute("INSERT INTO global_settings VALUES('gc-owner','01')", [])
+            .unwrap();
+        db.execute("INSERT INTO accounts VALUES('owner',42,7,8)", [])
+            .unwrap();
+        let scope = vault_store::OwnerContext::authenticated(p(1)).unwrap();
+        scope.run(&db,|db|{let h=vault_types::Header{id:vec![1;16],nonce:vec![2;32],state:vault_types::VaultState::Active,sequence:0,key_name:"test_key_1".into(),public_key:vec![3;96]};db.execute("INSERT INTO vaults VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![h.id,vec![9u8;16],serde_json::to_string(&h).unwrap()]).unwrap();vault_store::content::begin(db,vault_types::BeginRevision{vault:vec![1;16],object:vec![2;16],expected_revision:0,operation:vec![3;16],plain_size:0,manifest:vec![4;64],chunk_hashes:vec![vec![5;32]]},1)?;vault_store::operations::begin(db,&[7;16],&[8;32],1)?;vault_store::keys::reserve(db,1,1,10)?;Ok(())}).unwrap();
+    }
+    let db = Connection::open(&path).unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    for table in ["uploads", "operations", "key_flights", "accounts"] {
+        assert_eq!(
+            db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+    assert_eq!(
+        db.query_row(
+            "SELECT value FROM global_settings WHERE key='gc-owner'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "01"
+    );
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+#[test]
+fn offline_timer_recovers_expired_orphan_key_reservation() {
+    state::initialize().unwrap();
+    let owner = p(34);
+    credit(owner, 1_000_000_000);
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| {
+            vault_store::keys::reserve(db, 1, 1, 100_000_000)?;
+            vault_store::keys::mark_sent(db, 1, 100_000_000)?;
+            vault_store::save(db, "derive", &(1u64, vec![1u8; 16]))
+        })
+    })
+    .unwrap();
+    state::State
+        .vault_reserve_cycles(&owner.to_text(), "derive:1", 120_000_000, 1000)
+        .unwrap();
+    state::initialize().unwrap();
+    state::State
+        .vault_settle_storage_timer_batch(121000)
+        .unwrap();
+    state::transaction(|db| {
+        let flight: i64 = db
+            .query_row("SELECT in_flight FROM key_flights", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(flight, 0);
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn key_and_financial_callback_settlement_roll_back_together() {
+    state::initialize().unwrap();
+    let owner = p(35);
+    credit(owner, 1_000_000_000);
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| {
+            vault_store::keys::reserve(db, 1, 1, 100_000_000)?;
+            vault_store::keys::mark_sent(db, 1, 100_000_000)?;
+            vault_store::save(db, "derive", &(1u64, vec![1u8; 16]))
+        })
+    })
+    .unwrap();
+    state::State
+        .vault_reserve_cycles(&owner.to_text(), "derive:1", 120_000_000, 1000)
+        .unwrap();
+    state::transaction(|db|{db.execute_batch("CREATE TRIGGER reject_refund BEFORE UPDATE ON accounts BEGIN SELECT RAISE(ABORT,'injected refund failure'); END;").unwrap();Ok(())}).unwrap();
+    assert!(
+        state::State
+            .vault_settle_key_flight(scope, 1, 2, 50_000_000)
+            .is_err()
+    );
+    state::transaction(|db| {
+        assert_eq!(
+            db.query_row("SELECT in_flight FROM key_flights", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        Ok(())
+    })
+    .unwrap();
 }

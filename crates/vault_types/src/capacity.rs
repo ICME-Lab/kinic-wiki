@@ -14,6 +14,8 @@ pub const RESERVATIONS: usize = 10000;
 pub const AUDIT: usize = 10000;
 pub const SMALL_ROW: usize = 512;
 pub const PAYMENT_ROW: usize = 4096;
+pub const CLEANUP_RECEIPTS: usize = 1024;
+pub const CLEANUP_ROW: usize = 512;
 pub const SETTINGS: usize = 64 * 1024;
 pub const SETTING_SLOTS: usize = 7;
 pub const SETTING_ROW: usize = 8192;
@@ -24,7 +26,8 @@ pub const GLOBAL_SETTING_KEYS: &[&str] = &[
     "funding",
     "generation",
     "quote_fee_serial",
-    "cleanup-budget",
+    "gc-owner",
+    "serial",
 ];
 pub const PRINCIPAL_TEXT: usize = 63;
 pub const TOKEN: usize = 128;
@@ -42,11 +45,12 @@ fn worst_case_pool_and_rows_fit() {
         + RESERVATIONS * SMALL_ROW
         + AUDIT * SMALL_ROW
         + SETTINGS
-        + KEY_ROWS * KEY_ROW;
-    assert_eq!(total, 16_105_472);
+        + KEY_ROWS * KEY_ROW
+        + CLEANUP_RECEIPTS * CLEANUP_ROW;
+    assert_eq!(total, 16_629_760);
     const { assert!(SETTING_SLOTS * SETTING_ROW + BILLING_CURSOR_ROW <= SETTINGS) };
     assert!(GLOBAL_SETTING_KEYS.len() <= SETTING_SLOTS);
-    assert_eq!(ACCOUNTING_POOL as usize - total, 671_744);
+    assert_eq!(ACCOUNTING_POOL as usize - total, 147_456);
     assert!(row_size(&[PRINCIPAL_TEXT, TOKEN, PRINCIPAL_TEXT], 8).unwrap() <= SMALL_ROW);
     assert!(row_size(&[PRINCIPAL_TEXT, KIND, 16], 4).unwrap() <= SMALL_ROW);
     assert!(row_size(&[29, 32], 9).unwrap() <= KEY_ROW);

@@ -1,4 +1,4 @@
-//! Owner-scoped upload reconciliation and signed cleanup's bounded cancellation.
+//! Owner-scoped upload reconciliation and bounded direct cancellation.
 use super::*;
 #[derive(Serialize, serde::Deserialize)]
 pub(crate) struct CancelledUpload {
@@ -135,7 +135,7 @@ pub fn cancel_upload_batch(
     })
     .map_err(|_| Error::Storage)?;
     // Replace the upload's already-reserved receipt slot. Neither new headroom nor
-    // receipt admission is required, even when migrated legacy state is overcommitted.
+    // receipt admission is required, including when the shared capacity is exhausted.
     db.execute(
         "DELETE FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",
         params![upload],

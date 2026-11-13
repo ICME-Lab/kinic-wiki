@@ -13,7 +13,7 @@ struct Vault {
     maintenance: bool,
     readonly: bool,
     derive_payment: std::cell::Cell<Option<u64>>,
-    operation: std::cell::Cell<Option<(u64, bool)>>,
+    operation: std::cell::Cell<Option<u64>>,
 }
 impl Vault {
     fn capture() -> Result<Self> {
@@ -43,16 +43,18 @@ impl Vault {
         )
     }
     fn operation_token(&self) -> Option<String> {
-        self.operation.get().map(|(token, derive)| {
-            format!("{}:{token}", if derive { "derive" } else { "challenge" })
-        })
+        self.operation.get().map(|token| format!("derive:{token}"))
+    }
+    fn read<T>(&self, now: i64, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let result = self.transaction(f);
+        self.finish_at(result, now)
     }
     fn finish<T>(&self, result: Result<T>) -> Result<T> {
+        self.finish_at(result, now_millis())
+    }
+    fn finish_at<T>(&self, result: Result<T>, now: i64) -> Result<T> {
         if self.operation.get().is_none()
-            && matches!(
-                &result,
-                Err(Error::Unauthorized | Error::InvalidProof | Error::Expired)
-            )
+            && matches!(&result, Err(Error::Unauthorized | Error::Expired))
         {
             return result;
         }
@@ -60,14 +62,12 @@ impl Vault {
         // Reserved completion remains chargeable after configuration changes and upgrades.
         if let Some(token) = self.operation_token() {
             with_service(|s| {
-                s.vault_finish_execution(&self.owner().to_text(), &token, amount, now_millis())
+                s.vault_finish_execution(&self.owner().to_text(), &token, amount, now)
             })
             .expect("Vault accounting failed");
         } else if crate::state::State.balance(&self.owner().to_text())? > 0 {
-            with_service(|s| {
-                s.vault_charge_execution(&self.owner().to_text(), amount, now_millis())
-            })
-            .expect("Vault accounting failed");
+            with_service(|s| s.vault_charge_execution(&self.owner().to_text(), amount, now))
+                .expect("Vault accounting failed");
         }
 
         result
@@ -86,16 +86,8 @@ fn meter() -> u64 {
     }
 }
 impl Environment for Vault {
-    fn challenge_pending(&self, db: &Connection, token: u64) -> Result<bool> {
-        crate::accounting::challenge_pending_in(db, self.owner(), token)
-    }
-    fn cleanup_existing_flights(
-        &self,
-        db: &Connection,
-        targets: &[Id],
-        cancel_live: bool,
-    ) -> Result<bool> {
-        crate::accounting::recover_pending_in(db, self.owner(), targets, cancel_live, self.now())
+    fn recover_pending(&self, db: &Connection, target: Option<&[u8]>) -> Result<bool> {
+        crate::accounting::recover_pending_in(db, self.owner(), target, self.now())
     }
     fn reconcile_key_gc(&self, db: &Connection, owners: &[Principal]) -> Result<()> {
         crate::accounting::reconcile_key_gc_in(db, self.owner(), owners, now_millis())
@@ -109,16 +101,12 @@ impl Environment for Vault {
     fn now(&self) -> u64 {
         super::now_nanos() / 1_000_000_000
     }
-    fn balance(&self) -> u128 {
-        ic_cdk::api::canister_cycle_balance()
-    }
     fn transaction<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         crate::state::transaction(|db| {
             if self.maintenance {
                 crate::accounting::maintain_expired_in(db, self.now())?;
             }
             self.owner.run(db, |db| {
-                vault_store::config(db)?;
                 let value = f(db)?;
                 if self.readonly {
                     return Ok(value);
@@ -142,37 +130,12 @@ impl Environment for Vault {
         let config = with_service(|s| Ok(s.vault_config()))
             .map_err(|_| Error::Storage)??
             .ok_or(Error::Unauthorized)?;
-        if self.balance() < config.minimum_cycles as u128 {
+        if ic_cdk::api::canister_cycle_balance() < config.minimum_cycles as u128 {
             return Err(Error::QuotaExceeded);
         }
         with_service(|s| s.vault_require_spending(&self.owner().to_text(), now_millis()))
             .map(|_| ())
             .map_err(|_| Error::QuotaExceeded)
-    }
-    fn reserve_challenge(&self, token: u64) -> Result<()> {
-        with_service(|s| {
-            s.vault_reserve_cycles(
-                &self.owner().to_text(),
-                &format!("challenge:{token}"),
-                (super::UPDATE_EXECUTION_BASE_CYCLES + super::UPDATE_ACCOUNTING_OVERHEAD_CYCLES)
-                    as u64,
-                now_millis(),
-            )
-        })
-        .map_err(|_| Error::QuotaExceeded)?;
-        self.operation.set(Some((token, false)));
-        Ok(())
-    }
-    fn settle_challenge(&self, token: u64) -> Result<()> {
-        with_service(|s| {
-            s.vault_settle_cycles(
-                &self.owner().to_text(),
-                &format!("challenge:{token}"),
-                0,
-                now_millis(),
-            )
-        })
-        .map_err(|_| Error::Storage)
     }
     fn checkpoint_execution(&self) -> Result<()> {
         let token = self.operation_token().ok_or(Error::Storage)?;
@@ -194,7 +157,7 @@ impl Environment for Vault {
             )
         })
         .map_err(|_| Error::QuotaExceeded)?;
-        self.operation.set(Some((token, true)));
+        self.operation.set(Some(token));
         Ok(())
     }
     fn settle_cycles(&self, token: u64, actual: u64) -> Result<()> {
@@ -223,7 +186,7 @@ impl Environment for Vault {
     async fn public_key(&self, name: &str) -> Result<Vec<u8>> {
         management::vetkd_public_key(&management::VetKDPublicKeyArgs {
             canister_id: None,
-            context: KEY_CONTEXT_V2.to_vec(),
+            context: KEY_CONTEXT.to_vec(),
             key_id: key_id(name),
         })
         .await
@@ -234,7 +197,7 @@ impl Environment for Vault {
         let payment = self.required_derive_payment(name);
         let result = management::vetkd_derive_key(&management::VetKDDeriveKeyArgs {
             input,
-            context: KEY_CONTEXT_V2.to_vec(),
+            context: KEY_CONTEXT.to_vec(),
             key_id: key_id(name),
             transport_public_key: transport,
         })
@@ -258,392 +221,39 @@ fn key_id(name: &str) -> management::VetKDKeyId {
 }
 
 #[ic_cdk::update]
-fn set_config(config: Option<vault_types::VaultConfig>) -> vault_types::Result<()> {
+fn set_config(config: Option<VaultConfig>) -> Result<()> {
     if !ic_cdk::api::is_controller(&ic_cdk::api::msg_caller()) {
         return Err(Error::Unauthorized);
     }
-    with_service(|s| Ok(s.vault_set_config(config))).map_err(|_| Error::Storage)?
+    crate::state::State.vault_set_config(config)
 }
 #[ic_cdk::update]
-fn get_config() -> vault_types::Result<Option<vault_types::VaultConfig>> {
-    // Public configuration contains no owner data and is required for exact RP/origin matching.
+fn get_config() -> Result<Option<VaultConfig>> {
     OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
-    with_service(|s| Ok(s.vault_config())).map_err(|_| Error::Storage)?
+    crate::state::State.vault_config()
 }
 #[ic_cdk::update]
-fn reserve_vault(request: vault_types::Reserve) -> vault_types::Result<vault_types::Header> {
+async fn create_vault(request: CreateVault) -> Result<Header> {
     let env = Vault::capture()?;
-    let result = vault_service::reserve_vault(&env, request);
+    let result = vault_service::create_vault(&env, request).await;
     env.finish(result)
 }
-
 #[ic_cdk::update]
-fn list_unfinished_vaults() -> vault_types::Result<Vec<vault_types::UnfinishedVault>> {
-    let env = Vault::capture()?;
-    let result = vault_service::list_unfinished_vaults(&env);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn cancel_vault_setup(vault: vault_types::Id, attempt: vault_types::Id) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::cancel_vault_setup(&env, vault, attempt);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_vault_header(vault: vault_types::Id) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_vault_header(&env, vault);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn list_vaults() -> vault_types::Result<Vec<vault_types::Header>> {
-    let env = Vault::capture()?;
-    let result = vault_service::list_vaults(&env);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn list_credentials() -> vault_types::Result<Vec<vault_types::CredentialInfo>> {
-    let env = Vault::capture()?;
-    let result = vault_service::list_credentials(&env);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-async fn begin_unlock(
-    request: vault_types::BeginUnlock,
-) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_unlock(&env, request).await;
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-async fn derive_vault_key(
-    request: vault_types::Derive,
-) -> vault_types::Result<vault_types::KeyReply> {
+async fn derive_vault_key(request: DeriveKey) -> Result<KeyReply> {
     let env = Vault::capture()?;
     let result = vault_service::derive_vault_key(&env, request).await;
     env.finish(result)
 }
-
 #[ic_cdk::update]
-fn activate_vault(request: vault_types::Activate) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::activate_vault(&env, request);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn manage_unlock_credential(request: vault_types::ManageCredential) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::manage_unlock_credential(&env, request);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn prepare_unlock_credential(
-    vault: vault_types::Id,
-    registration: String,
-) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture()?;
-    let result = vault_service::prepare_unlock_credential(&env, vault, registration);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn begin_revision(request: vault_types::BeginRevision) -> vault_types::Result<vault_types::Upload> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_revision(&env, request);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn put_chunk(upload: vault_types::Id, index: u32, data: Vec<u8>) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::put_chunk(&env, upload, index, data);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn commit_revision(upload: vault_types::Id) -> vault_types::Result<vault_types::Revision> {
-    let env = Vault::capture()?;
-    let result = vault_service::commit_revision(&env, upload);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_manifest(
-    vault: vault_types::Id,
-    object: vault_types::Id,
-    revision: u64,
-) -> vault_types::Result<vault_types::Revision> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_manifest(&env, vault, object, revision);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_chunk(
-    vault: vault_types::Id,
-    object: vault_types::Id,
-    revision: u64,
-    index: u32,
-) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_chunk(&env, vault, object, revision, index);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn list_history(
-    vault: vault_types::Id,
-    object: vault_types::Id,
-    before: u64,
-) -> vault_types::Result<vault_types::RevisionPage> {
-    let env = Vault::capture()?;
-    let result = vault_service::list_history(&env, vault, object, before);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn list_objects(
-    vault: vault_types::Id,
-    after: vault_types::Id,
-) -> vault_types::Result<vault_types::ObjectPage> {
-    let env = Vault::capture()?;
-    let result = vault_service::list_objects(&env, vault, after);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_quota(vault: vault_types::Id) -> vault_types::Result<vault_types::Quota> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_quota(&env, vault);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn delete_object(
-    vault: vault_types::Id,
-    object: vault_types::Id,
-    expected_revision: u64,
-    operation: vault_types::Id,
-) -> vault_types::Result<vault_types::Revision> {
-    let env = Vault::capture()?;
-    let result = vault_service::delete_object(&env, vault, object, expected_revision, operation);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn purge_object(vault: vault_types::Id, object: vault_types::Id) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::purge_object(&env, vault, object);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn collect_garbage() -> vault_types::Result<u64> {
-    let env = Vault::capture()?;
-    let result = vault_service::collect_garbage(&env);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn begin_export(
-    vault: vault_types::Id,
-    export: vault_types::Id,
-) -> vault_types::Result<vault_types::Export> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_export(&env, vault, export);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn export_index(
-    export: vault_types::Id,
-    after: u64,
-) -> vault_types::Result<vault_types::ExportPage> {
-    let env = Vault::capture()?;
-    let result = vault_service::export_index(&env, export, after);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_export_chunk(
-    export: vault_types::Id,
-    object: vault_types::Id,
-    revision: u64,
-    index: u32,
-) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_export_chunk(&env, export, object, revision, index);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn finish_export(export: vault_types::Id, saved: bool) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::finish_export(&env, export, saved);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn abort_export(export: vault_types::Id) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::abort_export(&env, export);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn begin_restore(request: vault_types::BeginRestore) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_restore(&env, request);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn begin_restore_revision(
-    vault: vault_types::Id,
-    revision: vault_types::Revision,
-    attempt: Option<vault_types::Id>,
-) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::begin_restore_revision(&env, vault, revision, attempt);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn put_restore_chunk(
-    vault: vault_types::Id,
-    index: u32,
-    data: Vec<u8>,
-    attempt: Option<vault_types::Id>,
-) -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = vault_service::put_restore_chunk(&env, vault, index, data, attempt);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn commit_restore_revision(
-    vault: vault_types::Id,
-    sequence: u64,
-    attempt: Option<vault_types::Id>,
-) -> vault_types::Result<vault_types::RestoreProgress> {
-    let env = Vault::capture()?;
-    let result = vault_service::commit_restore_revision(&env, vault, sequence, attempt);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn commit_restore(request: vault_types::Activate) -> vault_types::Result<vault_types::Header> {
-    let env = Vault::capture()?;
-    let result = vault_service::commit_restore(&env, request);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_active_export() -> vault_types::Result<Option<vault_types::Export>> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_active_export(&env);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn get_active_export_for_vault(
-    vault: vault_types::Id,
-) -> vault_types::Result<Option<vault_types::Export>> {
-    let env = Vault::capture()?;
-    let result = vault_service::get_active_export_for_vault(&env, vault);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn cancel_pending_key_derivation() -> vault_types::Result<()> {
-    let env = Vault::capture()?;
-    let result = Err(Error::Unauthorized);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-async fn mutate(
-    payload: Vec<u8>,
-    signature: Vec<u8>,
-) -> vault_types::Result<vault_types::MutationResult> {
+fn mutate(request: Mutation) -> Result<MutationResult> {
     let env = Vault::capture_cleanup()?;
-    let r = vault_service::mutations::mutate(&env, payload, signature).await;
-    env.finish(r)
+    let result = vault_service::mutate(&env, request);
+    env.finish(result)
 }
-#[ic_cdk::update]
-async fn bootstrap(
-    request: vault_types::Bootstrap,
-) -> vault_types::Result<vault_types::BootstrapReply> {
-    let env = Vault::capture()?;
-    let r = vault_service::generation::bootstrap(&env, request).await;
-    env.finish(r)
-}
-#[ic_cdk::update]
-fn register_bootstrap(
-    attempt: vault_types::Id,
-    registration: String,
-) -> vault_types::Result<vault_types::GrantInfo> {
-    let env = Vault::capture()?;
-    let r = vault_service::generation::register(&env, attempt, registration);
-    env.finish(r)
-}
-#[ic_cdk::update]
-async fn begin_grant(
-    request: vault_types::GrantRequest,
-) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture()?;
-    let r = vault_service::ceremonies::begin(&env, request).await;
-    env.finish(r)
-}
-#[ic_cdk::update]
-fn finish_grant(
-    operation: vault_types::Id,
-    proof: String,
-) -> vault_types::Result<vault_types::GrantInfo> {
-    let env = Vault::capture()?;
-    let r = vault_service::ceremonies::finish(&env, operation, proof);
-    env.finish(r)
-}
-#[ic_cdk::update]
-fn begin_cleanup(
-    request: vault_types::GrantRequest,
-) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture_cleanup()?;
-    let r = vault_service::cleanup::begin(&env, request);
-    env.finish(r)
-}
-#[ic_cdk::update]
-fn finish_cleanup(
-    operation: vault_types::Id,
-    proof: String,
-) -> vault_types::Result<vault_types::GrantInfo> {
-    let env = Vault::capture_cleanup()?;
-    let r = vault_service::cleanup::finish(&env, operation, proof);
-    env.finish(r)
-}
-
-#[ic_cdk::update]
-fn cleanup_status() -> vault_types::Result<Option<vault_types::CleanupProgress>> {
-    let env = Vault::capture()?;
-    let r = vault_service::cleanup::status(&env);
-    env.finish(r)
-}
-
-/// Aggregate capacity is public metadata; it never allocates an owner or account.
 #[ic_cdk::query]
-fn global_capacity() -> vault_types::Result<vault_types::GlobalCapacity> {
+fn global_capacity() -> Result<GlobalCapacity> {
     crate::state::transaction(vault_store::content::global_capacity)
 }
-
-/// Release only an existing captured owner's callback token, even after config removal.
 pub(crate) fn settle_key_reservation_for_owner(
     owner: OwnerContext,
     token: u64,
@@ -652,201 +262,107 @@ pub(crate) fn settle_key_reservation_for_owner(
 ) -> Result<bool> {
     crate::state::State.vault_settle_key_flight(owner, token, now, actual)
 }
-
-/// Owner-only encrypted status remains available when configuration is absent or incompatible.
-#[ic_cdk::query]
-fn incident_status() -> vault_types::Result<Option<vault_types::IncidentStatus>> {
-    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
-    crate::state::transaction(|db| owner.run(db, vault_store::incident::status))
-}
-#[ic_cdk::query]
-fn incident_context() -> vault_types::Result<Option<vault_types::IncidentContext>> {
-    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
-    crate::state::transaction(|db| owner.run(db, vault_service::incident::context_in))
-}
-
-#[ic_cdk::query]
-fn incident_source_index(
-    job: vault_types::Id,
-    vault: vault_types::Id,
-    attempt: vault_types::Id,
-    after: u64,
-) -> vault_types::Result<vault_types::ExportPage> {
-    let env = Vault::capture_read()?;
-    vault_service::incident_wrapping::source_index(&env, job, vault, attempt, after)
-}
-#[ic_cdk::query]
-fn incident_staged_export(
-    request: vault_types::IncidentRead,
-) -> vault_types::Result<vault_types::StagedExport> {
-    let env = Vault::capture_read()?;
-    vault_service::incident_export::descriptor(&env, request)
-}
-#[ic_cdk::query]
-fn incident_staged_index(
-    request: vault_types::IncidentRead,
-    after: u64,
-) -> vault_types::Result<vault_types::ExportPage> {
-    let env = Vault::capture_read()?;
-    vault_service::incident_export::index(&env, request, after)
-}
-#[ic_cdk::query]
-fn incident_staged_chunk(
-    request: vault_types::IncidentRead,
-    object: vault_types::Id,
-    revision: u64,
-    index: u32,
-) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture_read()?;
-    vault_service::incident_export::chunk(&env, request, object, revision, index)
-}
-#[ic_cdk::query]
-fn incident_cutover_digest() -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture_read()?;
-    vault_service::incident_cutover::ready_digest(&env)
-}
-
 #[ic_cdk::update]
-async fn initialize_restore_namespace(operation: vault_types::Id) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture()?;
-    let result = vault_service::restore_admission::initialize_namespace(&env, operation).await;
-    env.finish(result)
-}
-#[ic_cdk::query]
-fn restore_admission_status() -> vault_types::Result<Option<vault_types::RestoreAdmissionStatus>> {
+fn list_vaults() -> Result<Vec<Header>> {
     let env = Vault::capture_read()?;
-    vault_service::restore_admission::status(&env)
+    env.read(now_millis(), vault_store::list)
 }
 #[ic_cdk::update]
-fn begin_restore_admission(
-    request: vault_types::RestoreAdmissionRequest,
-) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture()?;
-    let result = vault_service::restore_admission::begin(&env, request);
-    env.finish(result)
-}
-#[ic_cdk::update]
-fn register_restore_candidate(
-    job: vault_types::Id,
-    registration: String,
-) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture()?;
-    let result = vault_service::restore_admission::register(&env, job, registration);
-    env.finish(result)
-}
-#[ic_cdk::update]
-fn prove_restore_candidate(
-    job: vault_types::Id,
-    assertion: String,
-) -> vault_types::Result<vault_types::RestoreAdmissionStatus> {
-    let env = Vault::capture()?;
-    let result = vault_service::restore_admission::possess(&env, job, assertion);
-    env.finish(result)
-}
-#[ic_cdk::update]
-fn prove_restore_current(
-    job: vault_types::Id,
-    signature: Vec<u8>,
-) -> vault_types::Result<vault_types::RestoreAdmissionStatus> {
-    let env = Vault::capture()?;
-    let result = vault_service::restore_admission::prove_current(&env, job, signature);
-    env.finish(result)
-}
-#[ic_cdk::update]
-fn resume_restore_admission(job: vault_types::Id) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture()?;
-    let result = vault_service::restore_admission::resume(&env, job);
-    env.finish(result)
-}
-
-#[ic_cdk::update]
-fn begin_restore_grant(
-    request: vault_types::GrantRequest,
-) -> vault_types::Result<vault_types::Challenge> {
-    let env = Vault::capture_cleanup()?;
-    let result = vault_service::restore_grants::begin(&env, request);
-    env.finish(result)
-}
-#[ic_cdk::update]
-fn finish_restore_grant(
-    operation: vault_types::Id,
-    proof: String,
-    cleanup_only: bool,
-) -> vault_types::Result<vault_types::GrantInfo> {
-    let env = Vault::capture_cleanup()?;
-    let result = vault_service::restore_grants::finish(&env, operation, proof, cleanup_only);
-    env.finish(result)
-}
-#[ic_cdk::query]
-fn restore_target_descriptor(
-    job: vault_types::Id,
-    target: vault_types::Generation,
-) -> vault_types::Result<vault_types::StagedExport> {
+fn get_vault_header(vault: Id) -> Result<Header> {
     let env = Vault::capture_read()?;
-    vault_service::restore_pipeline::descriptor(&env, job, target)
+    env.read(now_millis(), |db| vault_store::header(db, &vault))
 }
-#[ic_cdk::query]
-fn restore_target_index(
-    job: vault_types::Id,
-    target: vault_types::Generation,
-    after: u64,
-) -> vault_types::Result<vault_types::ExportPage> {
+#[ic_cdk::update]
+fn list_objects(vault: Id, after: Id) -> Result<ObjectPage> {
     let env = Vault::capture_read()?;
-    vault_service::restore_pipeline::index(&env, job, target, after)
-}
-#[ic_cdk::query]
-fn restore_target_chunk(
-    job: vault_types::Id,
-    target: vault_types::Generation,
-    object: vault_types::Id,
-    revision: u64,
-    index: u32,
-) -> vault_types::Result<Vec<u8>> {
-    let env = Vault::capture_read()?;
-    vault_service::restore_pipeline::chunk(&env, job, target, object, revision, index)
-}
-#[ic_cdk::query]
-fn restore_target_progress(
-    job: vault_types::Id,
-    target: vault_types::Generation,
-) -> vault_types::Result<vault_types::RestoreProgress> {
-    let env = Vault::capture_read()?;
-    vault_service::restore_pipeline::progress(&env, job, target)
-}
-
-/// Read-only status resolves activation whose old grant has intentionally been invalidated.
-#[ic_cdk::query]
-fn create_empty_status() -> vault_types::Result<Option<vault_types::CreateEmptyStatus>> {
-    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
-    crate::state::transaction(|db| {
-        owner.run(db, |db| {
-            Ok(vault_store::transition::load_state(db)?.creation)
-        })
+    env.read(now_millis(), |db| {
+        vault_store::content::objects(db, &vault, &after)
     })
 }
 #[ic_cdk::update]
-fn cancel_create_empty(
-    job: vault_types::Id,
-    target: vault_types::PendingCreation,
-    generation: Option<vault_types::Generation>,
-    cursor: u64,
-) -> vault_types::Result<vault_types::CleanupProgress> {
-    let env = Vault::capture_cleanup()?;
-    let result = vault_service::create_empty::cancel(&env, job, target, generation, cursor);
-    env.finish(result)
+fn get_manifest(vault: Id, object: Id, revision: u64) -> Result<Revision> {
+    let env = Vault::capture_read()?;
+    env.read(now_millis(), |db| {
+        vault_store::content::manifest(db, &vault, &object, revision)
+    })
+}
+#[ic_cdk::update]
+fn get_chunk(vault: Id, object: Id, revision: u64, index: u32) -> Result<Vec<u8>> {
+    let env = Vault::capture_read()?;
+    env.read(now_millis(), |db| {
+        vault_store::content::chunk(db, &vault, &object, revision, index)
+    })
+}
+#[ic_cdk::update]
+fn list_history(vault: Id, object: Id, before: u64) -> Result<RevisionPage> {
+    let env = Vault::capture_read()?;
+    env.read(now_millis(), |db| {
+        vault_store::content::history(db, &vault, &object, before)
+    })
+}
+#[ic_cdk::update]
+fn get_quota(vault: Id) -> Result<Quota> {
+    let env = Vault::capture_read()?;
+    env.read(now_millis(), |db| vault_store::content::quota(db, &vault))
+}
+#[ic_cdk::update]
+fn list_pending_uploads(after: Id) -> Result<PendingUploads> {
+    let env = Vault::capture_read()?;
+    env.read(now_millis(), |db| {
+        vault_store::content::pending_uploads(db, &after)
+    })
+}
+#[ic_cdk::update]
+fn get_upload_status(upload: Id) -> Result<UploadStatus> {
+    let env = Vault::capture_read()?;
+    env.read(now_millis(), |db| {
+        vault_store::content::upload_status(db, &upload, env.now())
+    })
 }
 
-#[ic_cdk::update]
-fn list_pending_uploads(
-    after: vault_types::Id,
-) -> vault_types::Result<vault_types::PendingUploads> {
-    let env = Vault::capture_read()?;
-    let result = vault_service::list_pending_uploads(&env, after);
-    env.finish(result)
-}
-#[ic_cdk::update]
-fn get_upload_status(upload: vault_types::Id) -> vault_types::Result<vault_types::UploadStatus> {
-    let env = Vault::capture_read()?;
-    let result = vault_service::get_upload_status(&env, upload);
-    env.finish(result)
+#[cfg(test)]
+mod read_accounting_tests {
+    use super::*;
+    #[test]
+    fn private_reads_charge_positive_balance_and_allow_unfunded_without_allocation() {
+        crate::state::initialize().unwrap();
+        let owner = Principal::from_slice(&[41]);
+        crate::state::transaction(|db| {
+            db.execute(
+                "INSERT INTO accounts VALUES(?1,100000000,0,0)",
+                kinic_sqlite_compat::params![owner.to_text()],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+        let env = Vault {
+            owner: OwnerContext::authenticated(owner).unwrap(),
+            started: 0,
+            maintenance: false,
+            readonly: true,
+            derive_payment: std::cell::Cell::new(None),
+            operation: std::cell::Cell::new(None),
+        };
+        assert!(env.read(1, vault_store::list).unwrap().is_empty());
+        assert_eq!(
+            crate::state::State.balance(&owner.to_text()).unwrap(),
+            80_000_000
+        );
+        let other = Principal::from_slice(&[42]);
+        let env = Vault {
+            owner: OwnerContext::authenticated(other).unwrap(),
+            ..env
+        };
+        assert!(env.read(2, vault_store::list).unwrap().is_empty());
+        crate::state::transaction(|db| {
+            assert_eq!(
+                db.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
 }

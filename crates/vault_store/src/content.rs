@@ -53,13 +53,13 @@ fn next_sequence(sequence: u64) -> Result<u64> {
     Ok(sequence + 1)
 }
 pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
-    incident::readable(db, v)?;
+    active(db, v)?;
     let current = num(
         db,
         "SELECT COALESCE(sum(r.plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.deleted=0",
         v,
     )?;
-    let reserved:i64=db.query_row("SELECT (SELECT COALESCE(sum(reserved),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(reserved+CASE WHEN working_prepaid=1 THEN 0 ELSE length(pending) END),0) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+    let reserved:i64=db.query_row("SELECT COALESCE(sum(reserved),0) FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     let reserved = reserved as u64;
     let charged = usage(db)?.saturating_sub(reserved);
     Ok(Quota {
@@ -69,15 +69,44 @@ pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
         limit: TOTAL_MAX,
     })
 }
+fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
+    let scope = if scoped {
+        " WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)"
+    } else {
+        ""
+    };
+    let mut total = 262144u64;
+    for (table, expression) in [
+        ("settings", "length(value)+length(key)+256"),
+        ("vaults", "8192"),
+        ("revisions", "charge"),
+        ("uploads", "reserved"),
+        ("receipts", "length(result)+length(digest)+4096"),
+        ("objects", "4096"),
+        ("operations", "CASE WHEN cleanup=1 THEN 0 ELSE 131072 END"),
+    ] {
+        let n: i64 = db
+            .query_row(
+                &format!("SELECT COALESCE(sum({expression}),0) FROM {table}{scope}"),
+                params![],
+                |r| sql::row_get(r, 0),
+            )
+            .map_err(db_error)?;
+        total = total.checked_add(n as u64).ok_or(Error::QuotaExceeded)?;
+    }
+    if scoped {
+        let n:i64=db.query_row("SELECT count(*) FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
+        total += n as u64 * 4096;
+    } else {
+        total += capacity::ACCOUNTING_POOL;
+    }
+    Ok(total)
+}
 pub fn usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT count(*)*4096 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT COALESCE(sum(CASE WHEN key='restore-working' THEN 524288 WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','transition','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM (SELECT * FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(65536),0) FROM (SELECT * FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(charge),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(reserved),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*8192 FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT count(*)*4096 FROM (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) GROUP BY vault))+(SELECT COALESCE(sum(reserved+CASE WHEN working_prepaid=1 THEN 0 ELSE length(pending) END),0) FROM (SELECT * FROM restores WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
-    Ok(n as u64)
+    measured_usage(db, true)
 }
 pub fn global_usage(db: &Connection) -> Result<u64> {
-    let n:i64=db.query_row("SELECT 262144+(SELECT COALESCE(sum(CASE WHEN key='restore-working' THEN 524288 WHEN (key IN ('control','candidate','cleanup','authorities','bootstrap','transition','grant-ceremony','grant-random') OR key LIKE 'grant:%' OR key LIKE 'grant-slot:%' OR key LIKE 'credential-slot:%') THEN 65536 ELSE length(value)+length(key)+256 END),0) FROM settings)+(SELECT COALESCE(sum(65536),0) FROM credentials)+(SELECT COALESCE(sum(charge),0) FROM revisions)+(SELECT COALESCE(sum(reserved),0) FROM uploads)+(SELECT COALESCE(sum(CASE WHEN result='' THEN 4096 ELSE length(result)+length(digest)+4096 END),0) FROM receipts)+(SELECT count(*)*8192 FROM vaults)+(SELECT count(*)*4096 FROM objects)+(SELECT COALESCE(sum(n-1),0)*4096 FROM (SELECT count(*) n FROM exports GROUP BY owner,vault))+(SELECT COALESCE(sum(reserved+CASE WHEN working_prepaid=1 THEN 0 ELSE length(pending) END),0) FROM restores)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
-    Ok((n as u64)
-        .saturating_add(capacity::ACCOUNTING_POOL)
-        .saturating_add(crate::accounting_capacity::legacy_excess(db)?))
+    measured_usage(db, false)
 }
 pub fn global_capacity(db: &Connection) -> Result<GlobalCapacity> {
     let used = global_usage(db)?;
@@ -85,7 +114,6 @@ pub fn global_capacity(db: &Connection) -> Result<GlobalCapacity> {
         used,
         limit: TOTAL_MAX,
         accounting_reserved: capacity::ACCOUNTING_POOL,
-        legacy_excess: crate::accounting_capacity::legacy_excess(db)?,
         overcommitted: used > TOTAL_MAX,
         overage: used.saturating_sub(TOTAL_MAX),
     })
@@ -158,9 +186,8 @@ pub fn record<T: Serialize>(
 }
 fn receipt_slots_used(db: &Connection) -> Result<i64> {
     db.query_row(
-        "SELECT (SELECT count(*) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))
-              + (SELECT count(*) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))
-              + (SELECT count(*) FROM (SELECT * FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE expires>0)",
+        "SELECT (SELECT count(*) FROM operations WHERE cleanup=0 AND owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT count(*) FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))
+              + (SELECT COALESCE(sum(1+receipt_budget/131072),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",
         params![],
         |r| sql::row_get(r, 0),
     )
@@ -169,9 +196,8 @@ fn receipt_slots_used(db: &Connection) -> Result<i64> {
 
 fn global_receipt_slots_used(db: &Connection) -> Result<i64> {
     db.query_row(
-        "SELECT (SELECT count(*) FROM receipts)
-              + (SELECT count(*) FROM uploads)
-              + (SELECT count(*) FROM vaults WHERE expires>0)",
+        "SELECT (SELECT count(*) FROM operations WHERE cleanup=0)+(SELECT count(*) FROM receipts)
+              + (SELECT COALESCE(sum(1+receipt_budget/131072),0) FROM uploads)",
         params![],
         |r| sql::row_get(r, 0),
     )
@@ -184,8 +210,13 @@ pub fn collect_expired_receipts(db: &Connection, now: u64) -> Result<()> {
     Ok(())
 }
 pub fn check_receipt_capacity(db: &Connection, now: u64) -> Result<()> {
+    check_receipt_capacity_for(db, now, 1)
+}
+fn check_receipt_capacity_for(db: &Connection, now: u64, additional: i64) -> Result<()> {
     collect_expired_receipts(db, now)?;
-    if receipt_slots_used(db)? >= ROW_MAX || global_receipt_slots_used(db)? >= ROW_MAX {
+    if receipt_slots_used(db)? + additional > ROW_MAX
+        || global_receipt_slots_used(db)? + additional > ROW_MAX
+    {
         return Err(Error::QuotaExceeded);
     }
     Ok(())
@@ -274,14 +305,16 @@ pub fn begin_with_budget(
     if q.current.saturating_sub(old) + r.plain_size > VAULT_MAX {
         return Err(Error::QuotaExceeded);
     }
-    let reserved = WRAPPER_HEADROOM
+    let receipt_budget = (r.chunk_hashes.len() as u64 + 1) * operations::CHARGE;
+    check_receipt_capacity_for(db, now, r.chunk_hashes.len() as i64 + 2)?;
+    let reserved = receipt_budget
         + r.plain_size
         + r.chunk_hashes.len() as u64 * (16 + OVERHEAD)
         + raw.len() as u64 * 2
         + OVERHEAD * 3;
     check_capacity(db, reserved)?;
     db.execute(
-        "INSERT INTO uploads(owner,id,vault,object,expected,expires,digest,request,reserved) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,?7,?8)",
+        "INSERT INTO uploads(owner,id,vault,object,expected,expires,digest,request,reserved,receipt_budget) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         params![
             r.operation,
             r.vault,
@@ -290,7 +323,8 @@ pub fn begin_with_budget(
             (now + DAY) as i64,
             digest,
             raw,
-            reserved as i64
+            reserved as i64,
+            receipt_budget as i64
         ],
     )
     .map_err(db_error)?;
@@ -418,7 +452,6 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
     let hashes = serde_json::to_string(&rev.chunk_hashes).map_err(|_| Error::Storage)?;
     let charge = rev.plain_size
         + rev.chunk_hashes.len() as u64 * (16 + OVERHEAD)
-        + WRAPPER_HEADROOM
         + rev.manifest.len() as u64
         + hashes.len() as u64
         + OVERHEAD;
@@ -450,7 +483,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
         params![id],
     )
     .map_err(db_error)?;
-    overlays::populate_current(db, &h, &rev)?;
+
     put_header(db, &h)?;
     record(db, id, &d, &rev, now)?;
     Ok(rev)
@@ -471,7 +504,7 @@ fn row(r: &sql::Row<'_>) -> sql::Result<Revision> {
 }
 const COLS: &str = "r.vault,r.object,r.revision,r.plain_size,r.manifest,r.hashes,r.deleted,r.born";
 pub fn manifest(db: &Connection, v: &[u8], o: &[u8], revision: u64) -> Result<Revision> {
-    let header = incident::readable(db, v)?;
+    active(db, v)?;
     id(o)?;
     let rev = if revision == 0 {
         head(db, v, o)?
@@ -481,7 +514,7 @@ pub fn manifest(db: &Connection, v: &[u8], o: &[u8], revision: u64) -> Result<Re
     if rev > i64::MAX as u64 {
         return Err(Error::InvalidInput);
     }
-    overlays::effective(db, &header, db.query_row(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision=?3 AND r.retired IS NULL"),params![v,o,rev as i64],row).optional().map_err(db_error)?.ok_or(Error::NotFound)?)
+    db.query_row(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision=?3 AND r.retired IS NULL"),params![v,o,rev as i64],row).optional().map_err(db_error)?.ok_or(Error::NotFound)
 }
 pub fn chunk(db: &Connection, v: &[u8], o: &[u8], revision: u64, index: u32) -> Result<Vec<u8>> {
     let m = manifest(db, v, o, revision)?;
@@ -498,7 +531,7 @@ pub fn chunk(db: &Connection, v: &[u8], o: &[u8], revision: u64, index: u32) -> 
     .ok_or(Error::NotFound)
 }
 pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<RevisionPage> {
-    let header = incident::readable(db, v)?;
+    active(db, v)?;
     id(o)?;
     let mut s=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.object=?2 AND r.revision<?3 AND r.retired IS NULL ORDER BY r.revision DESC LIMIT 11")).map_err(db_error)?;
     let entries = sql::query_map(
@@ -511,7 +544,6 @@ pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<Revis
     let mut page = Vec::new();
     let mut more = false;
     for e in entries {
-        let e = overlays::effective(db, &header, e)?;
         let size = e.manifest.len() + e.chunk_hashes.len() * 32 + 512;
         if page.len() >= 10 || bytes + size > 800_000 {
             more = true;
@@ -531,7 +563,7 @@ pub fn history(db: &Connection, v: &[u8], o: &[u8], before: u64) -> Result<Revis
     })
 }
 pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
-    let header = incident::readable(db, v)?;
+    active(db, v)?;
     if !after.is_empty() {
         id(after)?
     }
@@ -541,7 +573,6 @@ pub fn objects(db: &Connection, v: &[u8], after: &[u8]) -> Result<ObjectPage> {
     let mut bytes = 0;
     let mut more = false;
     for e in entries {
-        let e = overlays::effective(db, &header, e)?;
         let size = e.manifest.len() + e.chunk_hashes.len() * 32 + 512;
         if page.len() >= 100 || bytes + size > 800_000 {
             more = true;
@@ -610,77 +641,16 @@ pub fn delete(
     record(db, operation, &d, &r, now)?;
     Ok(r)
 }
-pub fn purge(db: &Connection, v: &[u8], o: &[u8], now: u64) -> Result<()> {
-    let mut h = active(db, v)?;
-    id(o)?;
-    let n: i64 = db
-        .query_row(
-            "SELECT count(*) FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND state='Active' AND expires>?2",
-            params![v, now as i64],
-            |r| sql::row_get(r, 0),
-        )
-        .map_err(db_error)?;
-    if n > 0 {
-        return Err(Error::ExportInProgress);
-    }
-    let uploads: i64 = db
-        .query_row(
-            "SELECT count(*) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND object=?2 AND expires>?3",
-            params![v, o, now as i64],
-            |r| sql::row_get(r, 0),
-        )
-        .map_err(db_error)?;
-    if uploads > 0 {
-        return Err(Error::Busy);
-    }
-    h.sequence = next_sequence(h.sequence)?;
-    db.execute(
-        "DELETE FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2)",
-        params![v, o],
-    )
-    .map_err(db_error)?;
-    db.execute(
-        "DELETE FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2)",
-        params![v, o],
-    )
-    .map_err(db_error)?;
-    db.execute("DELETE FROM wrapper_slots WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2",params![v,o]).map_err(db_error)?;
-    // Preserve head identity after purge so a stale expected_revision cannot recreate or collide with old AAD.
-    put_header(db, &h)
-}
 fn collect_expired_upload(db: &Connection, now: u64) -> Result<()> {
-    let upload: Option<(Id, Vec<u8>, i64)> = db
-        .query_row(
-            "SELECT u.id,u.digest,EXISTS(SELECT 1 FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.operation=u.id)
-         FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) u WHERE u.expires<=?1 AND u.cancel_job IS NULL LIMIT 1",
-            params![now as i64],
-            |r| {
-                Ok((
-                    sql::row_get(r, 0)?,
-                    sql::row_get(r, 1)?,
-                    sql::row_get(r, 2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(db_error)?;
-    let Some((id, digest, has_receipt)) = upload else {
-        return Ok(());
-    };
-    // Removing this upload releases its reserved receipt slot. Legacy state
-    // that already exceeds the limit waits for receipt expiry.
-    if has_receipt == 0 && receipt_slots_used(db)? > ROW_MAX {
-        return Ok(());
-    }
-    db.execute("DELETE FROM chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (upload=?1)", params![id])
-        .map_err(db_error)?;
-    db.execute(
-        "DELETE FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id=?1)",
-        params![id],
-    )
-    .map_err(db_error)?;
-    if has_receipt == 0 {
-        record(db, &id, &digest, &"Expired", now)?;
+    let row:Option<(Id,Id,Option<Id>)>=db.query_row("SELECT id,vault,cancel_job FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND expires<=?1 ORDER BY expires,id LIMIT 1",params![now as i64],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))).optional().map_err(db_error)?;
+    if let Some((upload, vault, job)) = row {
+        cancel_upload_batch(
+            db,
+            &vault,
+            &upload,
+            &job.unwrap_or_else(|| upload.clone()),
+            now,
+        )?;
     }
     Ok(())
 }
@@ -691,15 +661,11 @@ pub(crate) fn remove_revision(
     object: &[u8],
     revision: i64,
 ) -> Result<()> {
-    if incident::pinned(db, vault)? {
-        return Err(Error::Conflict);
-    }
     db.execute(
         "DELETE FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision=?3)",
         params![vault, object, revision],
     )
     .map_err(db_error)?;
-    db.execute("DELETE FROM wrapper_slots WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2 AND revision=?3",params![vault,object,revision]).map_err(db_error)?;
     db.execute(
         "DELETE FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision=?3)",
         params![vault, object, revision],
@@ -708,286 +674,73 @@ pub(crate) fn remove_revision(
     Ok(())
 }
 
-fn collect_retired_revision(db: &Connection, now: u64) -> Result<u64> {
-    let revision: Option<(Id, Id, i64)> = db
-        .query_row(
-            "SELECT r.vault,r.object,r.revision FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r
-         WHERE r.retired IS NOT NULL AND NOT EXISTS(SELECT 1 FROM vaults v WHERE v.owner=r.owner AND v.id=r.vault AND json_extract(v.header,'$.state')='IncidentRequired') AND NOT EXISTS(
-           SELECT 1 FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) e WHERE e.vault=r.vault AND e.state='Active' AND e.expires>?1
-         ) LIMIT 1",
-            params![now as i64],
-            |r| {
-                Ok((
-                    sql::row_get(r, 0)?,
-                    sql::row_get(r, 1)?,
-                    sql::row_get(r, 2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(db_error)?;
-    if let Some((vault, object, revision)) = revision {
-        remove_revision(db, &vault, &object, revision)?;
-        return Ok(1);
+fn collect_retired_revision(db: &Connection) -> Result<u64> {
+    let row:Option<(Id,Id,i64)>=db.query_row("SELECT vault,object,revision FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND retired IS NOT NULL ORDER BY vault,object,revision LIMIT 1",params![],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))).optional().map_err(db_error)?;
+    let Some((v, o, r)) = row else { return Ok(0) };
+    remove_ciphertext_batch(db, &v, Some(&o), Some(r))?;
+    let remaining:i64=db.query_row("SELECT count(*) FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND object=?2 AND revision=?3",params![v,o,r],|r|sql::row_get(r,0)).map_err(db_error)?;
+    if remaining == 0 {
+        remove_revision(db, &v, &o, r)?;
     }
-    Ok(0)
+    Ok(1)
 }
-
 pub fn gc(db: &Connection, now: u64) -> Result<u64> {
-    if transition::restore_pending(db)? {
-        return Ok(0);
-    }
+    keys::collect_owner_completed(db, now)?;
     collect_expired_receipts(db, now)?;
+    operations::collect(db, now)?;
     collect_expired_upload(db, now)?;
-    db.execute(
-        "DELETE FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id IN(SELECT id FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE expires<=?1 LIMIT 100))",
-        params![now as i64],
-    )
-    .map_err(db_error)?;
-    match setup::collect_expired(db, now)? {
-        Some(revisions) => Ok(revisions),
-        None => collect_retired_revision(db, now),
-    }
+    collect_retired_revision(db)
 }
-pub fn begin_export(db: &Connection, vault: &[u8], export: &[u8], now: u64) -> Result<Export> {
-    let header = incident::readable(db, vault)?;
-    id(export)?;
-    let previous: Option<String> = db
+/// Cursor advances even for idle owners. A restart reads the same durable position.
+pub fn maintain_expired(db: &Connection, now: u64) -> Result<Option<(Principal, u64)>> {
+    let cursor: Option<String> = db
         .query_row(
-            "SELECT snapshot FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
-            params![export],
+            "SELECT value FROM global_settings WHERE key='gc-owner'",
+            params![],
             |r| sql::row_get(r, 0),
         )
         .optional()
         .map_err(db_error)?;
-    if let Some(s) = previous {
-        let e: Export = serde_json::from_str(&s).map_err(|_| Error::Storage)?;
-        if e.vault != vault {
-            return Err(Error::Conflict);
-        }
-        return get_export(db, export, now);
-    }
-    let n: i64 = db
-        .query_row(
-            "SELECT count(*) FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?2 AND state='Active' AND expires>?1",
-            params![now as i64,vault],
-            |r| sql::row_get(r, 0),
-        )
-        .map_err(db_error)?;
-    if n > 0 {
-        return Err(Error::Busy);
-    }
-    // Reuse the prepaid snapshot slot once its prior snapshot no longer pins data.
-    // Active, unexpired snapshots are protected by the Busy check above.
-    db.execute("DELETE FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=(SELECT id FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND (state<>'Active' OR expires<=?2) ORDER BY expires,id LIMIT 1)", params![vault,now as i64]).map_err(db_error)?;
-    let reclaimed: i64 = db
-        .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))
-        .map_err(db_error)?;
-    let all: i64 = db
-        .query_row("SELECT count(*) FROM exports", params![], |r| {
-            sql::row_get(r, 0)
-        })
-        .map_err(db_error)?;
-    if all >= 10000 {
-        return Err(Error::QuotaExceeded);
-    }
-    // The first bounded snapshot slot is prepaid when the vault is reserved.
-    let existing:i64=db.query_row("SELECT count(*) FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1",params![vault],|r|sql::row_get(r,0)).map_err(db_error)?;
-    if existing > 0 && reclaimed == 0 {
-        check_capacity(db, OVERHEAD)?;
-    }
+    let cursor = cursor.unwrap_or_default();
+    let next:Option<Vec<u8>>=db.query_row("SELECT owner FROM (SELECT owner FROM vaults UNION SELECT owner FROM uploads UNION SELECT owner FROM receipts UNION SELECT owner FROM operations UNION SELECT owner FROM key_flights) WHERE hex(owner)>?1 ORDER BY hex(owner) LIMIT 1",params![cursor],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
+    let Some(owner) = next else {
+        db.execute("INSERT INTO global_settings(key,value) VALUES('gc-owner','') ON CONFLICT(key) DO UPDATE SET value=''",params![]).map_err(db_error)?;
+        return Ok(None);
+    };
+    db.execute("INSERT INTO global_settings(key,value) VALUES('gc-owner',hex(?1)) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![owner]).map_err(db_error)?;
+    let owner = Principal::try_from_slice(&owner).map_err(|_| Error::Storage)?;
+    let usage = OwnerContext::authenticated(owner)?.run(db, |db| {
+        gc(db, now)?;
+        usage(db)
+    })?;
+    Ok(Some((owner, usage)))
+}
 
-    let (record_count,chunk_count,plain_bytes):(i64,i64,i64)=db.query_row("SELECT count(*),COALESCE(sum(CASE WHEN deleted=1 THEN 0 WHEN plain_size=0 THEN 1 ELSE (plain_size+1048575)/1048576 END),0),COALESCE(sum(plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND born<=?2 AND (retired IS NULL OR retired>?2)",params![vault,header.sequence as i64],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))).map_err(db_error)?;
-    let e = Export {
-        record_count: record_count as u64,
-        chunk_count: chunk_count as u64,
-        plain_bytes: plain_bytes as u64,
-        id: export.to_vec(),
-        vault: vault.to_vec(),
-        sequence: header.sequence,
-        expires: now + DAY,
-        state: "Active".into(),
-        header,
-    };
-    db.execute(
-        "INSERT INTO exports VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4,'Active')",
-        params![
-            export,
-            vault,
-            serde_json::to_string(&e).map_err(|_| Error::Storage)?,
-            e.expires as i64
-        ],
-    )
-    .map_err(db_error)?;
-    Ok(e)
-}
-pub fn get_export(db: &Connection, id: &[u8], now: u64) -> Result<Export> {
-    vault_types::id(id)?;
-    let (raw, state): (String, String) = db
-        .query_row(
-            "SELECT snapshot,state FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
-            params![id],
-            |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
-        )
-        .optional()
-        .map_err(db_error)?
-        .ok_or(Error::NotFound)?;
-    let mut e: Export = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
-    e.state = state;
-    if e.expires <= now {
-        return Err(Error::Expired);
-    }
-    if e.state != "Active" {
-        return Err(Error::Conflict);
-    }
-    Ok(e)
-}
-pub fn export_index(db: &Connection, export: &[u8], after: u64, now: u64) -> Result<ExportPage> {
-    let e = get_export(db, export, now)?;
-    snapshot_index(db, &e.header, e.sequence, after)
-}
-pub fn snapshot_index(
-    db: &Connection,
-    header: &Header,
-    sequence: u64,
-    after: u64,
-) -> Result<ExportPage> {
-    if after > i64::MAX as u64 {
-        return Err(Error::InvalidInput);
-    }
-    let mut stmt=db.prepare(&format!("SELECT {COLS} FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r WHERE r.vault=?1 AND r.born<=?2 AND (r.retired IS NULL OR r.retired>?2) AND r.born>?3 ORDER BY r.born LIMIT 101")).map_err(db_error)?;
-    let rows = sql::query_map(
-        &mut stmt,
-        params![header.id, sequence as i64, after as i64],
-        row,
-    )
-    .map_err(db_error)?;
-    let mut entries = Vec::new();
-    let mut bytes = 0;
-    let mut more = false;
-    for r in rows {
-        let r = overlays::effective(db, header, r)?;
-        let len = r.manifest.len() + r.chunk_hashes.len() * 32 + 512;
-        if entries.len() >= 100 || bytes + len > 800_000 {
-            more = true;
-            break;
-        }
-        bytes += len;
-        entries.push(r)
-    }
-    let next = if more {
-        entries.last().map(|r| r.sequence)
-    } else {
-        None
-    };
-    Ok(ExportPage { entries, next })
-}
-pub fn export_chunk(
-    db: &Connection,
-    export: &[u8],
-    object: &[u8],
-    revision: u64,
-    index: u32,
-    now: u64,
-) -> Result<Vec<u8>> {
-    let e = get_export(db, export, now)?;
-    snapshot_chunk(db, &e.vault, e.sequence, object, revision, index)
-}
-pub fn snapshot_chunk(
+/// At most 100 rows and one maximum ciphertext chunk's bytes per call.
+pub fn remove_ciphertext_batch(
     db: &Connection,
     vault: &[u8],
-    sequence: u64,
-    object: &[u8],
-    revision: u64,
-    index: u32,
-) -> Result<Vec<u8>> {
-    id(object)?;
-    if revision > i64::MAX as u64 || index > 10 {
-        return Err(Error::InvalidInput);
-    }
-    let yes:Option<i64>=db.query_row("SELECT 1 FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND object=?2 AND revision=?3 AND born<=?4 AND (retired IS NULL OR retired>?4)",params![vault,object,revision as i64,sequence as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
-    if yes.is_none() {
-        return Err(Error::NotFound);
-    }
-    db.query_row(
-        "SELECT data FROM (SELECT * FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE vault=?1 AND object=?2 AND revision=?3 AND idx=?4",
-        params![vault, object, revision as i64, index as i64],
-        |r| sql::row_get(r, 0),
-    )
-    .optional()
-    .map_err(db_error)?
-    .ok_or(Error::NotFound)
-}
-pub fn finish_export(db: &Connection, export: &[u8], saved: bool, now: u64) -> Result<Header> {
-    id(export)?;
-    let (raw, state): (String, String) = db
-        .query_row(
-            "SELECT snapshot,state FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE id=?1",
-            params![export],
-            |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
-        )
-        .optional()
-        .map_err(db_error)?
-        .ok_or(Error::NotFound)?;
-    let e: Export = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
-    if state == "Finished" && saved {
-        return incident::readable(db, &e.vault);
-    }
-    if state == "Aborted" && !saved {
-        return incident::readable(db, &e.vault);
-    }
-    if e.expires <= now {
-        return Err(Error::Expired);
-    }
-    if state != "Active" {
-        return Err(Error::Conflict);
-    }
-    let mut h = incident::readable(db, &e.vault)?;
-    if saved {
-        h.backup_sequence = Some(e.sequence);
-        h.backup_at = Some(now);
-        put_header(db, &h)?;
-    }
-    db.execute(
-        "UPDATE exports SET state=?2 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id=?1)",
-        params![export, if saved { "Finished" } else { "Aborted" }],
+    object: Option<&[u8]>,
+    revision: Option<i64>,
+) -> Result<usize> {
+    let mut stmt=db.prepare("SELECT rowid,length(data) FROM revision_chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND (length(?2)=0 OR object=?2) AND (?3<0 OR revision=?3) ORDER BY object,revision,idx LIMIT 100").map_err(db_error)?;
+    let rows: Vec<(i64, i64)> = sql::query_map(
+        &mut stmt,
+        params![vault, object.unwrap_or(&[]), revision.unwrap_or(-1)],
+        |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
     )
     .map_err(db_error)?;
-    Ok(h)
-}
-pub fn active_export(db: &Connection, now: u64) -> Result<Option<Export>> {
-    let id: Option<Vec<u8>> = db
-        .query_row(
-            "SELECT id FROM (SELECT * FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE state='Active' AND expires>?1 LIMIT 1",
-            params![now as i64],
-            |r| sql::row_get(r, 0),
-        )
-        .optional()
-        .map_err(db_error)?;
-    id.map(|id| get_export(db, &id, now)).transpose()
-}
-
-pub fn active_export_for_vault(db: &Connection, vault: &[u8], now: u64) -> Result<Option<Export>> {
-    active(db, vault)?;
-    let id:Option<Id>=db.query_row("SELECT id FROM exports WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND state='Active' AND expires>?2 LIMIT 1",params![vault,now as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
-    id.map(|id| get_export(db, &id, now)).transpose()
-}
-
-/// Select one expired owner's housekeeping work on the server, before binding the request owner.
-/// Each scoped GC pass keeps its existing fixed deletion bounds and preserves live reservations.
-pub fn maintain_expired(db: &Connection, now: u64) -> Result<Option<(Principal, u64)>> {
-    let owner:Option<Vec<u8>>=db.query_row("SELECT owner FROM (
-        SELECT owner,expires FROM receipts WHERE expires<=?1
-        UNION ALL SELECT owner,expires FROM uploads WHERE expires<=?1 AND cancel_job IS NULL
-        UNION ALL SELECT owner,expires FROM vaults WHERE expires>0 AND expires<=?1
-        UNION ALL SELECT owner,expires FROM exports WHERE expires<=?1
-        UNION ALL SELECT r.owner,0 AS expires FROM revisions r WHERE r.retired IS NOT NULL AND NOT EXISTS(SELECT 1 FROM vaults v WHERE v.owner=r.owner AND v.id=r.vault AND json_extract(v.header,'$.state')='IncidentRequired') AND NOT EXISTS(
-            SELECT 1 FROM exports e WHERE e.owner=r.owner AND e.vault=r.vault AND e.state='Active' AND e.expires>?1)
-        ) ORDER BY expires,owner LIMIT 1",params![now as i64],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
-    let Some(owner) = owner else { return Ok(None) };
-    let owner = Principal::from_slice(&owner);
-    OwnerContext::authenticated(owner)?.run(db, |db| {
-        gc(db, now)?;
-        Ok(Some((owner, usage(db)?)))
-    })
+    let mut bytes = 0usize;
+    let mut removed = 0;
+    for (row, size) in rows {
+        let size = usize::try_from(size).map_err(|_| Error::Storage)?;
+        if bytes + size > CHUNK_MAX {
+            break;
+        }
+        db.execute("DELETE FROM revision_chunks WHERE rowid=?1", params![row])
+            .map_err(db_error)?;
+        bytes += size;
+        removed += 1;
+    }
+    Ok(removed)
 }

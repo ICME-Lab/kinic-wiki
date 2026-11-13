@@ -1,3 +1,4 @@
+use vault_types::*;
 mod accounting;
 mod api;
 mod capacity;
@@ -14,7 +15,9 @@ fn now_nanos() -> u64 {
 fn now_millis() -> i64 {
     (now_nanos() / 1_000_000) as i64
 }
-fn with_service<T>(f: impl FnOnce(&state::State) -> Result<T, String>) -> Result<T, String> {
+fn with_service<T>(
+    f: impl FnOnce(&state::State) -> std::result::Result<T, String>,
+) -> std::result::Result<T, String> {
     f(&state::State)
 }
 fn initialize() {

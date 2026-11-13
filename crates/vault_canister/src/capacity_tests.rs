@@ -220,7 +220,7 @@ fn capacity_settings_prepaid_slots_cover_every_existing_key_and_cursor_widening(
     use vault_types::capacity::*;
     state::initialize().unwrap();
     state::transaction(|db| {
-        for key in GLOBAL_SETTING_KEYS.iter().copied().chain(["future-incident","future-restore"]) {
+        for key in GLOBAL_SETTING_KEYS.iter().copied().chain(["future-setting"]) {
             let max=SETTING_ROW-8-key.len();
             db.execute("INSERT INTO global_settings VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,"x".repeat(max)]).unwrap();
         }

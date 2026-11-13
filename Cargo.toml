@@ -23,5 +23,4 @@ exclude = ["vendor/ic-agent"]
 ic-sqlite-vfs = { git = "https://github.com/humandebri/ic-sqlite-vfs", rev = "a3a454ff749c5be59b00725ced7ede5ac200496f", default-features = false }
 
 [patch.crates-io]
-passkey-auth = { path = "vendor/passkey-auth" }
 ic-agent = { path = "vendor/ic-agent" }

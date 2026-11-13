@@ -69,6 +69,7 @@ impl State {
         })
     }
     /// Settlement is permitted after disabling new work and is independent of today's budget.
+    #[cfg(test)]
     pub fn vault_settle_cycles(
         &self,
         owner: &str,
@@ -86,31 +87,6 @@ impl State {
         now: i64,
     ) -> Result<(), String> {
         self.write_index(|tx| settle_reservation(tx, owner, token, actual, now, true, true))
-    }
-    #[cfg(test)]
-    pub fn vault_cancel_reserved_cycles(
-        &self,
-        owner: &str,
-        token: &str,
-        actual: u64,
-        orphan: bool,
-        now: i64,
-    ) -> Result<(), String> {
-        self.write_index(|tx| {
-            let exists: Option<i64> = tx
-                .query_row(
-                    "SELECT 1 FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",
-                    params![owner, token],
-                    |r| sqlite::row_get(r, 0),
-                )
-                .optional()
-                .map_err(sql_error)?;
-            // Outstanding rows are never compacted. Absence leaves no debit to refund/replay.
-            if exists.is_none() {
-                return Ok(());
-            }
-            settle_reservation(tx, owner, token, actual, now, orphan, false)
-        })
     }
     pub fn vault_charge_execution(&self, owner: &str, amount: u64, now: i64) -> Result<(), String> {
         self.write_index(|tx| {
@@ -252,16 +228,6 @@ impl State {
             validate_vault_config(config)?;
         }
         self.vault_raw_transaction(|db|{
-            let old:Option<String>=db.query_row("SELECT value FROM global_settings WHERE key='config'",params![],|r|sqlite::row_get(r,0)).optional().map_err(|_|vault_types::Error::Storage)?;
-            let old:Option<vault_types::VaultConfig>=old.map(|s|serde_json::from_str(&s).map_err(|_|vault_types::Error::Storage)).transpose()?;
-            let compatible=match (&old,&config){
-                (Some(a),Some(b))=>a.origin==b.origin&&a.rp_id==b.rp_id&&a.key_name==b.key_name,
-                (None,None)=>true,_=>false
-            };
-            if !compatible {
-                let pending:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE json_extract(header,'$.state') IN ('Pending','Restoring','IncidentRequired'))",params![],|r|sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage)?;
-                if pending!=0 || vault_store::transition::any_pending(db)? {return Err(vault_types::Error::Conflict);}
-            }
             match config {
                 Some(config)=>{let raw=serde_json::to_string(&config).map_err(|_|vault_types::Error::Storage)?;db.execute("INSERT INTO global_settings(key,value) VALUES('config',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![raw]).map_err(|_|vault_types::Error::Storage)?;}
                 None=>{db.execute("DELETE FROM global_settings WHERE key='config'",params![]).map_err(|_|vault_types::Error::Storage)?;}
@@ -277,22 +243,11 @@ impl State {
     }
 }
 pub fn validate_vault_config(config: &vault_types::VaultConfig) -> vault_types::Result<()> {
-    let origin = url::Url::parse(&config.origin).map_err(|_| vault_types::Error::InvalidInput)?;
-    let host = origin.host_str().ok_or(vault_types::Error::InvalidInput)?;
-    let local = host == "localhost" || host.ends_with(".localhost");
-    if config.origin != origin.origin().ascii_serialization()
-        || (!local && origin.scheme() != "https")
-        || (local && !matches!(origin.scheme(), "http" | "https"))
-        || host != config.rp_id
-        || (!local && (host != "vault.kinic.xyz" || config.origin != "https://vault.kinic.xyz"))
-        || config.rp_id.is_empty()
-        || config.rp_id.len() > 253
-        || config.rp_id.starts_with('.')
-        || config.key_name.is_empty()
+    if config.key_name.is_empty()
         || config.key_name.len() > 64
         || config.minimum_cycles < 100_000_000_000
     {
-        return Err(vault_types::Error::InvalidInput);
+        return Err(Error::InvalidInput);
     }
     Ok(())
 }
@@ -324,7 +279,30 @@ impl State {
     ) -> vault_types::Result<bool> {
         self.vault_raw_transaction(|db| {
             context.run(db, |db| {
-                vault_service::runtime::settle_key_reservation_in(db, token, now, actual)
+                let current =
+                    vault_service::runtime::settle_key_reservation_in(db, token, now, actual)?;
+                let owner = context.owner().to_text();
+                let journal = format!("derive:{token}");
+                let exists: i64 = db
+                    .query_row(
+                        "SELECT count(*) FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",
+                        params![owner, journal],
+                        |r| sqlite::row_get(r, 0),
+                    )
+                    .map_err(|_| Error::Storage)?;
+                if exists != 0 {
+                    settle_reservation(
+                        db,
+                        &owner,
+                        &journal,
+                        actual,
+                        (now * 1000) as i64,
+                        true,
+                        true,
+                    )
+                    .map_err(|_| Error::Storage)?;
+                }
+                Ok(current)
             })
         })
     }
@@ -387,29 +365,6 @@ impl State {
         now: i64,
     ) -> Result<(), String> {
         self.write_index(|tx| finish_reserved_execution(tx, owner, token, cycles, now))
-    }
-    #[cfg(test)]
-    pub fn vault_recover_orphan_execution(
-        &self,
-        owner: &str,
-        now: i64,
-    ) -> Result<Vec<u64>, String> {
-        let generation = self
-            .vault_current_generation()
-            .map_err(|_| "Vault generation unavailable")?;
-        self.write_index(|tx|{
-            let mut stmt=tx.prepare("SELECT token,execution_checkpoint,in_flight FROM vault_cycle_reservations WHERE owner=?1 AND generation<?2 AND (execution_checkpoint>execution_billed OR (token LIKE 'challenge:%' AND in_flight=1)) ORDER BY created_at_ms,token LIMIT 1000").map_err(sql_error)?;
-            let rows:Vec<(String,i64,i64)>=sqlite::query_map(&mut stmt,params![owner,generation],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?,sqlite::row_get(r,2)?))).map_err(sql_error)?;
-            let mut challenges=vec![];
-            for (token,checkpoint,flight) in rows {
-                if let Some(id)=token.strip_prefix("challenge:").and_then(|n|n.parse::<u64>().ok()) {
-                    if flight==1{settle_reservation(tx,owner,&token,0,now,true,false)?;}
-                    challenges.push(id);
-                }
-                finish_reserved_execution(tx,owner,&token,checkpoint as u64,now)?;
-            }
-            Ok(challenges)
-        })
     }
     fn vault_current_generation(&self) -> vault_types::Result<i64> {
         self.vault_raw_transaction(|db|db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|sqlite::row_get(r,0)).map_err(|_|vault_types::Error::Storage))
@@ -502,7 +457,11 @@ pub(crate) fn track_storage_in(
     Ok(())
 }
 pub(crate) fn maintain_expired_in(db: &Connection, now: u64) -> vault_types::Result<()> {
-    if let Some((owner, usage)) = vault_store::content::maintain_expired(db, now)? {
+    if let Some((owner, _)) = vault_store::content::maintain_expired(db, now)? {
+        let usage = vault_store::OwnerContext::authenticated(owner)?.run(db, |db| {
+            recover_pending_in(db, owner, None, now)?;
+            vault_store::content::usage(db)
+        })?;
         track_storage_in(
             db,
             &owner.to_text(),
@@ -542,67 +501,46 @@ pub(crate) fn record_entry(
     Ok(())
 }
 
-/// Called only inside an authenticated cleanup mutation transaction. One key flight and one
-/// orphan challenge maximum; never starts external work or creates an account/reservation.
+/// Cancel only this caller's flight, or recover its expired pre-upgrade flight.
 pub(crate) fn recover_pending_in(
     db: &Connection,
     owner: candid::Principal,
-    targets: &[vault_types::Id],
-    cancel_live: bool,
+    target: Option<&[u8]>,
     now: u64,
 ) -> vault_types::Result<bool> {
     let text = owner.to_text();
-    let millis =
-        i64::try_from(now.checked_mul(1000).ok_or(Error::Storage)?).map_err(|_| Error::Storage)?;
-    let runtime:i64=db.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM global_settings WHERE key='generation'),0)",params![],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
-    let flight:Option<(i64,i64,i64)>=db.query_row("SELECT token,generation,created FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled') ORDER BY in_flight DESC,token DESC LIMIT 1",params![owner.as_slice()],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?,sqlite::row_get(r,2)?))).optional().map_err(|_|Error::Storage)?;
-    if let Some((token, generation, created)) = flight {
-        let mut control = vault_store::load::<serde_json::Value>(db, "control")?;
-        let exact = control
-            .as_ref()
-            .and_then(|c| c.get("derive"))
-            .filter(|f| f.get("token").and_then(|x| x.as_u64()) == Some(token as u64));
-        let target = exact
-            .and_then(|f| f.get("vault"))
-            .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok());
-        let scoped = cancel_live && target.as_ref().is_some_and(|v| targets.contains(v));
-        // Expired orphan accounting is safe owner maintenance; never cancel unrelated live work.
-        let orphan = generation != runtime && now >= created as u64 + 120;
-        if scoped || orphan {
-            let Some((own, actual, is_orphan)) = vault_store::keys::cancel_pending(db, now)? else {
-                return Err(Error::Storage);
-            };
+    let millis = (now * 1000) as i64;
+    let runtime = vault_store::operations::runtime(db)?;
+    let row:Option<(i64,i64,i64)>=db.query_row("SELECT token,generation,created FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled') ORDER BY in_flight DESC,token DESC LIMIT 1",params![owner.as_slice()],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?,sqlite::row_get(r,2)?))).optional().map_err(|_|Error::Storage)?;
+    if let Some((token, generation, created)) = row {
+        let control = vault_store::load::<(u64, vault_types::Id)>(db, "derive")?;
+        let selected = target.is_some_and(|v| {
+            control
+                .as_ref()
+                .is_some_and(|(t, id)| *t == token as u64 && id == v)
+        });
+        if selected || (generation != runtime && now >= created as u64 + 120) {
+            let (own, actual, orphan) =
+                vault_store::keys::cancel_pending(db, now)?.ok_or(Error::Storage)?;
             if own != token as u64 {
                 return Err(Error::Conflict);
             }
             let journal = format!("derive:{token}");
-            let exists:Option<i64>=db.query_row("SELECT execution_checkpoint FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",params![text,journal],|r|sqlite::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-            if let Some(checkpoint) = exists {
-                settle_reservation(db, &text, &journal, actual, millis, is_orphan, false)
+            let checkpoint:Option<i64>=db.query_row("SELECT execution_checkpoint FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",params![text,journal],|r|sqlite::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
+            if let Some(checkpoint) = checkpoint {
+                settle_reservation(db, &text, &journal, actual, millis, orphan, false)
                     .map_err(|_| Error::Storage)?;
                 finish_reserved_execution(db, &text, &journal, checkpoint as u64, millis)
                     .map_err(|_| Error::Storage)?;
             }
-            if let Some(c) = control.as_mut()
-                && c.get("derive")
-                    .and_then(|f| f.get("token"))
-                    .and_then(|x| x.as_u64())
-                    == Some(own)
-            {
-                c["derive"] = serde_json::Value::Null;
-                vault_store::save(db, "control", c)?;
+            if control.as_ref().is_some_and(|(t, _)| *t == own) {
+                db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND key='derive'",params![]).map_err(|_|Error::Storage)?;
             }
+            db.execute("DELETE FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND token=?1 AND result IS NULL",params![token]).map_err(|_|Error::Storage)?;
             vault_store::keys::acknowledge_cancel(db, own)?;
         }
     }
-    let challenge:Option<(String,i64)>=db.query_row("SELECT token,execution_checkpoint FROM vault_cycle_reservations WHERE owner=?1 AND generation<?2 AND token LIKE 'challenge:%' AND (in_flight=1 OR execution_checkpoint>execution_billed) ORDER BY created_at_ms,token LIMIT 1",params![text,runtime],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?))).optional().map_err(|_|Error::Storage)?;
-    if let Some((token, checkpoint)) = challenge {
-        settle_reservation(db, &text, &token, 0, millis, true, false)
-            .map_err(|_| Error::Storage)?;
-        finish_reserved_execution(db, &text, &token, checkpoint as u64, millis)
-            .map_err(|_| Error::Storage)?;
-    }
-    let pending:i64=db.query_row("SELECT (SELECT count(*) FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled'))+(SELECT count(*) FROM vault_cycle_reservations WHERE owner=?2 AND generation<?3 AND (in_flight=1 OR execution_checkpoint>execution_billed))",params![owner.as_slice(),text,runtime],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
+    let pending:i64=db.query_row("SELECT count(*) FROM key_flights WHERE owner=?1 AND (in_flight=1 OR phase='cancelled')",params![owner.as_slice()],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
     Ok(pending == 0)
 }
 
@@ -621,14 +559,4 @@ pub(crate) fn reconcile_key_gc_in(
     }
     db.execute("INSERT INTO owner_scope(slot,owner) VALUES(1,?1) ON CONFLICT(slot) DO UPDATE SET owner=excluded.owner",params![caller.as_slice()]).map_err(|_|Error::Storage)?;
     Ok(())
-}
-
-/// Read one exact restore allocation reservation; no cancellation, refund or new row.
-pub(crate) fn challenge_pending_in(
-    db: &Connection,
-    owner: candid::Principal,
-    token: u64,
-) -> vault_types::Result<bool> {
-    let n:i64=db.query_row("SELECT count(*) FROM vault_cycle_reservations WHERE owner=?1 AND token=?2 AND (in_flight=1 OR execution_checkpoint>execution_billed)",params![owner.to_text(),format!("challenge:{token}")],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
-    Ok(n != 0)
 }
