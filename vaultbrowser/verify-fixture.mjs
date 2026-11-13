@@ -72,7 +72,17 @@ try {
     .click();
   await editor.getByText("Private fixture text", { exact: true }).waitFor();
   await page.getByText("Show version history", { exact: true }).click();
+  const historyDownload = page.waitForEvent("download");
   await page.getByText("Download revision 1", { exact: true }).click();
+  const historyFile = await historyDownload;
+  assert.match(
+    historyFile.suggestedFilename(),
+    /^document-[A-Za-z0-9_-]+-revision-1\.bin$/,
+  );
+  const historyStream = await historyFile.createReadStream();
+  const historyChunks = [];
+  for await (const chunk of historyStream) historyChunks.push(chunk);
+  assert.equal(Buffer.concat(historyChunks).toString(), "Private fixture text");
   await page.evaluate(() => {
     window.retainedEditor = window.syntheticEditor();
     window.retainedInput = document.querySelector('input[maxlength="512"]');
@@ -88,6 +98,7 @@ try {
   assert.equal(wiped.text, "");
   assert.equal(wiped.input, "");
   assert.equal(wiped.root, false);
+  assert.equal(wiped.blobs.filter(([action]) => action === "create").length, 1);
   for (const [, url] of wiped.blobs.filter(([action]) => action === "create"))
     assert(
       wiped.blobs.some(

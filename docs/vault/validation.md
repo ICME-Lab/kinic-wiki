@@ -1,130 +1,79 @@
-# Standalone Vault validation
+# Standalone II-only Vault validation
 
-The dedicated Vault has its own canister, certified assets, origin-derived Internet Identity principal, stable database and browser Session. Wiki database creation, deletion and upgrade do not share its database or key namespace. This document distinguishes native tests, actual canister execution, browser acceptance and synthetic UI fixtures. It is not a production deployment or an independent external security audit.
+This release uses a dedicated Vault canister, certified application assets, an origin-derived Internet Identity principal and browser encryption. Validation distinguishes real Wasm execution, real II browser sessions and synthetic UI fixtures. No production deployment, live-ledger payment, existing-canister reinstall or independent external audit is claimed.
 
-## Reproduce the gates
+## Reproduce
 
-Use the repository Rust toolchain, Node 24 and pnpm 11.0.8. Install workspace dependencies with `pnpm install --frozen-lockfile` and the separate PocketIC dependencies with `npm ci --prefix pocketic-tests --ignore-scripts`. The CI workflow explicitly selects Vault changes, runs the full Rust workspace when Vault Rust changes, and runs the dedicated Vault job for client, canister, contract, asset, recovery-tool and acceptance changes.
+Use the repository Rust toolchain, Node 24, pnpm 11.0.8, didc 0.6.2, icp-cli 1.0.2 and PocketIC 16.1.0. Workspace dependencies and the separate PocketIC dependencies are locked.
 
 ```sh
+pnpm install --frozen-lockfile
+npm ci --prefix pocketic-tests --ignore-scripts
+pnpm audit --audit-level moderate
 cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo machete
 node scripts/check-vault-boundary.mjs
 node packages/vault-client/scripts/generate-contracts.mjs --check
 pnpm --filter './packages/vault-*' --filter vaultbrowser -r test
 pnpm --dir packages/vault-client typecheck
 pnpm --dir vaultbrowser typecheck
-node --test tools/vault-recovery/test/offline.test.mjs
-pnpm --dir vaultbrowser build
-cargo build -p vault-canister -p vfs-canister --target wasm32-unknown-unknown --release --locked
-node pocketic-tests/scripts/build-vault-synthetic-funding.mjs
-node pocketic-tests/scripts/build-vault-ledger.mjs
-node pocketic-tests/scripts/build-vault-client-acceptance.mjs
-node pocketic-tests/scripts/build-vault-fixtures.mjs
-export POCKET_IC_BIN="/absolute/path/to/pocketic-16.1.0/pocket-ic"
-test "$("$POCKET_IC_BIN" --version)" = "pocket-ic-server 16.1.0"
-pnpm --dir pocketic-tests test:vault
-```
-
-Current funding acceptance uses the explicitly NONDEPLOYABLE `synthetic-funding-test-only` feature and separate `target/vault-synthetic-funding-build` artifact/provenance. Its certified configuration says `fundingMode: "synthetic-test-only"`, even when testing production-origin policy. Default production Wasm remains in `target/wasm32-unknown-unknown/release` with `fundingMode: "unavailable"`; actual certification tests execute it, and the isolation suite upgrades a synthetic journal into it to verify no fee/transfer calls, no controller override, and preserved balances/unknown holds. The browser acceptance build enables the same test-only feature and records nondeployable provenance. None of these synthetic results demonstrate production funding availability.
-
-CI pins PocketIC 16.1.0. Each acceptance process owns and stops its own server and unique port file. Only the complete v6 backend at `3dc9c7c557d996d87e7eba0ee9143c64db8fceed` is pinned as a pre-refactor upgrade baseline. `build-vault-fixtures.mjs` builds that baseline plus current-source account-capacity and logical-quota fixtures from reachable Git archives under `target`, not worktrees or machine binaries. All three are nondeployable synthetic-funding Wasm, with source/archive/fixture/Wasm/lock hashes and toolchain provenance. The baseline embeds current assets intentionally; this establishes backend upgrade continuity, not historical browser provenance. Development schemas1–5 and Task4–12 migration support are retired. V1/v2 backup import and offline recovery remain supported.
-
-The backend aggregate runner requires an explicit `POCKET_IC_BIN`, checks and logs its exact 16.1.0 version before starting any acceptance process, and rejects other versions instead of falling back to the SDK binary. Use the same verified binary for direct integration-test commands. Capacity upgrade fixtures drain the pinned runtime's install-code instruction budget with scheduler rounds, asserting less than 1ms of virtual-clock movement so quotes, billing and retained snapshots do not age during pacing.
-
-The scoped empty-creation key-rotation case opts into an additional real `TestThresholdKeys` subnet, which supplies `test_key_1` alongside the fiduciary subnet's `key_1`. A test-only adapter extends the locked `@dfinity/pic` 0.21.0 instance request through PocketIC 16.1's REST API; it checks the actual topology and retains the SDK's real transport, canister calls and teardown. Other restore fixtures keep their existing topology. The case verifies distinct real public keys and both source/target encrypted roots.
-
-For actual browser acceptance, install **icp-cli 1.0.2** and Chromium (`pnpm --dir wikibrowser exec playwright install chromium`), leave local ports 8044 and 3100 free, then run:
-
-```sh
+pnpm --dir pocketic-tests run build:vault-acceptance
+POCKET_IC_BIN=/absolute/path/to/pocket-ic-16.1.0 pnpm --dir pocketic-tests test:vault
+pnpm --dir wikibrowser exec playwright install chromium
 node pocketic-tests/scripts/run-vault-browser-acceptance.mjs
 ```
 
-The full browser test explicitly reaches the bounded authorization-capacity refusal at workflow and upgrade boundaries and waits 421 real seconds at each boundary (about 14 minutes total). It permits natural idle logout, verifies cleared private views, reauthenticates the same II account, and compares authoritative public job/header/credential/payment/capacity state before resuming with reselected files. There is no clock manipulation, receipt eviction or cap change. The test-only same-origin readback fixture uses the real AuthClient/agent/delegation and read APIs; it is not shipped in the production assets. The CI job allows 90 minutes, including these waits and builds. This is interrupted, paced acceptance, not instant uninterrupted completion.
+The CI job also runs strict production/fixture lint and uses Ubuntu 24.04 plus pinned tool downloads. It builds the same current production assets and schema 7 fixtures before running the six cases and real-II browser launcher. Deleted backup/recovery packages and historical artifact paths are no longer part of CI. Shared UI changes continue to select both Wiki and Vault checks; Rust/learning-example/CLI filters are retained. Hosted CI must still run on the final published commit.
 
-The runner checks port ownership, creates a unique project under `target/vault-browser-network-*`, creates separate Wiki/Vault/synthetic-ledger/II-backend/II-frontend canisters, builds the current assets and local-origin canisters, runs `vaultbrowser/verify-acceptance.mjs`, and stops only its own network/server in `finally`. It preserves the unique project's data and mappings for diagnosis. `VAULT_ACCEPTANCE_IDENTITY` can select an existing local controller identity without changing the CLI default. CI creates its own test identity. Do not use production or live-fund identities. The synthetic ledger records actual inter-canister approval/transfer calls but does not implement ledger economics. Downloads contain synthetic secrets and plaintext recovery outputs; keep them local. The uploaded CI provenance artifact excludes those downloads.
+For local machines without an npm executable, the tested separate dependency command is `pnpm --package=npm@11.6.2 dlx npm ci --prefix pocketic-tests --ignore-scripts`. `VAULT_BUILD_CACHE` and `VAULT_BROWSER_BUILD_CACHE` can point to an external native cache without changing the recorded output artifacts. No build-cache override authorizes reuse of an existing network or canister.
 
-The II runner fetches unmodified official `release-2026-05-08` development backend and frontend. Compressed SHA-256 pins are respectively `620d21e404330fa93ffa047a9302dbfa6c63ecef706d33f76b28adea104a05d9` and `62e6539d4ddeeaf47456c10eda7b04c5bc2446f246542460c7f9c5bddc80a2e0`. Initialization disables CAPTCHA and explicitly sets `dummy_auth=null` on both components. Actual WebAuthn virtual credentials and real II canister delegations are required. This is pinned development-II coverage, not proof of the latest managed or production II UI. The built-in managed II signup attempt in the local investigation produced a blank hidden view after identity creation was selected, without credential creation; its cause was not established. The working pinned run preserves `same-origin-allow-popups`; no COOP policy weakening or dummy authentication was used.
+## Evidence and artifacts
 
-## Evidence and its limits
+The integrated UI produced production Vault Wasm SHA-256 `5cefb331fc1a095ea9b2492349a90c192649404ab038acb9e95b918d9c9ae4d6`. All six current cases passed: lifecycle, state, capacity, isolation, physical-isolation and certification, including teardown. The production artifact has funding compiled unavailable. Test state/accounting injection and synthetic funding are separately built nondeployable artifacts.
 
-- **Native Rust:** the full workspace reports 1,303 successful executions when summing result lines, including nested child-process fixtures. Four ignored entries remain: two upstream native SQLite/VFS teardown limitations, one explicitly invoked lease-child fixture, and an external authenticated Codex/dsh transport test. Actual Wasm tests cover the canister storage/upgrade behavior independently. Strict workspace Clippy and Rustfmt pass. The exported Candid equality test and generated mutation contracts remain unchanged by boxing the internal Header result; native replay/storage tests and actual upgrade suites pass.
-- **Actual Wasm:** 18 sequential acceptance processes cover independent ownership and synthetic funding; generation/bootstrap and replay; capacity and old-state migration; incident preparation/cutover; new/reused scoped restore admission; full logical-quota import; mixed and all-purged parent obligations; v1/v2/foreign-source restoration; compatible upgrades; delayed random/key callbacks; cancellation; quota refusal; and scoped empty creation. Fixtures use real Ed25519 signatures and real PocketIC vetKD. They are not evidence of browser WebAuthn or Internet Identity by themselves.
-- **Actual certification:** the official `@dfinity/response-verification` validator verifies actual certificates, root signatures, witnesses, status, headers and bodies for HTML, JavaScript, configuration and II alternative origins against the local root key. Altered bodies, status, CSP and root keys fail. Merely seeing an `IC-Certificate` header is not counted as verification.
-- **Actual browser core:** one II account/passkey provider produces distinct Wiki and Vault principals. A Wiki-origin request explicitly naming the Vault derivation root receives II's unverified-origin refusal. The Wiki delegation has zero Vault credit and cannot read the known Vault header or change its configuration. Browser same-origin checks block DOM access, CSP refuses framing, and the legitimate Vault has no Wiki opener. Actual UI creation, passkey signing, vetKD, note write, backup download and independent offline recovery pass. Lock clears the retained detached editor document/DOM and destroys the view. No plaintext payload appears in Web Storage.
-- **Actual recovery browser:** the current UI completes compromised-passkey incident allocation, saved/reselected kit/archive verification and fresh atomic cutover; a new device then prepares a restore, survives an actual compatible canister upgrade, reselects the saved source and target files, performs bounded discard/import and server backup verification, and activates the scoped candidate. That scoped key subsequently creates and activates a new empty instance. The full runner exits successfully. Deliberate fresh-proof saturation reaches Busy before each real cooldown; elapsed times including reauthentication were 421,755 and 422,106 ms. Natural logout clears private views and same-account reauthentication preserves exact public pending jobs, headers, credentials, capacity and payment journal. The test disables surviving old virtual devices to simulate loss; ordinary restore does not revoke those registrations. The idle test exposed and now covers first-login callback setup when the authentication SDK creates its idle manager lazily.
-- **Synthetic UI fixtures:** layout, keyboard behavior, recovery dialogs, saved-file cancellation, editor undo-history wiping and late-response/identity-change handling have separate React/Chromium fixtures. Their actor/device mocks are not counted as actual-canister or same-II evidence. Detached CodeMirror/React native event-listener inventory still reports framework listeners after the document is empty and view destroyed; this is recorded as a tool limitation, not a zero-listener or RAM-erasure claim. The final bundle reports 1,021.88 kB (327.07 kB gzip); Vite's bundle-size and ineffective-dynamic-import advisories remain visible; no warning suppression or artificial drag behavior was added.
-- **Independent offline format checks:** the CLI runs in a separate process with network access forbidden, recovers legacy v1 and fresh v2 archives, refuses existing output overwrite, and is also exercised against an actual browser-produced backup. Archive tests and actual restore suites reject corrupt, incomplete/trailing, wrong-kit and old-root/future-ciphertext combinations. An old decrypted root failing to decrypt future data does not imply that an unrevoked Global passkey lost its authority to request a fresh current key. Source and fresh-target commitments differ and are checked.
+| Artifact                                                                | Provenance/purpose                                             |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `target/vault-ii-acceptance/vault_canister.wasm`                        | Current production assets and default funding-disabled backend |
+| `target/vault-ii-acceptance/vfs_canister.wasm`                          | Independent current Wiki canister                              |
+| `target/vault-ii-acceptance/vault-state.wasm`                           | Current-source, controller-only test SQL fixture               |
+| `target/vault-ii-acceptance/vault-old-schema.wasm`                      | Minimal old-schema refusal fixture                             |
+| `target/vault-synthetic-funding-build/…/vault_canister.wasm`            | Nondeployable synthetic-funding variant                        |
+| `target/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm`       | Nondeployable synthetic ledger                                 |
+| `target/vault-ii-acceptance/client/client.mjs`                          | Actual current client/crypto bundle                            |
+| `target/vault-ii-acceptance/{production,state,old-schema,runtime}.json` | Exact source, artifact, runtime and harness hashes/results     |
+| `target/vault-browser-readback/readback.mjs`                            | Test-only inspector, excluded from production assets           |
+| `target/vault-browser-provenance.json`                                  | Actual browser network/II/Wasm provenance                      |
+| `target/vault-browser-teardown.json`                                    | Owned ports/process teardown and fixture identity removal      |
+| `target/vault-ii-acceptance/browser/results.json`                       | Completed real-II browser case results                         |
 
-Historical evidence before the enforced funding gate: the complete 18-process backend matrix ran against production-origin-configured Vault Wasm `1030a3ceb2d0c6d6eb46bdc1c2aba2e206ab825d5b0de6288d403b0bcba2cd77`. Later client-only repairs produced final assets embedded in production Wasm `d50635874b02826bd4e63931a0ec3efe3b7214e7dd370111ccb58b29170d17a6`, which passed actual certification/tamper checks and the focused capacity/migration case. The full actual browser used local-origin Wasm `a0c7c26696ef2c3867828e614fd7edaecbe5c4574798f5e5d111a1bb5584d987`. These are distinct executed artifacts; the final CI job rebuilds and tests the published commit. Client/crypto/backup tests report 89 passes and UI tests 54 passes; types, strict lint, contracts and the existing unused-dependency gate also pass.
+The six-case suite does not use a real II delegation: PocketIC supplies the caller to the actual client and canister. It verifies real anchored vetKD, encrypted document v3, owner/canister/Vault/nonce isolation, exact retries, full-capacity prepaid upload completion, zero-credit cleanup, fair durable GC, schema 7 preservation and unchanged rejection of schemas1–6. Default-production upgrade tests retain synthetic prepaid credit and prove existing/new encrypted content still works with funding unavailable. Certification checks verify the real IC certificate/tree/body/status/security headers and reject tampering.
 
-## Physical memory sample
+The physical-isolation case uploads and decrypts a real 2 MiB random attachment, measures logical/physical growth, then independently creates/writes/upgrades/deletes Wiki state and rederives the unchanged Vault root. Its sample is empirical, not a full-capacity or worst-case physical memory bound.
 
-A real random 2,097,152-byte attachment was encrypted and uploaded through signed operations. On the historical production-origin-configured acceptance Wasm with SHA-256 `1030a3ceb2d0c6d6eb46bdc1c2aba2e206ab825d5b0de6288d403b0bcba2cd77`, management-canister total memory increased from 36,246,031 to 45,027,855 bytes (**8,781,824 bytes**), while logical charged usage increased from 19,175,485 to 21,299,823 bytes (**2,124,338 bytes**). The earlier pre-change binary sample measured physical growth 8,847,360 and logical growth 2,124,353 bytes for the same payload size. These are empirical samples with different embedded assets, not a full-capacity or worst-case bound, nor separate SQLite-page/heap attribution. The test records a fresh `target/vault-physical-memory.json`. It also creates, writes, upgrades and deletes an independent Wiki database, then confirms unchanged Vault state/module identity and decrypts the Vault root again with fresh authorized vetKD.
+## Actual II browser method
 
-## Operational boundaries
+The launcher creates a unique project under `target/vault-browser-network-*`, a project-owned `ICP_HOME` and disposable controller identity. It allocates a free random gateway port and probes existing certified Wiki dev origins on ports 3100/3010 before claiming one. It never kills an occupied unrelated listener. Each run installs fresh Wiki, Vault, synthetic-ledger, II backend and II frontend canisters. II release `release-2026-05-08` is pinned by compressed SHA-256 for both artifacts; cached downloads are reverified before use. Dummy authentication is disabled. Bundled Playwright Chromium uses a virtual WebAuthn authenticator only in the real II popup, with zero Vault-origin credential API calls.
 
-See [operations and upgrades](operations.md) and [accounting limits](../vault-accounting-capacity.md). Production quotes and all transfer dispatch are compile-time disabled in default builds, including exact unknown retries, before fee/transfer ledger calls. Setting controller funding configuration cannot enable them. Authoritative reconciliation/finalization remains an unresolved release dependency. Historical or synthetic unknown payments retained beyond 23 hours or 100 retries have no implemented reconciliation tool: a wallet may remain debited without beneficiary credit. Journals, holds, balances, reads, cleanup and valid late settlement remain protected. Retention does not recover funds. No automatic replacement transfer or arbitrary controller credit is authorized.
+After the synthetic funding step, the same fresh owned Vault is upgraded to a default-feature, local-origin binary. Its certified configuration reports funding unavailable, Get quote is disabled, and retained credit supports the remaining real-II operations. Both local binary hashes are recorded. A default-feature local-origin artifact is still not a deployable mainnet artifact. The exact mainnet-configured production Wasm is covered separately by the six-case suite.
 
-A parent whose originals are all purged resolves by removal/replacement, without manufacturing a cutover digest. A pending child remains guarded and staged; only its independent fresh proof and verified activation publish it. Mixed parents still require fresh whole-job atomic cutover for every remaining original target. No recovery candidate is promoted to Global authority, and no original source is resurrected.
+The certified Vault application entry and configuration are used throughout. The readback module is served only by owned test interception, uses the actual SDK delegation and real actors, and imports the unchanged production client/crypto. Lost-reply tests forward actual ingress and discard only its HTTP response; delayed-reply tests hold the real response. No mock provider, root verification, actor result, document cipher or independent Vault factor is used. Synthetic ledger transfers are actual inter-canister calls, with no real token economics or live funds.
 
-Trusted Vault JavaScript and canister updaters can access or change security-critical behavior. Browser key/reference cleanup does not guarantee physical RAM erasure. No production deployment, DNS change, live-ledger transfer or downgrade of current stable data was part of this validation. Hosted CI and branch review must run on the final published commit before release.
+The expiry probe requests a shorter real II delegation through a test-only AuthClient login, then reloads the production entry using the normal SDK storage. It inspects the signed expiration, keeps editing until that time, checks immediate private-view removal and sends a captured old actor's update to verify the replica's expired-delegation rejection. Browser/replica clocks and the application's eight-hour TTL/five-minute idle constants remain unchanged. A separate test obtains a fresh normal-login delegation, records its signed expiry before and after the actual five-minute idle interval, and confirms that the retained signer still succeeds after local logout while its delegation remains valid. Ordinary SDK logout only clears this browser's SDK key/delegation storage: a retained session signing key plus its still-valid delegation remains usable until signed expiry.
 
+The final current run passed all 20 checkpoints on Chromium 149.0.7827.55. Natural idle logout occurred after 299,652 ms with 28,496,769 ms still remaining on the same signed delegation; the retained signer succeeded after local logout, while the separate expired signer received replica HTTP 400. Owned teardown passed.
 
-## Generation and interrupted-save repair acceptance
+The driver covers login/create/write/read/relogin, a second browser context with fresh application storage, another II/anonymous denials, same-page owner and Vault switching, Wiki principal/derivation-origin separation, same-origin DOM and frame CSP, exact create/key/save retries, save cancellation, real history downloads, and late read/key callbacks after close/logout. Persistence checks distinguish documented SDK authentication records and public subnet-key caches from forbidden Vault roots/DEKs/plaintext. Private DOM/editor undo/password/File references and owned Blob URLs are cleared; physical memory erasure is not claimed. Explicit downloads and clipboard copies remain outside that guarantee.
 
-Client regression tests cover empty-Vault remote rotation, immutable complete generation snapshots, lock/late responses, new-root future writes rejecting an old root, exact encrypted upload replay after lost begin/chunk/commit replies, chunk-level expiry/UV cancellation, cancelled cleanup UV, committed history retirement and lock-discarded jobs. UI tests cover paused-form controls and zero-balance cleanup after lock. The generations Wasm process now cancels an upload at zero balance, upgrades during cancellation, resumes its persisted job/cursor with fresh proof and checks terminal receipt replay without changing Vault sequence. The restore-upgrade process additionally upgrades a pinned v6 pending upload to current v6 and completes the same ciphertext under fresh authority. The browser forwards a real chunk ingress, drops only its HTTP replies through the exact retry budget, then verifies frozen editing and explicit whole-save resumption; actors, authentication and effects remain real.
+The launcher stops only its owned server process group and project network, removes the disposable identity/seed, and checks that both owned ports can be bound again. CI publishes provenance/results JSON only, excluding test identity material, browser storage and downloaded plaintext.
 
-Full-quota tests use the current-source isolated quota fixture. No production seeding hook exists. Schema6 initializes only an empty unversioned DB, validates an existing complete6 without repairing missing schema objects, and rejects unsupported/foreign/partial stores before initialization. No downgrade or pre-release schema migration is supported.
+## Current local checks and remaining limits
 
-## Initial-release simplification coverage
+The current full workspace run passed 1,203 top-level Rust tests plus 2 nested child-fixture executions (1,205 raw result-summary passes), with 4 existing ignored cases. Strict Clippy, formatting and cargo-machete passed. Client/crypto tests passed 39, integrated Vault UI tests 55, and Wiki tests 264 plus its source checks; types, strict lint, generated contracts and origin boundary checks passed. Package commands ran with host pnpm 11.25.0; frozen install and the moderate audit also passed with the exact CI pin 11.0.8. Both audits used the repository's unchanged inherited braces advisory exception; no new ignore or severity change was added.
 
-Canister support starts at complete schema6. This changes canister-state compatibility, not v1/v2 backup compatibility or cryptographic domains.
+The owned synthetic Chromium fixture now requires a completed history download, matching filename/content and a nonempty matching Blob create/revoke pair. It also checks keyboard exit/preview, refresh retention, private undo/password/File clearing and mobile navigation/focus. Its key acquisition is substituted and is not real-II evidence.
 
-| Retired development-only coverage | Retained or replacement release coverage |
-| --- | --- |
-| Unit transition-slot, restore-workspace and upload-column migrations (3 cases) | Fresh complete6, unchanged6 reopen, unsupported/foreign refusal and partial/missing-object refusal (4 cases) |
-| Unit grandfathered over-cap account union, 5000-account excess and oversized legacy row (3 cases) | Existing current-cap admission, exact Unknown settlement, bounded rows and cancellation tests remain |
-| Nine Task4–12/schema5 backend baselines | One pinned pre-refactor complete6 baseline; current6 comparison includes saved data and pending operations |
-| Capacity process grandfathered1025/5000-account/old allowance subscenarios | Legal1024-account limit, concurrent same beneficiary, bounded errors and Unknown transfer persistence/exact settlement through upgrade |
-| Generation process old reservation backfill | Already-prepaid namespace and pending creation retain exactly the same capacity through repeated6 upgrades |
-| Restore process migration-created512KiB overage | Full-quota staged restore keeps its existing reservation, fresh proof, reads/export/cleanup and growth refusal through6 upgrade |
-| Schema5 pending upload migration | Pinned6 pending ciphertext/chunk/receipt/reservation survives6 upgrade and finishes once with fresh authority |
+Vlmkit 0.23.0 integrity/copy/scroll passed without findings. Interactions reported 0 suspects and 11 warnings. The unsuppressed handler gate still exits 1 with two React/CodeMirror `drag-source-not-draggable` suspects and one handler-inventory warning. No fake draggable attributes, threshold changes or suppressions were added. This is **not an all-gates-CLEAN result**. The existing Vite large-chunk warning also remains.
 
-The aggregate still has18 independently torn-down processes; that count is not a claim that retired migration scenarios remain. Five protocol fixtures share real Ed25519/CBOR registration/assertion setup, preserving zero versus monotonic authenticator counters. Scenario assertions and mutation signing remain at call sites; ten recovery scenarios already consume the shared encrypted source/target fixture. No authorization/crypto/ledger effect is mocked by this extraction.
-
-The neutral `packages/ui` owns CSS, the Tailwind preset and primitives. Wiki’s existing exports remain compatible, Vault keeps its private renderer and input defaults, and CI watches shared changes for both apps. UI regressions verify native refs/events and exact custom classes. Anonymous before/after Chromium pixels match390/1280 under OSlight/dark; the shipped app remains light-only with dormant dark tokens. Vlmkit0.23 integrity passes3viewports; the same existing generic React root drag handler inventory suspect/warning appears before and after and is not suppressed. Actual II/private workflow acceptance is separate and still required.
-
-Independent initial-release review found three initialization gaps and each was reproducedRED before the combined correction: page policy lost on an actually reopened connection; SQLLIKE wildcard admitting `sqliteXforeign`; and same-name malformed schema guards/extra columns. Replacement checks use the literal reserved prefix and compare canonical persisted CREATE definitions to the very same creation statements, including literal bytes, column order, constraints, index uniqueness and trigger bodies. The page-count policy is separate from schema creation and is reapplied after successful validation. Three new regression tests add these paths to the four initial-release tests; retired historical-only unit tests remain six. The implemented262144-page ceiling is preserved (4GiB at pinned16KiB/page), correcting the earlier1GiB interpretation without changing limits.
-
-Recovery UI initialization is also covered with delayed configuration: the initial empty RP must not create controllers whose replacement locks the shared private session. Controllers mount only after the exact origin/RP is configured, independently of balance; configured zero-balance recovery/cleanup remains available.
-
-
-## 2026-11-13 simplification audit
-
-The follow-up audits Vault service/store/canister, client/UI, protocol fixtures,
-generated contracts and vendor manifests. It preserves schema6, Candid, signing
-and key domains, v1/v2 backups, quotas and disabled production funding.
-
-| Candidate | Disposition and evidence |
-| --- | --- |
-| Full source setup copied into incident/cutover/admission tests | Shared paid replica and encrypted-source fixtures; zero/monotonic counters, optional document history and upgrade timing explicit. All109 scenario assertions retained. |
-| Incident/restore/empty paid derive execution | One private key-flight executor; original concrete role predicates and state remain at callers, rechecked at every original boundary; owner-only financial settlement remains separate from publication. |
-| Three client WebAuthn handshakes and duplicated generation conversion | Stateless proof helper and pure wire conversions; feature reuse/current-proof/cleanup policy remains local; existing API reexports retained. Ordinary credential-selection/concurrency flow deliberately separate. |
-| Thirteen unsigned write service implementations | Their only production callers were Candid endpoints whose Environment never authorizes mutation. Removed old activation/credential/restore/content implementations and Candidate DTO; endpoints authenticate and return the identical uncharged Unauthorized. ActualWasm characterization covers all14 unsigned write endpoints before and after; signed paths remain unchanged. |
-| Native/source test setup and assertions | Existing101service tests retained, including lower-level begin_revision payer reentrancy and async fencing; no scenario deleted for line count. |
-| Remaining SQL/auth/payment/restore/incident branches | Preserve distinct ownership, authority, prepaid-capacity and callback lifetimes; a common name does not imply equivalent policy. |
-| Generated main and mutation Candid contracts | Both consumed. Main service carries mutation bytes opaquely, so its generated declarations do not replace the standalone mutation payload contract. |
-| V1 cryptographic strings and archive readers | Supported crypto and backup formats, not retired canister migrations. |
-| Vendored WebAuthn source, manifests and notices | Runtime verification dependency; retain upstream licensing and reproducible snapshot, rather than rewriting or trimming third-party implementation for line count. |
-| Public client convenience exports with few/no in-repo references | No proven internal dead-code status; retain supported exports instead of assuming absence of external consumers. |
-| Synthetic UI fixtures | Retain unique detached CodeMirror undo/DOM/input/file wiping, keyboard and wrong-file checks; separate from actual-II acceptance, never counted as canister/auth proof. |
-
-The protocol fixture correctness CI gate now checks every Vault helper, test and
-builder for undefined and unused names. No lint suppression or new dependency is
-introduced; removed unused bindings keep the underlying side-effecting RPCs.
-FullWorkspace Rust counts still include nested fixture executions; source-size
-reports distinguish product code, tests/tooling, generated contracts, lockfiles,
-documentation and vendored source. Previous failures are retained as historical
-evidence and are not labelled green after a correction.
+Production funding and authoritative ledger reconciliation remain blocked; these tests do not establish live payment recovery. The local browser assumes trusted fixture root keys; production retains its IC trust anchor. [Operations](operations.md) describes the II/updater trust, retained signing-identity boundary, schema and capacity limits.

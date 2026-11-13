@@ -17,6 +17,7 @@
     "vite.config.ts",
     "fixtures/main.tsx",
     "fixtures/network.ts",
+    "fixtures/acceptance-readback.ts",
     "fixtures/vite.config.ts"
   ]
 }

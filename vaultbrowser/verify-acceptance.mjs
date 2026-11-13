@@ -1,34 +1,33 @@
-import { createHash } from "node:crypto";
-import { idlFactory as mutationFactory } from "../packages/vault-candid/mutation.js";
-// Real current UI + local canisters + one actual II provider. No actor or auth stubs.
+// Actual certified UI + real II + actual canisters/crypto. Local fixture only.
 import assert from "node:assert/strict";
-import { chromium } from "../wikibrowser/node_modules/@playwright/test/index.mjs";
-import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
+import { chromium } from "../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { idlFactory } from "../packages/vault-candid/index.js";
 const require = createRequire(import.meta.url);
-const { Ed25519KeyIdentity } = require("@icp-sdk/core/identity");
 const { Cbor } = require("@icp-sdk/core/agent");
 const { IDL } = require("@icp-sdk/core/candid");
-const mutationType = mutationFactory({ IDL })._fields.find(
-  ([n]) => n === "encode",
-)[1].argTypes[0];
-const vaultURL =
-  process.env.VAULT_ACCEPTANCE_URL ??
-  "http://4fbx2-kt777-77775-aaabq-cai.localhost:8034";
-const wikiURL = process.env.WIKI_ACCEPTANCE_URL ?? "http://127.0.0.1:3100";
-const iiURL =
-  process.env.II_ACCEPTANCE_URL ??
-  "http://46el7-ql777-77775-aaada-cai.localhost:8034";
-for (const url of [vaultURL, wikiURL, iiURL])
-  assert.ok(
-    ["127.0.0.1", "localhost"].includes(new URL(url).hostname) ||
-      new URL(url).hostname.endsWith(".localhost"),
-    "Local synthetic acceptance only",
-  );
-const out = new URL("../target/vault-acceptance/browser/", import.meta.url)
+const { Ed25519KeyIdentity } = require("@icp-sdk/core/identity");
+const methods = new Map(idlFactory({ IDL })._fields);
+const vaultURL = process.env.VAULT_ACCEPTANCE_URL;
+const wikiURL = process.env.WIKI_ACCEPTANCE_URL;
+const iiURL = process.env.II_ACCEPTANCE_URL;
+for (const url of [vaultURL, wikiURL, iiURL]) {
+  assert.ok(url, "Owned launcher URLs required");
+  const h = new URL(url).hostname;
+  assert.ok(["localhost", "127.0.0.1"].includes(h) || h.endsWith(".localhost"));
+}
+const canister = new URL(vaultURL).hostname.split(".")[0];
+const out = new URL("../target/vault-ii-acceptance/browser/", import.meta.url)
   .pathname;
 mkdirSync(out, { recursive: true });
+const results = [];
+const pass = (name, details = {}) => {
+  results.push({ name, ...details });
+  console.log("PASS", name, JSON.stringify(details));
+};
 const browser = await chromium.launch({
   headless: true,
   args: [
@@ -36,11 +35,14 @@ const browser = await chromium.launch({
     `--unsafely-treat-insecure-origin-as-secure=${[vaultURL, wikiURL, iiURL].join(",")}`,
   ],
 });
+const contexts = [];
 const context = await browser.newContext({ acceptDownloads: true });
-context.setDefaultTimeout(90000);
-let iiCredentials = [];
-async function authenticator(page, credentials = []) {
-  const cdp = await context.newCDPSession(page);
+contexts.push(context);
+context.setDefaultTimeout(60000);
+let ownerCredentials = [];
+async function completeLogin(popup, credentials, create = false) {
+  await popup.waitForURL(iiURL + "/**");
+  const cdp = await popup.context().newCDPSession(popup);
   await cdp.send("WebAuthn.enable");
   const { authenticatorId } = await cdp.send(
     "WebAuthn.addVirtualAuthenticator",
@@ -57,26 +59,18 @@ async function authenticator(page, credentials = []) {
   );
   for (const credential of credentials)
     await cdp.send("WebAuthn.addCredential", { authenticatorId, credential });
-  return { cdp, authenticatorId };
-}
-async function signIn(page, button, create = false) {
-  const popupPromise = page.waitForEvent("popup");
-  await button.click();
-  const popup = await popupPromise;
-  assert.equal(new URL(popup.url()).origin, iiURL);
-  const { cdp, authenticatorId } = await authenticator(popup, iiCredentials);
   const choose = popup.getByRole("button", {
     name: "Continue with passkey",
     exact: true,
   });
   const proceed = popup.getByRole("button", { name: "Continue", exact: true });
-  await choose.or(proceed).first().waitFor({ timeout: 60000 });
+  await choose.or(proceed).first().waitFor();
   if (await choose.isVisible()) await choose.click();
   if (create) {
     await popup
       .getByRole("button", { name: "Create new identity", exact: true })
       .click();
-    await popup.getByRole("textbox").fill("Vault Acceptance");
+    await popup.getByRole("textbox").fill("Disposable Vault acceptance");
     await popup
       .getByRole("button", { name: "Create identity", exact: true })
       .click();
@@ -84,224 +78,576 @@ async function signIn(page, button, create = false) {
     await popup
       .getByRole("button", { name: "Use existing identity", exact: true })
       .isVisible()
-  )
+  ) {
     await popup
       .getByRole("button", { name: "Use existing identity", exact: true })
       .click();
-  await popup
-    .getByRole("button", { name: "Continue", exact: true })
-    .waitFor({ timeout: 60000 });
-  iiCredentials = (
+  }
+  await proceed.waitFor();
+  const actual = (
     await cdp.send("WebAuthn.getCredentials", { authenticatorId })
   ).credentials;
   assert.ok(
-    iiCredentials.length > 0,
-    "Actual II WebAuthn credential required; dummy auth must be disabled",
+    actual.length,
+    "Actual II WebAuthn credentials required; dummy auth disabled",
   );
   const closed = popup.waitForEvent("close");
-  await popup.getByRole("button", { name: "Continue", exact: true }).click();
+  await proceed.click();
   await closed;
+  return actual;
+}
+async function signIn(
+  page,
+  button,
+  credentials = ownerCredentials,
+  create = false,
+) {
+  const popup = page.waitForEvent("popup");
+  await button.click();
+  return completeLogin(await popup, credentials, create);
+}
+async function inspector(page) {
+  await page.route(
+    new URL("/__acceptance-readback.mjs", page.url()).href,
+    (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: readFileSync(
+          new URL(
+            "../target/vault-browser-readback/readback.mjs",
+            import.meta.url,
+          ),
+        ),
+      }),
+  );
+}
+const inspect = (page, method, ...args) =>
+  page.evaluate(
+    async ({ method, args }) => {
+      const module = await import("/__acceptance-readback.mjs");
+      return module[method](...args);
+    },
+    { method, args },
+  );
+const readback = (page) => inspect(page, "readback", canister, vaultURL);
+const loginButton = (page) =>
+  page.getByRole("button", {
+    name: "Sign in with Internet Identity",
+    exact: true,
+  });
+const editor = (page) => page.locator('.cm-content[contenteditable="true"]');
+async function settle(page, errors = false) {
+  await page
+    .getByText("Processing Vault operation…", { exact: true })
+    .waitFor({ state: "hidden", timeout: 120000 });
+  if (!errors)
+    assert.deepEqual(await page.getByRole("alert").allTextContents(), []);
+}
+async function action(page, name, errors = false) {
+  const button = page.getByRole("button", {
+    name,
+    exact: true,
+    includeHidden: true,
+  });
+  for (const details of await button.locator("xpath=ancestor::details").all()) {
+    if (!(await details.evaluate((e) => e.open)))
+      await details.locator(":scope > summary").click();
+  }
+  await button.click();
+  await settle(page, errors);
+}
+async function retain(page) {
+  await page.evaluate(() => {
+    const content = document.querySelector(".cm-content");
+    window.retainedEditor = content?.cmTile.root.view;
+    window.retainedFields = [
+      ...document.querySelectorAll(
+        '[data-vault-sensitive] input, [data-vault-sensitive] textarea, input[type="file"]',
+      ),
+    ];
+  });
+}
+async function assertCleared(page) {
+  assert.equal(await editor(page).count(), 0);
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      text: window.retainedEditor?.state.doc.toString() ?? "",
+      dom: window.retainedEditor?.contentDOM.textContent ?? "",
+      fields: (window.retainedFields ?? []).every(
+        (e) => !e.value && (!e.files || e.files.length === 0),
+      ),
+    })),
+    { text: "", dom: "", fields: true },
+  );
 }
 try {
   const vault = await context.newPage();
-  const vaultAuth = await authenticator(vault);
-  let loseChunkReplies = false;
-  const droppedMutations = [];
-  // Forward real ingress first, then lose only the HTTP reply. Never replace actor,
-  // authentication, WebAuthn, canister execution or encrypted data with a fake.
+  vault.on("dialog", (d) => d.accept());
+  await vault.addInitScript(() => {
+    window.vaultCredentialCalls = 0;
+    for (const method of ["create", "get"]) {
+      const original = navigator.credentials[method].bind(
+        navigator.credentials,
+      );
+      navigator.credentials[method] = (...args) => {
+        window.vaultCredentialCalls++;
+        return original(...args);
+      };
+    }
+    window.blobEvents = [];
+    const create = URL.createObjectURL.bind(URL),
+      revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      const url = create(blob);
+      window.blobEvents.push(["create", url]);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      window.blobEvents.push(["revoke", url]);
+      return revoke(url);
+    };
+  });
+  let dropMethod, dropAction, delayMethod, releaseResponse;
+  const lost = [];
+  let delayedReady;
+  // Execute real ingress, then drop or hold the actual HTTP reply. No fabricated reply.
   await vault.route("**/api/v*/canister/**/call", async (route) => {
     const body = route.request().postDataBuffer();
     const content = body ? Cbor.decode(body).content : undefined;
-    if (loseChunkReplies && content?.method_name === "mutate") {
-      const [payload] = IDL.decode(
-        [mutationType],
-        IDL.decode(
-          [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-          new Uint8Array(content.arg),
-        )[0],
-      );
-      if ("PutChunk" in payload.operation) {
-        await route.fetch();
-        droppedMutations.push(
-          createHash("sha256").update(content.arg).digest("hex"),
+    const method = content?.method_name;
+    let actionName;
+    if (method === "mutate")
+      actionName = Object.keys(
+        IDL.decode(methods.get(method).argTypes, new Uint8Array(content.arg))[0]
+          .action,
+      )[0];
+    if (method === dropMethod && (!dropAction || actionName === dropAction)) {
+      await route.fetch();
+      lost.push({
+        method,
+        action: actionName,
+        sha256: createHash("sha256").update(content.arg).digest("hex"),
+      });
+      await route.abort("failed");
+    } else if (method === delayMethod) {
+      delayMethod = undefined;
+      const response = await route.fetch();
+      delayedReady();
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () =>
+            reject(
+              Error("Held actual response was not released within 30 seconds"),
+            ),
+          30000,
         );
-        await route.abort("failed");
-        return;
-      }
-    }
-    await route.continue();
+        releaseResponse = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+      });
+      await route.fulfill({ response });
+    } else await route.continue();
   });
-  const idle = async () => {
-    await vault
-      .getByText("Processing Vault operation…", { exact: true })
-      .waitFor({ state: "hidden", timeout: 120000 });
-    assert.equal(
-      await vault.getByRole("alert").count(),
-      0,
-      await vault.getByRole("alert").allTextContents(),
-    );
-  };
-  await vault.route(vaultURL + "/__acceptance-readback.mjs", (route) =>
-    route.fulfill({
-      contentType: "text/javascript",
-      body: readFileSync(
-        new URL(
-          "../target/vault-browser-readback/readback.mjs",
-          import.meta.url,
-        ),
-      ),
-    }),
-  );
-  const readback = () =>
-    vault.evaluate(
-      async ({ canister, host }) => {
-        const { readback } = await import("/__acceptance-readback.mjs");
-        return readback(canister, host);
-      },
-      { canister: new URL(vaultURL).hostname.split(".")[0], host: vaultURL },
-    );
-  const waitForRetainedGrants = async (reason) => {
-    const before = await readback(),
-      start = Date.now();
-    assert.ok(
-      before.restore.Ok[0] &&
-        !("Active" in before.restore.Ok[0].pipeline[0].phase),
-    );
-    console.log(
-      "WAIT real 421 seconds for prior grant TTL + receipt retention:",
-      reason,
-    );
-    for (let elapsed = 0; elapsed < 421000;) {
-      const step = Math.min(30000, 421000 - elapsed);
-      await vault.waitForTimeout(step);
-      elapsed += step;
-    }
-    assert.ok(Date.now() - start >= 421000);
-    const login = vault.getByRole("button", {
-      name: "Sign in with Internet Identity",
-      exact: true,
-    });
-    await login.waitFor();
-    assert.equal(await vault.locator(".cm-content").count(), 0);
-    assert.equal(await vault.locator('input[type="file"]').count(), 0);
-    assert.equal(
-      await vault.evaluate(
-        () => window.__detachedVaultEditor?.state.doc.length ?? 0,
-      ),
-      0,
-    );
-    await signIn(vault, login);
-    await reveal(vault.getByText("Vault principal:", { exact: false }));
-    const after = await readback();
-    assert.equal(after.principal, before.principal);
-    for (const key of [
-      "restore",
-      "headers",
-      "incident",
-      "credentials",
-      "payments",
-      "capacity",
-    ])
-      assert.deepEqual(
-        after[key],
-        before[key],
-        `${key} must survive natural idle logout/retention without new authority or data loss`,
-      );
-    assert.ok(
-      BigInt(after.balance.Ok) > 0n &&
-        BigInt(after.balance.Ok) <= BigInt(before.balance.Ok),
-      "No new credit; only ordinary storage/execution charges may reduce balance",
-    );
-    await action("Recover after losing all passkeys");
-    console.log(
-      "PASS Busy → natural idle logout/private-view cleanup → same-II reauthentication; exact pending state/headers/capacity/payment journal preserved",
-      reason,
-      "elapsed_ms",
-      Date.now() - start,
-    );
-  };
-  const reveal = async (target) => {
-    await target.waitFor({ state: "attached" });
-    const ancestors = target.locator("xpath=ancestor::details");
-    for (let i = 0; i < (await ancestors.count()); i++) {
-      const details = ancestors.nth(i);
-      if (!(await details.evaluate((element) => element.open)))
-        await details.locator(":scope > summary").click();
-    }
-    return target;
-  };
-  const action = async (name) => {
-    await (
-      await reveal(
-        vault.getByRole("button", { name, exact: true, includeHidden: true }),
-      )
-    ).click();
-    await idle();
-  };
-  const download = async (name, path) => {
-    const event = vault.waitForEvent("download", { timeout: 120000 });
-    await (
-      await reveal(
-        vault.getByRole("button", { name, exact: true, includeHidden: true }),
-      )
-    ).click();
-    await (await event).saveAs(path);
-  };
-  vault.on("dialog", (d) => d.accept());
   await vault.goto(vaultURL);
-  await signIn(
-    vault,
-    vault.getByRole("button", {
-      name: "Sign in with Internet Identity",
-      exact: true,
-    }),
+  await inspector(vault);
+  ownerCredentials = await signIn(vault, loginButton(vault), [], true);
+  await vault
+    .getByRole("button", { name: "Create Vault", exact: true })
+    .waitFor();
+  const owner = (await readback(vault)).principal;
+  const disclosure = vault.getByText(
+    /This release has no backup or independent recovery/,
+  );
+  assert.equal(await disclosure.isVisible(), true);
+  assert.equal(
+    await vault
+      .getByText("Account & storage", { exact: true })
+      .evaluate((e) => e.parentElement.open),
+    false,
+  );
+  assert.equal(
+    await vault
+      .getByText("Interrupted uploads", { exact: true })
+      .evaluate((e) => e.parentElement.open),
+    false,
+  );
+  assert.equal(
+    await vault
+      .getByRole("button", {
+        name: /Add passkey|Download recovery|Download encrypted backup|Unlock Vault/,
+      })
+      .count(),
+    0,
+  );
+  pass(
+    "actual II login; disclosure and collapsed management; no second Vault factor",
+    { principal: owner },
+  );
+  await action(vault, "Get quote");
+  await action(vault, "Approve and pay this quote");
+  await vault.getByText("Paid", { exact: true }).waitFor();
+  pass("explicit synthetic ledger funding through real ICRC-2 calls");
+  const beforeUpgrade = await readback(vault);
+  execFileSync(
+    "icp",
+    [
+      "canister",
+      "install",
+      "vault",
+      "--mode",
+      "upgrade",
+      "--wasm",
+      process.env.VAULT_ACCEPTANCE_WASM,
+      "--args",
+      "()",
+      "--project-root-override",
+      process.env.VAULT_ACCEPTANCE_PROJECT,
+      "-e",
+      "acceptance",
+      "--identity",
+      process.env.VAULT_ACCEPTANCE_IDENTITY,
+    ],
+    { stdio: "inherit" },
+  );
+  await vault.reload();
+  await vault
+    .getByRole("button", { name: "Create Vault", exact: true })
+    .waitFor();
+  assert.equal(
+    await vault.evaluate(
+      async () => (await (await fetch("/config.json")).json()).fundingMode,
+    ),
+    "unavailable",
+  );
+  await vault.getByText("Account & storage", { exact: true }).click();
+  assert.equal(
+    await vault
+      .getByRole("button", { name: "Get quote", exact: true })
+      .isDisabled(),
     true,
   );
-  await reveal(vault.getByText("Vault principal:", { exact: false }));
-  const vaultPrincipal = (
-    await vault.getByText("Vault principal:", { exact: false }).innerText()
-  )
-    .replace("Vault principal: ", "")
-    .trim();
-  console.log(
-    "PASS actual II sign-in",
-    vaultPrincipal,
-    "actual passkeys",
-    iiCredentials.length,
+  const afterUpgrade = await readback(vault);
+  assert.equal(afterUpgrade.principal, owner);
+  assert.deepEqual(afterUpgrade.payments, beforeUpgrade.payments);
+  assert.ok(
+    BigInt(afterUpgrade.balance.Ok) > 0n &&
+      BigInt(afterUpgrade.balance.Ok) <= BigInt(beforeUpgrade.balance.Ok),
   );
-  await vault.screenshot({ path: out + "authenticated.png", fullPage: true });
-  writeFileSync(
-    out + "status.json",
-    JSON.stringify(
-      { vaultPrincipal, actualIIPasskeys: iiCredentials.length },
-      null,
-      2,
-    ) + "\n",
+  pass(
+    "fresh owned canister upgraded to default-feature local Wasm; certified funding unavailable, paid journal and prepaid credit retained",
   );
+
+  dropMethod = "create_vault";
+  await action(vault, "Create Vault", true);
+  await vault
+    .getByRole("button", { name: "Retry Vault creation", exact: true })
+    .waitFor();
+  const first = await readback(vault);
+  assert.equal(first.headers.Ok.length, 1);
+  await action(vault, "Refresh Vaults");
+  assert.equal((await readback(vault)).headers.Ok.length, 1);
+  dropMethod = "derive_vault_key";
+  await action(vault, "Retry Vault creation", true);
+  await vault
+    .getByRole("button", { name: "Retry opening Vault", exact: true })
+    .waitFor();
+  const afterKeyFailure = await readback(vault);
+  assert.equal(afterKeyFailure.headers.Ok.length, 1);
+  dropMethod = undefined;
+  await action(vault, "Retry opening Vault");
+  await editor(vault).waitFor();
+  for (const method of ["create_vault", "derive_vault_key"]) {
+    const replies = lost.filter((x) => x.method === method);
+    assert.ok(replies.length > 0);
+    assert.equal(new Set(replies.map((x) => x.sha256)).size, 1);
+  }
+  const vaultId = first.headers.Ok[0].id;
+  let sourceName = "Vault 1 · Active";
+  pass(
+    "lost create reply + Refresh + same create retry + lost key reply retry creates exactly one Vault",
+  );
+  const title = "Actual II private note",
+    plaintext = "actual-browser-private-payload";
+  await vault.getByLabel("Document title").fill(title);
+  await editor(vault).fill(plaintext);
+  dropMethod = "mutate";
+  dropAction = "PutChunk";
+  await action(vault, "Save document", true);
+  await vault
+    .getByRole("button", { name: "Resume save", exact: true })
+    .waitFor();
+  assert.equal(await vault.getByLabel("Document title").isDisabled(), true);
+  const chunks = lost.filter((x) => x.action === "PutChunk");
+  assert.ok(chunks.length > 0);
+  assert.equal(new Set(chunks.map((x) => x.sha256)).size, 1);
+  dropMethod = undefined;
+  dropAction = undefined;
+  await action(vault, "Resume save");
+  await action(vault, title);
+  assert.equal(await editor(vault).innerText(), plaintext);
+  const docs = await inspect(vault, "clientRead", canister, vaultURL, vaultId);
+  assert.equal(docs.documents[0].plaintext, plaintext);
+  const object = docs.documents[0].object;
+  pass(
+    "lost real PutChunk replies; frozen editor; exact resume; independent real-client decrypt",
+  );
+  await action(vault, "New document");
+  await vault.getByLabel("Document title").fill("Cancelled upload");
+  await editor(vault).fill("cancelled-private-payload");
+  dropMethod = "mutate";
+  dropAction = "PutChunk";
+  await action(vault, "Save document", true);
+  await vault
+    .getByRole("button", { name: "Cancel save", exact: true })
+    .waitFor();
+  dropMethod = undefined;
+  dropAction = undefined;
+  await action(vault, "Cancel save");
+  assert.equal((await readback(vault)).uploads.Ok.entries.length, 0);
+  assert.equal(
+    await vault
+      .getByRole("button", { name: "Cancelled upload", exact: true })
+      .count(),
+    0,
+  );
+  pass(
+    "lost real save reply cancel reconciles and clears pending server upload",
+  );
+
+  await action(vault, title);
+  await action(vault, "Show version history");
+  const downloadEvent = vault.waitForEvent("download");
+  await action(vault, "Download revision 1");
+  const download = await downloadEvent;
+  assert.match(
+    download.suggestedFilename(),
+    /^document-[A-Za-z0-9_-]+-revision-1\.bin$/,
+  );
+  const stream = await download.createReadStream(),
+    buffers = [];
+  for await (const b of stream) buffers.push(b);
+  assert.equal(Buffer.concat(buffers).toString(), plaintext);
+  await retain(vault);
+  await action(vault, "Close Vault");
+  await assertCleared(vault);
+  const blobs = await vault.evaluate(() => window.blobEvents);
+  assert.ok(blobs.some(([kind]) => kind === "create"));
+  for (const [, url] of blobs.filter(([kind]) => kind === "create"))
+    assert.ok(blobs.some(([kind, u]) => kind === "revoke" && u === url));
+  await action(vault, sourceName);
+  await editor(vault).waitFor();
+  await editor(vault).press("ControlOrMeta+z");
+  assert.equal(
+    await editor(vault).evaluate((e) =>
+      e.cmTile.root.view.state.doc.toString(),
+    ),
+    "",
+  );
+  await action(vault, title);
+  assert.equal(await editor(vault).innerText(), plaintext);
+  pass(
+    "history download bytes/name; close clears detached editor/undo/input/Blob; reopen reads same content",
+  );
+  await action(vault, "New document");
+  await vault.getByLabel("Document type").selectOption("credential");
+  await vault
+    .getByLabel("Password", { exact: true })
+    .fill("disposable-private-password");
+  await retain(vault);
+  await action(vault, "Close Vault");
+  await assertCleared(vault);
+  await action(vault, sourceName);
+  await vault.getByLabel("Document type").selectOption("attachment");
+  await vault.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
+    name: "private.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("private-file-draft"),
+  });
+  await retain(vault);
+  await action(vault, "Close Vault");
+  await assertCleared(vault);
+  await action(vault, sourceName);
+  await action(vault, title);
+  pass("actual private password and File input references clear on close");
+
+  await retain(vault);
+  await action(vault, "Create Vault");
+  sourceName = `Vault ${(await readback(vault)).headers.Ok.findIndex((h) => h.id.join() === vaultId.join()) + 1} · Active`;
+  await editor(vault).waitFor();
+  assert.equal(
+    await editor(vault).evaluate((e) =>
+      e.cmTile.root.view.state.doc.toString(),
+    ),
+    "",
+  );
+  assert.equal(
+    await vault.evaluate(() => window.retainedEditor.state.doc.toString()),
+    "",
+  );
+  await vault.setViewportSize({ width: 375, height: 812 });
+  assert.equal(await disclosure.isVisible(), true);
+  const toggle = vault.getByRole("button", { name: "Toggle Vault navigation" });
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  await toggle.click();
+  await action(vault, sourceName);
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(
+    await toggle.evaluate((e) => e === document.activeElement),
+    true,
+  );
+  await action(vault, title);
+  await vault.setViewportSize({ width: 1280, height: 900 });
+  pass(
+    "Vault switch clears prior draft/editor; mobile disclosure/navigation/focus",
+  );
+
+  await retain(vault);
+  await action(vault, "Sign out");
+  await loginButton(vault).waitFor();
+  await assertCleared(vault);
+  await signIn(vault, loginButton(vault));
+  assert.equal((await readback(vault)).principal, owner);
+  await action(vault, sourceName);
+  await action(vault, title);
+  assert.equal(await editor(vault).innerText(), plaintext);
+  pass(
+    "sign out clears private views; same II relogin decrypts existing content",
+  );
+
+  await retain(vault);
+  await action(vault, "Sign out");
+  await loginButton(vault).waitFor();
+  const storageControl = await context.newCDPSession(vault);
+  // Forget only this disposable browser's II account selection, not any canister account.
+  await storageControl.send("Storage.clearDataForOrigin", {
+    origin: iiURL,
+    storageTypes: "all",
+  });
+  await signIn(vault, loginButton(vault), [], true);
+  assert.notEqual((await readback(vault)).principal, owner);
+  assert.equal((await readback(vault)).headers.Ok.length, 0);
+  await assertCleared(vault);
+  const switchedDenial = await inspect(
+    vault,
+    "deny",
+    canister,
+    vaultURL,
+    vaultId,
+    object,
+  );
+  for (const key of ["header", "key", "objects", "manifest", "chunk", "config"])
+    assert.ok("Err" in switchedDenial[key]);
+  await action(vault, "Sign out");
+  await loginButton(vault).waitFor();
+  await storageControl.send("Storage.clearDataForOrigin", {
+    origin: iiURL,
+    storageTypes: "all",
+  });
+  ownerCredentials = await signIn(vault, loginButton(vault));
+  assert.equal((await readback(vault)).principal, owner);
+  await action(vault, sourceName);
+  await action(vault, title);
+  pass(
+    "same production page switches real II owners, clears old private state, denies prior owner's data, then returns to original owner",
+  );
+
+  const secondContext = await browser.newContext();
+  contexts.push(secondContext);
+  secondContext.setDefaultTimeout(60000);
+  const second = await secondContext.newPage();
+  await second.goto(vaultURL);
+  await inspector(second);
+  ownerCredentials = await signIn(second, loginButton(second));
+  assert.equal((await readback(second)).principal, owner);
+  const independent = await inspect(
+    second,
+    "clientRead",
+    canister,
+    vaultURL,
+    vaultId,
+  );
+  assert.equal(independent.documents[0].plaintext, plaintext);
+  await action(second, sourceName);
+  await action(second, title);
+  assert.equal(await editor(second).innerText(), plaintext);
+  pass(
+    "second browser context with no copied app storage: same II and fresh client decrypt existing content",
+  );
+  await secondContext.close();
+  contexts.pop();
+
+  const otherContext = await browser.newContext();
+  contexts.push(otherContext);
+  otherContext.setDefaultTimeout(60000);
+  const other = await otherContext.newPage();
+  await other.goto(vaultURL);
+  await inspector(other);
+  await signIn(other, loginButton(other), [], true);
+  const otherOwner = (await readback(other)).principal;
+  assert.notEqual(otherOwner, owner);
+  for (const anonymous of [false, true]) {
+    const denied = await inspect(
+      other,
+      "deny",
+      canister,
+      vaultURL,
+      vaultId,
+      object,
+      anonymous,
+    );
+    assert.ok("Err" in denied.rows || denied.rows.Ok.length === 0);
+    for (const key of [
+      "header",
+      "key",
+      "objects",
+      "manifest",
+      "chunk",
+      "config",
+    ])
+      assert.ok(
+        "Err" in denied[key],
+        `${anonymous ? "anonymous" : "other II"} ${key}`,
+      );
+  }
+  pass(
+    "other real II account and anonymous actors denied owner header/key/content/config",
+  );
+  await otherContext.close();
+  contexts.pop();
+
   const wiki = await context.newPage();
-  await authenticator(wiki);
   await wiki.goto(wikiURL + "/dashboard");
-  await signIn(wiki, wiki.locator("[data-tid=login-button]"));
+  await inspector(wiki);
+  ownerCredentials = await signIn(
+    wiki,
+    wiki.locator("[data-tid=login-button]"),
+  );
   await wiki.locator('[aria-label^="Principal "]').waitFor();
   const wikiPrincipal = (
     await wiki.locator('[aria-label^="Principal "]').getAttribute("aria-label")
   ).slice("Principal ".length);
-  assert.notEqual(wikiPrincipal, vaultPrincipal);
-  console.log(
-    "PASS same II passkey/account distinct Wiki and Vault principals",
-    wikiPrincipal,
-    vaultPrincipal,
+  assert.notEqual(wikiPrincipal, owner);
+  const deniedWiki = await inspect(
+    wiki,
+    "deny",
+    canister,
+    vaultURL,
+    vaultId,
+    object,
   );
-  // A malicious Wiki page asks the same II provider for the Vault derivation root.
-  const attackPopup = wiki.waitForEvent("popup");
+  assert.equal(deniedWiki.principal, wikiPrincipal);
+  for (const key of ["header", "key", "objects", "manifest", "chunk", "config"])
+    assert.ok("Err" in deniedWiki[key]);
+  const popupPromise = wiki.waitForEvent("popup");
   await wiki.evaluate(
     ({ iiURL, vaultURL, key }) => {
       const popup = window.open(
         iiURL + "/#authorize",
         "vault-derivation-attack",
       );
-      window.__vaultAttackResult = null;
-      const receive = (event) => {
+      window.attackResult = null;
+      window.addEventListener("message", (event) => {
         if (event.source !== popup || event.origin !== iiURL) return;
         if (event.data.kind === "authorize-ready")
           popup.postMessage(
@@ -313,13 +659,9 @@ try {
             },
             iiURL,
           );
-        if (
-          event.data.kind === "authorize-client-failure" ||
-          event.data.kind === "authorize-client-success"
-        )
-          window.__vaultAttackResult = event.data.kind;
-      };
-      window.addEventListener("message", receive);
+        if (event.data.kind === "authorize-client-success")
+          window.attackResult = event.data.kind;
+      });
     },
     {
       iiURL,
@@ -327,198 +669,26 @@ try {
       key: [...Ed25519KeyIdentity.generate().getPublicKey().toDer()],
     },
   );
-  const attack = await attackPopup;
-  await attack
-    .getByText("Unverified origin", { exact: true })
-    .waitFor({ timeout: 60000 });
-  assert.notEqual(
-    await wiki.evaluate(() => window.__vaultAttackResult),
-    "authorize-client-success",
-  );
+  const attack = await popupPromise;
+  await attack.getByText("Unverified origin", { exact: true }).waitFor();
+  assert.equal(await wiki.evaluate(() => window.attackResult), null);
   await attack.close();
-  console.log(
-    "PASS malicious Wiki-origin Vault derivation request denied by actual II alternative-origins validation",
-  );
-  await vault.getByRole("button", { name: "Get quote", exact: true }).click();
-  await vault
-    .getByRole("button", { name: "Approve and pay this quote", exact: true })
-    .click();
-  await vault.getByText("Paid", { exact: true }).waitFor({ timeout: 60000 });
-  await vault
-    .getByRole("button", { name: "Create Vault", exact: true })
-    .click();
-  await vault.getByLabel("New recovery secret").waitFor({ timeout: 60000 });
-  const secret = await vault.getByLabel("New recovery secret").innerText();
-  const kitDownload = vault.waitForEvent("download");
-  await vault
-    .getByRole("button", { name: "Download recovery kit", exact: true })
-    .click();
-  await (await kitDownload).saveAs(out + "source-kit.json");
-  await vault.getByLabel("Re-enter saved recovery secret").fill(secret);
-  await vault
-    .getByRole("button", { name: "Confirm and activate Vault", exact: true })
-    .click();
-  await vault.getByLabel("Document title").waitFor({ timeout: 60000 });
-  await vault
-    .getByLabel("Document title")
-    .fill("Actual acceptance private note");
-  await vault.locator(".cm-content").fill("actual-browser-private-payload");
-  loseChunkReplies = true;
-  await vault
-    .getByRole("button", { name: "Save document", exact: true })
-    .click();
-  const resumeSave = vault.getByRole("button", {
-    name: "Resume save",
-    exact: true,
-  });
-  await resumeSave.waitFor({ timeout: 120000 });
-  await vault
-    .getByText("Processing Vault operation…", { exact: true })
-    .waitFor({ state: "hidden", timeout: 120000 });
-  assert.ok(
-    droppedMutations.length >= 3,
-    "real chunk replies must exhaust the client's exact retry budget",
-  );
+  assert.equal(await vault.evaluate(() => window.opener === null), true);
+  const crossPopup = context.waitForEvent("page");
   assert.equal(
-    new Set(droppedMutations).size,
-    1,
-    "all lost requests must retain identical signed mutation arguments",
-  );
-  assert.equal(await vault.getByLabel("Document title").isDisabled(), true);
-  assert.equal(
-    await vault
-      .getByRole("button", { name: "New document", exact: true })
-      .isDisabled(),
+    await wiki.evaluate(async (url) => {
+      const popup = window.open(url, "vault-sop-test");
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        void popup.document.body;
+        return false;
+      } catch (e) {
+        return e.name === "SecurityError";
+      }
+    }, vaultURL),
     true,
   );
-  loseChunkReplies = false;
-  await resumeSave.click();
-  await idle();
-  console.log(
-    "PASS actual browser: lost committed chunk replies exhaust retries; paused form is frozen; explicit Resume save keeps exact signed ciphertext and completes the revision",
-  );
-  await vault
-    .getByRole("button", {
-      name: "Actual acceptance private note",
-      exact: true,
-    })
-    .waitFor();
-  const backupDownload = vault.waitForEvent("download");
-  await (
-    await reveal(
-      vault.getByRole("button", {
-        name: "Download encrypted backup",
-        exact: true,
-        includeHidden: true,
-      }),
-    )
-  ).click();
-  await (await backupDownload).saveAs(out + "source.kvault");
-  console.log(
-    "PASS actual II + browser passkey + vetKD + synthetic ICRC-2 approval/payment + signed creation/write + encrypted backup download",
-  );
-  const archive = readFileSync(out + "source.kvault");
-  const secretFile = out + "offline-secret";
-  writeFileSync(
-    secretFile,
-    JSON.parse(readFileSync(out + "source-kit.json", "utf8")).secret,
-    { mode: 0o600 },
-  );
-  const recovered = out + `offline-${Date.now()}`;
-  execFileSync(
-    process.execPath,
-    [
-      "tools/vault-recovery/src/main.mjs",
-      "--backup",
-      out + "source.kvault",
-      "--secret-file",
-      secretFile,
-      "--output",
-      recovered,
-    ],
-    { stdio: "pipe" },
-  );
-  assert.ok(
-    readdirSync(recovered)
-      .filter((name) => name.endsWith(".bin"))
-      .some(
-        (name) =>
-          readFileSync(recovered + "/" + name, "utf8") ===
-          "actual-browser-private-payload",
-      ),
-  );
-  console.log(
-    "PASS independent offline CLI decrypts the actual browser-produced archive without II, vetKD or network",
-  );
-  const sourceHeader = JSON.parse(
-    archive.subarray(12, 12 + archive.readUInt32BE(8)).toString(),
-  ).header;
-  const negative = await wiki.evaluate(
-    async ({ canister, host, vaultId, idlPath }) => {
-      const { AuthClient } =
-        await import("/node_modules/.vite/deps/@icp-sdk_auth_client.js");
-      const { Actor, HttpAgent } =
-        await import("/node_modules/.vite/deps/@icp-sdk_core_agent.js");
-      const { idlFactory } = await import(idlPath);
-      const auth = await AuthClient.create();
-      const agent = await HttpAgent.create({
-        host,
-        identity: auth.getIdentity(),
-        shouldFetchRootKey: true,
-      });
-      const actor = Actor.createActor(idlFactory, {
-        agent,
-        canisterId: canister,
-      });
-      const [balance, rows, header, config] = await Promise.all([
-        actor.account_balance(),
-        actor.list_vaults(),
-        actor.get_vault_header(
-          Uint8Array.from(
-            atob(vaultId.replace(/-/g, "+").replace(/_/g, "/")),
-            (c) => c.charCodeAt(0),
-          ),
-        ),
-        actor.set_config([]),
-      ]);
-      return {
-        principal: auth.getIdentity().getPrincipal().toText(),
-        balance,
-        rows,
-        header,
-        config,
-      };
-    },
-    {
-      canister: new URL(vaultURL).hostname.split(".")[0],
-      host: new URL(vaultURL).origin,
-      vaultId: sourceHeader.vault,
-      idlPath:
-        "/@fs/" +
-        new URL("../packages/vault-candid/index.js", import.meta.url).pathname,
-    },
-  );
-  assert.equal(negative.principal, wikiPrincipal);
-  assert.equal(negative.balance.Ok, 0n);
-  assert.ok("Err" in negative.rows || negative.rows.Ok.length === 0);
-  assert.ok("Err" in negative.header);
-  assert.ok("Err" in negative.config);
-  assert.equal(await vault.evaluate(() => window.opener === null), true);
-  const sopPopup = context.waitForEvent("page");
-  const cross = await wiki.evaluate(async (vaultURL) => {
-    const popup = window.open(vaultURL, "vault-sop-test");
-    await new Promise((r) => setTimeout(r, 500));
-    let blocked = false;
-    try {
-      void popup.document.body;
-    } catch (e) {
-      blocked = e.name === "SecurityError";
-    }
-    popup?.close();
-    return blocked;
-  }, vaultURL);
-  assert.equal(cross, true);
-  await (await sopPopup).close();
+  await (await crossPopup).close();
   const frameDenied = wiki.waitForEvent("console", {
     predicate: (message) => message.text().includes("frame-ancestors"),
     timeout: 15000,
@@ -533,319 +703,342 @@ try {
     .locator("iframe")
     .last()
     .evaluate((frame) => frame.remove());
-  console.log(
-    "PASS actual browser refuses Wiki framing of Vault under frame-ancestors CSP",
+  await wiki.close();
+  pass(
+    "same II Wiki principal separation; real II derivation-origin attack denied; SOP/opener/frame CSP",
   );
 
+  // Delay an actual private read, switch context, then deliver its real plaintext-producing reply.
+  await action(vault, "New document");
+  delayMethod = "get_chunk";
+  const ready = new Promise((resolve) => {
+    delayedReady = resolve;
+  });
+  await vault.getByRole("button", { name: title, exact: true }).click();
+  await Promise.race([
+    ready,
+    vault.waitForTimeout(30000).then(() => {
+      throw Error("Expected real get_chunk interception");
+    }),
+  ]);
+  await action(vault, "Close Vault");
+  releaseResponse();
+  await vault.waitForTimeout(1000);
+  await assertCleared(vault);
   assert.equal(
-    await vault.evaluate(() =>
-      JSON.stringify([localStorage, sessionStorage]).includes(
-        "actual-browser-private-payload",
-      ),
-    ),
+    (await vault.locator("body").innerText()).includes(plaintext),
     false,
   );
-  console.log(
-    "PASS actual Wiki delegation has zero Vault credit, no Vault list/header/config authority; cross-origin DOM blocked and no Vault opener or plaintext Web Storage",
+  pass("late real read reply after close cannot restore editor or plaintext");
+
+  delayMethod = "derive_vault_key";
+  const keyReady = new Promise((resolve) => {
+    delayedReady = resolve;
+  });
+  await vault.getByRole("button", { name: sourceName, exact: true }).click();
+  await Promise.race([
+    keyReady,
+    vault.waitForTimeout(30000).then(() => {
+      throw Error("Expected real derive_vault_key interception");
+    }),
+  ]);
+  await action(vault, "Sign out");
+  await loginButton(vault).waitFor();
+  releaseResponse();
+  await vault.waitForTimeout(1000);
+  await assertCleared(vault);
+  await signIn(vault, loginButton(vault));
+  assert.equal((await readback(vault)).principal, owner);
+  assert.equal(await editor(vault).count(), 0);
+  pass(
+    "late real key reply after logout cannot reinstall old client root or private UI; same-owner new login remains closed",
   );
 
-  if (process.env.VAULT_ACCEPTANCE_CORE_ONLY !== "1") {
-    await action("I saved the backup");
-    await (
-      await reveal(vault.getByText("Unlock passkeys", { exact: true }))
-    ).click();
-    const second = await vaultAuth.cdp.send(
-      "WebAuthn.addVirtualAuthenticator",
-      {
-        options: {
-          protocol: "ctap2",
-          transport: "usb",
-          hasResidentKey: true,
-          hasUserVerification: true,
-          isUserVerified: true,
-          automaticPresenceSimulation: false,
-        },
-      },
-    );
-    vaultAuth.cdp.once("WebAuthn.credentialAsserted", async () => {
-      await vaultAuth.cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
-        authenticatorId: vaultAuth.authenticatorId,
-        enabled: false,
-      });
-      await vaultAuth.cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
-        authenticatorId: second.authenticatorId,
-        enabled: true,
-      });
-    });
-    await action("Add passkey");
-    const secondCredential = (
-      await vaultAuth.cdp.send("WebAuthn.getCredentials", {
-        authenticatorId: second.authenticatorId,
-      })
-    ).credentials[0];
-    await vault
-      .getByLabel("Authorizing passkey")
-      .selectOption(
-        Buffer.from(secondCredential.credentialId, "base64").toString(
-          "base64url",
-        ),
-      );
-    await vault.evaluate(() => {
-      const content = document.querySelector(".cm-content");
-      window.__detachedVaultEditor = content.cmTile.root.view;
-    });
-    await action("Respond to a compromised passkey");
-    assert.deepEqual(
-      await vault.evaluate(() => ({
-        doc: window.__detachedVaultEditor.state.doc.length,
-        dom: window.__detachedVaultEditor.contentDOM.textContent,
-        destroyed: window.__detachedVaultEditor.destroyed,
-      })),
-      { doc: 0, dom: "", destroyed: true },
-    );
-    console.log(
-      "PASS actual current editor lock wipes the detached document/DOM and destroys its view",
-    );
-
-    await vault.getByLabel("Passkey 1 · all Vaults").check();
-    if (
-      !(await vault
-        .getByRole("button", {
-          name: "Revoke and freeze all affected Vaults",
-          exact: true,
-        })
-        .isEnabled())
-    ) {
-      await vault.getByLabel("Passkey 1 · all Vaults").uncheck();
-      await vault.getByLabel("Passkey 2 · all Vaults").check();
-    }
-    await action("Revoke and freeze all affected Vaults");
-    await action("Allocate new target 1");
-    console.log(
-      "PASS actual incident allocation with fresh existing-job IncidentPrepare proof",
-    );
-    await download("Save and verify new kit 1", out + "incident-kit.json");
-    await vault
-      .getByLabel("Reselect saved new kit for target 1")
-      .setInputFiles(out + "incident-kit.json");
-    await idle();
-    await vault
-      .getByRole("button", { name: "Resume and prepare target 1", exact: true })
-      .click();
-    await vault
-      .getByLabel("Reselect saved new kit for target 1")
-      .setInputFiles(out + "incident-kit.json");
-    await idle();
-    await download("Save and verify new backup 1", out + "incident.kvault");
-    await vault
-      .getByLabel("Reselect saved new kit for target 1")
-      .setInputFiles(out + "incident-kit.json");
-    await vault
-      .getByLabel("Reselect saved new backup for target 1")
-      .setInputFiles(out + "incident.kvault");
-    await idle();
-    await action("Commit all verified targets with fresh passkey proof");
-    await vault
-      .getByText(
-        "All incident targets committed. Unlock again with fresh passkey verification.",
-        { exact: true },
-      )
-      .waitFor();
-    console.log(
-      "PASS actual current incident UI: revoked key, real saved/reselected new kit/archive, full verification, fresh proof atomic cutover",
-    );
-
-    // Recovery uses a third physical test device, without any surviving unlock key.
-    await vaultAuth.cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
-      authenticatorId: second.authenticatorId,
-      enabled: false,
-    });
-    const third = await vaultAuth.cdp.send("WebAuthn.addVirtualAuthenticator", {
-      options: {
-        protocol: "ctap2",
-        transport: "usb",
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    });
-    await action("Recover after losing all passkeys");
-    const sourceFiles = async () => {
-      await vault
-        .getByLabel("Select source encrypted backup", { exact: true })
-        .setInputFiles(out + "incident.kvault");
-      await vault
-        .getByLabel("Select original source recovery kit", { exact: true })
-        .setInputFiles(out + "incident-kit.json");
-    };
-    const withSource = async (name) => {
-      await (
-        await reveal(
-          vault.getByRole("button", { name, exact: true, includeHidden: true }),
-        )
-      ).click();
-      await sourceFiles();
-    };
-    await withSource("Select source backup and recovery kit");
-    await idle();
-    await withSource("Allocate fresh restoration target");
-    await idle();
-    const reachAuthorizationCapacity = async () => {
-      for (let attempt = 0; attempt < 4; attempt++) {
-        await withSource(
-          "Resume restoration with source files and fresh proof",
-        );
-        await vault
-          .getByText("Processing Vault operation…", { exact: true })
-          .waitFor({ state: "hidden", timeout: 120000 });
-        const alerts = await vault.getByRole("alert").allTextContents();
-        if (
-          alerts.some((text) => text.includes("temporary authorization limit"))
-        ) {
-          console.log(
-            "PASS actual finite authorization capacity refuses additional fresh proof",
-          );
-          return;
+  await action(vault, sourceName);
+  await action(vault, title);
+  const persistence = await vault.evaluate(
+    async (secrets) => {
+      const databases = [];
+      for (const entry of await indexedDB.databases()) {
+        const db = await new Promise((resolve, reject) => {
+          const r = indexedDB.open(entry.name);
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+        const stores = [];
+        for (const name of db.objectStoreNames) {
+          const store = db.transaction(name).objectStore(name);
+          const request = (r) =>
+            new Promise((resolve, reject) => {
+              r.onsuccess = () => resolve(r.result);
+              r.onerror = () => reject(r.error);
+            });
+          const [keys, values] = await Promise.all([
+            request(store.getAllKeys()),
+            request(store.getAll()),
+          ]);
+          const algorithms = [];
+          const publicNodeKeyCache =
+            name === "subnetNodeKeys" &&
+            values.every(
+              (record) =>
+                Object.keys(record).sort().join() === "key,timestamp,value" &&
+                typeof record.key === "string" &&
+                typeof record.timestamp === "number" &&
+                record.value instanceof Map &&
+                [...record.value].every(
+                  ([node, key]) =>
+                    typeof node === "string" &&
+                    key instanceof Uint8Array &&
+                    key.length === 44 &&
+                    Array.from(key.slice(0, 12)).join() ===
+                      "48,42,48,5,6,3,43,101,112,3,33,0",
+                ),
+            );
+          const serialized = JSON.stringify(values, (_, value) => {
+            if (value instanceof Map) return [...value];
+            if (value instanceof CryptoKey) {
+              algorithms.push(value.algorithm.name);
+              return { cryptoAlgorithm: value.algorithm.name };
+            }
+            return value;
+          });
+          stores.push({
+            name,
+            keys,
+            algorithms,
+            publicNodeKeyCache,
+            plaintextFound: secrets.some((secret) =>
+              serialized.includes(secret),
+            ),
+          });
         }
-        assert.deepEqual(alerts, []);
+        db.close();
+        databases.push({ name: entry.name, stores });
       }
-      throw Error("Expected actual bounded authorization capacity refusal");
-    };
-    await reachAuthorizationCapacity();
-    await waitForRetainedGrants(
-      "completed incident and admitted restore authorization boundary",
-    );
-    const newKit = vault.waitForEvent("download");
-    await withSource("Save new kit and prepared encrypted backup");
-    await (await newKit).saveAs(out + "restore-kit.json");
-    const prepared = vault.waitForEvent("download");
-    await vault
-      .getByLabel("Reselect saved restoration NEW kit", { exact: true })
-      .setInputFiles(out + "restore-kit.json");
-    await (await prepared).saveAs(out + "restored.kvault");
-    await vault
-      .getByLabel("Reselect saved prepared TARGET backup", { exact: true })
-      .setInputFiles(out + "restored.kvault");
-    await idle();
-    // A fixed-compatible upgrade interrupts the prepared restore. Saved files and fresh
-    // WebAuthn proof resume it; this does not claim downgrade compatibility.
-    if (process.env.VAULT_ACCEPTANCE_PROJECT) {
-      const id = process.env.VAULT_ACCEPTANCE_IDENTITY;
-      execFileSync(
-        "icp",
-        [
-          "canister",
-          "install",
-          "vault",
-          "-e",
-          "acceptance",
-          "--project-root-override",
-          process.env.VAULT_ACCEPTANCE_PROJECT,
-          "--mode",
-          "upgrade",
-          "--wasm",
-          process.env.VAULT_ACCEPTANCE_WASM,
-          "--args-format",
-          "hex",
-          "--args",
-          "4449444c0000",
-          ...(id ? ["--identity", id] : []),
-        ],
-        { stdio: "inherit" },
-      );
-      await action("Lock Vault");
-      await reachAuthorizationCapacity();
-      await waitForRetainedGrants(
-        "compatible upgrade interrupted a prepared restore",
-      );
-      console.log(
-        "PASS actual canister upgraded with a prepared current-UI restore pending; browser locked before fresh resume",
-      );
+      return {
+        databases,
+        localKeys: Object.keys(localStorage),
+        sessionKeys: Object.keys(sessionStorage),
+        cacheNames: await caches.keys(),
+        serviceWorkers: (await navigator.serviceWorker.getRegistrations())
+          .length,
+        credentialCalls: window.vaultCredentialCalls,
+      };
+    },
+    [plaintext, title, "cancelled-private-payload"],
+  );
+  assert.deepEqual(persistence.localKeys, []);
+  assert.deepEqual(persistence.sessionKeys, []);
+  assert.deepEqual(persistence.cacheNames, []);
+  assert.equal(persistence.serviceWorkers, 0);
+  assert.equal(persistence.credentialCalls, 0);
+  const network = new URL(vaultURL);
+  const allowedDatabases = [
+    "auth-client-db",
+    `icp-sdk-${network.host}`,
+    `icp-sdk-localhost:${network.port}`,
+  ];
+  assert.ok(persistence.databases.some((db) => db.name === "auth-client-db"));
+  assert.ok(
+    persistence.databases.every((db) => allowedDatabases.includes(db.name)),
+    "Only SDK authentication and public subnet-key caches may persist",
+  );
+  for (const db of persistence.databases)
+    for (const store of db.stores) {
+      assert.equal(store.plaintextFound, false);
+      if (db.name === "auth-client-db") {
+        assert.equal(store.name, "ic-keyval");
+        assert.ok(
+          store.keys.every((key) =>
+            ["identity", "delegation", "iv"].includes(key),
+          ),
+        );
+        assert.ok(
+          store.algorithms.every((name) => name === "ECDSA"),
+          "No AES Vault root or DEK may persist",
+        );
+      } else {
+        assert.equal(store.name, "subnetNodeKeys");
+        assert.equal(
+          store.publicNodeKeyCache,
+          true,
+          "SDK cache must contain only timestamped DER public Ed25519 subnet keys",
+        );
+        assert.deepEqual(store.algorithms, []);
+      }
     }
-    await withSource("Permanently discard current live content");
-    await idle();
-    await withSource("Import saved prepared target");
-    await vault
-      .getByLabel("Select saved prepared TARGET backup", { exact: true })
-      .setInputFiles(out + "restored.kvault");
-    await vault
-      .getByLabel("Select saved restoration NEW kit", { exact: true })
-      .setInputFiles(out + "restore-kit.json");
-    await idle();
-    await withSource(
-      "Verify saved target backup against restored server content",
-    );
-    await vault
-      .getByLabel("Select saved restoration NEW kit", { exact: true })
-      .setInputFiles(out + "restore-kit.json");
-    await vault
-      .getByLabel(
-        "Reselect saved prepared TARGET backup for final server comparison",
-        { exact: true },
-      )
-      .setInputFiles(out + "restored.kvault");
-    await idle();
-    await withSource("Activate verified scoped restoration");
-    await idle();
-    await vault
-      .getByText("Restoration complete for this scoped instance.", {
-        exact: false,
-      })
-      .waitFor();
-    console.log(
-      "PASS actual current restore UI: original proof, new device, saved/reselected kit/archive, bounded discard/import, server verification and scoped activation",
-    );
-    const thirdCredential = (
-      await vaultAuth.cdp.send("WebAuthn.getCredentials", {
-        authenticatorId: third.authenticatorId,
-      })
-    ).credentials[0];
-    await vault
-      .getByLabel("Authorizing passkey")
-      .selectOption(
-        Buffer.from(thirdCredential.credentialId, "base64").toString(
-          "base64url",
-        ),
-      );
-    await action("Create a new empty Vault with scoped access");
-    await vault
-      .getByLabel("Authorizing restored Vault")
-      .selectOption({ index: 1 });
-    await action("Authorize new empty Vault");
-    await action("Allocate empty Vault");
-    await download("Save and verify empty Vault kit", out + "empty-kit.json");
-    await vault
-      .getByLabel("Reselect saved empty Vault kit", { exact: true })
-      .setInputFiles(out + "empty-kit.json");
-    await idle();
-    await action("Activate new empty Vault");
-    console.log(
-      "PASS actual current scoped-creation UI: fresh proof, new empty instance, saved kit, activation",
-    );
+  pass(
+    "no Vault plaintext/root/DEK persistence; only SDK auth and public subnet keys; zero Vault WebAuthn calls",
+    { databases: persistence.databases.map((db) => db.name) },
+  );
+
+  // Short actual II delegation, same SDK storage, then production restore. No browser clock changes.
+  await action(vault, "Sign out");
+  await loginButton(vault).waitFor();
+  const shortPopup = vault.waitForEvent("popup");
+  const shortStarted = Date.now();
+  const shortLogin = inspect(vault, "shortLogin", iiURL, vaultURL, 35);
+  ownerCredentials = await completeLogin(await shortPopup, ownerCredentials);
+  await shortLogin;
+  await vault.reload();
+  await vault
+    .getByRole("button", { name: "Create Vault", exact: true })
+    .waitFor();
+  const expiry = (
+    await inspect(vault, "captureExpiry", canister, vaultURL)
+  ).map(BigInt);
+  const earliest = expiry.reduce((a, b) => (a < b ? a : b));
+  assert.ok(earliest > BigInt(Date.now()) * 1000000n);
+  assert.ok(
+    earliest < BigInt(shortStarted + 55000) * 1000000n,
+    "Actual signed II expiration must be short",
+  );
+  await action(vault, sourceName);
+  await action(vault, title);
+  await retain(vault);
+  while (Date.now() < Number(earliest / 1000000n) + 3000) {
+    if (await editor(vault).count())
+      await editor(vault)
+        .press("x")
+        .catch(() => {});
+    await vault.waitForTimeout(300);
   }
+  await loginButton(vault).waitFor();
+  await assertCleared(vault);
+  const expiredIngress = [];
+  const observeExpiry = async (response) => {
+    if (
+      /\/api\/v[0-9]+\/canister\/.*\/call$/.test(response.url()) &&
+      response.status() >= 400
+    )
+      expiredIngress.push({
+        status: response.status(),
+        body: await response.text(),
+      });
+  };
+  vault.on("response", observeExpiry);
+  const expired = await inspect(vault, "retainedCall");
+  vault.off("response", observeExpiry);
+  assert.equal(expired.accepted, false);
+  assert.match(expired.error, /expir|delegation/i);
+  assert.ok(
+    expiredIngress.some((response) => /expir/i.test(response.body)),
+    "Replica HTTP rejection must confirm actual delegation expiry",
+  );
+  pass(
+    "active typing across real II signed expiry clears UI; captured old actor rejected by replica",
+    {
+      ttlRequestedSeconds: 35,
+      signedExpirationNs: earliest.toString(),
+      browserClockManipulated: false,
+      replicaStatuses: expiredIngress.map((r) => r.status),
+    },
+  );
+
+  await signIn(vault, loginButton(vault));
+  await action(vault, sourceName);
+  await action(vault, title);
+  await retain(vault);
+  const idleExpirations = await inspect(
+    vault,
+    "captureExpiry",
+    canister,
+    vaultURL,
+  );
+  const idleExpiry = idleExpirations
+    .map(BigInt)
+    .reduce((a, b) => (a < b ? a : b));
+  const idleStart = Date.now();
+  assert.ok(
+    idleExpiry > BigInt(idleStart + 10 * 60 * 1000) * 1000000n,
+    "Fresh normal-login signed delegation must outlast the entire idle test",
+  );
+  console.log(
+    "WAIT actual five-minute idle; signed normal delegation expiry",
+    idleExpiry.toString(),
+  );
+  await loginButton(vault).waitFor({ timeout: 330000 });
+  assert.ok(Date.now() - idleStart >= 290000);
+  await assertCleared(vault);
+  const idleEnded = Date.now();
+  assert.ok(
+    BigInt(idleEnded) * 1000000n < idleExpiry,
+    "Idle logout must occur before signed delegation expiry",
+  );
+  const stillValid = await inspect(vault, "retainedCall");
+  assert.equal(
+    stillValid.accepted,
+    true,
+    "A retained signing identity remains valid after local idle logout until expiry",
+  );
+  assert.deepEqual(stillValid.expirations, idleExpirations);
+  pass(
+    "natural five-minute idle logout clears retained private UI before signed expiry; retained signer remains valid",
+    {
+      elapsedMs: idleEnded - idleStart,
+      signedExpirationsBefore: idleExpirations,
+      signedExpirationsAfter: stillValid.expirations,
+      signedRemainingAfterIdleMs: Number(idleExpiry / 1000000n) - idleEnded,
+      retainedActorAcceptedAfterLocalLogout: stillValid.accepted,
+    },
+  );
+  await signIn(vault, loginButton(vault));
+  assert.equal((await readback(vault)).principal, owner);
+  assert.equal(
+    (await inspect(vault, "clientRead", canister, vaultURL, vaultId))
+      .documents[0].plaintext,
+    plaintext,
+  );
+  pass(
+    "same II recovers access after expiry and idle without independent Vault secret",
+  );
+  writeFileSync(
+    out + "results.json",
+    JSON.stringify(
+      {
+        passed: results.length,
+        results,
+        browser: browser.version(),
+        clock: "real",
+        realFunds: false,
+        productionDeployment: false,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
 } catch (e) {
-  for (const [i, p] of context.pages().entries()) {
-    console.error(
-      "PAGE",
-      i,
-      p.url(),
-      await p
-        .getByRole("button")
-        .allTextContents()
-        .catch(() => []),
-      "ALERTS",
-      await p
-        .getByRole("alert")
-        .allTextContents()
-        .catch(() => []),
-    );
-    await p
-      .screenshot({ path: out + `failure-${i}.png`, fullPage: true })
-      .catch(() => {});
-  }
+  writeFileSync(
+    out + "partial-results.json",
+    JSON.stringify({ results, failure: String(e) }, null, 2) + "\n",
+  );
+  for (const ctx of contexts)
+    for (const [i, page] of ctx.pages().entries()) {
+      console.error(
+        "PAGE",
+        i,
+        page.url(),
+        "BUTTONS",
+        await page
+          .getByRole("button")
+          .allTextContents()
+          .catch(() => []),
+        "ALERTS",
+        await page
+          .getByRole("alert")
+          .allTextContents()
+          .catch(() => []),
+      );
+      await page
+        .screenshot({
+          path: out + `failure-${contexts.indexOf(ctx)}-${i}.png`,
+          fullPage: true,
+        })
+        .catch(() => {});
+    }
   throw e;
 } finally {
-  await context.close();
+  for (const ctx of contexts) await ctx.close();
   await browser.close();
 }

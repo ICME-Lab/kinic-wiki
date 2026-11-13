@@ -10,7 +10,7 @@ Notes, private Markdown preview, saved-credential content, attachments, local se
 
 A create retry retains the same operation and Vault ID in RAM. If key retrieval fails after creation, select that existing Vault or use Retry opening Vault. Refresh preserves the selected root, draft and pending creation. Pending/Deleting headers can be selected for cleanup without a key request. Resume save retransmits the pending encrypted action; Cancel save reconciles the upload before cancellation. Close Vault clears private state but leaves II signed in. Sign out ends authentication.
 
-AuthClient 5.0.0 retains the existing eight-hour delegation TTL and five-minute idle timeout. While an identity is exposed, the provider checks delegation validity locally every second, independently of activity. Expiry removes the identity before asynchronous SDK logout finishes. Login waits for logout storage removal. New identity objects rebuild the actor even if their principal text matches.
+AuthClient 5.0.0 retains the existing eight-hour delegation TTL and five-minute idle timeout. While an identity is exposed, the provider checks delegation validity locally every second, independently of activity. Expiry removes the identity before asynchronous SDK logout finishes. Login waits for logout storage removal. New identity objects rebuild the actor even if their principal text matches. SDK logout removes this browser's session; it does not revoke a retained session signing key and its still-valid II delegation. That retained signing identity remains usable until its signed expiry (up to the requested eight hours).
 
 Private documents, roots, draft inputs, File references, editor undo state and owned Blob URLs are scoped to the private session. Close, switch, logout, expiry and unmount fence late operations and clear private views. Hidden tabs close after one minute. Explicit clipboard copies and downloaded files are not cleared, and this does not promise physical RAM erasure. II's own delegation storage remains managed by its SDK.
 
@@ -44,7 +44,7 @@ wikibrowser/node_modules/.bin/vlmkit check interactions 'http://127.0.0.1:3023/?
 
 The UI fixture substitutes key acquisition/context refresh and uses an in-memory actor with real document encryption. Browser unit tests use the current client and mocked root verification. Neither establishes actual II, vetKD or current-Wasm acceptance. The handlers inventory reports React's root delegated dragstart and CodeMirror's contenteditable dragstart as not-draggable suspects; no draggable attributes or suppressions are added to hide them. The explicit Chromium gate covers keyboard editing, preview, refresh preservation, history download and private DOM/editor undo/password/Blob cleanup.
 
-`verify-acceptance.mjs` and `fixtures/acceptance-readback.ts` remain the separate Task3 acceptance boundary. They still reference the retired passkey/recovery protocol and must be replaced before use; they are not current II-only validation commands.
+Run `node pocketic-tests/scripts/run-vault-browser-acceptance.mjs` from the root for actual II/canister acceptance. The launcher creates fresh local infrastructure with isolated CLI settings, uses the certified production entry and a synthetic ledger, and tears down only its own processes. The inspector bundle is served through owned browser interception and is excluded from production assets. See [validation](../docs/vault/validation.md) for commands, artifacts and limits.
 
 ## Funding and capacity
 
