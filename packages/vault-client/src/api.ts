@@ -152,7 +152,20 @@ export class VaultClient {
       this.header = structuredClone(header);
     }
     const t = this.session.capture();
-    const h = structuredClone(ok(await this.actor.get_vault_header(header.id)));
+    const readHeader = async () => {
+      const reply = await this.actor.get_vault_header(header.id);
+      // An old response must never invalidate a newer selected context.
+      this.session.check(t);
+      if (
+        "Err" in reply &&
+        ("NotFound" in reply.Err || "Conflict" in reply.Err)
+      ) {
+        this.session.lock();
+        throw Error("TargetChanged");
+      }
+      return structuredClone(ok(reply));
+    };
+    const h = await readHeader();
     this.session.check(t);
     if (!equal(bytes(h.id), bytes(header.id)) || !("Active" in h.state)) {
       this.session.lock();
@@ -203,14 +216,19 @@ export class VaultClient {
       this.local,
     );
     this.session.check(t);
-    const current = ok(await this.actor.get_vault_header(h.id));
+    const current = await readHeader();
     this.session.check(t);
-    if (
-      !("Active" in current.state) ||
-      !equal(bytes(current.public_key), bytes(h.public_key)) ||
-      !equalContext(context, this.context(current))
-    )
+    try {
+      if (
+        !("Active" in current.state) ||
+        !equal(bytes(current.public_key), bytes(h.public_key)) ||
+        !equalContext(context, this.context(current))
+      )
+        throw Error("TargetChanged");
+    } catch {
+      this.session.lock();
       throw Error("TargetChanged");
+    }
     this.session.bindRoot(root, context);
     this.pinnedPublicKey = bytes(h.public_key);
     this.header = structuredClone(current);

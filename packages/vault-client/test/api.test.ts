@@ -399,3 +399,61 @@ it.each(["items", "read", "history", "quota"] as const)(
     expect(a.get_quota).not.toHaveBeenCalled();
   },
 );
+
+describe("open authoritative invalidation", () => {
+  it.each(["NotFound", "Conflict"] as const)(
+    "closes an existing same-Vault root on initial %s",
+    async (kind) => {
+      const { client, actor } = setup();
+      await client.open(header());
+      vi.mocked(actor.get_vault_header).mockResolvedValueOnce({
+        Err: { [kind]: null },
+      } as never);
+      await expect(client.open(header())).rejects.toThrow("TargetChanged");
+      expect(client.session.root).toBeUndefined();
+    },
+  );
+  it.each(["nonce", "public_key", "state", "invalid_nonce", "gone"])(
+    "invalidates the post-key attempt on %s",
+    async (field) => {
+      const { client, actor } = setup();
+      const changed = header();
+      if (field === "nonce") changed.nonce = new Uint8Array(32).fill(9);
+      if (field === "public_key")
+        changed.public_key = new Uint8Array(96).fill(9);
+      if (field === "state") changed.state = { Deleting: null };
+      if (field === "invalid_nonce") changed.nonce = new Uint8Array(1);
+      vi.mocked(actor.get_vault_header)
+        .mockResolvedValueOnce({ Ok: header() })
+        .mockResolvedValueOnce(
+          field === "gone" ? { Err: { NotFound: null } } : { Ok: changed },
+        );
+      const ticket = client.session.capture();
+      await expect(client.open(header())).rejects.toThrow("TargetChanged");
+      expect(client.session.capture()).toBeGreaterThan(ticket + 1);
+      const attempt = vi.mocked(actor.derive_vault_key).mock.calls[0][0];
+      await client.open(header());
+      expect(
+        vi.mocked(actor.derive_vault_key).mock.calls[1][0].operation,
+      ).not.toEqual(attempt.operation);
+    },
+  );
+  it("does not let an old NotFound response close a newer selection", async () => {
+    const { client, actor } = setup();
+    let reply!: (value: { Err: { NotFound: null } }) => void;
+    vi.mocked(actor.get_vault_header).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          reply = resolve;
+        }),
+    );
+    const old = client.open(header());
+    const other = { ...header(), id: new Uint8Array(16).fill(7) };
+    vi.mocked(actor.get_vault_header).mockResolvedValue({ Ok: other });
+    await client.open(other);
+    const root = client.session.root;
+    reply({ Err: { NotFound: null } });
+    await expect(old).rejects.toThrow("Locked");
+    expect(client.session.root).toBe(root);
+  });
+});
