@@ -132,23 +132,33 @@ prompt, machine checks and the paths the agent may change. Start from
 
 A revision is eligible only with **at least three task families and six paired
 results on the `validation` split**, a strictly positive improvement interval and
-no family regression. Smaller suites keep proposals unpublished. Keep the
-verifier scripts outside the project source (the example uses `{suite_dir}`), so
-the agent cannot read the oracle.
+no family regression. Smaller suites keep proposals unpublished. Keep the suite
+and verifier scripts outside the project source (the example uses `{suite_dir}`).
+This keeps the verifiers out of the exported source, but does not prevent the
+agent from reading them on the host. Use runner sandbox permissions or an
+external container to deny access to held-out oracles and solution checkouts;
+see the [evaluation boundaries](../evaluation/continual-learning/README.md).
 
-Isolated evaluation clears the environment, so add the credential variable names
-your runner needs, for example `"inherited_environment": ["OPENAI_API_KEY"]` for
-Codex with an API key, or point `CODEX_HOME` at your Codex login.
+Isolated evaluation clears the environment and uses a temporary `HOME`. Before
+setup, add the credential variable names your runner needs to `runner.json`, for
+example `"inherited_environment": ["OPENAI_API_KEY"]` for Codex with an API key.
+To use an existing Codex login instead, set `CODEX_HOME` in the launching process
+to your existing Codex configuration directory and add
+`"inherited_environment": ["CODEX_HOME"]`. Exporting it alone does not pass it to
+the isolated runner. Keep credential values out of both configuration files.
 
 For a new project, pass the suite at setup:
 
 ```bash
-kinic-vfs-cli learn setup --project-root . --runner-file "$PWD/runner.json" --validation-suite "$PWD/validation-suite.json" --json
+kinic-vfs-cli learn setup --project-root . --runner-file "$PWD/runner.json" --validation-suite /absolute/path/outside-your-project/validation-suite.json --json
 ```
 
-Running setup again on an already configured project changes nothing, including
-the suite. For a project set up in step 4, add the absolute path to
-`.kinic-learning.json` instead:
+Setup copies the runner configuration into `.kinic-learning.json`; later edits
+to `runner.json` do not change the configured runner. Running setup again on an
+already configured project changes nothing, including the runner and suite.
+For a project set up in step 4, edit `runner.inherited_environment` in
+`.kinic-learning.json` to configure evaluation credentials, and add the suite's
+absolute path at the top level:
 
 ```json
 "validation_suite": "/absolute/path/to/validation-suite.json"

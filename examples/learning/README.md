@@ -1,7 +1,9 @@
 # Continual learning examples
 
 Starting points for [the continual learning quickstart](../../docs/LEARNING_QUICKSTART.md).
-Copy a file into your project and adjust it; do not point setup at this directory.
+Copy a runner file into your project and adjust it; do not point setup at this
+directory. Keep your validation suite and verifier scripts outside the project
+source, and restrict the agent's access as described in the quickstart.
 
 | File | Use |
 |---|---|
