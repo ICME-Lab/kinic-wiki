@@ -1,6 +1,6 @@
 import { sign } from "node:crypto";
 import {restoreFixture, owner, other, IDL, cryptoLib} from "../helpers/vault-restore-fixture.mjs";
-import {b, key, ok, passkeys} from "../helpers/vault-passkeys.mjs";
+import { b, key, ok } from "../helpers/vault-passkeys.mjs";
 import {verifyVaultBaseline} from "../helpers/vault-baseline.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
 import assert from "node:assert/strict";
@@ -8,16 +8,24 @@ import {idlFactory as vaultIDL} from "../../packages/vault-candid/index.js";
 const reuseSmoke = process.env.VAULT_RESTORE_REUSE_SMOKE === "1";
 const baseline = "target/vault-v6-baseline.wasm";
 verifyVaultBaseline(baseline);
-const {
-
-} = cryptoLib;
 const f = await restoreFixture("target/vault-v6-baseline.wasm", {
   monotonicCounter: true,
   upgradeBeforeBootstrap: false,
   sourceDocument: true,
 });
 const {
-  pic, actor, canisterId, wasm, sourceG, sourceSecret, ephemeral, credential, lost, send, fresh, registration, assertion
+  pic,
+  actor,
+  canisterId,
+  wasm,
+  sourceG,
+  sourceSecret,
+  ephemeral,
+  lost,
+  send,
+  fresh,
+  registration,
+  assertion,
 } = f;
 try {
   const credentials = await fresh({ Credentials: null });

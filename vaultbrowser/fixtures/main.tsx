@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { Principal } from "@icp-sdk/core/principal";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { VaultClient } from "@kinic/vault-client";
+import { importKey } from "@kinic/vault-crypto";
 import type {
   Header,
   Revision,
@@ -73,6 +74,7 @@ const actor = {
   list_payments: async () => ({ Ok: [] }),
   list_vaults: async () => ({ Ok: [header] }),
   list_unfinished_vaults: async () => ({ Ok: [] }),
+  list_pending_uploads: async () => ({ Ok: { entries: [], next: [] } }),
   get_vault_header: async () => ({ Ok: header }),
   get_quota: async () => ({
     Ok: { current: 30n, charged: 100n, reserved: 0n, limit: 104857600n },
@@ -83,17 +85,13 @@ const actor = {
   }),
   list_objects: async () => ({ Ok: { entries: [revision], next: [] } }),
   get_active_export_for_vault: async () => ({ Ok: [] }),
-  cancel_pending_key_derivation: async () => ({ Ok: null }),
-  collect_garbage: async () => ({ Ok: 0n }),
-  delete_object: async () => ({ Ok: { ...revision, deleted: true } }),
-  purge_object: async () => ({ Ok: null }),
 } as unknown as VaultActor;
 class SyntheticClient extends VaultClient {
   override async unlock(value: Header) {
     this.session.lock();
     this.header = value;
-    this.session.raw = new Uint8Array(32);
-    this.session.root = {} as CryptoKey;
+    const raw = new Uint8Array(32);
+    this.session.bindRoot(await importKey(raw), value.generation[0]!, raw);
   }
   override async items() {
     return [

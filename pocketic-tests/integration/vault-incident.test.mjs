@@ -1,5 +1,5 @@
 import {restoreFixture, owner, other, IDL, cryptoLib, root} from "../helpers/vault-restore-fixture.mjs";
-import {b, key, ok, passkeys} from "../helpers/vault-passkeys.mjs";
+import { b, ok } from "../helpers/vault-passkeys.mjs";
 import {verifyVaultBaseline} from "../helpers/vault-baseline.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
 import assert from "node:assert/strict";
@@ -14,7 +14,22 @@ const f = await restoreFixture("target/vault-v6-baseline.wasm", {
   sourceDocument: false,
 });
 const {
-  pic, actor, canisterId, wasm, sourceG, sourceRaw, normal, recovery, credential, lost, bootstrap, send, fresh, derive, cryptoG, registration, assertion, paid, afterUpgrade
+  pic,
+  actor,
+  canisterId,
+  wasm,
+  sourceG,
+  sourceRaw,
+  normal,
+  lost,
+  bootstrap,
+  send,
+  fresh,
+  derive,
+  cryptoG,
+  registration,
+  paid,
+  afterUpgrade,
 } = f;
 try {
   assert.equal(afterUpgrade, paid);

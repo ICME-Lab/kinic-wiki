@@ -2,7 +2,7 @@
 // by the existing Ed25519 signing fixture. This is not browser/II evidence.
 import assert from "node:assert/strict";
 import { IncidentClient } from "../../packages/vault-crypto/.tmp-test/incident.mjs";
-import { assertion, ok, owner, b, b64, IDL } from "./vault-restore-fixture.mjs";
+import { assertion, ok, owner, IDL } from "./vault-restore-fixture.mjs";
 export async function completeRemainingParent(f, C, parent, replacements) {
   const originalNow = Date.now;
   const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");

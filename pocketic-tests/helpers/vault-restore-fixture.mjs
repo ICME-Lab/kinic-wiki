@@ -2,7 +2,6 @@ import { b, cat, hash, b64, key, ok, passkeys } from "./vault-passkeys.mjs";
 import { startVaultPocketIc } from "./vault-pocketic-server.mjs";
 import { createVaultPocketIcWithTestKeys } from "./vault-pocketic-test-keys.mjs";
 // Real dedicated Wasm protocol fixture. Only an isolated synthetic ledger is used.
-import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -37,33 +36,20 @@ const {
   importKey,
   deriveKey,
   sealV2,
-  openV2,
   generationAAD,
   recoveryVerifier,
 } = cryptoLib;
-export async function restoreFixture(
-  baseline = process.env.VAULT_RESTORE_WASM ??
-    "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
-  {
-    priorCanisters = 0,
-    credits = 2_000_000_000_000n,
-    testThresholdKeys = false,
-    monotonicCounter = true,
-    upgradeBeforeBootstrap = false,
-    sourceDocument = true,
-  } = {},
-) {
-  const { registration, assertion } = passkeys(owner, { monotonicCounter });
+/** A paid isolated replica, before any passkey or Vault namespace exists. */
+export async function fundedFixture(baseline, {
+  priorCanisters = 0, credits = 2_000_000_000_000n,
+  testThresholdKeys = false, replicaOptions,
+} = {}) {
   const server = await startVaultPocketIc(PocketIcServer.getBinPath());
   let pic;
   try {
-    const options = {
-      fiduciary: { state: { type: "new" } },
-      icpConfig: { betaFeatures: "Enabled" },
-    };
     pic = testThresholdKeys
-      ? await createVaultPocketIcWithTestKeys(server.getUrl(), options)
-      : await PocketIc.create(server.getUrl(), options);
+      ? await createVaultPocketIcWithTestKeys(server.getUrl(), replicaOptions)
+      : await PocketIc.create(server.getUrl(), replicaOptions);
     const wasm = resolve(
       root,
       "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
@@ -121,6 +107,47 @@ export async function restoreFixture(
     ok(await actor.quote_purchase(purchase));
     ok(await actor.pay_purchase(purchase.operation));
     const paid = ok(await actor.account_balance());
+    return {
+      pic, actor, canisterId, fake, wasm, paid, purchase,
+      close: async () => {
+        try {
+          await pic.tearDown();
+        } finally {
+          await server.stop();
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      await pic?.tearDown();
+    } finally {
+      await server.stop();
+    }
+    throw error;
+  }
+}
+export async function restoreFixture(
+  baseline = process.env.VAULT_RESTORE_WASM ??
+    "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
+  {
+    priorCanisters = 0,
+    credits = 2_000_000_000_000n,
+    testThresholdKeys = false,
+    monotonicCounter = true,
+    upgradeBeforeBootstrap = false,
+    sourceDocument = true,
+  } = {},
+) {
+  const { registration, assertion } = passkeys(owner, { monotonicCounter });
+  const base = await fundedFixture(baseline, {
+    priorCanisters, credits, testThresholdKeys,
+    replicaOptions: {
+      fiduciary: { state: { type: "new" } },
+      icpConfig: { betaFeatures: "Enabled" },
+    },
+  });
+  const { pic, actor, canisterId, fake, wasm, paid } = base;
+  try {
     let afterUpgrade;
     if (upgradeBeforeBootstrap) {
       await pic.upgradeCanister({ sender: owner, canisterId, wasm, arg: IDL.encode([], []) });
@@ -377,23 +404,14 @@ export async function restoreFixture(
       fresh,
       derive,
       cryptoG,
-      close: async () => {
-        try {
-          await pic.tearDown();
-        } finally {
-          await server.stop();
-        }
-      },
+      close: base.close,
     };
   } catch (error) {
-    try {
-      await pic?.tearDown();
-    } finally {
-      await server.stop();
-    }
+    await base.close();
     throw error;
   }
 }
+
 export {
   b,
   b64,

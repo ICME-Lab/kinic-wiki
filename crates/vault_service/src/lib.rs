@@ -51,13 +51,6 @@ struct Control {
     #[serde(default)]
     cleanup_budget: cleanup::Budget,
 }
-#[derive(Serialize, Deserialize)]
-struct Candidate {
-    vault: Id,
-    credential: passkey_auth::PasskeyCredential,
-    digest: Vec<u8>,
-    expires: u64,
-}
 fn valid_transport(bytes: &[u8]) -> bool {
     let Ok(arr) = <&[u8; 48]>::try_from(bytes) else {
         return false;
@@ -552,159 +545,6 @@ pub async fn derive_vault_key(env: &impl Environment, request: Derive) -> Result
         }
     })?
 }
-pub fn activate_vault(env: &impl Environment, request: Activate) -> Result<Header> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    activate_inner(env, request, false)
-}
-fn activate_inner(env: &impl Environment, request: Activate, restoring: bool) -> Result<Header> {
-    env.transaction(|db| {
-        if store::transition::creation_target(db,&request.vault)? { return Err(Error::Unauthorized); }
-        let cfg = store::authorize(db, env.owner())?;
-        id(&request.operation)?;
-        envelope(&request.normal)?;
-        envelope(&request.recovery)?;
-        if request.normal.nonce == request.recovery.nonce {
-            return Err(Error::InvalidInput);
-        }
-        let digest = hash(&request)?;
-        let prior: Option<(Vec<u8>, String)> = db
-            .query_row(
-                "SELECT digest,result FROM (SELECT * FROM receipts WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) WHERE operation=?1",
-                params![request.operation],
-                |r| {
-                    Ok((
-                        kinic_sqlite_compat::row_get(r, 0)?,
-                        kinic_sqlite_compat::row_get(r, 1)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|_| Error::Storage)?;
-        if let Some((d, result)) = prior {
-            if d != digest {
-                return Err(Error::Conflict);
-            }
-            return serde_json::from_str(&result).map_err(|_| Error::Storage);
-        }
-        let mut h = store::pending(db, &request.vault, env.now())?;
-        store::setup::check_attempt(db, &h, request.attempt.as_deref())?;
-        if restoring {
-            if h.state != VaultState::Restoring {
-                return Err(Error::Conflict);
-            }
-            store::restore::ready(db, &request.vault, env.now())?;
-            if h.recovery.as_ref() != Some(&request.recovery) {
-                return Err(Error::InvalidInput);
-            }
-        } else if h.state != VaultState::Pending {
-            return Err(Error::Conflict);
-        }
-        let ch = ceremony(db, env.now(), &request.vault, Purpose::Activate, &[0; 48], &[])?;
-        if credentials(db)?.is_empty() {
-            let credential = auth::registration(
-                &cfg,
-                &ch,
-                request.registration.as_deref().ok_or(Error::InvalidProof)?,
-            )?;
-            insert_credential(db, &credential)?;
-        } else {
-            assert_proof(
-                db,
-                &ch,
-                request.assertion.as_deref().ok_or(Error::InvalidProof)?,
-            )?;
-        }
-        h.state = VaultState::Active;
-        h.normal = Some(request.normal);
-        h.recovery = Some(request.recovery);
-        if restoring {
-            store::restore::committed(db, &h.id)?;
-        } else {
-            h.sequence = 1;
-        }
-        store::put_header(db, &h)?;
-        db.execute("UPDATE vaults SET expires=0 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id=?1)", params![h.id])
-            .map_err(|_| Error::Storage)?;
-        store::content::record(db, &request.operation, &digest, &h, env.now())?;
-        Ok(h)
-    })
-}
-pub fn manage_unlock_credential(env: &impl Environment, request: ManageCredential) -> Result<()> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.require_spending()?;
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::active(db, &request.vault)?;
-        let purpose = if request.remove.is_some() {
-            Purpose::RemoveCredential
-        } else {
-            Purpose::AddCredential
-        };
-        let target = if let Some(ref id) = request.remove {
-            id.clone()
-        } else {
-            hash(&request.registration)?
-        };
-        let ch = ceremony(db, env.now(), &request.vault, purpose, &[0; 48], &target)?;
-        assert_proof(db, &ch, &request.assertion)?;
-        if let Some(id) = request.remove {
-            let creds = credentials(db)?;
-            if creds.len() <= 1 {
-                return Err(Error::Conflict);
-            }
-            if !creds.iter().any(|c| c.id.0 == id) {
-                return Err(Error::NotFound);
-            }
-            db.execute("DELETE FROM credentials WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id=?1)", params![id])
-                .map_err(|_| Error::Storage)?;
-        } else {
-            // Registration uses the same bound ceremony challenge; the existing credential signs its digest.
-            let candidate: Candidate = store::load(db, "candidate")?.ok_or(Error::InvalidProof)?;
-            if candidate.vault != request.vault
-                || candidate.digest != target
-                || candidate.expires <= env.now()
-            {
-                return Err(Error::InvalidProof);
-            }
-            insert_credential(db, &candidate.credential)?;
-            db.execute("DELETE FROM settings WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (key='candidate')", params![])
-                .map_err(|_| Error::Storage)?;
-        }
-        Ok(())
-    })
-}
-pub fn prepare_unlock_credential(
-    env: &impl Environment,
-    vault: Id,
-    registration: String,
-) -> Result<Vec<u8>> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.require_spending()?;
-    env.transaction(|db| {
-        let cfg = store::authorize(db, env.owner())?;
-        store::incident::readable(db, &vault)?;
-        let ch = ceremony(db, env.now(), &vault, Purpose::AddCredential, &[0; 48], &[])?;
-        let credential = auth::registration(&cfg, &ch, &registration)?;
-        let digest = hash(&Some(registration))?;
-        store::save(
-            db,
-            "candidate",
-            &Candidate {
-                vault,
-                credential,
-                digest: digest.clone(),
-                expires: env.now() + 120,
-            },
-        )?;
-        Ok(digest)
-    })
-}
 pub fn begin_revision(env: &impl Environment, request: BeginRevision) -> Result<Upload> {
     if !env.mutation_authorized() {
         return Err(Error::Unauthorized);
@@ -717,24 +557,6 @@ pub fn begin_revision(env: &impl Environment, request: BeginRevision) -> Result<
             store::content::gc(db, env.now())?;
         }
         store::content::begin_with_budget(db, request, env.now(), allow_new)
-    })
-}
-pub fn put_chunk(env: &impl Environment, upload: Id, index: u32, data: Vec<u8>) -> Result<()> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::content::put(db, &upload, index, &data, env.now())
-    })
-}
-pub fn commit_revision(env: &impl Environment, upload: Id) -> Result<Revision> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::content::commit(db, &upload, env.now())
     })
 }
 pub fn get_manifest(
@@ -783,47 +605,6 @@ pub fn get_quota(env: &impl Environment, vault: Id) -> Result<Quota> {
         store::content::quota(db, &vault)
     })
 }
-pub fn delete_object(
-    env: &impl Environment,
-    vault: Id,
-    object: Id,
-    expected_revision: u64,
-    operation: Id,
-) -> Result<Revision> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.require_spending()?;
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::content::delete(
-            db,
-            &vault,
-            &object,
-            expected_revision,
-            &operation,
-            env.now(),
-        )
-    })
-}
-pub fn purge_object(env: &impl Environment, vault: Id, object: Id) -> Result<()> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::content::purge(db, &vault, &object, env.now())
-    })
-}
-pub fn collect_garbage(env: &impl Environment) -> Result<u64> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::content::gc(db, env.now())
-    })
-}
 pub fn begin_export(env: &impl Environment, vault: Id, export: Id) -> Result<Export> {
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
@@ -857,79 +638,7 @@ pub fn finish_export(env: &impl Environment, export: Id, saved: bool) -> Result<
 pub fn abort_export(env: &impl Environment, export: Id) -> Result<Header> {
     finish_export(env, export, false)
 }
-pub fn begin_restore(env: &impl Environment, request: BeginRestore) -> Result<Header> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    env.require_spending()?;
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        store::restore::begin(db, request, env.now())
-    })
-}
-fn restore_transaction<T>(
-    env: &impl Environment,
-    vault: &[u8],
-    attempt: Option<&[u8]>,
-    apply: impl FnOnce(&Connection, u64) -> Result<T>,
-) -> Result<T> {
-    env.transaction(|db| {
-        store::authorize(db, env.owner())?;
-        let t = env.now();
-        let h = store::pending(db, vault, t)?;
-        store::setup::check_attempt(db, &h, attempt)?;
-        apply(db, t)
-    })
-}
 
-pub fn begin_restore_revision(
-    env: &impl Environment,
-    vault: Id,
-    revision: Revision,
-    attempt: Option<Id>,
-) -> Result<()> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    restore_transaction(env, &vault, attempt.as_deref(), |db, t| {
-        store::restore::stage(db, &vault, revision, t)
-    })
-}
-
-pub fn put_restore_chunk(
-    env: &impl Environment,
-    vault: Id,
-    index: u32,
-    data: Vec<u8>,
-    attempt: Option<Id>,
-) -> Result<()> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    restore_transaction(env, &vault, attempt.as_deref(), |db, t| {
-        store::restore::put(db, &vault, index, &data, t)
-    })
-}
-
-pub fn commit_restore_revision(
-    env: &impl Environment,
-    vault: Id,
-    sequence: u64,
-    attempt: Option<Id>,
-) -> Result<RestoreProgress> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    restore_transaction(env, &vault, attempt.as_deref(), |db, t| {
-        store::restore::finish_record(db, &vault, sequence, t)
-    })
-}
-pub fn commit_restore(env: &impl Environment, request: Activate) -> Result<Header> {
-    if !env.mutation_authorized() {
-        return Err(Error::Unauthorized);
-    }
-    activate_inner(env, request, true)
-}
 pub fn get_active_export(env: &impl Environment) -> Result<Option<Export>> {
     env.transaction(|db| {
         store::authorize(db, env.owner())?;
