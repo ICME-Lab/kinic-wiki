@@ -13,10 +13,35 @@ reference documents are [portable project setup](PORTABLE_LEARNING.md),
 
 ## What you need
 
-- `kinic-vfs-cli` 2.0.4 or newer and `icp-cli`, both on `PATH`:
+- Git and Rust/Cargo to build the pinned CLI source below. This guide needs
+  functionality in the 2.0.5 source snapshot at
+  `d497719ecc00522067881fe2fa09a601c3816e07`; an npm installation alone does not
+  establish that these commands are available. From your project's root:
 
   ```bash
-  npm install -g kinic-vfs-cli @icp-sdk/icp-cli
+  kinic_project_dir="$PWD"
+  kinic_cli_build_dir="$(mktemp -d)"
+  git clone https://github.com/ICME-Lab/kinic-wiki.git "$kinic_cli_build_dir/kinic-wiki"
+  git -C "$kinic_cli_build_dir/kinic-wiki" checkout --detach d497719ecc00522067881fe2fa09a601c3816e07
+  cd "$kinic_cli_build_dir/kinic-wiki"
+  CARGO_TARGET_DIR="$kinic_cli_build_dir/target" cargo build --release --locked -p kinic-vfs-cli --bin kinic-vfs-cli
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$kinic_cli_build_dir/target/release/kinic-vfs-cli" "$HOME/.local/bin/kinic-vfs-cli"
+  export PATH="$HOME/.local/bin:$PATH"
+  kinic-vfs-cli --version
+  cd "$kinic_project_dir"
+  ```
+
+  The installed executable is `$HOME/.local/bin/kinic-vfs-cli` and reports
+  `kinic-vfs-cli 2.0.5`. Keep `$HOME/.local/bin` on `PATH` in new terminals and
+  agent sessions so hooks and background jobs can use it after the temporary
+  build directory is removed. The final `cd` returns to your own project before
+  database linking and agent setup.
+
+- `icp-cli`, installed separately and on `PATH`:
+
+  ```bash
+  npm install -g @icp-sdk/icp-cli
   ```
 
 - An Internet Identity linked as your default `icp` identity. See
@@ -65,8 +90,16 @@ never trusts hooks for you.
 **Claude Code**
 
 ```bash
-kinic-vfs-cli agent setup --engine claude
+kinic-vfs-cli agent setup --engine claude --dry-run --json
 ```
+
+Review the returned file changes, then apply them:
+
+```bash
+kinic-vfs-cli agent setup --engine claude --apply
+```
+
+Register the prepared marketplace and install the plugin:
 
 ```bash
 claude plugin marketplace add "$HOME/.claude/plugins/kinic"
