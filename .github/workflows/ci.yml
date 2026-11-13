@@ -215,7 +215,8 @@ jobs:
   wikibrowser-check:
     needs: changes
     if: needs.changes.outputs.wikibrowser == 'true'
-    runs-on: ubuntu-latest
+    # Keep browser jobs on an OS supported by the locked Playwright version.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: wikibrowser
@@ -605,7 +606,8 @@ jobs:
   extension-check:
     needs: changes
     if: needs.changes.outputs.extension == 'true'
-    runs-on: ubuntu-latest
+    # Keep browser jobs on an OS supported by the locked Playwright version.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: extensions/wiki-clipper
