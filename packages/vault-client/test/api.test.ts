@@ -480,3 +480,39 @@ it("retries only a pending Collect and gives each delivered batch a fresh ID", a
   await client.collect();
   expect(actor.mutate).toHaveBeenCalledTimes(count + 1);
 });
+
+it.each(["lock", "switch", "destroy"])(
+  "fences a late Collect on %s without clearing a newer pending retry",
+  async (action) => {
+    const { client, actor, change } = setup();
+    let resolve!: (reply: Awaited<ReturnType<VaultActor["mutate"]>>) => void;
+    vi.mocked(actor.mutate).mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const late = client.collect();
+    if (action === "destroy") client.destroy();
+    else if (action === "switch") {
+      const next = { ...header(), id: new Uint8Array(16).fill(2) };
+      change(next);
+      await client.open(next);
+    } else client.session.lock();
+    if (action !== "destroy") {
+      vi.mocked(actor.mutate).mockRejectedValueOnce(Error("LostResponse"));
+      await expect(client.collect()).rejects.toThrow("LostResponse");
+    }
+    resolve({ Ok: { Collected: 1n } });
+    await expect(late).rejects.toThrow("Locked");
+    if (action === "destroy") {
+      await expect(client.collect()).rejects.toThrow("NotSignedIn");
+      expect(actor.mutate).toHaveBeenCalledOnce();
+    } else {
+      await client.collect();
+      const calls = vi.mocked(actor.mutate).mock.calls;
+      expect(calls[1][0].operation).not.toEqual(calls[0][0].operation);
+      expect(calls[2][0]).toEqual(calls[1][0]);
+    }
+  },
+);

@@ -1183,7 +1183,11 @@ fn fresh_key_admission_at_full_shared_content_and_ordinary_receipts() {
     e.create();
     e.owner.set(Principal::from_slice(&[1]));
     e.transaction(|db| {
-        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9998) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',999999,x+100,0,0 FROM n", []).unwrap();
+        // Fill both the owner's and global ordinary row limit; the other owner's
+        // live revision below consumes the shared content headroom independently.
+        db.execute("DELETE FROM operations WHERE owner=X'02'", []).unwrap();
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',999999,x+100,0,0 FROM n", []).unwrap();
+        assert_eq!(db.query_row("SELECT count(*) FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND cleanup=0",[],|r|r.get::<_,i64>(0)).unwrap(),10000);
         assert_eq!(store::content::check_receipt_capacity(db, e.now()), Err(Error::QuotaExceeded));
         let extra = TOTAL_MAX - store::content::global_usage(db)?;
         db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();

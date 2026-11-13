@@ -11,6 +11,7 @@ import {
   other,
   out,
   IDL,
+  Principal,
   VaultClient,
   cryptoLib,
 } from "../helpers/vault-current.mjs";
@@ -526,4 +527,132 @@ try {
   );
 } finally {
   await old.close();
+}
+
+// Fresh access must survive live content owned by another caller and full ordinary rows.
+// Accounting injection reaches the logical boundary without allocating 200 MiB of ciphertext.
+const full = await fixture({ wasm: resolve(out, "vault-state.wasm") });
+const fullClients = [];
+try {
+  const makeClient = (actor, principal = owner) => {
+    const c = new VaultClient({
+      actor,
+      identity: { getPrincipal: () => principal },
+      canister: full.canisterId.toText(),
+      local: true,
+    });
+    fullClients.push(c);
+    return c;
+  };
+  const original = makeClient(full.actor);
+  const h = await original.create();
+  await original.open(h);
+  const plaintext = "fresh root at full live-content capacity";
+  const revision = await original.save(
+    { kind: "note", title: "retained" },
+    encode(plaintext),
+  );
+  // A funded third owner has never derived a key or allocated a derive setting.
+  const firstOwner = Principal.selfAuthenticating(b(92, 32));
+  await full.fundOwner(firstOwner);
+  const firstActor = full.actorFor(firstOwner);
+  const firstClient = makeClient(firstActor, firstOwner);
+  const unopened = await firstClient.create();
+  firstClient.destroy();
+  await full.fundOwner(other);
+  const otherActor = full.actorFor(other);
+  const otherClient = makeClient(otherActor, other);
+  const otherHeader = await otherClient.create();
+  await otherClient.open(otherHeader);
+  const otherRevision = await otherClient.save(
+    { kind: "note", title: "other owner" },
+    encode("retained other content"),
+  );
+  original.destroy();
+  otherClient.destroy();
+  const now = Math.floor((await full.pic.getTime()) / 1000);
+  await full.controls.fixture_execute(
+    "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 10000-(SELECT count(*) FROM operations WHERE cleanup=0)-(SELECT count(*) FROM receipts)) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,cleanup) SELECT X'" +
+      hex(owner.toUint8Array()) +
+      "',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00'," +
+      (now + 86400) +
+      ",x+100000,0,0 FROM n;",
+  );
+  const extra =
+    ok(await full.actor.global_capacity()).limit -
+    ok(await full.actor.global_capacity()).used;
+  await full.controls.fixture_execute(
+    "UPDATE revisions SET charge=charge+" +
+      extra +
+      " WHERE owner=X'" +
+      hex(other.toUint8Array()) +
+      "' AND object=X'" +
+      hex(otherRevision.object) +
+      "';",
+  );
+  const capacity = ok(await full.actor.global_capacity());
+  assert.equal(capacity.used, capacity.limit);
+  assert.equal(capacity.accounting_reserved, 16n * 1024n * 1024n);
+  assert.ok(ok(await full.actor.account_balance()) > 100_000_000_000n);
+  const state = async () =>
+    JSON.parse(
+      await full.controls.fixture_read(
+        "SELECT json_object('ordinary',(SELECT count(*) FROM operations WHERE cleanup=0)+(SELECT count(*) FROM receipts),'protected',(SELECT count(*) FROM operations WHERE cleanup=3),'flights',(SELECT count(*) FROM key_flights),'settings',(SELECT count(*) FROM settings WHERE key='derive'),'reservations',(SELECT count(*) FROM vault_cycle_reservations))",
+      ),
+    );
+  const before = await state();
+  assert.equal(before.ordinary, 10000);
+  assert.equal(before.settings, 0);
+  const wire = lossy(full.actor);
+  wire.dropNext((name) => name === "derive_vault_key");
+  const fresh = makeClient(wire.actor);
+  assert.equal(fresh.session.root, undefined);
+  await assert.rejects(fresh.open(h), /LostResponse/);
+  const afterLost = await state();
+  assert.equal(afterLost.protected, before.protected + 1);
+  assert.equal(ok(await full.actor.global_capacity()).used, capacity.limit);
+  await fresh.open(h);
+  assert.equal(
+    new TextDecoder().decode((await fresh.read(revision)).plaintext),
+    plaintext,
+  );
+  assert.deepEqual(
+    await state(),
+    afterLost,
+    "exact key replay creates no operation, flight, setting or payment reservation",
+  );
+  const keyCalls = wire.calls.filter(
+    (call) => call.name === "derive_vault_key",
+  );
+  assert.equal(keyCalls.length, 2);
+  assert.deepEqual(keyCalls[0].args, keyCalls[1].args);
+  const changed = structuredClone(keyCalls[0].args[0]);
+  changed.transport = cryptoLib.TransportSecretKey.random().publicKeyBytes();
+  err(await full.actor.derive_vault_key(changed), "Conflict");
+  const neverOpened = makeClient(firstActor, firstOwner);
+  await neverOpened.open(unopened);
+  assert.ok(neverOpened.session.root);
+  assert.equal(ok(await full.actor.global_capacity()).used, capacity.limit);
+  assert.ok(ok(await full.actor.get_quota(h.id)).charged <= capacity.limit);
+  // Protected receipts and accounting survive compatible current7 upgrade.
+  const snapshot = await full.controls.fixture_read(
+    "SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||cleanup||':'||hex(result)) FROM operations),'balances',(SELECT json_group_array(owner||':'||balance_cycles) FROM accounts),'reservations',(SELECT json_group_array(token||':'||reserved||':'||coalesce(actual,0)) FROM vault_cycle_reservations))",
+  );
+  await full.upgrade();
+  assert.equal(
+    await full.controls.fixture_read(
+      "SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||cleanup||':'||hex(result)) FROM operations),'balances',(SELECT json_group_array(owner||':'||balance_cycles) FROM accounts),'reservations',(SELECT json_group_array(token||':'||reserved||':'||coalesce(actual,0)) FROM vault_cycle_reservations))",
+    ),
+    snapshot,
+  );
+  assert.deepEqual(
+    ok(await full.actor.derive_vault_key(keyCalls[0].args[0])),
+    ok(keyCalls[1].result),
+  );
+  console.log(
+    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema7 protected receipt preservation at full cross-owner live content and 10000 ordinary receipts; fixed prepaid capacity conserved",
+  );
+} finally {
+  fullClients.forEach((c) => c.destroy());
+  await full.close();
 }
