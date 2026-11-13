@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
+import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
 import { utf8 } from "@kinic/vault-crypto";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
@@ -159,7 +159,7 @@ export function VaultDocuments({
           <output>
             {disabled
               ? "An encrypted save is in progress."
-              : "The encrypted save is paused. Resume this save, or cancel its unfinished upload before editing. Locking discards the local save job."}
+              : "The encrypted save is paused. Resume this save, or cancel its unfinished upload before editing. Closing this Vault discards the local save job."}
           </output>
           <div className="flex flex-wrap gap-2">
             <VaultButton
@@ -167,7 +167,10 @@ export function VaultDocuments({
               onClick={() =>
                 run(async () => {
                   const ticket = client.session.capture();
-                  await client.resumeSave(setProgress);
+                  await client.resumeSave((n) => {
+                    client.session.check(ticket);
+                    setProgress(n);
+                  });
                   client.session.check(ticket);
                   reset();
                   await refresh();
@@ -398,13 +401,7 @@ export function VaultDocuments({
                   onClick={() =>
                     run(async () => {
                       const g = client.session.capture();
-                      const page = ok(
-                        await client.actor.list_history(
-                          current.revision.vault,
-                          current.revision.object,
-                          18446744073709551615n,
-                        ),
-                      );
+                      const page = await client.history(current.revision);
                       client.session.check(g);
                       setHistory(page.entries);
                       setHistoryCursor(page.next[0]);
@@ -442,7 +439,7 @@ export function VaultDocuments({
                   onClick={() => {
                     if (
                       !window.confirm(
-                        "Permanently delete this document and its history? Existing backups are unchanged.",
+                        "Permanently delete this document and its history? This cannot be undone.",
                       )
                     )
                       return;
@@ -467,12 +464,9 @@ export function VaultDocuments({
                       onClick={() =>
                         run(async () => {
                           const g = client.session.capture(),
-                            page = ok(
-                              await client.actor.list_history(
-                                current.revision.vault,
-                                current.revision.object,
-                                historyCursor,
-                              ),
+                            page = await client.history(
+                              current.revision,
+                              historyCursor,
                             );
                           client.session.check(g);
                           setHistory((previous) => [

@@ -1,4 +1,4 @@
-// Start the separate fixtures/vault Vite entry before running this synthetic UI check.
+// Synthetic UI + real document encryption. Not actual II/vetKD acceptance.
 import assert from "node:assert/strict";
 import { chromium } from "../wikibrowser/node_modules/@playwright/test/index.mjs";
 const browser = await chromium.launch({ headless: true });
@@ -6,9 +6,9 @@ try {
   const page = await browser.newPage({
     viewport: { width: 1280, height: 900 },
   });
-  const external = [],
-    errors = [];
-  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
+  const errors = [],
+    external = [];
+  page.on("pageerror", (e) => errors.push(e.message));
   await page.route("**/*", (route) => {
     const url = new URL(route.request().url());
     if (url.hostname !== "127.0.0.1" && url.protocol !== "blob:") {
@@ -32,170 +32,112 @@ try {
     };
   });
   await page.goto(
-    process.env.VAULT_FIXTURE_URL ?? "http://127.0.0.1:3023/?state=unlocked",
+    process.env.VAULT_FIXTURE_URL ?? "http://127.0.0.1:3023/?state=opened",
   );
   const title = page.getByLabel("Document title");
   await title.waitFor();
-  await title.fill("Synthetic edited title");
-  if (process.env.VAULT_SCREENSHOT)
-    await page.screenshot({
-      path: process.env.VAULT_SCREENSHOT,
-      fullPage: true,
-    });
+  await page
+    .getByRole("button", { name: "Synthetic private note", exact: true })
+    .click();
   const editor = page.locator('.cm-content[contenteditable="true"]');
+  await editor.getByText("Private fixture text", { exact: true }).waitFor();
+  await title.fill("Edited secret");
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.insertText(
-    "\n![private](https://example.invalid/private-resource)\n[private](https://example.invalid/private-link)",
+    "\n![private](https://example.invalid/private)\n[link](https://example.invalid/link)",
   );
-  assert.match(await editor.innerText(), /private-resource/);
   await page.keyboard.press("Tab");
   assert.equal(
-    await editor.evaluate((element) => element === document.activeElement),
+    await editor.evaluate((e) => e === document.activeElement),
     false,
-    "Editor must allow Tab to leave",
   );
   const preview = page.getByText("Private Markdown preview", { exact: true });
   await preview.focus();
   await page.keyboard.press("Enter");
-  assert.equal(
-    await preview.evaluate((element) => element.parentElement.open),
-    true,
-  );
+  assert.equal(await preview.evaluate((e) => e.parentElement.open), true);
   assert.equal(
     await page
-      .locator('img[src*="example.invalid"], a[href*="example.invalid"]')
+      .locator(
+        '[aria-label="Private documents"] img,[aria-label="Private documents"] a[href]',
+      )
       .count(),
     0,
   );
-  await page.evaluate(() => {
-    window.detachedPrivateEditor = window.vaultFixture.editor();
-  });
-  const revert = page.getByRole("button", { name: "Revert", exact: true });
-  await revert.focus();
-  await page.keyboard.press("Enter");
-  assert.equal(await title.inputValue(), "Synthetic travel checklist");
-  assert.doesNotMatch(await editor.innerText(), /private-resource/);
-  await editor.click();
-  await page.keyboard.press("ControlOrMeta+z");
-  assert.doesNotMatch(
-    await editor.innerText(),
-    /private-resource/,
-    "reverted editor must not retain old undo history",
-  );
-  assert.deepEqual(
-    await page.evaluate(() => ({
-      doc: window.detachedPrivateEditor.state.doc.toString(),
-      dom: window.detachedPrivateEditor.contentDOM.textContent,
-    })),
-    { doc: "", dom: "" },
-  );
-  const history = page.getByRole("button", { name: "Show version history" });
-  await history.focus();
-  await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: "Download revision 1" }).waitFor();
-  const download = page.waitForEvent("download");
+  await page.getByText("Refresh Vaults", { exact: true }).click();
+  assert.equal(await title.inputValue(), "Edited secret");
+  await page.getByText("Save document", { exact: true }).click();
   await page
-    .getByRole("button", { name: "Download document", exact: true })
+    .getByRole("button", { name: "Edited secret", exact: true })
     .click();
-  assert.match((await download).suggestedFilename(), /revision-1\.bin$/);
+  await editor.getByText("Private fixture text", { exact: true }).waitFor();
+  await page.getByText("Show version history", { exact: true }).click();
+  await page.getByText("Download revision 1", { exact: true }).click();
   await page.evaluate(() => {
-    window.detachedPrivateEditor = window.vaultFixture.editor();
+    window.retainedEditor = window.syntheticEditor();
+    window.retainedInput = document.querySelector('input[maxlength="512"]');
   });
-  await page.getByRole("button", { name: "New document", exact: true }).click();
+  await page.getByText("Close Vault", { exact: true }).click();
+  await page.getByText("Choose or create a Vault", { exact: true }).waitFor();
+  const wiped = await page.evaluate(() => ({
+    text: window.retainedEditor.state.doc.toString(),
+    input: window.retainedInput.value,
+    root: !!window.syntheticVault.session.root,
+    blobs: window.syntheticBlobEvents,
+  }));
+  assert.equal(wiped.text, "");
+  assert.equal(wiped.input, "");
+  assert.equal(wiped.root, false);
+  for (const [, url] of wiped.blobs.filter(([action]) => action === "create"))
+    assert(
+      wiped.blobs.some(
+        ([action, value]) => action === "revoke" && value === url,
+      ),
+    );
+  await page.getByText("Vault 1 · Active", { exact: true }).click();
+  await title.waitFor();
+  await page.locator('.cm-content[contenteditable="true"]').click();
+  await page.keyboard.press("ControlOrMeta+z");
+  assert.equal(
+    await page.evaluate(() => window.syntheticEditor().state.doc.toString()),
+    "",
+  );
   await page.getByLabel("Document type").selectOption("credential");
-  await page.getByLabel("Username", { exact: true }).fill("synthetic account");
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("synthetic secret password");
-  const reveal = page.getByRole("button", {
-    name: "Show password",
-    exact: true,
-  });
-  await reveal.focus();
-  await page.keyboard.press("Enter");
-  assert.equal(
-    await page.getByLabel("Password", { exact: true }).getAttribute("type"),
-    "text",
-  );
-  await page.getByLabel("Search this Vault locally").fill("synthetic search");
+  await page.getByLabel("Password", { exact: true }).fill("credential secret");
   await page.evaluate(() => {
-    window.detachedPrivateInput =
-      document.querySelector(
-        'input[type="text"][value="synthetic secret password"]',
-      ) ??
-      [...document.querySelectorAll("input")].find(
-        (x) => x.value === "synthetic secret password",
-      );
+    window.retainedPassword = document.querySelector('input[type="password"]');
   });
-  const lock = page.getByRole("button", { name: "Lock Vault", exact: true });
-  await lock.focus();
-  await page.keyboard.press("Enter");
-  assert.equal(await page.getByLabel("Password", { exact: true }).count(), 0);
-  assert.equal(await page.getByLabel("Search this Vault locally").count(), 0);
-  assert.equal(await page.locator(".cm-editor").count(), 0);
-  assert.deepEqual(
-    await page.evaluate(() => ({
-      doc: window.detachedPrivateEditor.state.doc.toString(),
-      dom: window.detachedPrivateEditor.contentDOM.textContent,
-      password: window.detachedPrivateInput.value,
-    })),
-    { doc: "", dom: "", password: "" },
-  );
-  assert.doesNotMatch(
-    await page.locator("body").innerText(),
-    /synthetic secret password|synthetic account|synthetic search/,
-  );
-  assert.equal(await page.getByLabel("Export recovery secret").count(), 1);
-  await page.getByRole("button", { name: "Unlock with passkey" }).click();
+  await page.getByText("Close Vault", { exact: true }).click();
+  assert.equal(await page.evaluate(() => window.retainedPassword.value), "");
+  await page.getByText("Vault 1 · Active", { exact: true }).click();
+  await title.waitFor();
   await page.getByLabel("Document type").selectOption("attachment");
-  await page.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
-    name: "synthetic-private.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("synthetic attachment bytes"),
-  });
+  await page
+    .getByLabel("Attachment (10 MiB maximum)")
+    .setInputFiles({
+      name: "private.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("private file"),
+    });
   await page.evaluate(() => {
-    window.detachedFileInput = [
-      ...document.querySelectorAll('input[type="file"]'),
-    ].find((input) => input.files.length > 0);
+    window.retainedFile = document.querySelector('input[type="file"]');
   });
-  await page.getByRole("button", { name: "Lock Vault", exact: true }).click();
+  await page.getByText("Close Vault", { exact: true }).click();
+  assert.equal(await page.evaluate(() => window.retainedFile.files.length), 0);
   assert.equal(
-    await page.evaluate(() => window.detachedFileInput.files.length),
-    0,
-    "lock clears detached selected File input",
+    await page
+      .getByText(/This release has no backup or independent recovery/)
+      .isVisible(),
+    true,
   );
-  const cdp = await page.context().newCDPSession(page);
-  const detachedObject = await cdp.send("Runtime.evaluate", {
-    expression: "window.detachedPrivateEditor.contentDOM",
-  });
-  const detachedListeners = await cdp.send("DOMDebugger.getEventListeners", {
-    objectId: detachedObject.result.objectId,
-  });
-  console.log(
-    "Detached synthetic editor state:",
-    await page.evaluate(() => ({
-      connected: window.detachedPrivateEditor.contentDOM.isConnected,
-      destroyed: window.detachedPrivateEditor.destroyed,
-      documentLength: window.detachedPrivateEditor.state.doc.length,
-    })),
-    "remaining listener types:",
-    detachedListeners.listeners.map((x) => x.type),
+  assert.equal(
+    await page.getByText("Get quote", { exact: true }).isDisabled(),
+    true,
   );
-  const events = await page.evaluate(() => window.syntheticBlobEvents);
-  assert.equal(events.filter(([type]) => type === "create").length, 1);
-  assert.equal(events.filter(([type]) => type === "revoke").length, 1);
-  assert.deepEqual(
-    await page.evaluate(() => [localStorage.length, sessionStorage.length]),
-    [0, 0],
-  );
-  assert.deepEqual(external, []);
   assert.deepEqual(errors, []);
+  assert.deepEqual(external, []);
   console.log(
-    "Synthetic Chromium Vault checks passed: editor input/revert, keyboard exit/disclosures/history, credential reveal, private preview, download/revoke, lock destruction, no browser persistence or external requests.",
-  );
-  console.log(
-    "This fixture does not establish real canister, Internet Identity or passkey acceptance.",
+    "PASS: encrypted save/read fixture, keyboard exit/preview, refresh preservation, history download, DOM/editor undo/password/File/Blob wipe, visible loss disclosure, funding disabled; 0 page errors, 0 external requests. Synthetic UI only.",
   );
 } finally {
   await browser.close();

@@ -54,80 +54,40 @@ export function VaultPanel({
   );
 }
 const errors: Record<string, string> = {
-  FileSelectionCancelled:
-    "File selection stopped. Preparation is incomplete; resume with the saved files or cancel the attempt.",
-  RecoveryFileTooLarge:
-    "The selected file is too large. Recovery kits are limited to 4 KiB and backup archives to 256 MiB.",
-  CurrentLiveKitRequired:
-    "Select the recovery kit for the current live Vault, separately from an older source backup kit.",
   TargetChanged:
-    "The Vault or recovery target changed. Unlock the current generation again before continuing.",
-  PreparedArchiveMismatch:
-    "The prepared backup does not match this restoration attempt. Select its exact saved target backup and new kit.",
-  ExplicitCancelRequired:
-    "This target has already been prepared. Resume with the saved files, or cancel this exact attempt before creating a replacement.",
-  FreshScopedProofRequired:
-    "Verify the current scoped source passkey before continuing empty creation.",
-  FreshIncidentProofRequired:
-    "Verify a trusted remaining passkey before continuing this incident.",
-  FreshRestoreProofRequired:
-    "Resume with the source files and replacement passkey before continuing restoration.",
-  ChoosePasskey:
-    "Choose the registered passkey that authorizes this Vault or account action.",
-  FreshProofRequired: "Unlock with a registered passkey before making changes.",
+    "This Vault changed or is no longer available. Select a Vault again.",
   SavePending:
     "Resume or cancel the pending encrypted save before editing or saving again.",
   SaveInProgress: "A save is already running.",
   NoPendingSave:
-    "There is no encrypted save waiting in this session. Refresh interrupted saves to cancel an upload left before locking.",
-  UploadCancelling:
-    "Cancellation is in progress. Continue cancelling this upload.",
-  UploadExpired:
-    "This upload expired. Cancel its unfinished upload, then save again.",
-  UploadCancelled:
-    "This upload was cancelled. Cancel the local save job, then save again.",
-  UploadConflict:
-    "The server upload does not match this save. Cancel it before saving again.",
-  GrantExpired:
-    "The passkey authorization expired. Save again to verify your passkey; your draft is still open.",
-  LegacyRecoveryRequired:
-    "This legacy Vault requires the recovery workflow. Encrypted backup remains available.",
+    "There is no save waiting in this session. Refresh interrupted uploads to clean up earlier work.",
   ResolvePendingMutation:
-    "Retry the pending signed request before starting another change.",
-  NoPendingMutation: "There is no signed request waiting for a retry.",
-  InvalidKit:
-    "Select the recovery kit for this exact Vault generation, or enter its recovery secret.",
-  TitleRequired: "Enter a document title before saving.",
+    "Retry the pending request before starting another change.",
+  NoPendingMutation: "There is no request waiting for a retry.",
   Unauthorized:
-    "This action requires the Vault owner. Check your sign-in and Vault sign-in.",
+    "This action requires the Vault owner. Check your Internet Identity sign-in.",
   Conflict:
-    "Another update changed this document. Refresh the list and open it again.",
+    "Another update changed this document or operation. Refresh and open the current version before retrying.",
+  NotFound:
+    "This Vault, document or upload is no longer available. Refresh the list.",
   QuotaExceeded:
-    "A storage, operation or cycles limit was reached. Check your prepaid cycles balance.",
+    "A storage, operation or cycles limit was reached. Check your prepaid balance.",
   SizeLimit:
     "Attachments are limited to 10 MiB; notes and credentials to 256 KiB.",
-  Busy: "An operation or temporary authorization limit is pending. Retry any pending signed request first; otherwise wait for earlier authorizations to expire, then resume. Completed authorizations can remain reserved for up to 7 minutes.",
-  Expired: "This operation expired. Start it again.",
-  Locked: "Vault locked. Unlock it again to continue.",
-  RecoveryConfirmationMismatch:
-    "The recovery secret does not match. Re-enter the saved value.",
-  ExportInProgress:
-    "Finish or cancel the active backup before permanently deleting a document.",
-  ConnectionInterrupted:
-    "The connection was interrupted after retrying. Pending uploads expire after 24 hours.",
-  InvalidProof:
-    "Passkey verification failed. Check that you are using the configured Vault origin.",
+  Busy: "An operation is pending. Resume or cancel it before starting another change.",
+  Locked:
+    "This Vault is closed. Select it to continue with your current Internet Identity.",
+  NotSignedIn: "Sign in with Internet Identity to continue.",
   VaultDisabled:
-    "Vault writes and passkeys are unavailable until the administrator configures this origin.",
-  UnsupportedKey:
-    "This Vault uses an unsupported key service anchor. Use recovery-secret export or a compatible client.",
+    "Vault creation is unavailable until the administrator configures the service.",
+  UnsupportedKey: "This Vault uses an unsupported key service anchor.",
   KeyService:
-    "The key service is unavailable. You can still export using your recovery secret.",
+    "The key service is unavailable. Select this Vault to retry opening it.",
 };
 export function vaultError(error: unknown) {
   // Never display serialized server payloads, exception text, titles or plaintext.
   return (
     errors[error instanceof Error ? error.message : ""] ??
-    "The Vault operation failed. Check your connection, passkey or recovery secret and try again."
+    "The Vault operation failed. Check your connection and try the same operation again."
   );
 }

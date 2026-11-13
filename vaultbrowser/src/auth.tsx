@@ -106,6 +106,40 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
       client.current = undefined;
     };
   }, []);
+  // SDK 5.0.0 checks delegation validity locally. Activity never extends its TTL.
+  useEffect(() => {
+    if (!identity) return;
+    const c = client.current;
+    const token = serial.current;
+    let disposed = false;
+    let checking = false;
+    const current = () =>
+      !disposed &&
+      live.current &&
+      client.current === c &&
+      serial.current === token;
+    const interval = window.setInterval(() => {
+      if (!c || checking || !current()) return;
+      checking = true;
+      void c
+        .isAuthenticated()
+        .then((valid) => {
+          if (!current()) return;
+          if (!valid) logout();
+          else setIdentity(c.getIdentity());
+        })
+        .catch(() => {
+          if (current()) logout();
+        })
+        .finally(() => {
+          checking = false;
+        });
+    }, 1000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [identity]);
   const login = () => {
     const c = client.current;
     if (!live.current || !c || logoutPending.current) return;

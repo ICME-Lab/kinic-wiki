@@ -39,6 +39,7 @@ function Child() {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 it("opens II with only its own certified derivation origin and removes identity before async logout completes", async () => {
   const identity = {
@@ -389,3 +390,91 @@ it.each(["resolve", "reject"] as const)(
     expect(screen.getByText("ready")).toBeTruthy();
   },
 );
+
+it("expires an active typing user before delayed SDK logout settles", async () => {
+  let valid = true;
+  let finish!: () => void;
+  const c = {
+    isAuthenticated: vi.fn(async () => valid),
+    getIdentity: () => ({ getPrincipal: () => ({ toText: () => "active" }) }),
+    logout: vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  };
+  mock.create.mockResolvedValue(c);
+  vi.useFakeTimers();
+  await act(async () => {
+    render(
+      <VaultAuthProvider>
+        <Child />
+      </VaultAuthProvider>,
+    );
+  });
+  expect(screen.getByText("signed")).toBeTruthy();
+  // Typing cannot extend the delegation deadline.
+  valid = false;
+  fireEvent.keyDown(window, { key: "a" });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(screen.getByText("unsigned")).toBeTruthy();
+  expect(screen.getByText("loading")).toBeTruthy();
+  expect(c.logout).toHaveBeenCalledOnce();
+  await act(async () => finish());
+  vi.useRealTimers();
+});
+
+it("ignores an old validity poll after a new login and refreshes changed identity objects", async () => {
+  let poll!: (valid: boolean) => void;
+  let sdkIdentity = { getPrincipal: () => ({ toText: () => "old" }) };
+  const c = {
+    isAuthenticated: vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockImplementation(
+        () =>
+          new Promise<boolean>((r) => {
+            poll = r;
+          }),
+      ),
+    getIdentity: () => sdkIdentity,
+    logout: vi.fn(async () => {}),
+    login: vi.fn(async (o: { onSuccess: () => void }) => {
+      sdkIdentity = { getPrincipal: () => ({ toText: () => "new" }) };
+      o.onSuccess();
+    }),
+  };
+  mock.create.mockResolvedValue(c);
+  mock.load.mockResolvedValue({
+    identityProvider: "https://id.ai",
+    derivationOrigin: "https://vault.example",
+  });
+  vi.useFakeTimers();
+  await act(async () => {
+    render(
+      <VaultAuthProvider>
+        <Child />
+      </VaultAuthProvider>,
+    );
+  });
+  expect(screen.getByText("signed")).toBeTruthy();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(poll).toBeTypeOf("function");
+  await act(async () => fireEvent.click(screen.getByText("logout")));
+  await act(async () => fireEvent.click(screen.getByText("login")));
+  await act(async () => poll(false));
+  expect(screen.getByTestId("auth-principal").textContent).toBe("new");
+  expect(c.logout).toHaveBeenCalledOnce();
+  sdkIdentity = { getPrincipal: () => ({ toText: () => "refreshed" }) };
+  c.isAuthenticated.mockResolvedValue(true);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(screen.getByTestId("auth-principal").textContent).toBe("refreshed");
+  vi.useRealTimers();
+});

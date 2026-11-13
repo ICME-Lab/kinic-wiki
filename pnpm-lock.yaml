@@ -159,16 +159,6 @@ importers:
         specifier: 3.4.18
         version: 3.4.18
 
-  packages/vault-backup:
-    dependencies:
-      '@kinic/vault-crypto':
-        specifier: workspace:*
-        version: link:../vault-crypto
-    devDependencies:
-      vitest:
-        specifier: 4.1.12
-        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
-
   packages/vault-candid:
     dependencies:
       '@icp-sdk/core':
@@ -304,9 +294,6 @@ importers:
       '@kinic/ui':
         specifier: workspace:*
         version: link:../packages/ui
-      '@kinic/vault-backup':
-        specifier: workspace:*
-        version: link:../packages/vault-backup
       '@kinic/vault-candid':
         specifier: workspace:*
         version: link:../packages/vault-candid
