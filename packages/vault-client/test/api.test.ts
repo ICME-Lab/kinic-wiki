@@ -282,3 +282,120 @@ it("does not permit use of a destroyed client", async () => {
   await expect(client.listVaults()).rejects.toThrow("NotSignedIn");
   await expect(client.create()).rejects.toThrow("NotSignedIn");
 });
+it("clears a failed rootless key attempt when creating and opening another vault", async () => {
+  const { client, actor, change } = setup();
+  vi.mocked(actor.derive_vault_key).mockRejectedValueOnce(Error("key lost"));
+  await expect(client.open(header())).rejects.toThrow("key lost");
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
+    const h = { ...header(), id: new Uint8Array(request.vault) };
+    change(h);
+    return { Ok: h };
+  });
+  const created = await client.create();
+  await expect(client.open(created)).resolves.toBeUndefined();
+  expect(client.session.root).toBeDefined();
+});
+it("fences an outstanding open when creation selects a different vault", async () => {
+  const { client, actor, change } = setup();
+  let resolve!: (value: any) => void;
+  vi.mocked(actor.derive_vault_key).mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  const old = client.open(header());
+  await vi.waitFor(() => expect(resolve).toBeDefined());
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
+    const h = { ...header(), id: new Uint8Array(request.vault) };
+    change(h);
+    return { Ok: h };
+  });
+  const created = await client.create();
+  resolve({ Ok: { input: [], public_key: [], encrypted_key: [] } });
+  await expect(old).rejects.toThrow("Locked");
+  await expect(client.open(created)).resolves.toBeUndefined();
+  expect(client.header?.id).toEqual(created.id);
+});
+it.each(["deleteObject", "purgeObject"] as const)(
+  "fences %s if locked between context resolution and dispatch",
+  async (method) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    const revision = {
+      vault: id,
+      object: new Uint8Array(16).fill(7),
+      revision: 4n,
+      sequence: 4n,
+      plain_size: 0n,
+      deleted: false,
+      manifest: new Uint8Array(),
+      chunk_hashes: [],
+    };
+    const checked = (client as any).checkedContext.bind(client);
+    vi.spyOn(client as any, "checkedContext").mockImplementation(async () => {
+      const context = await checked();
+      queueMicrotask(() => client.session.lock());
+      return context;
+    });
+    const pending = client[method](revision);
+    await expect(pending).rejects.toThrow("Locked");
+    expect(actor.mutate).not.toHaveBeenCalled();
+  },
+);
+it("retries the same creation after switching away from its unresolved attempt", async () => {
+  const { client, actor, change } = setup();
+  let first: any;
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (r) => {
+    first = structuredClone(r);
+    throw Error("lost");
+  });
+  await expect(client.create()).rejects.toThrow("lost");
+  await client.open(header());
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (r) => {
+    const h = { ...header(), id: new Uint8Array(r.vault) };
+    change(h);
+    return { Ok: h };
+  });
+  const created = await client.create();
+  expect(actor.create_vault).toHaveBeenLastCalledWith(first);
+  expect(client.session.root).toBeUndefined();
+  await expect(client.open(created)).resolves.toBeUndefined();
+});
+it.each(["items", "read", "history", "quota"] as const)(
+  "fences %s before its first read when context validation becomes stale",
+  async (method) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    const a = actor as any;
+    a.list_objects = vi.fn();
+    a.get_chunk = vi.fn();
+    a.list_history = vi.fn();
+    a.get_quota = vi.fn();
+    const checked = (client as any).checkedContext.bind(client);
+    vi.spyOn(client as any, "checkedContext").mockImplementation(async () => {
+      const c = await checked();
+      queueMicrotask(() => client.session.lock());
+      return c;
+    });
+    const revision = {
+      vault: id,
+      object: new Uint8Array(16),
+      revision: 1n,
+      sequence: 1n,
+      plain_size: 0n,
+      deleted: false,
+      manifest: new Uint8Array(),
+      chunk_hashes: [new Uint8Array(32)],
+    };
+    const promise =
+      method === "read" || method === "history"
+        ? client[method](revision)
+        : client[method]();
+    await expect(promise).rejects.toThrow("Locked");
+    expect(a.list_objects).not.toHaveBeenCalled();
+    expect(a.get_chunk).not.toHaveBeenCalled();
+    expect(a.list_history).not.toHaveBeenCalled();
+    expect(a.get_quota).not.toHaveBeenCalled();
+  },
+);

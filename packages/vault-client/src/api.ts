@@ -126,7 +126,10 @@ export class VaultClient {
   }
   async create() {
     this.checkLive();
-    if (this.session.root) {
+    if (
+      !this.creating ||
+      (this.header && !equal(bytes(this.header.id), this.creating.vault))
+    ) {
       this.session.lock();
       this.header = undefined;
     }
@@ -250,7 +253,9 @@ export class VaultClient {
     return structuredClone(h);
   }
   private async checkedContext() {
+    const t = this.session.capture();
     const h = await this.refreshHeader();
+    this.session.check(t);
     return this.session.requireContext(this.context(h));
   }
   async mutate(
@@ -395,6 +400,7 @@ export class VaultClient {
   async items() {
     const t = this.session.capture();
     const c = await this.checkedContext();
+    this.session.check(t);
     const items: Item[] = [];
     let after = new Uint8Array();
     do {
@@ -432,8 +438,12 @@ export class VaultClient {
         let searchText = parsed.metadata.title;
         if (parsed.metadata.kind === "note" && !r.deleted) {
           const doc = await this.read(r);
-          searchText += " " + new TextDecoder().decode(doc.plaintext);
-          doc.plaintext.fill(0);
+          try {
+            this.session.check(t);
+            searchText += " " + new TextDecoder().decode(doc.plaintext);
+          } finally {
+            doc.plaintext.fill(0);
+          }
         }
         items.push({ revision: r, metadata: parsed.metadata, searchText });
       }
@@ -444,6 +454,7 @@ export class VaultClient {
   async read(r: Revision) {
     const t = this.session.capture();
     const c = await this.checkedContext();
+    this.session.check(t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
     const chunks: Uint8Array[] = [];
     for (let i = 0; i < r.chunk_hashes.length; i++) {
@@ -471,7 +482,9 @@ export class VaultClient {
   }
   async deleteObject(r: Revision) {
     if (this.saveJob || this.preparing) throw Error("SavePending");
+    const t = this.session.capture();
     const c = await this.checkedContext();
+    this.session.check(t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
     return this.mutate({
       DeleteObject: {
@@ -483,7 +496,9 @@ export class VaultClient {
   }
   async purgeObject(r: Revision) {
     if (this.saveJob || this.preparing) throw Error("SavePending");
+    const t = this.session.capture();
     const c = await this.checkedContext();
+    this.session.check(t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
     return this.mutate({
       PurgeObject: {
@@ -496,6 +511,7 @@ export class VaultClient {
   async history(r: Revision, before = 18446744073709551615n) {
     const t = this.session.capture();
     const c = await this.checkedContext();
+    this.session.check(t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
     const page = ok(await this.actor.list_history(r.vault, r.object, before));
     this.session.check(t);
@@ -504,6 +520,7 @@ export class VaultClient {
   async quota() {
     const t = this.session.capture();
     const c = await this.checkedContext();
+    this.session.check(t);
     const result = ok(await this.actor.get_quota(c.vault));
     this.session.check(t);
     return result;
@@ -526,8 +543,13 @@ export class VaultClient {
     const j = this.saveJob;
     if (!j) throw Error("NoPendingSave");
     if (this.flight) throw Error("SaveInProgress");
-    if (this.pending) await this.retryMutation();
+    const t = this.session.capture();
+    if (this.pending) {
+      await this.retryMutation();
+      this.session.check(t);
+    }
     const status = await this.uploadStatus(bytes(j.request.operation));
+    this.session.check(t);
     if ("Pending" in status) {
       if (!equal(bytes(status.Pending.request.vault), bytes(j.request.vault)))
         throw Error("TargetChanged");
@@ -539,6 +561,7 @@ export class VaultClient {
           : undefined,
       );
     }
+    this.session.check(t);
     j.chunks.forEach((x) => x.fill(0));
     this.saveJob = undefined;
     this.cleanupJob = undefined;
@@ -564,12 +587,13 @@ export class VaultClient {
     try {
       await this.cleanup(j);
     } catch (error) {
-      if (!this.pending) this.cleanupJob = undefined;
+      if (!this.pending && this.cleanupJob === j) this.cleanupJob = undefined;
       throw error;
     }
   }
   async deleteVault(vault: Uint8Array) {
     this.checkLive();
+    const t = this.session.capture();
     const j = (this.cleanupJob ??= {
       kind: "delete",
       vault: bytes(vault),
@@ -581,9 +605,10 @@ export class VaultClient {
     try {
       await this.cleanup(j);
     } catch (error) {
-      if (!this.pending) this.cleanupJob = undefined;
+      if (!this.pending && this.cleanupJob === j) this.cleanupJob = undefined;
       throw error;
     }
+    this.session.check(t);
     if (this.header && equal(bytes(this.header.id), vault)) {
       this.session.lock();
       this.header = undefined;
