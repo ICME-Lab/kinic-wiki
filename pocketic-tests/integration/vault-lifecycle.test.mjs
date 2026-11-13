@@ -222,6 +222,66 @@ try {
     decode((await client.read(note)).plaintext),
     "private note CommitRevision",
   );
+  // Ordinary deletion above preserved both readable versions. Purge must hide
+  // every historical manifest/chunk and permanently fence the object identity.
+  const deletedNote = ok(
+    await f.actor.get_manifest(header.id, note.object, 0n),
+  );
+  const beforePurgeHistory = await client.history(deletedNote);
+  assert.deepEqual(
+    beforePurgeHistory.entries.map((revision) => revision.revision),
+    [3n, 2n, 1n],
+  );
+  await client.purgeObject(deletedNote);
+  const purgeCall = wire.calls.findLast(
+    (call) => call.name === "mutate" && "PurgeObject" in call.args[0].action,
+  );
+  assert.ok(purgeCall);
+  const capacityAfterPurge = ok(await f.actor.global_capacity());
+  assert.deepEqual(await f.actor.mutate(purgeCall.args[0]), purgeCall.result);
+  assert.deepEqual(ok(await f.actor.global_capacity()), capacityAfterPurge);
+  for (const revision of [0n, 1n, 2n, 3n])
+    err(
+      await f.actor.get_manifest(header.id, note.object, revision),
+      "NotFound",
+    );
+  for (const revision of [1n, 2n])
+    err(
+      await f.actor.get_chunk(header.id, note.object, revision, 0),
+      "NotFound",
+    );
+  assert.deepEqual(await client.history(deletedNote), {
+    entries: [],
+    next: [],
+  });
+  await assert.rejects(client.read(note), /NotFound/);
+  for (const expected_revision of [0n, deletedNote.revision])
+    err(
+      await f.actor.mutate({
+        operation: operation(),
+        action: {
+          BeginRevision: {
+            vault: header.id,
+            object: note.object,
+            expected_revision,
+            operation: operation(),
+            plain_size: note.plain_size,
+            manifest: note.manifest,
+            chunk_hashes: note.chunk_hashes,
+          },
+        },
+      }),
+      "Conflict",
+    );
+  assert.equal(
+    (await client.items()).some((item) =>
+      Buffer.from(item.revision.object).equals(Buffer.from(note.object)),
+    ),
+    false,
+  );
+  console.log(
+    "PASS irreversible multi-revision purge hides explicit old manifests/chunks/history, rejects purged object reuse and replays the exact purge without allocation",
+  );
   await client.purgeObject(credential);
   err(await f.actor.get_manifest(header.id, credential.object, 0n), "NotFound");
   const original = client.session.root;
