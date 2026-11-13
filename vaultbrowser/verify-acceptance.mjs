@@ -208,7 +208,46 @@ try {
     };
   });
   let dropMethod, dropAction, delayMethod, releaseResponse;
-  const lost = [];
+  const retryTraces = new Set();
+  const startRetryTrace = (method, action) => {
+    const trace = { method, action, phase: "initial-attempt", requests: [] };
+    retryTraces.add(trace);
+    return trace;
+  };
+  const finishRetryTrace = (trace) => {
+    retryTraces.delete(trace);
+    const dropped = trace.requests.filter((r) => r.outcome === "dropped");
+    const successfulRetry = trace.requests.filter(
+      (r) =>
+        r.phase === "post-click-application-retry" &&
+        r.outcome === "successful",
+    );
+    assert.ok(
+      dropped.length > 0,
+      `${trace.method}: original dropped request required`,
+    );
+    assert.ok(
+      successfulRetry.length > 0,
+      `${trace.method}: successful post-click request required`,
+    );
+    for (const request of trace.requests) {
+      assert.equal(
+        request.sha256,
+        dropped[0].sha256,
+        `${trace.method}: complete Candid arguments must survive application retry`,
+      );
+      assert.ok(["dropped", "successful"].includes(request.outcome));
+      assert.ok(
+        request.status >= 200 && request.status < 300,
+        "Real ingress must receive a successful HTTP response before drop/delivery",
+      );
+    }
+    return {
+      method: trace.method,
+      action: trace.action,
+      requests: trace.requests,
+    };
+  };
   let delayedReady;
   // Execute real ingress, then drop or hold the actual HTTP reply. No fabricated reply.
   await vault.route("**/api/v*/canister/**/call", async (route) => {
@@ -221,13 +260,29 @@ try {
         IDL.decode(methods.get(method).argTypes, new Uint8Array(content.arg))[0]
           .action,
       )[0];
-    if (method === dropMethod && (!dropAction || actionName === dropAction)) {
-      await route.fetch();
-      lost.push({
-        method,
-        action: actionName,
-        sha256: createHash("sha256").update(content.arg).digest("hex"),
+    // Capture the complete Candid payload before deciding how to deliver its reply.
+    // The per-case collector closes before independent derivations or later uploads.
+    const observations = [...retryTraces]
+      .filter(
+        (trace) =>
+          trace.method === method &&
+          (!trace.action || trace.action === actionName),
+      )
+      .map((trace) => {
+        const request = {
+          phase: trace.phase,
+          sha256: createHash("sha256").update(content.arg).digest("hex"),
+          outcome: "pending",
+        };
+        trace.requests.push(request);
+        return request;
       });
+    if (method === dropMethod && (!dropAction || actionName === dropAction)) {
+      const response = await route.fetch();
+      for (const request of observations) {
+        request.status = response.status();
+        request.outcome = "dropped";
+      }
       await route.abort("failed");
     } else if (method === delayMethod) {
       delayMethod = undefined;
@@ -247,6 +302,13 @@ try {
         };
       });
       await route.fulfill({ response });
+    } else if (observations.length) {
+      const response = await route.fetch();
+      await route.fulfill({ response });
+      for (const request of observations) {
+        request.status = response.status();
+        request.outcome = response.ok() ? "successful" : "failed";
+      }
     } else await route.continue();
   });
   await vault.goto(vaultURL);
@@ -338,6 +400,7 @@ try {
     "fresh owned canister upgraded to default-feature local Wasm; certified funding unavailable, paid journal and prepaid credit retained",
   );
 
+  const createTrace = startRetryTrace("create_vault");
   dropMethod = "create_vault";
   await action(vault, "Create Vault", true);
   await vault
@@ -347,30 +410,32 @@ try {
   assert.equal(first.headers.Ok.length, 1);
   await action(vault, "Refresh Vaults");
   assert.equal((await readback(vault)).headers.Ok.length, 1);
+  const keyTrace = startRetryTrace("derive_vault_key");
   dropMethod = "derive_vault_key";
+  createTrace.phase = "post-click-application-retry";
   await action(vault, "Retry Vault creation", true);
   await vault
     .getByRole("button", { name: "Retry opening Vault", exact: true })
     .waitFor();
   const afterKeyFailure = await readback(vault);
   assert.equal(afterKeyFailure.headers.Ok.length, 1);
+  const createRetry = finishRetryTrace(createTrace);
   dropMethod = undefined;
+  keyTrace.phase = "post-click-application-retry";
   await action(vault, "Retry opening Vault");
   await editor(vault).waitFor();
-  for (const method of ["create_vault", "derive_vault_key"]) {
-    const replies = lost.filter((x) => x.method === method);
-    assert.ok(replies.length > 0);
-    assert.equal(new Set(replies.map((x) => x.sha256)).size, 1);
-  }
+  const keyRetry = finishRetryTrace(keyTrace);
   const vaultId = first.headers.Ok[0].id;
   let sourceName = "Vault 1 · Active";
   pass(
     "lost create reply + Refresh + same create retry + lost key reply retry creates exactly one Vault",
+    { retries: [createRetry, keyRetry] },
   );
   const title = "Actual II private note",
     plaintext = "actual-browser-private-payload";
   await vault.getByLabel("Document title").fill(title);
   await editor(vault).fill(plaintext);
+  const chunkTrace = startRetryTrace("mutate", "PutChunk");
   dropMethod = "mutate";
   dropAction = "PutChunk";
   await action(vault, "Save document", true);
@@ -378,12 +443,11 @@ try {
     .getByRole("button", { name: "Resume save", exact: true })
     .waitFor();
   assert.equal(await vault.getByLabel("Document title").isDisabled(), true);
-  const chunks = lost.filter((x) => x.action === "PutChunk");
-  assert.ok(chunks.length > 0);
-  assert.equal(new Set(chunks.map((x) => x.sha256)).size, 1);
   dropMethod = undefined;
   dropAction = undefined;
+  chunkTrace.phase = "post-click-application-retry";
   await action(vault, "Resume save");
+  const chunkRetry = finishRetryTrace(chunkTrace);
   await action(vault, title);
   assert.equal(await editor(vault).innerText(), plaintext);
   const docs = await inspect(vault, "clientRead", canister, vaultURL, vaultId);
@@ -391,6 +455,7 @@ try {
   const object = docs.documents[0].object;
   pass(
     "lost real PutChunk replies; frozen editor; exact resume; independent real-client decrypt",
+    { retries: [chunkRetry] },
   );
   await action(vault, "New document");
   await vault.getByLabel("Document title").fill("Cancelled upload");
