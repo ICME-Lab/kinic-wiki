@@ -1,0 +1,212 @@
+type Action = variant {
+  CancelUpload : record { job : blob; vault : blob; upload : blob };
+  PutChunk : record { upload : blob; bytes : blob; index : nat32 };
+  CommitRevision : record { upload : blob };
+  DeleteObject : record {
+    object : blob;
+    vault : blob;
+    expected_revision : nat64;
+  };
+  DeleteVault : record { vault : blob };
+  Collect;
+  PurgeObject : record {
+    object : blob;
+    vault : blob;
+    expected_revision : nat64;
+  };
+  BeginRevision : BeginRevision;
+};
+type BeginRevision = record {
+  object : blob;
+  vault : blob;
+  chunk_hashes : vec blob;
+  operation : blob;
+  manifest : blob;
+  plain_size : nat64;
+  expected_revision : nat64;
+};
+type CommittedUpload = record {
+  object : blob;
+  vault : blob;
+  revision : nat64;
+  sequence : nat64;
+};
+type CreateVault = record { vault : blob; operation : blob };
+type DeriveKey = record { vault : blob; transport : blob; operation : blob };
+type Error = variant {
+  Storage;
+  InvalidInput;
+  Busy;
+  KeyService;
+  NotFound;
+  Unauthorized;
+  Expired;
+  QuotaExceeded;
+  Conflict;
+};
+type FundingConfig = record {
+  recipient : principal;
+  cycles_per_kinic : nat64;
+  ledger : principal;
+};
+type GlobalCapacity = record {
+  used : nat64;
+  overcommitted : bool;
+  limit : nat64;
+  overage : nat64;
+  accounting_reserved : nat64;
+};
+type Header = record {
+  id : blob;
+  public_key : blob;
+  state : VaultState;
+  nonce : blob;
+  key_name : text;
+  sequence : nat64;
+};
+type HttpRequest = record {
+  url : text;
+  method : text;
+  body : blob;
+  headers : vec record { text; text };
+  certificate_version : opt nat16;
+};
+type HttpResponse = record {
+  body : blob;
+  headers : vec record { text; text };
+  upgrade : opt bool;
+  status_code : nat16;
+};
+type KeyReply = record {
+  encrypted_key : blob;
+  public_key : blob;
+  input : blob;
+};
+type Mutation = record { action : Action; operation : blob };
+type MutationResult = variant {
+  Collected : nat64;
+  Done;
+  Progress : bool;
+  Revision : Revision;
+  Upload : Upload;
+};
+type ObjectPage = record { next : opt blob; entries : vec Revision };
+type Payment = record {
+  fee : nat64;
+  status : Status;
+  credits : nat64;
+  attempt : nat64;
+  request : PurchaseRequest;
+  memo : blob;
+  generation : int64;
+  uncertain : bool;
+  sent_at : nat64;
+  wallet : principal;
+  created_at_time : nat64;
+  config : FundingConfig;
+};
+type PendingUpload = record {
+  expires : nat64;
+  request : BeginRevision;
+  cancel_job : opt blob;
+  received : vec nat32;
+};
+// Bounded owner-only metadata; no document name or plaintext.
+type PendingUploadSummary = record {
+  expires : nat64;
+  vault : blob;
+  upload : blob;
+  cancel_job : opt blob;
+};
+type PendingUploads = record {
+  next : opt blob;
+  entries : vec PendingUploadSummary;
+};
+type PurchaseRequest = record {
+  beneficiary : principal;
+  amount_e8s : nat64;
+  operation : blob;
+  min_credits : nat64;
+  created_at_time : nat64;
+};
+type Quota = record {
+  "reserved" : nat64;
+  limit : nat64;
+  current : nat64;
+  charged : nat64;
+};
+type Result = variant { Ok : nat64; Err : Error };
+type Result_1 = variant { Ok : Payment; Err : Error };
+type Result_10 = variant { Ok : RevisionPage; Err : Error };
+type Result_11 = variant { Ok : ObjectPage; Err : Error };
+type Result_12 = variant { Ok : vec Payment; Err : Error };
+type Result_13 = variant { Ok : PendingUploads; Err : Error };
+type Result_14 = variant { Ok : vec Header; Err : Error };
+type Result_15 = variant { Ok : MutationResult; Err : Error };
+type Result_16 = variant { Ok : opt Payment; Err : Error };
+type Result_17 = variant { Ok; Err : Error };
+type Result_2 = variant { Ok : Header; Err : Error };
+type Result_3 = variant { Ok : KeyReply; Err : Error };
+type Result_4 = variant { Ok : blob; Err : Error };
+type Result_5 = variant { Ok : opt VaultConfig; Err : Error };
+type Result_6 = variant { Ok : Revision; Err : Error };
+type Result_7 = variant { Ok : Quota; Err : Error };
+type Result_8 = variant { Ok : UploadStatus; Err : Error };
+type Result_9 = variant { Ok : GlobalCapacity; Err : Error };
+type Revision = record {
+  deleted : bool;
+  object : blob;
+  vault : blob;
+  chunk_hashes : vec blob;
+  revision : nat64;
+  manifest : blob;
+  plain_size : nat64;
+  sequence : nat64;
+};
+type RevisionPage = record { next : opt nat64; entries : vec Revision };
+type Status = variant {
+  Quoted;
+  InsufficientAllowance;
+  Paid : nat64;
+  BadFee : nat64;
+  Rejected;
+  InFlight;
+  Unknown;
+  Expired;
+  InsufficientFunds;
+};
+type Upload = record { id : blob; expires : nat64; revision : nat64 };
+type UploadStatus = variant {
+  Committed : CommittedUpload;
+  Absent;
+  Cancelled;
+  Expired;
+  Pending : PendingUpload;
+};
+type VaultConfig = record { minimum_cycles : nat64; key_name : text };
+type VaultState = variant { Deleting; Active; Deleted; Pending };
+service : () -> {
+  account_balance : () -> (Result) query;
+  cancel_quote : (blob) -> (Result_1);
+  create_vault : (CreateVault) -> (Result_2);
+  derive_vault_key : (DeriveKey) -> (Result_3);
+  get_chunk : (blob, blob, nat64, nat32) -> (Result_4);
+  get_config : () -> (Result_5);
+  get_manifest : (blob, blob, nat64) -> (Result_6);
+  get_quota : (blob) -> (Result_7);
+  get_upload_status : (blob) -> (Result_8);
+  get_vault_header : (blob) -> (Result_2);
+  global_capacity : () -> (Result_9) query;
+  http_request : (HttpRequest) -> (HttpResponse) query;
+  list_history : (blob, blob, nat64) -> (Result_10);
+  list_objects : (blob, blob) -> (Result_11);
+  list_payments : () -> (Result_12) query;
+  list_pending_uploads : (blob) -> (Result_13);
+  list_vaults : () -> (Result_14);
+  mutate : (Mutation) -> (Result_15);
+  pay_purchase : (blob) -> (Result_1);
+  payment_status : (blob) -> (Result_16) query;
+  quote_purchase : (PurchaseRequest) -> (Result_1);
+  set_config : (opt VaultConfig) -> (Result_17);
+  set_funding_config : (opt FundingConfig) -> (Result_17);
+}

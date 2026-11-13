@@ -1,0 +1,24 @@
+# Independent manifest: this project cannot deploy Wiki via --all.
+canisters:
+  - name: vault
+    build:
+      steps:
+        - type: script
+          commands:
+            - bash ../scripts/build-vault-canister.sh
+networks:
+  - name: local-vault
+    mode: managed
+    ii: true
+    gateway:
+      bind: 127.0.0.1
+      port: 8024
+environments:
+  - name: local-vault
+    network: local-vault
+    canisters:
+      - vault
+  - name: mainnet-vault
+    network: ic
+    canisters:
+      - vault

@@ -1,5 +1,9 @@
 [workspace]
 members = [
+    "crates/vault_canister",
+    "crates/vault_service",
+    "crates/vault_types",
+    "crates/vault_store",
     "crates/kinic_sqlite_compat",
     "crates/vfs_cli_app",
     "crates/vfs_cli_core",

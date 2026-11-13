@@ -1,0 +1,39 @@
+{
+  "name": "vaultbrowser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "vite --host vault.localhost --port 3024"
+  },
+  "dependencies": {
+    "@icp-sdk/auth": "5.0.0",
+    "@icp-sdk/core": "^5.4.0",
+    "@kinic/vault-candid": "workspace:*",
+    "@kinic/vault-client": "workspace:*",
+    "@kinic/vault-crypto": "workspace:*",
+    "@kinic/ui": "workspace:*",
+    "lucide-react": "0.555.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
+  "devDependencies": {
+    "@dfinity/response-verification": "3.2.0",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "autoprefixer": "10.4.22",
+    "jsdom": "30.0.1",
+    "postcss": "8.5.23",
+    "tailwindcss": "3.4.18",
+    "tailwindcss-animate": "1.0.7",
+    "typescript": "7.0.2",
+    "vite": "8.1.6",
+    "vitest": "4.1.12"
+  }
+}

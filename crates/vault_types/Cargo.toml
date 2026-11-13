@@ -1,0 +1,7 @@
+[package]
+name = "vault-types"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+candid = "0.10.26"
+serde = { version = "1", features = ["derive"] }
