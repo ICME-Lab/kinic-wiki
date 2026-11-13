@@ -209,6 +209,8 @@ kinic-vfs-cli --identity-mode anonymous --database-id <database-id> query-sql "S
 
 ## Identity Mode
 
+`identity show --json` reports the principal of the selected `icp-cli` identity.
+
 Authenticated CLI calls depend on `icp-cli`.
 `kinic-vfs-cli` shells out to `icp identity default`, `icp identity export <name>`, and expects an Internet Identity delegation created by `icp identity link ii` / refreshed by `icp identity login`.
 Install an `icp` version that supports II linking:
@@ -408,6 +410,7 @@ kinic-vfs-cli purge-source-capture --url <url> --yes --json
 
 These command groups have their own guides:
 
+- `agent setup|doctor|status|run|recall`: project setup, diagnostics and agent execution; see [`AGENT_CONFIGURATION.md`](AGENT_CONFIGURATION.md).
 - `codex setup`, `claude setup`, `dsh setup`: agent plugin installation; see [`AGENT_CONFIGURATION.md`](AGENT_CONFIGURATION.md).
 - `hermes setup|pull|status|flush-pending|shadows`: Hermes skill plugin; see [`plugins/hermes/README.md`](../plugins/hermes/README.md).
 - `learn ...`: continual learning setup, status, proposals and promotion; see [`CONTINUAL_LEARNING.md`](CONTINUAL_LEARNING.md) and [`PORTABLE_LEARNING.md`](PORTABLE_LEARNING.md).
