@@ -708,7 +708,7 @@ jobs:
           "$GITHUB_WORKSPACE"/pocketic-tests/helpers/vault-*.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/integration/vault-*.test.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/scripts/*vault*.mjs
-      - name: Build current production assets and schema7 acceptance fixtures
+      - name: Build current production assets and schema8 acceptance fixtures
         run: pnpm --dir pocketic-tests run build:vault-acceptance
       - name: Provision PocketIC 16.1
         run: |
