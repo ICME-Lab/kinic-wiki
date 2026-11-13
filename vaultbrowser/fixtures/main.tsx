@@ -11,6 +11,7 @@ import type {
   VaultActor,
 } from "@kinic/vault-client/contracts";
 import { VaultWorkspace } from "../src/vault/workspace";
+import { VaultChrome } from "../src/chrome";
 import "../src/style.css";
 const fixtureIdentity = Ed25519KeyIdentity.generate();
 const header: Header = {
@@ -72,6 +73,7 @@ const actor = {
   cleanup_status: async () => ({ Ok: [] }),
   list_payments: async () => ({ Ok: [] }),
   list_vaults: async () => ({ Ok: [header] }),
+  list_pending_uploads: async () => ({ Ok: { entries: [], next: [] } }),
   list_unfinished_vaults: async () => ({ Ok: [] }),
   get_vault_header: async () => ({ Ok: header }),
   get_quota: async () => ({
@@ -93,7 +95,11 @@ class SyntheticClient extends VaultClient {
     this.session.lock();
     this.header = value;
     this.session.raw = new Uint8Array(32);
-    this.session.root = {} as CryptoKey;
+    this.session.bindRoot(
+      {} as CryptoKey,
+      value.generation[0]!,
+      new Uint8Array(32),
+    );
   }
   override async items() {
     return [
@@ -154,12 +160,15 @@ function Fixture() {
     return () => clearInterval(timer);
   }, []);
   return (
-    <div className="mx-auto max-w-6xl p-4">
-      <p className="mb-4 text-sm">
-        Synthetic data fixture — no private data or remote canister.
-      </p>
-      <VaultWorkspace client={client} />
-    </div>
+    <>
+      <VaultChrome />
+      <main className="vault-page">
+        <VaultWorkspace client={client} />
+        <p className="mt-4 text-xs text-muted">
+          Synthetic data fixture — no private data or remote canister.
+        </p>
+      </main>
+    </>
   );
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

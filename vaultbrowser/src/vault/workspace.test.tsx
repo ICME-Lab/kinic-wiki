@@ -128,6 +128,56 @@ async function mounted() {
   });
   return { ...view, client };
 }
+it("keeps an unlocked draft when opening account and recovery settings", async () => {
+  const { client } = await mounted();
+  const root = client.session.root;
+  const generation = client.session.capture();
+  for (const name of ["Account & storage", "Recovery & access"]) {
+    const summary = screen.getByText(name, { selector: "summary" });
+    fireEvent.click(summary);
+    expect(summary.closest("details")?.open).toBe(true);
+    expect(client.session.root).toBe(root);
+    expect(client.session.capture()).toBe(generation);
+    expect(screen.getByDisplayValue("synthetic secret draft")).toBeTruthy();
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Lock Vault" }));
+  expect(client.session.root).toBeUndefined();
+  expect(screen.queryByDisplayValue("synthetic secret draft")).toBeNull();
+});
+it("opens navigation without disturbing a draft and closes it on Vault selection", async () => {
+  const { client } = await mounted();
+  const root = client.session.root;
+  const toggle = screen.getByRole("button", {
+    name: "Toggle Vault navigation",
+  });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(client.session.root).toBe(root);
+  expect(screen.getByDisplayValue("synthetic secret draft")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Vault 1" }));
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(client.session.root).toBeUndefined();
+});
+it("keeps the authorizing passkey available when no active Vault can be selected", async () => {
+  const { client } = await mounted();
+  fireEvent.click(screen.getByRole("button", { name: "Lock Vault" }));
+  vi.mocked(client.actor.list_vaults).mockResolvedValue({ Ok: [] });
+  vi.mocked(client.actor.list_credentials).mockResolvedValue({
+    Ok: [{ id: new Uint8Array([1]) }, { id: new Uint8Array([2]) }],
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Vaults" }));
+  });
+  expect(screen.queryByRole("button", { name: "Vault 1" })).toBeNull();
+  const selector = screen.getByRole("combobox", {
+    name: "Authorizing passkey",
+  });
+  fireEvent.change(selector, { target: { value: "Ag" } });
+  expect(
+    screen.getByRole("option", { name: "Passkey 2", selected: true }),
+  ).toBeTruthy();
+});
 it.each(["idle", "hidden", "pagehide", "manual"] as const)(
   "destroys private editor, search, key and Blob state on %s lock",
   async (reason) => {
@@ -376,11 +426,22 @@ it("lists and cancels a server upload after lock with a zero prepaid balance", a
 
 it("does not retire the private session while initial recovery configuration loads", async () => {
   let configured!: (value: unknown) => void;
-  const config = new Promise(resolve => { configured = resolve; });
+  const config = new Promise((resolve) => {
+    configured = resolve;
+  });
   const actor = {
     get_config: async () => config,
     account_balance: async () => ({ Ok: 0n }),
-    global_capacity: async () => ({ Ok: { used: 0n, limit: 209715200n, accounting_reserved: 16777216n, overcommitted: false, overage: 0n, legacy_excess: 0n } }),
+    global_capacity: async () => ({
+      Ok: {
+        used: 0n,
+        limit: 209715200n,
+        accounting_reserved: 16777216n,
+        overcommitted: false,
+        overage: 0n,
+        legacy_excess: 0n,
+      },
+    }),
     list_credentials: async () => ({ Ok: [] }),
     cleanup_status: async () => ({ Ok: [] }),
     list_payments: async () => ({ Ok: [] }),
@@ -390,11 +451,34 @@ it("does not retire the private session while initial recovery configuration loa
     restore_admission_status: async () => ({ Ok: [] }),
     incident_context: async () => ({ Ok: [] }),
   } as unknown as VaultActor;
-  const client = new VaultClient({ actor, identity: Ed25519KeyIdentity.generate(), canister: "aaaaa-aa", local: true });
+  const client = new VaultClient({
+    actor,
+    identity: Ed25519KeyIdentity.generate(),
+    canister: "aaaaa-aa",
+    local: true,
+  });
   const ticket = client.session.capture();
-  await act(async () => { render(<VaultWorkspace client={client} />); });
-  await act(async () => { configured({ Ok: [{ origin: location.origin, rp_id: "localhost", key_name: "test_key_1", minimum_cycles: 0n }] }); });
+  await act(async () => {
+    render(<VaultWorkspace client={client} />);
+  });
+  await act(async () => {
+    configured({
+      Ok: [
+        {
+          origin: location.origin,
+          rp_id: "localhost",
+          key_name: "test_key_1",
+          minimum_cycles: 0n,
+        },
+      ],
+    });
+  });
   expect(client.session.capture()).toBe(ticket);
   // Zero balance must still expose recovery/cleanup after origin/RP initialization.
-  expect(screen.getByRole("button", { name: "Recover after losing all passkeys" })).toBeTruthy();
+  fireEvent.click(
+    screen.getByText("Recovery & access", { selector: "summary" }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Recover after losing all passkeys" }),
+  ).toBeTruthy();
 });

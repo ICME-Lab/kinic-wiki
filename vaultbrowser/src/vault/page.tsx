@@ -7,6 +7,7 @@ import { useVaultAuth } from "../auth";
 
 import { createPrivateVaultClient } from "./actor";
 import { VaultWorkspace } from "./workspace";
+import { FileKey2, FolderLock, KeyRound, ShieldCheck } from "lucide-react";
 
 // Identity object identity matters even when a refreshed delegation has the same principal.
 const identityIds = new WeakMap<Identity, number>();
@@ -22,15 +23,35 @@ function identityKey(identity: Identity) {
 export default function VaultPage() {
   const { identity, loading } = useVaultAuth();
   return (
-    <main className="mx-auto max-w-6xl p-5">
+    <main className="vault-page">
       {identity && !loading ? (
         <PrivateSession key={identityKey(identity)} identity={identity} />
       ) : (
-        <section className="rounded-xl border border-line bg-white p-5">
-          <h1 className="text-xl font-semibold">Private Vault</h1>
-          <p className="mt-2 text-sm text-muted">
+        <section className="vault-welcome vault-panel">
+          <div className="vault-empty-icon">
+            <FolderLock size={36} aria-hidden />
+          </div>
+          <p className="vault-eyebrow">YOUR PRIVATE WORKSPACE</p>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            A space for what stays private.
+          </h1>
+          <p className="max-w-md text-sm leading-6 text-muted">
             Sign in with Internet Identity to access your private Vaults.
           </p>
+          <div className="vault-welcome-features">
+            <span>
+              <ShieldCheck size={19} aria-hidden />
+              Browser encryption
+            </span>
+            <span>
+              <KeyRound size={19} aria-hidden />
+              Passkey access
+            </span>
+            <span>
+              <FileKey2 size={19} aria-hidden />
+              Portable backups
+            </span>
+          </div>
         </section>
       )}
     </main>

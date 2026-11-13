@@ -6,6 +6,16 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  ChevronRight,
+  FolderLock,
+  KeyRound,
+  LockKeyhole,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { Funding } from "../funding";
 import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
 import type {
@@ -30,6 +40,7 @@ import {
 
 export type VaultWork = (operation: () => Promise<void>) => void;
 export function VaultWorkspace({ client }: { client: VaultClient }) {
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [vaults, setVaults] = useState<Header[]>([]);
   const [unfinished, setUnfinished] = useState<UnfinishedVault[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUploadSummary[]>(
@@ -211,96 +222,56 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
   const eligible =
     !!config && config.origin === location.origin && balance >= 20_000_000n;
   return (
-    <div ref={privateDOM} className="grid min-w-0 gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Private Vault</h1>
-          <p className="mt-1 text-sm text-muted">
-            Encrypted notes, credentials and attachments.
-          </p>
-        </div>
-        <VaultButton onClick={() => client.session.lock()}>
-          Lock Vault
-        </VaultButton>
-      </div>
-      <p className="text-sm text-muted">
-        Vault encryption keys, plaintext and search stay in this browser
-        session. Vault locks after 5 minutes of inactivity or 1 minute in a
-        hidden tab. Your browser and the canister updater remain trusted.
-      </p>
-      <VaultPanel label="Vault account">
-        <p className="font-semibold">
-          Prepaid balance: {balance.toString()} cycles
-        </p>
-        <p className="break-all text-sm">
-          Vault principal: {client.identity.getPrincipal().toText()}
-        </p>
-        <p className="text-sm text-muted">
-          Fund this principal with KINIC from your wallet. The paying wallet may
-          differ from your Vault sign-in.
-        </p>
-        <VaultButton onClick={() => run(refreshConfiguration)}>
-          Refresh balance
-        </VaultButton>
-        {capacity ? (
-          <div className="grid gap-2 text-sm">
-            <p>
-              Shared capacity: {capacity.used.toLocaleString()} /{" "}
-              {capacity.limit.toLocaleString()} bytes. Accounting reserve:{" "}
-              {capacity.accounting_reserved.toLocaleString()} bytes (16 MiB
-              within the 200 MiB total).
-            </p>
-            <p>
-              Storage includes ciphertext, history, pending operations and
-              control records. Each namespace reserves 512 KiB within its limits
-              for completion and cleanup. Owner limits are separate; funding
-              does not increase storage capacity. No shared database payer is
-              used.
-            </p>
-            {capacity.overcommitted ? (
-              <output>
-                Capacity is overcommitted by {capacity.overage.toLocaleString()}{" "}
-                bytes. Export and cleanup remain available.
-              </output>
-            ) : null}
-          </div>
-        ) : (
-          <output>Checking shared storage capacity before funding…</output>
-        )}
-        {capacity ? (
-          <Funding
-            key={`funding-${generation}`}
-            client={client}
-            onFunded={refreshConfiguration}
-          />
-        ) : null}
-        {credentials.length ? (
-          <label className="grid gap-1 text-sm">
-            Authorizing passkey
-            <select
-              value={credential}
-              className="min-h-10 min-w-0 rounded-lg border border-line bg-white px-3"
-              onChange={(e) => {
-                setCredential(e.target.value);
-                client.selectCredential(
-                  e.target.value ? unb64(e.target.value) : undefined,
-                );
-              }}
+    <div ref={privateDOM} className="vault-workspace grid min-w-0 gap-5">
+      <div className="vault-workspace-header flex flex-wrap items-center justify-between gap-3">
+        <div className="vault-workspace-heading">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Private Vault
+          </h1>
+          <div className="vault-status-strip" aria-label="Vault session status">
+            <span
+              className={`vault-status ${unlocked ? "vault-status--unlocked" : ""}`}
             >
-              <option value="">
-                {credentials.length === 1
-                  ? "Use registered passkey"
-                  : "Choose a registered passkey"}
-              </option>
-              {credentials.map((c, i) => (
-                <option key={b64(bytes(c.id))} value={b64(bytes(c.id))}>
-                  Passkey {i + 1}
+              <span aria-hidden />
+              {unlocked ? "Unlocked session" : "Session locked"}
+            </span>
+          </div>
+        </div>
+        <div className="vault-header-actions">
+          {credentials.length ? (
+            <label className="grid gap-1 text-sm">
+              <span className="sr-only sm:not-sr-only">
+                Authorizing passkey
+              </span>
+              <select
+                value={credential}
+                className="min-h-10 min-w-0 rounded-lg border border-line bg-white px-3"
+                onChange={(e) => {
+                  setCredential(e.target.value);
+                  client.selectCredential(
+                    e.target.value ? unb64(e.target.value) : undefined,
+                  );
+                }}
+              >
+                <option value="">
+                  {credentials.length === 1
+                    ? "Use registered passkey"
+                    : "Choose passkey"}
                 </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </VaultPanel>
+                {credentials.map((c, i) => (
+                  <option key={b64(bytes(c.id))} value={b64(bytes(c.id))}>
+                    Passkey {i + 1}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <VaultButton onClick={() => client.session.lock()}>
+            <LockKeyhole size={16} aria-hidden />
+            Lock Vault
+          </VaultButton>
+        </div>
+      </div>
       {!config || config.origin !== location.origin ? (
         <p className="text-sm text-muted">
           Vault writes and passkeys are disabled until this exact origin and RP
@@ -319,168 +290,176 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       {busy ? (
         <output className="text-sm">Processing Vault operation…</output>
       ) : null}
-      {/* Do not create RP-bound services before the initial configuration is known.
-          Replacing empty-RP services would lock this shared private session. */}
-      {config?.origin === location.origin && client.recoveryConfiguration.rpId ? (
-        <VaultRecovery
-          client={client}
-          disabled={busy}
-          enabled={eligible}
-          credential={
-            credential
-              ? unb64(credential)
-              : credentials.length === 1
-                ? bytes(credentials[0].id)
-                : undefined
-          }
-          run={run}
-          onChanged={async () => {
-            await Promise.all([refreshLists(), refreshConfiguration()]);
-          }}
-        />
-      ) : null}
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <VaultPanel label="Vaults">
-          <h2 className="font-semibold">Vaults</h2>
-          <p className="text-sm text-muted">
-            3 Vaults · 100 MiB each · 200 MiB total including history and
-            pending data. Shared capacity also includes 16 MiB for accounting.
-          </p>
-          {vaults.map((v, index) => (
-            <VaultButton
-              key={b64(bytes(v.id))}
-              disabled={busy}
-              aria-pressed={
-                !!selected && b64(bytes(selected.id)) === b64(bytes(v.id))
-              }
-              onClick={() => {
-                client.session.lock();
-                client.header = v;
-                setSelected(v);
-              }}
-            >
-              Vault {index + 1}
-            </VaultButton>
-          ))}
-          <VaultButton
-            disabled={busy || !eligible || vaults.length >= 3}
-            onClick={() =>
-              run(async () => {
-                const next = await client.createKit();
-                client.session.check(next.generation);
-                setSelected(undefined);
-                setKit(next);
-              })
-            }
-          >
-            Create Vault
-          </VaultButton>
-          <VaultButton
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                await Promise.all([refreshConfiguration(), refreshLists()]);
-              })
-            }
-          >
-            Refresh Vaults
-          </VaultButton>
-          <VaultButton
-            disabled={busy || client.hasPendingSave}
-            onClick={() =>
-              run(async () => {
-                await client.retryMutation();
-                await refreshLists();
-              })
-            }
-          >
-            Retry signed request
-          </VaultButton>
-          {pendingUploads.map((entry) => (
-            <div
-              className="grid gap-2 border-t border-line pt-3 text-sm"
-              key={b64(bytes(entry.upload))}
-            >
-              <p>
-                {entry.cancel_job.length
-                  ? "Save cancellation in progress"
-                  : "Interrupted encrypted save"}
-                . No document names are stored in this list.
-              </p>
-              <VaultButton
-                disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    const h = vaults.find(
-                      (v) => b64(bytes(v.id)) === b64(bytes(entry.vault)),
-                    );
-                    if (!h) throw Error("TargetChanged");
-                    await client.cancelUpload(h, bytes(entry.upload));
-                    await refreshLists();
-                  })
-                }
-              >
-                Cancel interrupted save
-              </VaultButton>
+      <div
+        className={`vault-workspace-grid ${navigationOpen ? "vault-navigation-open" : ""}`}
+      >
+        <VaultButton
+          className="vault-navigation-toggle"
+          id="vault-navigation-toggle"
+          aria-label="Toggle Vault navigation"
+          aria-expanded={navigationOpen}
+          aria-controls="vault-navigation"
+          onClick={() => setNavigationOpen((open) => !open)}
+        >
+          <FolderLock size={16} aria-hidden />
+          Vaults
+          <ChevronRight size={14} aria-hidden />
+        </VaultButton>
+        <div id="vault-navigation" className="vault-navigation">
+          <VaultPanel label="Vaults" className="vault-sidebar">
+            <div className="vault-sidebar-title">
+              <FolderLock size={18} aria-hidden />
+              <h2 className="font-semibold">Vaults</h2>
+              <span>{vaults.length}/3</span>
             </div>
-          ))}
-          {uploadAfter ? (
+            <p className="text-xs leading-5 text-muted">
+              A separate space for what stays private.
+            </p>
+            {vaults.map((v, index) => (
+              <VaultButton
+                key={b64(bytes(v.id))}
+                className="vault-switcher"
+                disabled={busy}
+                aria-pressed={
+                  !!selected && b64(bytes(selected.id)) === b64(bytes(v.id))
+                }
+                onClick={() => {
+                  setNavigationOpen(false);
+                  if (navigationOpen)
+                    document.getElementById("vault-navigation-toggle")?.focus();
+                  client.session.lock();
+                  client.header = v;
+                  setSelected(v);
+                }}
+              >
+                <FolderLock size={17} aria-hidden />
+                <span>Vault {index + 1}</span>
+                <ChevronRight size={15} aria-hidden />
+              </VaultButton>
+            ))}
+            <VaultButton
+              tone="primary"
+              disabled={busy || !eligible || vaults.length >= 3}
+              onClick={() =>
+                run(async () => {
+                  const next = await client.createKit();
+                  client.session.check(next.generation);
+                  setSelected(undefined);
+                  setKit(next);
+                })
+              }
+            >
+              <Plus size={16} aria-hidden />
+              Create Vault
+            </VaultButton>
             <VaultButton
               disabled={busy}
               onClick={() =>
                 run(async () => {
-                  const ticket = client.session.capture();
-                  const page = ok(
-                    await client.actor.list_pending_uploads(uploadAfter),
-                  );
-                  client.session.check(ticket);
-                  setPendingUploads(page.entries);
-                  setUploadAfter(
-                    page.next[0] ? bytes(page.next[0]) : undefined,
-                  );
+                  await Promise.all([refreshConfiguration(), refreshLists()]);
                 })
               }
             >
-              More interrupted saves
+              <RefreshCw size={15} aria-hidden />
+              Refresh Vaults
             </VaultButton>
-          ) : null}
-          {unfinished.map((entry) => (
-            <div
-              className="grid gap-2 border-t border-line pt-3 text-sm"
-              key={b64(bytes(entry.attempt))}
+            <VaultButton
+              disabled={busy || client.hasPendingSave}
+              onClick={() =>
+                run(async () => {
+                  await client.retryMutation();
+                  await refreshLists();
+                })
+              }
             >
-              <span>
-                {entry.cleaning
-                  ? "Setup cleanup in progress"
-                  : "Restoring" in entry.state
-                    ? "Interrupted restore"
-                    : "Interrupted creation"}
-              </span>
-              {"Pending" in entry.state || "Purging" in entry.state ? (
+              Retry signed request
+            </VaultButton>
+            {pendingUploads.map((entry) => (
+              <div
+                className="grid gap-2 border-t border-line pt-3 text-sm"
+                key={b64(bytes(entry.upload))}
+              >
+                <p>
+                  {entry.cancel_job.length
+                    ? "Save cancellation in progress"
+                    : "Interrupted encrypted save"}
+                  . No document names are stored in this list.
+                </p>
                 <VaultButton
                   disabled={busy}
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "Discard this interrupted setup? Your original backup is unchanged.",
-                      )
-                    )
-                      return;
+                  onClick={() =>
                     run(async () => {
-                      const g = client.session.capture();
-                      await client.cancelSetup(entry);
-                      client.session.check(g);
+                      const h = vaults.find(
+                        (v) => b64(bytes(v.id)) === b64(bytes(entry.vault)),
+                      );
+                      if (!h) throw Error("TargetChanged");
+                      await client.cancelUpload(h, bytes(entry.upload));
                       await refreshLists();
-                    });
-                  }}
+                    })
+                  }
                 >
-                  Cancel interrupted setup
+                  Cancel interrupted save
                 </VaultButton>
-              ) : null}
-            </div>
-          ))}
-        </VaultPanel>
-        <div className="grid min-w-0 content-start gap-4">
+              </div>
+            ))}
+            {uploadAfter ? (
+              <VaultButton
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    const ticket = client.session.capture();
+                    const page = ok(
+                      await client.actor.list_pending_uploads(uploadAfter),
+                    );
+                    client.session.check(ticket);
+                    setPendingUploads(page.entries);
+                    setUploadAfter(
+                      page.next[0] ? bytes(page.next[0]) : undefined,
+                    );
+                  })
+                }
+              >
+                More interrupted saves
+              </VaultButton>
+            ) : null}
+            {unfinished.map((entry) => (
+              <div
+                className="grid gap-2 border-t border-line pt-3 text-sm"
+                key={b64(bytes(entry.attempt))}
+              >
+                <span>
+                  {entry.cleaning
+                    ? "Setup cleanup in progress"
+                    : "Restoring" in entry.state
+                      ? "Interrupted restore"
+                      : "Interrupted creation"}
+                </span>
+                {"Pending" in entry.state || "Purging" in entry.state ? (
+                  <VaultButton
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          "Discard this interrupted setup? Your original backup is unchanged.",
+                        )
+                      )
+                        return;
+                      run(async () => {
+                        const g = client.session.capture();
+                        await client.cancelSetup(entry);
+                        client.session.check(g);
+                        await refreshLists();
+                      });
+                    }}
+                  >
+                    Cancel interrupted setup
+                  </VaultButton>
+                ) : null}
+              </div>
+            ))}
+          </VaultPanel>
+        </div>
+        <div className="vault-main grid min-w-0 content-start gap-4">
           {kit ? (
             <VaultSetup
               key={`setup-${generation}`}
@@ -495,13 +474,28 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
             />
           ) : selected ? (
             <>
-              <VaultPanel label="Selected Vault">
+              {unlocked ? (
+                <>
+                  <VaultDocuments
+                    key={`documents-${generation}`}
+                    client={client}
+                    items={items}
+                    disabled={busy}
+                    writesDisabled={!eligible}
+                    run={run}
+                    refresh={refresh}
+                  />
+                </>
+              ) : null}
+              <VaultPanel label="Selected Vault" className="vault-selected">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="mr-auto font-semibold">
+                  <h2 className="mr-auto flex items-center gap-2 font-semibold">
+                    <FolderLock size={18} aria-hidden />
                     {unlocked ? "Vault unlocked" : "Vault locked"}
                   </h2>
                   {!unlocked ? (
                     <VaultButton
+                      tone="primary"
                       disabled={busy || !eligible}
                       onClick={() =>
                         run(async () => {
@@ -510,6 +504,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                         })
                       }
                     >
+                      <KeyRound size={16} aria-hidden />
                       Unlock with passkey
                     </VaultButton>
                   ) : null}
@@ -530,53 +525,54 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                       : "Backup saved and confirmed"}
                 </p>
               </VaultPanel>
-              <VaultBackups
-                key={`backup-${generation}`}
-                client={client}
-                selected={selected}
-                unlocked={unlocked}
-                disabled={busy || client.hasPendingSave}
-                run={run}
-                onChanged={async () => {
-                  if (client.header) setSelected(client.header);
-                  await refreshLists();
-                }}
-              />
-              {selected.generation[0] ? (
-                <VaultEncryptedCleanup
-                  key={`cleanup-${generation}`}
-                  client={client}
-                  selected={selected}
-                  disabled={busy || client.hasPendingSave}
-                  run={run}
-                  onChanged={async () => {
-                    await refreshLists();
-                  }}
-                />
-              ) : null}
-              {unlocked ? (
-                <>
-                  <VaultDocuments
-                    key={`documents-${generation}`}
+              <details className="vault-disclosure">
+                <summary>
+                  <KeyRound size={17} aria-hidden />
+                  Vault settings &amp; backup
+                  <ChevronRight size={16} aria-hidden />
+                </summary>
+                <div className="vault-disclosure-body">
+                  <VaultBackups
+                    key={`backup-${generation}`}
                     client={client}
-                    items={items}
-                    disabled={busy}
-                    writesDisabled={!eligible}
+                    selected={selected}
+                    unlocked={unlocked}
+                    disabled={busy || client.hasPendingSave}
                     run={run}
-                    refresh={refresh}
+                    onChanged={async () => {
+                      if (client.header) setSelected(client.header);
+                      await refreshLists();
+                    }}
                   />
-                  <VaultPasskeys
-                    key={`passkeys-${generation}`}
-                    client={client}
-                    disabled={busy || !eligible || client.hasPendingSave}
-                    run={run}
-                    onChanged={refreshConfiguration}
-                  />
-                </>
-              ) : null}
+                  {selected.generation[0] ? (
+                    <VaultEncryptedCleanup
+                      key={`cleanup-${generation}`}
+                      client={client}
+                      selected={selected}
+                      disabled={busy || client.hasPendingSave}
+                      run={run}
+                      onChanged={async () => {
+                        await refreshLists();
+                      }}
+                    />
+                  ) : null}
+                  {unlocked ? (
+                    <VaultPasskeys
+                      key={`passkeys-${generation}`}
+                      client={client}
+                      disabled={busy || !eligible || client.hasPendingSave}
+                      run={run}
+                      onChanged={refreshConfiguration}
+                    />
+                  ) : null}
+                </div>
+              </details>
             </>
           ) : (
-            <VaultPanel label="Choose a Vault">
+            <VaultPanel label="Choose a Vault" className="vault-empty">
+              <div className="vault-empty-icon">
+                <FolderLock size={32} aria-hidden />
+              </div>
               <h2 className="font-semibold">Choose or create a Vault</h2>
               <p className="text-sm text-muted">
                 Keep the encrypted backup and recovery secret in separate safe
@@ -586,6 +582,103 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
           )}
         </div>
       </div>
+      <div className="vault-management-grid">
+        <details className="vault-disclosure">
+          <summary>
+            <Wallet size={17} aria-hidden />
+            Account &amp; storage
+            <ChevronRight size={16} aria-hidden />
+          </summary>
+          <div className="vault-disclosure-body">
+            <VaultPanel label="Vault account">
+              <p className="font-semibold">
+                Prepaid balance: {balance.toString()} cycles
+              </p>
+              <p className="break-all text-sm">
+                Vault principal: {client.identity.getPrincipal().toText()}
+              </p>
+              <p className="text-sm text-muted">
+                Fund this principal with KINIC from your wallet. The paying
+                wallet may differ from your Vault sign-in.
+              </p>
+              <VaultButton onClick={() => run(refreshConfiguration)}>
+                Refresh balance
+              </VaultButton>
+              {capacity ? (
+                <div className="grid gap-2 text-sm">
+                  <p>
+                    Shared capacity: {capacity.used.toLocaleString()} /{" "}
+                    {capacity.limit.toLocaleString()} bytes. Accounting reserve:{" "}
+                    {capacity.accounting_reserved.toLocaleString()} bytes (16
+                    MiB within the 200 MiB total).
+                  </p>
+                  <p>
+                    Storage includes ciphertext, history, pending operations and
+                    control records. Each namespace reserves 512 KiB within its
+                    limits for completion and cleanup. Owner limits are
+                    separate; funding does not increase storage capacity. No
+                    shared database payer is used.
+                  </p>
+                  {capacity.overcommitted ? (
+                    <output>
+                      Capacity is overcommitted by{" "}
+                      {capacity.overage.toLocaleString()} bytes. Export and
+                      cleanup remain available.
+                    </output>
+                  ) : null}
+                </div>
+              ) : (
+                <output>
+                  Checking shared storage capacity before funding…
+                </output>
+              )}
+              {capacity ? (
+                <Funding
+                  key={`funding-${generation}`}
+                  client={client}
+                  onFunded={refreshConfiguration}
+                />
+              ) : null}
+            </VaultPanel>
+          </div>
+        </details>
+        <details className="vault-disclosure">
+          <summary>
+            <ShieldCheck size={17} aria-hidden />
+            Recovery &amp; access
+            <ChevronRight size={16} aria-hidden />
+          </summary>
+          <div className="vault-disclosure-body">
+            {/* Do not create RP-bound services before the initial configuration is known.
+          Replacing empty-RP services would lock this shared private session. */}
+            {config?.origin === location.origin &&
+            client.recoveryConfiguration.rpId ? (
+              <VaultRecovery
+                client={client}
+                disabled={busy}
+                enabled={eligible}
+                credential={
+                  credential
+                    ? unb64(credential)
+                    : credentials.length === 1
+                      ? bytes(credentials[0].id)
+                      : undefined
+                }
+                run={run}
+                onChanged={async () => {
+                  await Promise.all([refreshLists(), refreshConfiguration()]);
+                }}
+              />
+            ) : null}
+          </div>
+        </details>
+      </div>
+      <p className="vault-trust-note">
+        <LockKeyhole size={14} aria-hidden />
+        Keys, plaintext and search stay in this browser session. Auto-lock: 5
+        minutes idle or 1 minute hidden. Your browser and the Vault updater
+        remain trusted.
+      </p>
     </div>
   );
 }
