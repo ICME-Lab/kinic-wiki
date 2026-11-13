@@ -6,6 +6,7 @@ pub mod create_empty;
 mod create_empty_flights;
 pub mod generation;
 mod grants;
+mod key_flights;
 pub mod mutations;
 pub mod recovery;
 pub mod runtime;
