@@ -218,7 +218,7 @@ jobs:
   wikibrowser-check:
     needs: changes
     if: needs.changes.outputs.wikibrowser == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: wikibrowser
@@ -608,7 +608,7 @@ jobs:
   extension-check:
     needs: changes
     if: needs.changes.outputs.extension == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: extensions/wiki-clipper
@@ -636,7 +636,7 @@ jobs:
   vault-check:
     needs: changes
     if: needs.changes.outputs.vault == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
