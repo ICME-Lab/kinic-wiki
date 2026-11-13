@@ -3,7 +3,7 @@ import { DelegationChain } from "@icp-sdk/core/identity";
 import { describe, expect, it, vi } from "vitest";
 import { encryptJson, sha256 } from "@kinic/ii-server/crypto";
 import { generateIiKey, type KinicDelegationMaterialV1 } from "@kinic/ii-server/internet-identity";
-import { handleAuthRoute } from "../src/auth/oauth.js";
+import { authenticationMode, handleAuthRoute } from "../src/auth/oauth.js";
 import entry from "../src/entry.js";
 import { II_SESSION_TTL_MS, REVIEW_SESSION_TTL_MS, MAX_REFRESH_ROTATIONS } from "../src/auth/session-policy.js";
 import {
@@ -118,9 +118,9 @@ describe("MCP inside the session Durable Object", () => {
     expect((await entry.fetch(mcpRequest(reconnected.issued.accessToken, "tools/call", params), env)).status).toBe(401);
   });
 
-  it("omits the connection profile for authenticated Muse clients, including after refresh", async () => {
-    const muse = await iiSession("muse-no-profile", undefined, "mcp:read", "https://agent.meta.ai/api/hatch/oauth/callback");
-    const chatgpt = await iiSession("chatgpt-keeps-profile");
+  it.each(["https://agent.meta.ai/api/hatch/oauth/callback", "https://muse.ai/api/hatch/oauth/callback", "https://platform.muse.ai/oauth/credential-test/callback"])("omits the connection profile for authenticated Muse clients, including after refresh: %s", async (redirectUri) => {
+    const muse = await iiSession(`muse-no-profile-${new URL(redirectUri).hostname.replaceAll(".", "-")}`, undefined, "mcp:read", redirectUri);
+    const chatgpt = await iiSession(`chatgpt-keeps-profile-${new URL(redirectUri).hostname.replaceAll(".", "-")}`);
     const request = mcpRequest(muse.issued.accessToken);
     // Client-supplied labels must not turn the app-only profile back on.
     request.headers.set("user-agent", "ChatGPT");
@@ -304,8 +304,7 @@ describe("staging OAuth discovery and registration", () => {
     await expect(rejected.json()).resolves.toEqual({ error: "invalid_redirect_uri" });
   });
 
-  it("registers the observed Muse callback and starts PKCE authorization", async () => {
-    const redirectUri = "https://agent.meta.ai/api/hatch/oauth/callback";
+  it.each(["https://agent.meta.ai/api/hatch/oauth/callback", "https://muse.ai/api/hatch/oauth/callback", "https://platform.muse.ai/oauth/credential-test/callback"])("registers the observed Muse callback and starts PKCE authorization: %s", async (redirectUri) => {
     const response = await register([redirectUri]);
     expect(response.status).toBe(201);
     const client = await response.json<{ client_id: string; grant_types: string[] }>();
@@ -314,7 +313,7 @@ describe("staging OAuth discovery and registration", () => {
     url.searchParams.set("redirect_uri", redirectUri);
     const authorization = await fetchWorker(url.toString());
     expect(authorization.status).toBe(200);
-    expect(authorization.headers.get("content-security-policy")).toContain("https://agent.meta.ai");
+    expect(authorization.headers.get("content-security-policy")).toContain(new URL(redirectUri).origin);
     expect(authorization.headers.get("content-security-policy")).not.toContain("https://platform.openai.com");
     expect(await authorization.text()).toContain("Internet Identity");
   });
@@ -329,7 +328,7 @@ describe("staging OAuth discovery and registration", () => {
     "https://user:pass@agent.meta.ai/api/hatch/oauth/callback",
     "https://agent.meta.ai:8443/api/hatch/oauth/callback",
     "https://agent.meta.ai/api/hatch/oauth/other"
-  ])("rejects unapproved Muse callback variants: %s", async (redirectUri) => {
+  ].flatMap((uri) => [uri, uri.replaceAll("agent.meta.ai", "muse.ai"), uri.replaceAll("agent.meta.ai", "platform.muse.ai").replaceAll("/api/hatch/oauth/", "/oauth/credential-test/")]))("rejects unapproved Muse callback variants: %s", async (redirectUri) => {
     const response = await register([redirectUri]);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "invalid_redirect_uri" });
@@ -505,11 +504,12 @@ describe("staging OAuth discovery and registration", () => {
   });
 
   it.each([
-    "https://chatgpt.com/connector/oauth/callback",
-    "https://chat.openai.com/callback",
-    "http://127.0.0.1:43210/callback",
-    "http://localhost:43211/callback"
-  ])("authorizes the reviewer with a session-scoped form policy for %s", async (redirectUri) => {
+    ["https://chatgpt.com/connector/oauth/callback", "openai-review", "review-password"],
+    ["https://chat.openai.com/callback", "openai-review", "review-password"],
+    ["http://127.0.0.1:43210/callback", "openai-review", "review-password"],
+    ["http://localhost:43211/callback", "openai-review", "review-password"],
+    ["https://muse.ai/api/hatch/oauth/callback", "muse-review-secondary", "muse-review-secondary-password"]
+  ])("authorizes the reviewer with a session-scoped form policy for %s", async (redirectUri, username, password) => {
     const registered = await register([redirectUri, "https://chatgpt.com/unused-callback"]);
     const { client_id: clientId } = await registered.json<{ client_id: string }>();
     const verifier = "r".repeat(43);
@@ -533,8 +533,8 @@ describe("staging OAuth discovery and registration", () => {
       },
       body: new URLSearchParams({
         connect_state: connectState,
-        username: "openai-review",
-        password: "wrong"
+        username,
+        password: username === "muse-review-secondary" ? "review-password" : "muse-review-secondary-password"
       }).toString()
     });
     expect(rejected.status).toBe(401);
@@ -554,8 +554,8 @@ describe("staging OAuth discovery and registration", () => {
       },
       body: new URLSearchParams({
         connect_state: connectState,
-        username: "openai-review",
-        password: "review-password"
+        username,
+        password
       }).toString()
     });
     expect(accepted.status).toBe(302);
@@ -583,6 +583,19 @@ describe("staging OAuth discovery and registration", () => {
       scope: "mcp:read mcp:write offline_access",
       resource
     });
+  });
+
+  it.each([
+    [undefined, "a".repeat(43)],
+    ["a".repeat(43), undefined],
+    ["invalid", "a".repeat(43)],
+    ["a".repeat(43), "invalid"]
+  ])("fails closed on incomplete or malformed secondary reviewer credentials: %s / %s", (usernameHash, passwordHash) => {
+    expect(authenticationMode(new Request(origin), {
+      ...env,
+      MCP_REVIEW_SECONDARY_USERNAME_HASH: usernameHash,
+      MCP_REVIEW_SECONDARY_PASSWORD_HASH: passwordHash
+    })).toBe("misconfigured");
   });
 
   it("binds reviewer login to its cookie and rate limits repeated attempts", async () => {
