@@ -29,6 +29,7 @@ jobs:
     outputs:
       canister: ${{ steps.paths.outputs.canister }}
       rust_all: ${{ steps.paths.outputs.rust_all }}
+      cli_docs: ${{ steps.paths.outputs.cli_docs }}
       probe: ${{ steps.paths.outputs.probe }}
       cli: ${{ steps.paths.outputs.cli }}
       wikibrowser: ${{ steps.paths.outputs.wikibrowser }}
@@ -64,6 +65,7 @@ jobs:
             {
               echo "canister=true"
               echo "rust_all=true"
+              echo "cli_docs=true"
               echo "probe=true"
               echo "cli=true"
               echo "wikibrowser=true"
@@ -99,6 +101,7 @@ jobs:
 
           set_output canister '^(packages/vfs-client-core/api-guidance\.json$|Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
           set_output rust_all '^(Cargo\.(toml|lock)$|vendor/ic-agent/|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
+          set_output cli_docs '^(docs/CLI\.md|\.github/workflows/ci\.yml)$'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(Cargo\.lock$|vendor/ic-agent/|crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
           set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^wikibrowser/)"
@@ -406,6 +409,27 @@ jobs:
         run: pnpm build
       - name: Build Cloudflare Worker
         run: pnpm build:worker
+
+  cli-reference-check:
+    needs: changes
+    # Rust changes already run this test in rust-check's workspace suite.
+    if: needs.changes.outputs.cli_docs == 'true' && needs.changes.outputs.rust_all != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --profile minimal
+      - name: Check CLI reference coverage
+        run: cargo test -p kinic-vfs-cli --lib --locked cli_reference
 
   rust-check:
     needs: changes
