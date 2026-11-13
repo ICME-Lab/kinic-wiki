@@ -113,7 +113,9 @@ See [docs/DB_LIFECYCLE.md](docs/DB_LIFECYCLE.md) for creation, suspension, and d
 
 ## Continual Learning
 
-The CLI can connect Codex, DeepSeek Harness, and Claude Code to versioned context receipts, durable run evidence, isolated evaluation and guarded lesson revision. Set up an arbitrary project with `kinic-vfs-cli agent setup --engine <codex|dsh|claude>` and `kinic-vfs-cli learn setup --runner-file /absolute/path/runner.json`. See [portable project setup](docs/PORTABLE_LEARNING.md), [continual learning](docs/CONTINUAL_LEARNING.md), and [agent configuration](docs/AGENT_CONFIGURATION.md).
+The CLI can connect Codex, DeepSeek Harness, and Claude Code to versioned context receipts, durable run evidence, isolated evaluation and guarded lesson revision. Each prompt recalls lessons from your database, each turn is recorded as evidence, and revisions are published only after they improve results on your own validation tasks.
+
+Start with the [continual learning quickstart](docs/LEARNING_QUICKSTART.md), which takes one project from setup to recorded proposals, with example runner and validation files in [examples/learning](examples/learning/). The reference documents are [portable project setup](docs/PORTABLE_LEARNING.md), [continual learning](docs/CONTINUAL_LEARNING.md), and [agent configuration](docs/AGENT_CONFIGURATION.md).
 
 `kinic-vfs-cli claude setup` retains the existing recorder installation entry point; automatic learning still requires explicit project setup. `kinic-vfs-cli hermes setup` installs the skill-run recorder. Claude Code owned runs require CLI version 2.1.286 or newer and API/provider credentials; ordinary interactive session hooks can use the existing subscription login. See the [Claude Code setup guide](docs/AGENT_CONFIGURATION.md#claude-code).
 

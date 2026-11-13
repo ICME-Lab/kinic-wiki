@@ -1,0 +1,8 @@
+{
+  "engine": "dsh",
+  "executable": "/absolute/path/to/dsh",
+  "model": "deepseek-official/deepseek-flash",
+  "timeout_seconds": 600,
+  "max_output_bytes": 8388608,
+  "inherited_environment": ["DEEPSEEK_API_KEY"]
+}
