@@ -180,9 +180,6 @@ importers:
       '@icp-sdk/core':
         specifier: 5.4.0
         version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
-      '@kinic/vault-backup':
-        specifier: workspace:*
-        version: link:../vault-backup
       '@kinic/vault-candid':
         specifier: workspace:*
         version: link:../vault-candid

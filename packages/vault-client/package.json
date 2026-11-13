@@ -6,17 +6,11 @@
   "exports": {
     ".": "./src/api.ts",
     "./contracts": "./src/contracts.ts",
-    "./session": "./src/session.ts",
-    "./incident": "./src/incident.ts",
-    "./create-empty": "./src/create-empty.ts",
-    "./restore": "./src/restore.ts",
-    "./signed": "./src/signed.ts",
-    "./mutation-contracts": "./src/mutation-contracts.ts"
+    "./session": "./src/session.ts"
   },
   "dependencies": {
     "@icp-sdk/core": "5.4.0",
     "@kinic/vault-crypto": "workspace:*",
-    "@kinic/vault-backup": "workspace:*",
     "@kinic/vault-candid": "workspace:*"
   },
   "devDependencies": {
@@ -27,7 +21,7 @@
   "scripts": {
     "contracts:check": "node scripts/generate-contracts.mjs --check",
     "contracts:generate": "node scripts/generate-contracts.mjs",
-    "test": "vitest run --root ../.. packages/vault-client packages/vault-crypto packages/vault-backup",
+    "test": "vitest run --root ../.. packages/vault-client packages/vault-crypto",
     "typecheck": "tsc --project tsconfig.json"
   }
 }

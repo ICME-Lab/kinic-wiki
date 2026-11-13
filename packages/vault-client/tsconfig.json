@@ -18,7 +18,6 @@
   "include": [
     "src/**/*.ts",
     "test/**/*.ts",
-    "../vault-crypto/**/*.ts",
-    "../vault-backup/**/*.ts"
+    "../vault-crypto/**/*.ts"
   ]
 }

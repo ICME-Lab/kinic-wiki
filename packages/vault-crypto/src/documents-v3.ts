@@ -1,7 +1,6 @@
-import { generationAAD, openV2, sealV2, type Generation } from "./generation.ts";
+import { documentAAD, type VaultContext } from "./context.ts";
 import { strictJSON } from "./strict-json.ts";
 import {
-  aad,
   importKey,
   open,
   seal,
@@ -10,6 +9,17 @@ import {
   concat,
   type Envelope,
 } from "./index.ts";
+async function sealV3(
+  key: CryptoKey,
+  plain: Uint8Array,
+  binding: Uint8Array,
+): Promise<Envelope> {
+  return { ...(await seal(key, plain, binding)), version: 3 };
+}
+async function openV3(key: CryptoKey, envelope: Envelope, binding: Uint8Array) {
+  if (envelope.version !== 3) throw Error("InvalidEnvelope");
+  return open(key, envelope, binding);
+}
 export const b64 = (b: Uint8Array) => {
   let s = "";
   for (const x of b) s += String.fromCharCode(x);
@@ -45,19 +55,18 @@ export type Metadata = {
   mime?: string;
 };
 export type Manifest = {
-  version: 1 | 2;
+  version: 3;
   dek: ReturnType<typeof pack>;
   metadata: ReturnType<typeof pack>;
   nonces: string[];
 };
-export async function encryptDocument(
+export async function encryptDocumentV3(
   root: CryptoKey,
-  vault: Uint8Array,
+  context: VaultContext,
   object: Uint8Array,
   revision: bigint,
   metadata: Metadata,
   plaintext: Uint8Array,
-  generation?: Generation,
 ) {
   if (
     plaintext.length > 10 * 1024 * 1024 ||
@@ -67,29 +76,33 @@ export async function encryptDocument(
     throw Error("SizeLimit");
   const raw = randomBytes(32);
   const key = await importKey(raw);
-  const dek = generation ? await sealV2(root,raw,generationAAD(generation,object,revision,"dek")) : await seal(root, raw, aad(vault, object, revision, "dek"));
+  const dek = await sealV3(
+    root,
+    raw,
+    documentAAD(context, object, revision, "dek"),
+  );
   raw.fill(0);
   const meta = utf8.encode(JSON.stringify(metadata));
   if (meta.length > 8192) throw Error("SizeLimit");
-  const encryptedMetadata = await seal(
+  const encryptedMetadata = await sealV3(
     key,
     meta,
-    aad(vault, object, revision, "metadata"),
+    documentAAD(context, object, revision, "metadata"),
   );
   const chunks: Uint8Array[] = [],
     nonces: string[] = [];
   for (let i = 0; i < Math.max(1, Math.ceil(plaintext.length / 1048576)); i++) {
-    const e = await seal(
+    const e = await sealV3(
       key,
       plaintext.subarray(i * 1048576, (i + 1) * 1048576),
-      aad(vault, object, revision, "chunk", i),
+      documentAAD(context, object, revision, "chunk", i),
     );
     chunks.push(e.ciphertext);
     nonces.push(b64(e.nonce));
   }
   const manifest = utf8.encode(
     JSON.stringify({
-      version: generation ? 2 : 1,
+      version: 3,
       dek: pack(dek),
       metadata: pack(encryptedMetadata),
       nonces,
@@ -97,34 +110,37 @@ export async function encryptDocument(
   );
   return { manifest, chunks, hashes: await Promise.all(chunks.map(hash)) };
 }
-export async function readManifest(
+export async function readManifestV3(
   root: CryptoKey,
-  vault: Uint8Array,
+  context: VaultContext,
   object: Uint8Array,
   revision: bigint,
   bytes: Uint8Array,
-  generation?: Generation,
 ) {
   if (bytes.length > 65536) throw Error("InvalidManifest");
   const m = strictJSON(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes),
   ) as Manifest;
   if (
-    ![1,2].includes(m.version) ||
+    m.version !== 3 ||
     !Array.isArray(m.nonces) ||
     m.nonces.length < 1 ||
     m.nonces.length > 10
   )
     throw Error("InvalidManifest");
-  const raw = await unwrapDEK(root,vault,object,revision,m,generation);
+  const raw = await openV3(
+    root,
+    unpack(m.dek),
+    documentAAD(context, object, revision, "dek"),
+  );
   const key = await importKey(raw);
   raw.fill(0);
   const metadata: Metadata = JSON.parse(
     new TextDecoder("utf-8", { fatal: true }).decode(
-      await open(
+      await openV3(
         key,
         unpack(m.metadata),
-        aad(vault, object, revision, "metadata"),
+        documentAAD(context, object, revision, "metadata"),
       ),
     ),
   );
@@ -135,17 +151,22 @@ export async function readManifest(
     throw Error("InvalidMetadata");
   return { manifest: m, key, metadata };
 }
-export async function decryptDocument(
+export async function decryptDocumentV3(
   root: CryptoKey,
-  vault: Uint8Array,
+  context: VaultContext,
   object: Uint8Array,
   revision: bigint,
   manifest: Uint8Array,
   chunks: Uint8Array[],
   hashes: Uint8Array[],
-  generation?: Generation,
 ) {
-  const parsed = await readManifest(root, vault, object, revision, manifest, generation);
+  const parsed = await readManifestV3(
+    root,
+    context,
+    object,
+    revision,
+    manifest,
+  );
   if (
     chunks.length !== parsed.manifest.nonces.length ||
     hashes.length !== chunks.length
@@ -156,34 +177,22 @@ export async function decryptDocument(
     if (b64(await hash(chunks[i])) !== b64(hashes[i]))
       throw Error("CorruptChunk");
     plain.push(
-      await open(
+      await openV3(
         parsed.key,
         {
-          version: 1,
+          version: 3,
           nonce: unb64(parsed.manifest.nonces[i]),
           ciphertext: chunks[i],
         },
-        aad(vault, object, revision, "chunk", i),
+        documentAAD(context, object, revision, "chunk", i),
       ),
     );
   }
   return { metadata: parsed.metadata, plaintext: concat(...plain) };
 }
 
-export async function unwrapDEK(root:CryptoKey,vault:Uint8Array,object:Uint8Array,revision:bigint,m:Manifest,generation?:Generation){
-  if(m.version===1){if(m.dek.version!==1)throw Error("InvalidManifest");return open(root,unpack(m.dek),aad(vault,object,revision,"dek"));}
-  if(m.version!==2||!generation||b64(generation.vault)!==b64(vault))throw Error("InvalidGeneration");
-  return openV2(root,unpack(m.dek),generationAAD(generation,object,revision,"dek"));
-}
-/** Only replace DEK wrapping. Original content AAD/metadata/chunks remain byte-for-byte. */
-export async function rewrapManifest(source:CryptoKey,target:CryptoKey,vault:Uint8Array,object:Uint8Array,revision:bigint,bytes:Uint8Array,targetGeneration:Generation,sourceGeneration?:Generation){
-  if(bytes.length>65536)throw Error("InvalidManifest");
-  const parsed=await readManifest(source,vault,object,revision,bytes,sourceGeneration);
-  const raw=await unwrapDEK(source,vault,object,revision,parsed.manifest,sourceGeneration);
-  try {
-    const dek=await sealV2(target,raw,generationAAD(targetGeneration,object,revision,"dek"));
-    const reopened=await openV2(target,dek,generationAAD(targetGeneration,object,revision,"dek"));
-    try{if(b64(raw)!==b64(reopened))throw Error("InvalidWrapper");}finally{reopened.fill(0);}
-    return utf8.encode(JSON.stringify({version:2,dek:pack(dek),metadata:parsed.manifest.metadata,nonces:parsed.manifest.nonces}));
-  }finally{raw.fill(0);}
-}
+export {
+  encryptDocumentV3 as encryptDocument,
+  readManifestV3 as readManifest,
+  decryptDocumentV3 as decryptDocument,
+};

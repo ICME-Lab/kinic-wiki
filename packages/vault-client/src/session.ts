@@ -1,89 +1,64 @@
-import { Principal } from "@icp-sdk/core/principal";
-import type { Generation } from "./contracts";
-import { authorityContext } from "./signed";
-import type { TransportSecretKey } from "../../vault-crypto/src/index.ts";
+import {
+  contextInput,
+  copyVaultContext,
+  type VaultContext,
+} from "../../vault-crypto/src/context.ts";
 export class Session {
-  private lockCleanups = new Set<() => void>();
-  addLockCleanup(cleanup: () => void) {
-    this.lockCleanups.add(cleanup);
-    return () => this.lockCleanups.delete(cleanup);
-  }
+  private cleanups = new Set<() => void>();
+  private binding?: VaultContext;
   private controller = new AbortController();
-  get signal() {
-    return this.controller.signal;
-  }
-  transport?: TransportSecretKey;
-  signer?: { destroy(): void };
   generation = 0;
   root?: CryptoKey;
-  raw?: Uint8Array;
-  private keyBinding?: Generation;
-  bindRoot(root: CryptoKey, generation: Generation, raw?: Uint8Array) {
-    this.keyBinding = this.copyGeneration(generation);
-    this.root = root;
-    if (this.raw && this.raw !== raw) this.raw.fill(0);
-    this.raw = raw;
-  }
-  private copyGeneration(g: Generation): Generation {
-    return {
-      ...g,
-      canister: Principal.fromUint8Array(
-        new Uint8Array(g.canister.toUint8Array()),
-      ),
-      owner: Principal.fromUint8Array(new Uint8Array(g.owner.toUint8Array())),
-      vault: new Uint8Array(g.vault),
-      nonce: new Uint8Array(g.nonce),
-    };
-  }
-  get keyGeneration() {
-    return this.keyBinding && this.copyGeneration(this.keyBinding);
-  }
-  requireGeneration(g: Generation | undefined) {
-    if (
-      !this.root ||
-      !g ||
-      !this.keyBinding ||
-      authorityContext(g) !== authorityContext(this.keyBinding)
-    ) {
-      this.lock();
-      throw Error("TargetChanged");
-    }
-    return this.copyGeneration(this.keyBinding);
-  }
   lastActivity = Date.now();
   hiddenAt?: number;
   urls = new Set<string>();
   onLock = () => {};
+  get signal() {
+    return this.controller.signal;
+  }
+  addLockCleanup(f: () => void) {
+    this.cleanups.add(f);
+    return () => this.cleanups.delete(f);
+  }
   capture() {
     return this.generation;
   }
   check(g: number) {
-    if (g !== this.generation) throw Error("Locked");
     this.expire();
     if (g !== this.generation) throw Error("Locked");
   }
+  bindRoot(root: CryptoKey, context: VaultContext) {
+    this.binding = copyVaultContext(context);
+    this.root = root;
+  }
+  requireContext(context: VaultContext) {
+    if (
+      !this.root ||
+      !this.binding ||
+      !equal(contextInput(this.binding), contextInput(context))
+    ) {
+      this.lock();
+      throw Error("TargetChanged");
+    }
+    return copyVaultContext(this.binding);
+  }
   lock() {
     this.generation++;
-    for (const cleanup of this.lockCleanups) {
-      try {
-        cleanup();
-      } catch {
-        /* A detached view cannot prevent other private state from being cleared. */
-      }
-    }
     this.controller.abort();
     this.controller = new AbortController();
+    for (const f of this.cleanups) {
+      try {
+        f();
+      } catch {
+        /* continue cleanup */
+      }
+    }
+    this.binding = undefined;
+    this.root = undefined;
+    for (const url of this.urls) URL.revokeObjectURL(url);
+    this.urls.clear();
     this.lastActivity = Date.now();
     this.hiddenAt = this.hiddenAt === undefined ? undefined : Date.now();
-    this.raw?.fill(0);
-    this.raw = undefined;
-    this.root = undefined;
-    this.keyBinding = undefined;
-    this.transport = undefined;
-    this.signer?.destroy();
-    this.signer = undefined;
-    for (const u of this.urls) URL.revokeObjectURL(u);
-    this.urls.clear();
     this.onLock();
   }
   expire(now = Date.now()) {
@@ -102,15 +77,18 @@ export class Session {
     this.hiddenAt = hidden ? (this.hiddenAt ?? Date.now()) : undefined;
   }
   download(data: Uint8Array, name: string) {
-    const u = URL.createObjectURL(new Blob([new Uint8Array(data).buffer]));
-    this.urls.add(u);
+    const url = URL.createObjectURL(new Blob([new Uint8Array(data).buffer]));
+    this.urls.add(url);
     const a = document.createElement("a");
-    a.href = u;
+    a.href = url;
     a.download = name;
     a.click();
     setTimeout(() => {
-      URL.revokeObjectURL(u);
-      this.urls.delete(u);
+      URL.revokeObjectURL(url);
+      this.urls.delete(url);
     }, 30000);
   }
+}
+export function equal(a: Uint8Array, b: Uint8Array) {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
