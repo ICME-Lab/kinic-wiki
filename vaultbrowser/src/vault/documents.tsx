@@ -1,4 +1,15 @@
 import { useState, useCallback } from "react";
+import {
+  Download,
+  FileKey2,
+  FileText,
+  History,
+  Paperclip,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
 import { utf8 } from "@kinic/vault-crypto";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
@@ -147,10 +158,23 @@ export function VaultDocuments({
     disabled || writesDisabled || pendingSave || !!current?.revision.deleted;
   const byteCount = utf8.encode(body).length;
   return (
-    <VaultPanel label="Private documents" sensitive>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold">Private documents</h2>
+    <VaultPanel label="Private documents" sensitive className="vault-documents">
+      <div className="vault-documents-header flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FileText size={18} aria-hidden />
+          <h2 className="font-semibold">Private documents</h2>
+          <span className="vault-count">{items.length}</span>
+        </div>
+        <VaultField
+          label="Search this Vault locally"
+          labelHidden
+          type="search"
+          placeholder="Find a private document…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <VaultButton disabled={disabled} onClick={() => run(refresh)}>
+          <RefreshCw size={15} aria-hidden />
           Refresh documents
         </VaultButton>
       </div>
@@ -197,15 +221,10 @@ export function VaultDocuments({
           </div>
         </div>
       ) : null}
-      <VaultField
-        label="Search this Vault locally"
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[200px_minmax(0,1fr)]">
-        <div className="grid min-w-0 content-start gap-2">
+      <div className="vault-document-grid">
+        <div className="vault-document-list grid min-w-0 content-start gap-2">
           <VaultButton disabled={disabled || pendingSave} onClick={reset}>
+            <Plus size={16} aria-hidden />
             New document
           </VaultButton>
           {items
@@ -218,11 +237,25 @@ export function VaultDocuments({
               <VaultButton
                 key={b64(bytes(item.revision.object))}
                 disabled={disabled || pendingSave}
+                aria-pressed={
+                  !!current &&
+                  b64(bytes(current.revision.object)) ===
+                    b64(bytes(item.revision.object))
+                }
                 onClick={() => run(() => open(item))}
-                className="break-words text-left"
+                className="vault-document-item"
               >
-                {item.metadata.title || "Untitled"}
-                {item.revision.deleted ? " (deleted)" : ""}
+                {item.metadata.kind === "credential" ? (
+                  <FileKey2 size={17} aria-hidden />
+                ) : item.metadata.kind === "attachment" ? (
+                  <Paperclip size={17} aria-hidden />
+                ) : (
+                  <FileText size={17} aria-hidden />
+                )}
+                <span>
+                  {item.metadata.title || "Untitled"}
+                  {item.revision.deleted ? " (deleted)" : ""}
+                </span>
               </VaultButton>
             ))}
           {!items.length ? (
@@ -231,9 +264,10 @@ export function VaultDocuments({
             </p>
           ) : null}
         </div>
-        <div className="grid min-w-0 content-start gap-3">
+        <div className="vault-document-editor grid min-w-0 content-start gap-3">
           <VaultField
             label="Document title"
+            labelHidden
             value={title}
             maxLength={512}
             disabled={readOnly}
@@ -243,7 +277,7 @@ export function VaultDocuments({
             }}
           />
           <label className="grid gap-1 text-sm font-medium">
-            Document type
+            <span className="sr-only">Document type</span>
             <select
               className="min-h-10 rounded-lg border border-line bg-white px-3 text-ink"
               value={kind}
@@ -376,11 +410,13 @@ export function VaultDocuments({
                 />
               )}
               <VaultButton
+                tone="primary"
                 disabled={
                   readOnly || !dirty || (kind === "attachment" && !file)
                 }
                 onClick={save}
               >
+                <Save size={16} aria-hidden />
                 Save document
               </VaultButton>
               {progress > 0 ? (
@@ -408,6 +444,7 @@ export function VaultDocuments({
                     })
                   }
                 >
+                  <History size={15} aria-hidden />
                   Show version history
                 </VaultButton>
                 {!current.revision.deleted ? (
@@ -416,6 +453,7 @@ export function VaultDocuments({
                       disabled={disabled}
                       onClick={() => run(() => download(current.revision))}
                     >
+                      <Download size={15} aria-hidden />
                       Download document
                     </VaultButton>
                     <VaultButton
@@ -430,6 +468,7 @@ export function VaultDocuments({
                         })
                       }
                     >
+                      <Trash2 size={15} aria-hidden />
                       Delete document
                     </VaultButton>
                   </>

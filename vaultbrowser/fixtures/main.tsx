@@ -1,4 +1,6 @@
 // Synthetic UI gate entry only: this is not II/vetKD acceptance.
+import { useEffect } from "react";
+import { VaultChrome } from "../src/chrome";
 import { createRoot } from "react-dom/client";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { VaultClient, ok, bytes } from "@kinic/vault-client";
@@ -57,19 +59,30 @@ Object.assign(window, {
   syntheticEditor: () =>
     EditorView.findFromDOM(document.querySelector(".cm-editor")!),
 });
-createRoot(document.getElementById("root")!).render(
-  <main className="mx-auto max-w-6xl p-5">
-    <VaultWorkspace client={client} />
-  </main>,
-);
-if (new URLSearchParams(location.search).get("state") === "opened") {
-  const interval = window.setInterval(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent === "Vault 1 · Active",
-    );
-    if (button) {
-      window.clearInterval(interval);
-      button.click();
-    }
-  }, 50);
+function Fixture() {
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("state") !== "opened") return;
+    const timer = window.setInterval(() => {
+      const button = Array.from(document.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === "Vault 1 · Active",
+      );
+      if (button && !button.disabled) {
+        window.clearInterval(timer);
+        button.click();
+      }
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <>
+      <VaultChrome />
+      <main className="vault-page">
+        <VaultWorkspace client={client} />
+        <p className="mt-4 text-xs text-muted">
+          Synthetic data fixture — no private data or remote canister.
+        </p>
+      </main>
+    </>
+  );
 }
+createRoot(document.getElementById("root")!).render(<Fixture />);

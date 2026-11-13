@@ -1,0 +1,5 @@
+{
+  "env": { "node": true, "es2024": true },
+  "globals": { "crypto": "readonly" },
+  "rules": { "no-undef": "error" }
+}

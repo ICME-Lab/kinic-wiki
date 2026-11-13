@@ -7,27 +7,34 @@ import type {
 } from "react";
 export function VaultButton({
   className = "",
+  tone = "default",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement>) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  tone?: "default" | "primary" | "danger";
+}) {
   return (
     <Button
       unstyled
       type="button"
-      className={`min-h-10 rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      className={`vault-button vault-button--${tone} ${className}`}
       {...props}
     />
   );
 }
 export function VaultField({
   label,
+  labelHidden = false,
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & { label: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & {
+  label: string;
+  labelHidden?: boolean;
+}) {
   return (
     <label className="grid min-w-0 gap-1 text-sm font-medium">
-      {label}
+      <span className={labelHidden ? "sr-only" : undefined}>{label}</span>
       <Input
         unstyled
-        className="min-h-10 min-w-0 rounded-lg border border-line bg-white px-3 py-2 text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="vault-input min-w-0"
         autoComplete="off"
         {...props}
       />
@@ -38,8 +45,10 @@ export function VaultPanel({
   children,
   label,
   sensitive = false,
+  className = "",
 }: {
   sensitive?: boolean;
+  className?: string;
   children: ReactNode;
   label: string;
 }) {
@@ -47,7 +56,7 @@ export function VaultPanel({
     <section
       aria-label={label}
       data-vault-sensitive={sensitive ? "true" : undefined}
-      className="grid min-w-0 content-start gap-4 rounded-xl border border-line bg-white p-4"
+      className={`vault-panel grid min-w-0 content-start gap-4 ${className}`}
     >
       {children}
     </section>

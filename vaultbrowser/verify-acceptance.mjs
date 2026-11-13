@@ -171,7 +171,7 @@ try {
       "WAIT real 421 seconds for prior grant TTL + receipt retention:",
       reason,
     );
-    for (let elapsed = 0; elapsed < 421000; ) {
+    for (let elapsed = 0; elapsed < 421000;) {
       const step = Math.min(30000, 421000 - elapsed);
       await vault.waitForTimeout(step);
       elapsed += step;
@@ -191,7 +191,7 @@ try {
       0,
     );
     await signIn(vault, login);
-    await vault.getByText("Vault principal:", { exact: false }).waitFor();
+    await reveal(vault.getByText("Vault principal:", { exact: false }));
     const after = await readback();
     assert.equal(after.principal, before.principal);
     for (const key of [
@@ -220,13 +220,31 @@ try {
       Date.now() - start,
     );
   };
+  const reveal = async (target) => {
+    await target.waitFor({ state: "attached" });
+    const ancestors = target.locator("xpath=ancestor::details");
+    for (let i = 0; i < (await ancestors.count()); i++) {
+      const details = ancestors.nth(i);
+      if (!(await details.evaluate((element) => element.open)))
+        await details.locator(":scope > summary").click();
+    }
+    return target;
+  };
   const action = async (name) => {
-    await vault.getByRole("button", { name, exact: true }).click();
+    await (
+      await reveal(
+        vault.getByRole("button", { name, exact: true, includeHidden: true }),
+      )
+    ).click();
     await idle();
   };
   const download = async (name, path) => {
     const event = vault.waitForEvent("download", { timeout: 120000 });
-    await vault.getByRole("button", { name, exact: true }).click();
+    await (
+      await reveal(
+        vault.getByRole("button", { name, exact: true, includeHidden: true }),
+      )
+    ).click();
     await (await event).saveAs(path);
   };
   vault.on("dialog", (d) => d.accept());
@@ -239,7 +257,7 @@ try {
     }),
     true,
   );
-  await vault.getByText("Vault principal:", { exact: false }).waitFor();
+  await reveal(vault.getByText("Vault principal:", { exact: false }));
   const vaultPrincipal = (
     await vault.getByText("Vault principal:", { exact: false }).innerText()
   )
@@ -386,9 +404,15 @@ try {
     })
     .waitFor();
   const backupDownload = vault.waitForEvent("download");
-  await vault
-    .getByRole("button", { name: "Download encrypted backup", exact: true })
-    .click();
+  await (
+    await reveal(
+      vault.getByRole("button", {
+        name: "Download encrypted backup",
+        exact: true,
+        includeHidden: true,
+      }),
+    )
+  ).click();
   await (await backupDownload).saveAs(out + "source.kvault");
   console.log(
     "PASS actual II + browser passkey + vetKD + synthetic ICRC-2 approval/payment + signed creation/write + encrypted backup download",
@@ -431,12 +455,10 @@ try {
   ).header;
   const negative = await wiki.evaluate(
     async ({ canister, host, vaultId, idlPath }) => {
-      const { AuthClient } = await import(
-        "/node_modules/.vite/deps/@icp-sdk_auth_client.js"
-      );
-      const { Actor, HttpAgent } = await import(
-        "/node_modules/.vite/deps/@icp-sdk_core_agent.js"
-      );
+      const { AuthClient } =
+        await import("/node_modules/.vite/deps/@icp-sdk_auth_client.js");
+      const { Actor, HttpAgent } =
+        await import("/node_modules/.vite/deps/@icp-sdk_core_agent.js");
       const { idlFactory } = await import(idlPath);
       const auth = await AuthClient.create();
       const agent = await HttpAgent.create({
@@ -529,7 +551,9 @@ try {
 
   if (process.env.VAULT_ACCEPTANCE_CORE_ONLY !== "1") {
     await action("I saved the backup");
-    await vault.getByText("Unlock passkeys", { exact: true }).click();
+    await (
+      await reveal(vault.getByText("Unlock passkeys", { exact: true }))
+    ).click();
     const second = await vaultAuth.cdp.send(
       "WebAuthn.addVirtualAuthenticator",
       {
@@ -656,7 +680,11 @@ try {
         .setInputFiles(out + "incident-kit.json");
     };
     const withSource = async (name) => {
-      await vault.getByRole("button", { name, exact: true }).click();
+      await (
+        await reveal(
+          vault.getByRole("button", { name, exact: true, includeHidden: true }),
+        )
+      ).click();
       await sourceFiles();
     };
     await withSource("Select source backup and recovery kit");

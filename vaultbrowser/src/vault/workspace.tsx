@@ -6,6 +6,14 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  ChevronRight,
+  FolderLock,
+  LockKeyhole,
+  Plus,
+  RefreshCw,
+  Wallet,
+} from "lucide-react";
 import { Funding } from "../funding";
 import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
 import type {
@@ -23,6 +31,7 @@ import { VaultEncryptedCleanup } from "./management";
 export type VaultWork = (operation: () => Promise<void>) => void;
 const id = (h: Header) => b64(bytes(h.id));
 export function VaultWorkspace({ client }: { client: VaultClient }) {
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [vaults, setVaults] = useState<Header[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUploadSummary[]>(
     [],
@@ -217,55 +226,28 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
   };
   const eligible = !!config && balance >= config.minimum_cycles;
   return (
-    <div ref={privateDOM} className="grid min-w-0 gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Private Vault</h1>
-          <p className="mt-1 text-sm text-muted">
-            Encrypted notes, credentials and attachments.
-          </p>
+    <div ref={privateDOM} className="vault-workspace grid min-w-0 gap-5">
+      <div className="vault-workspace-header flex flex-wrap items-center justify-between gap-3">
+        <div className="vault-workspace-heading">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Private Vault
+          </h1>
+          <div className="vault-status-strip" aria-label="Vault session status">
+            <span
+              className={`vault-status ${opened ? "vault-status--unlocked" : ""}`}
+            >
+              <span aria-hidden />
+              {opened ? "Vault open" : "Vault closed"}
+            </span>
+          </div>
         </div>
-        <VaultButton onClick={() => client.session.lock()}>
-          Close Vault
-        </VaultButton>
+        <div className="vault-header-actions">
+          <VaultButton onClick={() => client.session.lock()}>
+            <LockKeyhole size={16} aria-hidden />
+            Close Vault
+          </VaultButton>
+        </div>
       </div>
-      <p className="text-sm text-muted">
-        Select a Vault to open it with your current Internet Identity. Private
-        views close after 5 minutes of inactivity or 1 minute in a hidden tab.
-        Sign out to end authentication. Your browser and the canister updater
-        remain trusted.
-      </p>
-      <VaultPanel label="Vault account">
-        <p className="font-semibold">
-          Prepaid balance: {balance.toString()} cycles
-        </p>
-        <p className="break-all text-sm">
-          Vault principal: {client.identity.getPrincipal().toText()}
-        </p>
-        <VaultButton disabled={busy} onClick={() => run(refreshConfiguration)}>
-          Refresh balance
-        </VaultButton>
-        {capacity ? (
-          <p className="text-sm">
-            Shared capacity: {capacity.used.toLocaleString()} /{" "}
-            {capacity.limit.toLocaleString()} bytes. Storage includes
-            ciphertext, history and pending operations. Funding does not
-            increase storage limits.
-            {capacity.overcommitted
-              ? " Capacity is overcommitted; cleanup remains available."
-              : ""}
-          </p>
-        ) : (
-          <output>Checking shared storage capacity…</output>
-        )}
-        {capacity ? (
-          <Funding
-            key={`funding-${generation}`}
-            client={client}
-            onFunded={refreshConfiguration}
-          />
-        ) : null}
-      </VaultPanel>
       {!config ? (
         <p className="text-sm text-muted">
           Vault creation is unavailable until the service is configured. Cleanup
@@ -283,121 +265,90 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       {busy ? (
         <output className="text-sm">Processing Vault operation…</output>
       ) : null}
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <VaultPanel label="Vaults">
-          <h2 className="font-semibold">Vaults</h2>
-          <p className="text-sm">
-            This release has no backup or independent recovery. Losing access to
-            Internet Identity permanently loses access to your Vaults unless you
-            recover Internet Identity itself.
-          </p>
-          <VaultButton
-            disabled={busy || !eligible}
-            onClick={() =>
-              run(async () => {
-                setCreationPending(true);
-                const pending = client.create();
-                const ticket = client.session.capture();
-                const header = await pending;
-                client.session.check(ticket);
-                if (!alive.current) return;
-                setCreationPending(false);
-                select(header);
-                await refreshLists();
-                client.session.check(ticket);
-                await open(header);
-              })
-            }
-          >
-            {creationPending ? "Retry Vault creation" : "Create Vault"}
-          </VaultButton>
-          <VaultButton disabled={busy} onClick={() => run(refreshLists)}>
-            Refresh Vaults
-          </VaultButton>
-          {vaults.map((h, index) => (
-            <VaultButton
-              key={id(h)}
-              disabled={busy}
-              aria-pressed={selected ? id(selected) === id(h) : false}
-              onClick={() => run(() => open(h))}
-            >
-              Vault {index + 1} · {Object.keys(h.state)[0]}
-            </VaultButton>
-          ))}
-          <details className="[&:not([open])>div]:hidden">
-            <summary className="cursor-pointer text-sm font-medium">
-              Interrupted uploads
-            </summary>
-            <div className="mt-3 grid gap-2">
-              <p className="text-sm">
-                Cancel unfinished uploads with zero prepaid balance.
-              </p>
-              <VaultButton disabled={busy} onClick={() => run(refreshLists)}>
-                Refresh interrupted uploads
-              </VaultButton>
-              {pendingUploads.map((upload, index) => (
-                <VaultButton
-                  key={b64(bytes(upload.upload))}
-                  disabled={busy || client.hasPendingSave}
-                  onClick={() =>
-                    run(async () => {
-                      const ticket = client.session.capture();
-                      try {
-                        await client.cancelUpload(
-                          bytes(upload.vault),
-                          bytes(upload.upload),
-                          upload.cancel_job[0]
-                            ? bytes(upload.cancel_job[0])
-                            : undefined,
-                        );
-                      } catch (cause) {
-                        client.session.check(ticket);
-                        if (
-                          cause instanceof Error &&
-                          ["Conflict", "NotFound"].includes(cause.message)
-                        )
-                          await refreshLists();
-                        throw cause;
-                      }
-                      client.session.check(ticket);
-                      await refreshLists();
-                    })
-                  }
-                >
-                  Cancel interrupted upload {index + 1}
-                </VaultButton>
-              ))}
-              {uploadAfter ? (
-                <VaultButton
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      const ticket = client.session.capture();
-                      const page = await client.pendingUploads(
-                        new Uint8Array(uploadAfter),
-                      );
-                      client.session.check(ticket);
-                      setPendingUploads((previous) => [
-                        ...previous,
-                        ...page.entries,
-                      ]);
-                      setUploadAfter(
-                        page.next[0] ? bytes(page.next[0]) : undefined,
-                      );
-                    })
-                  }
-                >
-                  Load more interrupted uploads
-                </VaultButton>
-              ) : null}
+      <p id="vault-loss-disclosure" className="text-sm text-muted">
+        This release has no backup or independent recovery. Losing access to
+        Internet Identity permanently loses access to your Vaults unless you
+        recover Internet Identity itself.
+      </p>
+      <div
+        className={`vault-workspace-grid ${navigationOpen ? "vault-navigation-open" : ""}`}
+      >
+        <VaultButton
+          className="vault-navigation-toggle"
+          id="vault-navigation-toggle"
+          aria-label="Toggle Vault navigation"
+          aria-expanded={navigationOpen}
+          aria-controls="vault-navigation"
+          onClick={() => setNavigationOpen((open) => !open)}
+        >
+          <FolderLock size={16} aria-hidden />
+          Vaults
+          <ChevronRight size={14} aria-hidden />
+        </VaultButton>
+        <div id="vault-navigation" className="vault-navigation">
+          <VaultPanel label="Vaults" className="vault-sidebar">
+            <div className="vault-sidebar-title">
+              <FolderLock size={18} aria-hidden />
+              <h2 className="font-semibold">Vaults</h2>
+              <span>{vaults.length}/3</span>
             </div>
-          </details>
-        </VaultPanel>
-        <div className="grid min-w-0 content-start gap-4">
+            <p className="text-xs leading-5 text-muted">
+              A separate space for what stays private.
+            </p>
+            <VaultButton
+              tone="primary"
+              aria-describedby="vault-loss-disclosure"
+              disabled={busy || !eligible}
+              onClick={() =>
+                run(async () => {
+                  setCreationPending(true);
+                  const pending = client.create();
+                  const ticket = client.session.capture();
+                  const header = await pending;
+                  client.session.check(ticket);
+                  if (!alive.current) return;
+                  setCreationPending(false);
+                  select(header);
+                  await refreshLists();
+                  client.session.check(ticket);
+                  await open(header);
+                })
+              }
+            >
+              <Plus size={16} aria-hidden />
+              {creationPending ? "Retry Vault creation" : "Create Vault"}
+            </VaultButton>
+            <VaultButton disabled={busy} onClick={() => run(refreshLists)}>
+              <RefreshCw size={15} aria-hidden />
+              Refresh Vaults
+            </VaultButton>
+            {vaults.map((h, index) => (
+              <VaultButton
+                key={id(h)}
+                className="vault-switcher"
+                disabled={busy}
+                aria-pressed={selected ? id(selected) === id(h) : false}
+                onClick={() => {
+                  setNavigationOpen(false);
+                  if (navigationOpen)
+                    document.getElementById("vault-navigation-toggle")?.focus();
+                  run(() => open(h));
+                }}
+              >
+                <FolderLock size={17} aria-hidden />
+                <span>
+                  Vault {index + 1} · {Object.keys(h.state)[0]}
+                </span>
+                <ChevronRight size={15} aria-hidden />
+              </VaultButton>
+            ))}
+          </VaultPanel>
+        </div>
+        <div className="vault-main grid min-w-0 content-start gap-4">
           {selected ? (
             <>
               {!opened ? (
-                <VaultPanel label="Open Vault">
+                <VaultPanel label="Open Vault" className="vault-selected">
                   {"Active" in selected.state ? (
                     <>
                       <p>
@@ -463,7 +414,10 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
               />
             </>
           ) : (
-            <VaultPanel label="Choose a Vault">
+            <VaultPanel label="Choose a Vault" className="vault-empty">
+              <div className="vault-empty-icon">
+                <FolderLock size={32} aria-hidden />
+              </div>
               <h2 className="font-semibold">Choose or create a Vault</h2>
               <p className="text-sm text-muted">
                 Your Internet Identity provides access. No separate Vault
@@ -473,6 +427,126 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
           )}
         </div>
       </div>
+      <div className="vault-management-grid">
+        <details className="vault-disclosure [&:not([open])>div]:hidden">
+          <summary>
+            <Wallet size={17} aria-hidden />
+            Account &amp; storage
+            <ChevronRight size={16} aria-hidden />
+          </summary>
+          <div className="vault-disclosure-body">
+            <VaultPanel label="Vault account">
+              <p className="font-semibold">
+                Prepaid balance: {balance.toString()} cycles
+              </p>
+              <p className="break-all text-sm">
+                Vault principal: {client.identity.getPrincipal().toText()}
+              </p>
+              <VaultButton
+                disabled={busy}
+                onClick={() => run(refreshConfiguration)}
+              >
+                Refresh balance
+              </VaultButton>
+              {capacity ? (
+                <p className="text-sm">
+                  Shared capacity: {capacity.used.toLocaleString()} /{" "}
+                  {capacity.limit.toLocaleString()} bytes. Storage includes
+                  ciphertext, history and pending operations. Funding does not
+                  increase storage limits.
+                  {capacity.overcommitted
+                    ? " Capacity is overcommitted; cleanup remains available."
+                    : ""}
+                </p>
+              ) : (
+                <output>Checking shared storage capacity…</output>
+              )}
+              {capacity ? (
+                <Funding
+                  key={`funding-${generation}`}
+                  client={client}
+                  onFunded={refreshConfiguration}
+                />
+              ) : null}
+            </VaultPanel>
+          </div>
+        </details>
+        <details className="vault-disclosure [&:not([open])>div]:hidden">
+          <summary className="cursor-pointer text-sm font-medium">
+            Interrupted uploads
+          </summary>
+          <div className="vault-disclosure-body">
+            <p className="text-sm">
+              Cancel unfinished uploads with zero prepaid balance.
+            </p>
+            <VaultButton disabled={busy} onClick={() => run(refreshLists)}>
+              Refresh interrupted uploads
+            </VaultButton>
+            {pendingUploads.map((upload, index) => (
+              <VaultButton
+                key={b64(bytes(upload.upload))}
+                disabled={busy || client.hasPendingSave}
+                onClick={() =>
+                  run(async () => {
+                    const ticket = client.session.capture();
+                    try {
+                      await client.cancelUpload(
+                        bytes(upload.vault),
+                        bytes(upload.upload),
+                        upload.cancel_job[0]
+                          ? bytes(upload.cancel_job[0])
+                          : undefined,
+                      );
+                    } catch (cause) {
+                      client.session.check(ticket);
+                      if (
+                        cause instanceof Error &&
+                        ["Conflict", "NotFound"].includes(cause.message)
+                      )
+                        await refreshLists();
+                      throw cause;
+                    }
+                    client.session.check(ticket);
+                    await refreshLists();
+                  })
+                }
+              >
+                Cancel interrupted upload {index + 1}
+              </VaultButton>
+            ))}
+            {uploadAfter ? (
+              <VaultButton
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    const ticket = client.session.capture();
+                    const page = await client.pendingUploads(
+                      new Uint8Array(uploadAfter),
+                    );
+                    client.session.check(ticket);
+                    setPendingUploads((previous) => [
+                      ...previous,
+                      ...page.entries,
+                    ]);
+                    setUploadAfter(
+                      page.next[0] ? bytes(page.next[0]) : undefined,
+                    );
+                  })
+                }
+              >
+                Load more interrupted uploads
+              </VaultButton>
+            ) : null}
+          </div>
+        </details>
+      </div>
+      <p className="vault-trust-note">
+        <LockKeyhole size={14} aria-hidden />
+        Select a Vault to open it with your current Internet Identity. Private
+        views close after 5 minutes of inactivity or 1 minute in a hidden tab.
+        Sign out to end authentication. Your browser and the canister updater
+        remain trusted.
+      </p>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 ## User Guides
 
+- [LEARNING_QUICKSTART.md](LEARNING_QUICKSTART.md) — first project setup for continual learning, with examples
 - [PORTABLE_LEARNING.md](PORTABLE_LEARNING.md) — arbitrary-project setup, CLI-only plugins and durable learning jobs
 - [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md) — CLI learning, Codex/DSH integration, evaluation and guarded publication
 

@@ -99,3 +99,32 @@ The neutral `packages/ui` owns CSS, the Tailwind preset and primitives. Wiki’s
 Independent initial-release review found three initialization gaps and each was reproducedRED before the combined correction: page policy lost on an actually reopened connection; SQLLIKE wildcard admitting `sqliteXforeign`; and same-name malformed schema guards/extra columns. Replacement checks use the literal reserved prefix and compare canonical persisted CREATE definitions to the very same creation statements, including literal bytes, column order, constraints, index uniqueness and trigger bodies. The page-count policy is separate from schema creation and is reapplied after successful validation. Three new regression tests add these paths to the four initial-release tests; retired historical-only unit tests remain six. The implemented262144-page ceiling is preserved (4GiB at pinned16KiB/page), correcting the earlier1GiB interpretation without changing limits.
 
 Recovery UI initialization is also covered with delayed configuration: the initial empty RP must not create controllers whose replacement locks the shared private session. Controllers mount only after the exact origin/RP is configured, independently of balance; configured zero-balance recovery/cleanup remains available.
+
+
+## 2026-11-13 simplification audit
+
+The follow-up audits Vault service/store/canister, client/UI, protocol fixtures,
+generated contracts and vendor manifests. It preserves schema6, Candid, signing
+and key domains, v1/v2 backups, quotas and disabled production funding.
+
+| Candidate | Disposition and evidence |
+| --- | --- |
+| Full source setup copied into incident/cutover/admission tests | Shared paid replica and encrypted-source fixtures; zero/monotonic counters, optional document history and upgrade timing explicit. All109 scenario assertions retained. |
+| Incident/restore/empty paid derive execution | One private key-flight executor; original concrete role predicates and state remain at callers, rechecked at every original boundary; owner-only financial settlement remains separate from publication. |
+| Three client WebAuthn handshakes and duplicated generation conversion | Stateless proof helper and pure wire conversions; feature reuse/current-proof/cleanup policy remains local; existing API reexports retained. Ordinary credential-selection/concurrency flow deliberately separate. |
+| Thirteen unsigned write service implementations | Their only production callers were Candid endpoints whose Environment never authorizes mutation. Removed old activation/credential/restore/content implementations and Candidate DTO; endpoints authenticate and return the identical uncharged Unauthorized. ActualWasm characterization covers all14 unsigned write endpoints before and after; signed paths remain unchanged. |
+| Native/source test setup and assertions | Existing101service tests retained, including lower-level begin_revision payer reentrancy and async fencing; no scenario deleted for line count. |
+| Remaining SQL/auth/payment/restore/incident branches | Preserve distinct ownership, authority, prepaid-capacity and callback lifetimes; a common name does not imply equivalent policy. |
+| Generated main and mutation Candid contracts | Both consumed. Main service carries mutation bytes opaquely, so its generated declarations do not replace the standalone mutation payload contract. |
+| V1 cryptographic strings and archive readers | Supported crypto and backup formats, not retired canister migrations. |
+| Vendored WebAuthn source, manifests and notices | Runtime verification dependency; retain upstream licensing and reproducible snapshot, rather than rewriting or trimming third-party implementation for line count. |
+| Public client convenience exports with few/no in-repo references | No proven internal dead-code status; retain supported exports instead of assuming absence of external consumers. |
+| Synthetic UI fixtures | Retain unique detached CodeMirror undo/DOM/input/file wiping, keyboard and wrong-file checks; separate from actual-II acceptance, never counted as canister/auth proof. |
+
+The protocol fixture correctness CI gate now checks every Vault helper, test and
+builder for undefined and unused names. No lint suppression or new dependency is
+introduced; removed unused bindings keep the underlying side-effecting RPCs.
+FullWorkspace Rust counts still include nested fixture executions; source-size
+reports distinguish product code, tests/tooling, generated contracts, lockfiles,
+documentation and vendored source. Previous failures are retained as historical
+evidence and are not labelled green after a correction.

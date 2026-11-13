@@ -336,6 +336,9 @@ it("closes on hidden-tab expiry and revokes owned Blob URLs", async () => {
 });
 it("keeps production funding disabled", async () => {
   await mounted();
+  fireEvent.click(
+    screen.getByText("Account & storage", { selector: "summary" }),
+  );
   const account = screen.getByRole("region", { name: "Vault account" });
   expect(
     (within(account).getByText("Get quote") as HTMLButtonElement).disabled,
@@ -438,4 +441,64 @@ it("closes a failed key attempt when its header disappears on refresh", async ()
     expect(x.client.session.capture()).toBeGreaterThan(ticket),
   );
   expect(screen.queryByText("Retry opening Vault")).toBeNull();
+});
+
+it("keeps the open draft and root when account and upload disclosures are toggled", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Private note body"), {
+    target: { value: "unsaved private draft" },
+  });
+  const root = x.client.session.root;
+  const ticket = x.client.session.capture();
+  for (const name of ["Account & storage", "Interrupted uploads"]) {
+    const summary = screen.getByText(name, { selector: "summary" });
+    fireEvent.click(summary);
+    expect(summary.closest("details")?.open).toBe(true);
+    expect(x.client.session.root).toBe(root);
+    expect(x.client.session.capture()).toBe(ticket);
+    expect(screen.getByDisplayValue("unsaved private draft")).toBeTruthy();
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Close Vault" }));
+  expect(x.client.session.root).toBeUndefined();
+  expect(screen.queryByDisplayValue("unsaved private draft")).toBeNull();
+});
+it("toggles navigation without disturbing drafts and returns focus before switching Vaults", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Document title"), {
+    target: { value: "private draft" },
+  });
+  const root = x.client.session.root;
+  const toggle = screen.getByRole("button", {
+    name: "Toggle Vault navigation",
+  });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(x.client.session.root).toBe(root);
+  expect(screen.getByDisplayValue("private draft")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Vault 2 · Active" }));
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(toggle);
+  expect(screen.queryByDisplayValue("private draft")).toBeNull();
+  await waitFor(() =>
+    expect(Array.from(x.client.header?.id ?? [])).toEqual(
+      Array.from(x.headers[1].id),
+    ),
+  );
+  await screen.findByLabelText("Document title");
+});
+it("keeps the loss disclosure before create and outside collapsed navigation", async () => {
+  await mounted();
+  const disclosure = screen.getByText(
+    /This release has no backup or independent recovery/,
+  );
+  const create = screen.getByRole("button", { name: "Create Vault" });
+  expect(create.getAttribute("aria-describedby")).toBe(disclosure.id);
+  expect(disclosure.closest("#vault-navigation")).toBeNull();
+  expect(
+    disclosure.compareDocumentPosition(create) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });

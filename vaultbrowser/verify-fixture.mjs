@@ -112,13 +112,11 @@ try {
   await page.getByText("Vault 1 · Active", { exact: true }).click();
   await title.waitFor();
   await page.getByLabel("Document type").selectOption("attachment");
-  await page
-    .getByLabel("Attachment (10 MiB maximum)")
-    .setInputFiles({
-      name: "private.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("private file"),
-    });
+  await page.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
+    name: "private.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("private file"),
+  });
   await page.evaluate(() => {
     window.retainedFile = document.querySelector('input[type="file"]');
   });
@@ -130,14 +128,45 @@ try {
       .isVisible(),
     true,
   );
+  await page.getByText("Account & storage", { exact: true }).click();
   assert.equal(
     await page.getByText("Get quote", { exact: true }).isDisabled(),
     true,
   );
+  await page.setViewportSize({ width: 375, height: 812 });
+  const toggle = page.getByRole("button", { name: "Toggle Vault navigation" });
+  assert.equal(await toggle.isVisible(), true);
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(
+    await page.getByText("Vault 1 · Active", { exact: true }).isVisible(),
+    false,
+  );
+  assert.equal(
+    await page
+      .getByText(/This release has no backup or independent recovery/)
+      .isVisible(),
+    true,
+  );
+  await toggle.click();
+  await page.getByRole("button", { name: "Vault 1 · Active" }).click();
+  await title.waitFor();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(
+    await toggle.evaluate((e) => e === document.activeElement),
+    true,
+  );
+  await title.fill("mobile private draft");
+  await toggle.click();
+  assert.equal(await title.inputValue(), "mobile private draft");
+  await page.getByRole("button", { name: "Vault 2 · Active" }).click();
+  await title.waitFor();
+  assert.equal(await title.inputValue(), "");
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  await page.getByText("Close Vault", { exact: true }).click();
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log(
-    "PASS: encrypted save/read fixture, keyboard exit/preview, refresh preservation, history download, DOM/editor undo/password/File/Blob wipe, visible loss disclosure, funding disabled; 0 page errors, 0 external requests. Synthetic UI only.",
+    "PASS: encrypted save/read fixture, keyboard exit/preview, refresh preservation, history download, DOM/editor undo/password/File/Blob wipe, visible loss disclosure, funding disabled, mobile navigation/focus/draft isolation; 0 page errors, 0 external requests. Synthetic UI only.",
   );
 } finally {
   await browser.close();
