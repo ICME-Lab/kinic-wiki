@@ -2,7 +2,7 @@
 
 This runbook prepares the authenticated Kinic Wiki app for review. It never stores reviewer credentials in the repository.
 
-## Privacy-policy resubmission
+## Publication checks
 
 Publish `docs/legal/privacy-policy.md` at `https://wiki.kinic.xyz/privacy-policy` and confirm that the submission portal points to it. Verify that the published tool disclosures match the portal's Scan Tools results, including nested metadata and conflict responses.
 
@@ -50,7 +50,7 @@ pnpm --dir workers/wiki-mcp review:smoke -- \
   --open
 ```
 
-The seeder is idempotent for matching content and metadata, refuses truncated inventory, and refuses to overwrite a conflicting stable page. If an obsolete fixture already occupies either stable path, recreate the dedicated review database explicitly instead of silently migrating it. The smoke test uses random scratch names, verifies exact expected evidence, and removes each owned node with its current etag. If a write response is lost, cleanup rereads the path and deletes it only when its content exactly matches the recorded marker.
+Confirm seeding succeeds, all smoke runs pass, and no test scratch nodes remain. If an obsolete fixture conflicts with a stable evidence page, explicitly recreate the dedicated review database rather than overwriting that page. For leftover scratch nodes, read their current content and etags, verify they belong to the failed test, then remove only those nodes.
 
 ## Prepare production
 
@@ -75,9 +75,9 @@ For both ChatGPT web and mobile:
 1. Use a clean browser profile or mobile device.
 2. Start a new conversation with only the Private Kinic Wiki app enabled.
 3. Choose `OpenAI reviewer sign in` and enter only the submitted username and password. No account creation, passkey, or 2FA is allowed.
-4. Run all five positive prompts from `workers/wiki-mcp/chatgpt-app-submission.json` once.
-5. Confirm the two write cases create only random paths below `/OpenAIReview/scratch/` and clean them up.
-6. Run all three negative prompts and confirm Kinic Wiki is not invoked.
+4. Run every positive prompt defined in `workers/wiki-mcp/chatgpt-app-submission.json` once.
+5. Confirm every write case creates only random paths below `/OpenAIReview/scratch/` and cleans them up.
+6. Run every negative prompt defined in the same JSON and confirm Kinic Wiki is not invoked.
 7. Record the result from that clean conversation and reconnect once only if routing or cached descriptors look stale.
 
 Record the date, client, prompt number, invoked tool sequence, pass/fail result, and any leftover scratch path. Remove leftovers only after reading their current etags. Do not put credentials, service keys, OAuth tokens, delegations, principals, or private node bodies in the record.
@@ -85,16 +85,3 @@ Record the date, client, prompt number, invoked tool sequence, pass/fail result,
 ## Submission gate
 
 Submit only when the checked-in JSON validates, authenticated production smoke passes three consecutive runs, all web and mobile cases pass consistently, and the portal contains working reviewer credentials and concise login instructions.
-
-Use this credential text in the submission portal, substituting only the password:
-
-```text
-Dedicated demo account containing sample data only.
-
-Username: openai-review
-Password: <production review password>
-
-Connect Kinic Wiki, choose "OpenAI reviewer sign in", and enter the credentials above.
-Login provides immediate access to the pre-populated openai-review-fixture database.
-No account creation, passkey, or two-factor authentication is required.
-```
