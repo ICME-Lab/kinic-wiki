@@ -30,6 +30,13 @@ import { VaultEncryptedCleanup } from "./management";
 
 export type VaultWork = (operation: () => Promise<void>) => void;
 const id = (h: Header) => b64(bytes(h.id));
+type WorkspaceState = {
+  selection:
+    | { kind: "none" }
+    | { kind: "selected" | "open"; header: Header };
+  // An unresolved create survives selecting another Vault and list refreshes.
+  creation: "idle" | "unresolved";
+};
 export function VaultWorkspace({ client }: { client: VaultClient }) {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [vaults, setVaults] = useState<Header[]>([]);
@@ -37,17 +44,38 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     [],
   );
   const [uploadAfter, setUploadAfter] = useState<Uint8Array>();
-  const [selected, setSelected] = useState<Header>();
-  const selectedRef = useRef<Header | undefined>(undefined);
-  const select = useCallback((header?: Header) => {
-    selectedRef.current = header;
-    setSelected(header);
-  }, []);
+  const [workspace, setWorkspace] = useState<WorkspaceState>({
+    selection: { kind: "none" },
+    creation: "idle",
+  });
+  const workspaceRef = useRef(workspace);
+  const updateWorkspace = useCallback(
+    (update: (state: WorkspaceState) => WorkspaceState) => {
+      workspaceRef.current = update(workspaceRef.current);
+      setWorkspace(workspaceRef.current);
+    },
+    [],
+  );
+  const select = useCallback(
+    (header?: Header, kind?: "selected" | "open") => {
+      updateWorkspace((state) => ({
+        ...state,
+        selection: header
+          ? {
+              kind: kind ?? (state.selection.kind === "open" ? "open" : "selected"),
+              header,
+            }
+          : { kind: "none" },
+      }));
+    },
+    [updateWorkspace],
+  );
+  const selected =
+    workspace.selection.kind === "none" ? undefined : workspace.selection.header;
+  const opened = workspace.selection.kind === "open";
   const [items, setItems] = useState<Item[]>([]);
   const [quota, setQuota] = useState<Quota>();
-  const [opened, setOpened] = useState(false);
   const [generation, setGeneration] = useState(client.session.capture());
-  const [creationPending, setCreationPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [config, setConfig] = useState<VaultConfig>();
@@ -64,7 +92,6 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       workId.current++;
       busyRef.current = false;
       setBusy(false);
-      setOpened(false);
       select(undefined);
       setItems([]);
       setQuota(undefined);
@@ -140,7 +167,8 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     ]);
     client.session.check(ticket);
     if (!alive.current) return;
-    const previous = selectedRef.current;
+    const selection = workspaceRef.current.selection;
+    const previous = selection.kind === "none" ? undefined : selection.header;
     const listed = previous
       ? list.find((h) => id(h) === id(previous))
       : undefined;
@@ -183,8 +211,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     if (!alive.current) return;
     setItems(list);
     setQuota(q);
-    select(header);
-    setOpened(true);
+    select(header, "open");
     await refreshLists();
   };
   const refreshConfiguration = useCallback(async () => {
@@ -302,13 +329,16 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
               disabled={busy || !eligible}
               onClick={() =>
                 run(async () => {
-                  setCreationPending(true);
+                  updateWorkspace((state) => ({
+                    ...state,
+                    creation: "unresolved",
+                  }));
                   const pending = client.create();
                   const ticket = client.session.capture();
                   const header = await pending;
                   client.session.check(ticket);
                   if (!alive.current) return;
-                  setCreationPending(false);
+                  updateWorkspace((state) => ({ ...state, creation: "idle" }));
                   select(header);
                   await refreshLists();
                   client.session.check(ticket);
@@ -317,7 +347,9 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
               }
             >
               <Plus size={16} aria-hidden />
-              {creationPending ? "Retry Vault creation" : "Create Vault"}
+              {workspace.creation === "unresolved"
+                ? "Retry Vault creation"
+                : "Create Vault"}
             </VaultButton>
             <VaultButton disabled={busy} onClick={() => run(refreshLists)}>
               <RefreshCw size={15} aria-hidden />

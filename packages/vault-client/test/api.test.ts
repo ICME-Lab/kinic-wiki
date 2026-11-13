@@ -516,3 +516,128 @@ it.each(["lock", "switch", "destroy"])(
     }
   },
 );
+
+type MutationReply = Awaited<ReturnType<VaultActor["mutate"]>>;
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it("rejects concurrent mutation dispatch and keeps a newer flight after old finally", async () => {
+  const { client, actor } = setup();
+  const oldReply = deferred<MutationReply>();
+  vi.mocked(actor.mutate).mockReturnValueOnce(oldReply.promise);
+  const old = client.collect();
+  await expect(client.collect()).rejects.toThrow("MutationInProgress");
+  await expect(client.mutate({ DeleteVault: { vault: id } })).rejects.toThrow(
+    "ResolvePendingMutation",
+  );
+  expect(actor.mutate).toHaveBeenCalledOnce();
+  client.session.lock();
+  const newReply = deferred<MutationReply>();
+  vi.mocked(actor.mutate).mockReturnValueOnce(newReply.promise);
+  const current = client.collect();
+  oldReply.resolve({ Ok: { Collected: 1n } });
+  await expect(old).rejects.toThrow("Locked");
+  await expect(client.collect()).rejects.toThrow("MutationInProgress");
+  expect(actor.mutate).toHaveBeenCalledTimes(2);
+  newReply.resolve({ Ok: { Collected: 2n } });
+  await expect(current).resolves.toEqual({ Collected: 2n });
+  await expect(client.retryMutation()).rejects.toThrow("NoPendingMutation");
+});
+
+it("clears delivered mutation errors and permits a different next request", async () => {
+  const { client, actor } = setup();
+  vi.mocked(actor.mutate).mockResolvedValueOnce({ Err: { Conflict: null } });
+  await expect(client.mutate({ DeleteVault: { vault: id } })).rejects.toThrow(
+    "Conflict",
+  );
+  await expect(client.retryMutation()).rejects.toThrow("NoPendingMutation");
+  await expect(client.collect()).resolves.toEqual({ Done: null });
+});
+
+it("does not let old save preparation release a newer preparation", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  type HeaderReply = Awaited<ReturnType<VaultActor["get_vault_header"]>>;
+  const oldHeader = deferred<HeaderReply>();
+  vi.mocked(actor.get_vault_header).mockReturnValueOnce(oldHeader.promise);
+  const old = client.save({ kind: "note", title: "old" }, new Uint8Array([1]));
+  client.session.lock();
+  await client.open(header());
+  const newHeader = deferred<HeaderReply>();
+  vi.mocked(actor.get_vault_header).mockReturnValueOnce(newHeader.promise);
+  const current = client.save(
+    { kind: "note", title: "new" },
+    new Uint8Array([2]),
+  );
+  oldHeader.resolve({ Ok: header() });
+  await expect(old).rejects.toThrow("Locked");
+  await expect(
+    client.save({ kind: "note", title: "third" }, new Uint8Array([3])),
+  ).rejects.toThrow("SavePending");
+  newHeader.resolve({ Ok: header() });
+  await expect(current).rejects.toThrow("network");
+  expect(client.hasPendingSave).toBe(true);
+  const revision = await client.resumeSave();
+  const doc = await client.read(revision);
+  expect(doc.metadata.title).toBe("new");
+  expect(doc.plaintext).toEqual(new Uint8Array([2]));
+});
+
+it("does not let an old save flight release or replace a newer encrypted job", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  const original = vi.mocked(actor.mutate).getMockImplementation()!;
+  const oldReply = deferred<MutationReply>();
+  vi.mocked(actor.mutate).mockReturnValueOnce(oldReply.promise);
+  const old = client.save({ kind: "note", title: "old" }, new Uint8Array([1]));
+  await vi.waitFor(() => expect(actor.mutate).toHaveBeenCalledOnce());
+  client.session.lock();
+  await client.open(header());
+  const newReply = deferred<MutationReply>();
+  vi.mocked(actor.mutate).mockReturnValueOnce(newReply.promise);
+  const current = client.save(
+    { kind: "note", title: "new" },
+    new Uint8Array([2]),
+  );
+  await vi.waitFor(() => expect(actor.mutate).toHaveBeenCalledTimes(2));
+  oldReply.resolve({ Ok: { Done: null } });
+  await expect(old).rejects.toThrow("Locked");
+  await expect(client.resumeSave()).rejects.toThrow("SaveInProgress");
+  await expect(client.cancelSave()).rejects.toThrow("SaveInProgress");
+  await expect(
+    client.save({ kind: "note", title: "third" }, new Uint8Array([3])),
+  ).rejects.toThrow("SavePending");
+  newReply.resolve(await original(vi.mocked(actor.mutate).mock.calls[1][0]));
+  await expect(current).rejects.toThrow("network");
+  const revision = await client.resumeSave();
+  const doc = await client.read(revision);
+  expect(doc.metadata.title).toBe("new");
+  expect(doc.plaintext).toEqual(new Uint8Array([2]));
+});
+
+it("retries delete progress exactly and clears delivered cleanup errors", async () => {
+  const { client, actor } = setup();
+  vi.mocked(actor.mutate)
+    .mockRejectedValueOnce(Error("lost"))
+    .mockResolvedValueOnce({ Ok: { Progress: false } })
+    .mockResolvedValueOnce({ Ok: { Progress: true } });
+  await expect(client.deleteVault(id)).rejects.toThrow("lost");
+  await expect(client.cancelUpload(id, new Uint8Array(16))).rejects.toThrow(
+    "ResolvePendingMutation",
+  );
+  await client.deleteVault(id);
+  const calls = vi.mocked(actor.mutate).mock.calls;
+  expect(calls[0][0]).toEqual(calls[1][0]);
+  expect(calls[1][0].action).toEqual(calls[2][0].action);
+  expect(calls[1][0].operation).not.toEqual(calls[2][0].operation);
+  vi.mocked(actor.mutate).mockResolvedValueOnce({ Err: { NotFound: null } });
+  await expect(client.deleteVault(id)).rejects.toThrow("NotFound");
+  await expect(
+    client.cancelUpload(id, new Uint8Array(16)),
+  ).resolves.toBeUndefined();
+});

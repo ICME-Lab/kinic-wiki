@@ -125,6 +125,8 @@ it("retries exact create after refresh and key failure without duplicating a Vau
       (screen.getByText("Retry Vault creation") as HTMLButtonElement).disabled,
     ).toBe(false),
   );
+  await x.open(2);
+  expect(screen.getByText("Retry Vault creation")).toBeTruthy();
   x.failKey(true);
   fireEvent.click(screen.getByText("Retry Vault creation"));
   await screen.findByText(/key service is unavailable/);
@@ -136,12 +138,19 @@ it("retries exact create after refresh and key failure without duplicating a Vau
   await screen.findByLabelText("Document title");
   expect(x.headers).toHaveLength(3);
 });
-it.each(["resume", "cancel"])(
-  "handles lost save replies with %s",
-  async (action) => {
+it.each([
+  ["resume", "BeginRevision"],
+  ["resume", "PutChunk"],
+  ["resume", "CommitRevision"],
+  ["cancel", "BeginRevision"],
+  ["cancel", "PutChunk"],
+  ["cancel", "CommitRevision"],
+])(
+  "handles %s after a lost %s reply",
+  async (action, phase) => {
     const x = await mounted();
     await x.open();
-    x.lose("PutChunk");
+    x.lose(phase);
     fireEvent.change(screen.getByLabelText("Document title"), {
       target: { value: "Lost note" },
     });
@@ -155,8 +164,9 @@ it.each(["resume", "cancel"])(
       screen.getByText(action === "resume" ? "Resume save" : "Cancel save"),
     );
     await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
-    const chunks = x.calls.filter((m) => "PutChunk" in m.action);
-    expect(chunks[0]).toEqual(chunks[1]);
+    const retries = x.calls.filter((m) => phase in m.action);
+    expect(retries).toHaveLength(2);
+    expect(retries[0]).toEqual(retries[1]);
     expect(x.uploads.size).toBe(0);
     if (action === "resume")
       await screen.findByRole("button", { name: "Lost note" });
@@ -639,3 +649,76 @@ it.each(["Pending", "Deleting", "failed-open"])(
     expect(x.calls[2].operation).not.toEqual(x.calls[0].operation);
   },
 );
+
+it("reconciles a lost cancellation reply while retaining the pending save", async () => {
+  const x = await mounted();
+  await x.open();
+  x.lose("PutChunk");
+  fireEvent.change(screen.getByLabelText("Document title"), {
+    target: { value: "Cancelled note" },
+  });
+  fireEvent.change(screen.getByLabelText("Private note body"), {
+    target: { value: "cancelled body" },
+  });
+  fireEvent.click(screen.getByText("Save document"));
+  await screen.findByRole("alert");
+  x.lose("CancelUpload");
+  fireEvent.click(screen.getByText("Cancel save"));
+  await waitFor(() =>
+    expect(x.calls.filter((m) => "CancelUpload" in m.action)).toHaveLength(1),
+  );
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Cancel save") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  expect(x.client.hasPendingSave).toBe(true);
+  fireEvent.click(screen.getByText("Cancel save"));
+  await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
+  const calls = x.calls.filter((m) => "CancelUpload" in m.action);
+  expect(calls).toHaveLength(2);
+  expect(calls[0]).toEqual(calls[1]);
+  expect(x.uploads.size).toBe(0);
+  expect(x.revisions).toHaveLength(0);
+});
+
+it("keeps newer opening work busy when an old opening finishes after close", async () => {
+  const x = await mounted();
+  type KeyReply = Awaited<ReturnType<typeof x.actor.derive_vault_key>>;
+  let finishOld!: (reply: KeyReply) => void;
+  let finishNew!: (reply: KeyReply) => void;
+  vi.spyOn(x.actor, "derive_vault_key")
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishNew = resolve;
+        }),
+    );
+  fireEvent.click(screen.getByText("Vault 1 · Active"));
+  await waitFor(() => expect(finishOld).toBeTypeOf("function"));
+  fireEvent.click(screen.getByText("Close Vault"));
+  fireEvent.click(screen.getByText("Vault 2 · Active"));
+  await waitFor(() => expect(finishNew).toBeTypeOf("function"));
+  const reply = { Ok: { input: [], public_key: [], encrypted_key: [] } };
+  await act(async () => finishOld(reply));
+  expect(screen.getByText("Processing Vault operation…")).toBeTruthy();
+  expect(
+    (screen.getByText("Refresh Vaults") as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByLabelText("Document title")).toBeNull();
+  await act(async () => finishNew(reply));
+  await screen.findByLabelText("Document title");
+  await waitFor(() =>
+    expect(screen.queryByText("Processing Vault operation…")).toBeNull(),
+  );
+  expect(Array.from(x.client.header?.id ?? [])).toEqual(
+    Array.from(x.headers[1].id),
+  );
+});

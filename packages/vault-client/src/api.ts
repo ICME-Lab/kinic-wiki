@@ -47,6 +47,21 @@ type Save = {
   ticket: number;
   revision?: Revision;
 };
+type RequestState =
+  | { kind: "idle" }
+  | { kind: "sending" | "ambiguous"; mutation: Mutation };
+type SaveState =
+  | { kind: "idle" }
+  | { kind: "preparing" }
+  | { kind: "ready" | "sending"; job: Save };
+type CleanupJob = {
+  vault: Uint8Array;
+  operation: Uint8Array;
+} & (
+  | { kind: "cancel"; upload: Uint8Array; job: Uint8Array }
+  | { kind: "delete" }
+);
+
 export class VaultClient {
   readonly session = new Session();
   readonly actor: VaultActor;
@@ -62,18 +77,9 @@ export class VaultClient {
     operation: Uint8Array;
     transport: TransportSecretKey;
   };
-  private pending?: Mutation;
-  private saveJob?: Save;
-  private cleanupJob?: {
-    kind: "cancel" | "delete";
-    vault: Uint8Array;
-    upload?: Uint8Array;
-    job: Uint8Array;
-    operation: Uint8Array;
-  };
-  private flight?: object;
-  private preparing?: object;
-  private mutationFlight?: object;
+  private request: RequestState = { kind: "idle" };
+  private saveState: SaveState = { kind: "idle" };
+  private cleanupState: { kind: "idle" } | CleanupJob = { kind: "idle" };
   constructor(options: {
     actor: VaultActor;
     identity: Identity;
@@ -89,13 +95,10 @@ export class VaultClient {
     this.session.addLockCleanup(() => {
       this.keyAttempt = undefined;
       this.pinnedPublicKey = undefined;
-      this.pending = undefined;
-      this.cleanupJob = undefined;
-      this.saveJob?.chunks.forEach((x) => x.fill(0));
-      this.saveJob = undefined;
-      this.flight = undefined;
-      this.preparing = undefined;
-      this.mutationFlight = undefined;
+      this.request = { kind: "idle" };
+      this.cleanupState = { kind: "idle" };
+      this.pendingSave?.chunks.forEach((x) => x.fill(0));
+      this.saveState = { kind: "idle" };
     });
   }
   destroy() {
@@ -282,28 +285,41 @@ export class VaultClient {
   ): Promise<MutationResult> {
     this.checkLive();
     const proposed = structuredClone({ action, operation });
-    if (this.pending && stable(this.pending) !== stable(proposed))
+    const previous = this.request;
+    if (
+      previous.kind !== "idle" &&
+      stable(previous.mutation) !== stable(proposed)
+    )
       throw Error("ResolvePendingMutation");
-    if (this.mutationFlight) throw Error("MutationInProgress");
-    const mutation = (this.pending ??= proposed);
+    if (previous.kind === "sending") throw Error("MutationInProgress");
+    const mutation = previous.kind === "idle" ? proposed : previous.mutation;
     const t = this.session.capture();
-    const flight = {};
-    this.mutationFlight = flight;
+    const sending: RequestState = { kind: "sending", mutation };
+    this.request = sending;
     try {
       const result = await this.actor.mutate(mutation);
       this.session.check(t);
-      this.pending = undefined;
+      this.request = { kind: "idle" };
       return ok(result);
     } finally {
-      if (this.mutationFlight === flight) this.mutationFlight = undefined;
+      // A transport failure preserves the exact request; a delivered Err clears it.
+      // An older callback must never replace a newer session's request.
+      if (this.request === sending)
+        this.request = { kind: "ambiguous", mutation };
     }
   }
   async retryMutation() {
-    if (!this.pending) throw Error("NoPendingMutation");
-    return this.mutate(this.pending.action, bytes(this.pending.operation));
+    if (this.request.kind === "idle") throw Error("NoPendingMutation");
+    const { mutation } = this.request;
+    return this.mutate(mutation.action, bytes(mutation.operation));
+  }
+  private get pendingSave() {
+    return this.saveState.kind === "ready" || this.saveState.kind === "sending"
+      ? this.saveState.job
+      : undefined;
   }
   get hasPendingSave() {
-    return !!this.saveJob;
+    return !!this.pendingSave;
   }
   async save(
     metadata: Metadata,
@@ -311,10 +327,10 @@ export class VaultClient {
     item?: Item,
     progress: (n: number) => void = () => {},
   ) {
-    if (this.saveJob || this.preparing) throw Error("SavePending");
-    if (this.pending) throw Error("ResolvePendingMutation");
-    const preparing = {};
-    this.preparing = preparing;
+    if (this.saveState.kind !== "idle") throw Error("SavePending");
+    if (this.request.kind !== "idle") throw Error("ResolvePendingMutation");
+    const preparing: SaveState = { kind: "preparing" };
+    this.saveState = preparing;
     const detach = this.session.addLockCleanup(() => plaintext.fill(0));
     try {
       const t = this.session.capture();
@@ -340,25 +356,28 @@ export class VaultClient {
         manifest: doc.manifest,
         chunk_hashes: doc.hashes,
       };
-      this.saveJob = {
-        request,
-        chunks: doc.chunks,
-        phase: -1,
-        operation: randomBytes(16),
-        ticket: t,
+      this.saveState = {
+        kind: "ready",
+        job: {
+          request,
+          chunks: doc.chunks,
+          phase: -1,
+          operation: randomBytes(16),
+          ticket: t,
+        },
       };
     } finally {
       detach();
-      if (this.preparing === preparing) this.preparing = undefined;
+      if (this.saveState === preparing) this.saveState = { kind: "idle" };
     }
     return this.resumeSave(progress);
   }
   async resumeSave(progress: (n: number) => void = () => {}) {
-    const j = this.saveJob;
+    const j = this.pendingSave;
     if (!j) throw Error("NoPendingSave");
-    if (this.flight) throw Error("SaveInProgress");
-    const flight = {};
-    this.flight = flight;
+    if (this.saveState.kind === "sending") throw Error("SaveInProgress");
+    const sending: SaveState = { kind: "sending", job: j };
+    this.saveState = sending;
     try {
       await this.checkedContext();
       this.session.check(j.ticket);
@@ -409,10 +428,11 @@ export class VaultClient {
       }
       const revision = j.revision;
       if (!revision) throw Error("InvalidReceipt");
-      this.saveJob = undefined;
+      this.saveState = { kind: "idle" };
       return revision;
     } finally {
-      if (this.flight === flight) this.flight = undefined;
+      if (this.saveState === sending)
+        this.saveState = { kind: "ready", job: j };
     }
   }
   async items() {
@@ -499,7 +519,7 @@ export class VaultClient {
     }
   }
   async deleteObject(r: Revision) {
-    if (this.saveJob || this.preparing) throw Error("SavePending");
+    if (this.saveState.kind !== "idle") throw Error("SavePending");
     const t = this.session.capture();
     const c = await this.checkedContext();
     this.session.check(t);
@@ -513,7 +533,7 @@ export class VaultClient {
     });
   }
   async purgeObject(r: Revision) {
-    if (this.saveJob || this.preparing) throw Error("SavePending");
+    if (this.saveState.kind !== "idle") throw Error("SavePending");
     const t = this.session.capture();
     const c = await this.checkedContext();
     this.session.check(t);
@@ -558,11 +578,11 @@ export class VaultClient {
     return result;
   }
   async cancelSave() {
-    const j = this.saveJob;
+    const j = this.pendingSave;
     if (!j) throw Error("NoPendingSave");
-    if (this.flight) throw Error("SaveInProgress");
+    if (this.saveState.kind === "sending") throw Error("SaveInProgress");
     const t = this.session.capture();
-    if (this.pending) {
+    if (this.request.kind !== "idle") {
       await this.retryMutation();
       this.session.check(t);
     }
@@ -581,23 +601,24 @@ export class VaultClient {
     }
     this.session.check(t);
     j.chunks.forEach((x) => x.fill(0));
-    this.saveJob = undefined;
-    this.cleanupJob = undefined;
+    this.saveState = { kind: "idle" };
+    this.cleanupState = { kind: "idle" };
     return status;
   }
   async cancelUpload(vault: Uint8Array, upload: Uint8Array, job?: Uint8Array) {
     this.checkLive();
-    const j = (this.cleanupJob ??= {
-      kind: "cancel",
-      vault: bytes(vault),
-      upload: bytes(upload),
-      job: job ? bytes(job) : randomBytes(16),
-      operation: randomBytes(16),
-    });
+    if (this.cleanupState.kind === "idle")
+      this.cleanupState = {
+        kind: "cancel",
+        vault: bytes(vault),
+        upload: bytes(upload),
+        job: job ? bytes(job) : randomBytes(16),
+        operation: randomBytes(16),
+      };
+    const j = this.cleanupState;
     if (
       j.kind !== "cancel" ||
       !equal(j.vault, vault) ||
-      !j.upload ||
       !equal(j.upload, upload) ||
       (job && !equal(j.job, job))
     )
@@ -605,25 +626,28 @@ export class VaultClient {
     try {
       await this.cleanup(j);
     } catch (error) {
-      if (!this.pending && this.cleanupJob === j) this.cleanupJob = undefined;
+      if (this.request.kind === "idle" && this.cleanupState === j)
+        this.cleanupState = { kind: "idle" };
       throw error;
     }
   }
   async deleteVault(vault: Uint8Array) {
     this.checkLive();
     const t = this.session.capture();
-    const j = (this.cleanupJob ??= {
-      kind: "delete",
-      vault: bytes(vault),
-      job: randomBytes(16),
-      operation: randomBytes(16),
-    });
+    if (this.cleanupState.kind === "idle")
+      this.cleanupState = {
+        kind: "delete",
+        vault: bytes(vault),
+        operation: randomBytes(16),
+      };
+    const j = this.cleanupState;
     if (j.kind !== "delete" || !equal(j.vault, vault))
       throw Error("ResolvePendingMutation");
     try {
       await this.cleanup(j);
     } catch (error) {
-      if (!this.pending && this.cleanupJob === j) this.cleanupJob = undefined;
+      if (this.request.kind === "idle" && this.cleanupState === j)
+        this.cleanupState = { kind: "idle" };
       throw error;
     }
     this.session.check(t);
@@ -632,18 +656,18 @@ export class VaultClient {
       this.header = undefined;
     }
   }
-  private async cleanup(j: NonNullable<VaultClient["cleanupJob"]>) {
+  private async cleanup(j: CleanupJob) {
     const t = this.session.capture();
     for (;;) {
       const action: Action =
         j.kind === "cancel"
-          ? { CancelUpload: { vault: j.vault, upload: j.upload!, job: j.job } }
+          ? { CancelUpload: { vault: j.vault, upload: j.upload, job: j.job } }
           : { DeleteVault: { vault: j.vault } };
       const r = await this.mutate(action, j.operation);
       this.session.check(t);
       if (!("Progress" in r)) throw Error("InvalidReceipt");
       if (r.Progress) {
-        this.cleanupJob = undefined;
+        this.cleanupState = { kind: "idle" };
         return;
       }
       j.operation = randomBytes(16);
@@ -653,8 +677,9 @@ export class VaultClient {
     try {
       return await this.mutate(
         { Collect: null },
-        this.pending && "Collect" in this.pending.action
-          ? bytes(this.pending.operation)
+        this.request.kind !== "idle" &&
+        "Collect" in this.request.mutation.action
+          ? bytes(this.request.mutation.operation)
           : undefined,
       );
     } catch (e) {
