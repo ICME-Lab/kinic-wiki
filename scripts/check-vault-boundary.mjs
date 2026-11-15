@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { checkCargo, checkTypescript } from './vault-boundary-graph.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -19,4 +21,6 @@ for (const file of readdirSync(root + 'packages/ui/src').filter(name => /\.(ts|t
 }
 assert.match(readFileSync(root + 'wikibrowser/components/admin-shell.tsx', 'utf8'), /https:\/\/vault\.kinic\.xyz/);
 assert.doesNotMatch(readFileSync(root + 'vaultbrowser/icp.yaml', 'utf8'), /name: wiki/);
+checkCargo(JSON.parse(execFileSync('cargo', ['metadata', '--format-version', '1', '--locked'], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })));
+checkTypescript(root);
 console.log('Wiki/Vault runtime, contract, browser and deployment boundaries PASS');

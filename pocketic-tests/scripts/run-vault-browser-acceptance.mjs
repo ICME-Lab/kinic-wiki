@@ -202,6 +202,8 @@ try {
     "wasm32-unknown-unknown",
     "--release",
     "--locked",
+    "--features",
+    "vault-canister/embedded-assets",
   ];
   run(
     "cargo",

@@ -101,7 +101,7 @@ jobs:
 
           js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^patches/|^scripts/cloudflare/|^crates/vfs_canister/vfs\.did$)'
 
-          set_output vault "($js_workspace|^crates/vault_|^crates/kinic_sqlite_compat/|^packages/vault-|^packages/ui/|^vaultbrowser/|^scripts/.*vault.*|^pocketic-tests/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^\.github/workflows/ci\.yml$)"
+          printf '%s\n' "$changed" | node scripts/vault-ci-paths.mjs
           set_output canister '^(packages/vfs-client-core/api-guidance\.json$|Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
           set_output rust_all '^(Cargo\.(toml|lock)$|vendor/ic-agent/|examples/learning/|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat|vault_canister|vault_store|vault_service|vault_types)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output cli_docs '^(docs/CLI\.md|\.github/workflows/ci\.yml)$'
@@ -659,11 +659,11 @@ jobs:
       - run: pnpm run release:package
       - run: pnpm run release:check
 
-  vault-check:
+  vault-fast-check:
     needs: changes
     if: needs.changes.outputs.vault == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
@@ -691,6 +691,8 @@ jobs:
           tar -xJf target/tools/didc.tar.xz -C target/tools --strip-components=1 didc-x86_64-unknown-linux-gnu/didc
           test "$(target/tools/didc --version)" = "didc 0.6.2"
           echo "$GITHUB_WORKSPACE/target/tools" >> "$GITHUB_PATH"
+      - name: Test boundary graphs and CI selection
+        run: node --test scripts/vault-boundary-graph.test.mjs
       - name: Contracts and origin boundary
         run: |
           node scripts/check-vault-boundary.mjs
@@ -708,6 +710,30 @@ jobs:
           "$GITHUB_WORKSPACE"/pocketic-tests/helpers/vault-*.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/integration/vault-*.test.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/scripts/*vault*.mjs
+
+  vault-wasm-acceptance:
+    needs: [changes, vault-fast-check]
+    if: needs.changes.outputs.vault == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: corepack enable && corepack prepare pnpm@11.0.8 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: npm ci --prefix pocketic-tests --ignore-scripts
+      - run: rustup toolchain install --profile minimal && rustup target add wasm32-unknown-unknown
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-vault-cargo-${{ hashFiles('Cargo.lock') }}
       - name: Build current production assets and schema8 acceptance fixtures
         run: pnpm --dir pocketic-tests run build:vault-acceptance
       - name: Provision PocketIC 16.1
@@ -721,6 +747,62 @@ jobs:
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
         run: pnpm --dir pocketic-tests test:vault
+      - name: Seal acceptance artifact handoff
+        run: |
+          git rev-parse HEAD > target/vault-ii-acceptance/source-commit.txt
+          find target/vault-ii-acceptance -maxdepth 1 -type f -print0 > /tmp/vault-artifacts
+          find target/vault-ii-acceptance/client -type f -print0 >> /tmp/vault-artifacts
+          printf '%s\0' target/vault-synthetic-funding-build/provenance.json target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm target/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm >> /tmp/vault-artifacts
+          sort -z /tmp/vault-artifacts | xargs -0 sha256sum > target/vault-artifacts.sha256
+          tar -czf target/vault-acceptance-artifacts.tar.gz --null -T /tmp/vault-artifacts target/vault-artifacts.sha256
+          du -h target/vault-acceptance-artifacts.tar.gz >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vault-acceptance-artifacts
+          path: target/vault-acceptance-artifacts.tar.gz
+          if-no-files-found: error
+      - name: Preserve Wasm acceptance provenance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-wasm-acceptance-provenance
+          path: |
+            target/vault-ii-acceptance/*.json
+            target/vault-synthetic-funding-build/provenance.json
+
+  vault-browser-acceptance:
+    needs: [changes, vault-wasm-acceptance]
+    if: needs.changes.outputs.vault == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: corepack enable && corepack prepare pnpm@11.0.8 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: npm ci --prefix pocketic-tests --ignore-scripts
+      - run: rustup toolchain install --profile minimal && rustup target add wasm32-unknown-unknown
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-vault-cargo-${{ hashFiles('Cargo.lock') }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: vault-acceptance-artifacts
+          path: target
+      - name: Verify acceptance artifact handoff
+        run: |
+          tar -xzf target/vault-acceptance-artifacts.tar.gz
+          sha256sum --strict -c target/vault-artifacts.sha256
+          test "$(cat target/vault-ii-acceptance/source-commit.txt)" = "$(git rev-parse HEAD)"
+      - run: mkdir -p target/tools
       - name: Install pinned local-network CLI and Chromium
         run: |
           curl -fsSL --retry 3 https://github.com/dfinity/icp-cli/releases/download/v1.0.2/icp-cli-x86_64-unknown-linux-gnu.tar.xz -o target/tools/icp.tar.xz
