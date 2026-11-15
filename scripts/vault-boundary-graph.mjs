@@ -60,7 +60,7 @@ export function checkTypescript(root, ts = loadParser(root)) {
     if (/^(wikibrowser|packages\/vfs-)/.test(name)) return 'wiki';
     if (/^packages\/ui\//.test(name)) return 'ui';
     if (serviceFiles.has(p)) return 'service';
-    if (/^external:(?:@icp-sdk\/(?:auth|core)(?:\/|$)|@dfinity\/|(?:.*[\/@-])?(?:auth|actor|agent|network|storage|persistence|sqlite)(?:[\/@-]|$))/i.test(p)) return 'service';
+    if (/^external:(?:node:(?:fs|http|https|net|tls|sqlite)(?:\/|$)|(?:axios|ky|idb|localforage|dexie|better-sqlite3)(?:\/|$)|@icp-sdk\/(?:auth|core)(?:\/|$)|@dfinity\/|(?:.*[\/@-])?(?:auth|actor|agent|network|storage|persistence|sqlite)(?:[\/@-]|$))/i.test(p)) return 'service';
     return null;
   };
   const resolveFile = p => [p, ...['.ts', '.tsx', '.js', '.mjs', '/index.ts', '/index.tsx'].map(s => p+s), ...['.ts', '.tsx', '.mts'].map(s => p.replace(/\.[cm]?jsx?$/, s))].find(x => existsSync(x) && !readdirSafe(x));

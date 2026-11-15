@@ -72,3 +72,7 @@ test('CI invokes the tested selector CLI and writes a GitHub output',()=>{
   assert.equal(readFileSync(output,'utf8'),'vault=true\n');
  } finally {rmSync(dir,{recursive:true,force:true});}
 });
+
+for (const dependency of ['node:fs/promises','axios','idb']) test(`shared UI rejects persistence/network package ${dependency}`,()=>fixture({
+ 'packages/ui/src/button.ts':`import * as service from "${dependency}"`
+},root=>assert.throws(()=>checkTypescript(root,ts),/Forbidden ui/)));
