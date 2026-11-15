@@ -34,6 +34,15 @@ export const idlFactory = ({ IDL }) => {
     'cycles_per_kinic' : IDL.Nat64,
     'ledger' : IDL.Principal,
   });
+  const ReconciliationState = IDL.Record({
+    'end' : IDL.Nat64,
+    'next' : IDL.Nat64,
+    'lease' : IDL.Nat64,
+    'start' : IDL.Nat64,
+    'lease_until' : IDL.Nat64,
+    'spender' : IDL.Principal,
+    'lease_generation' : IDL.Int64,
+  });
   const Payment = IDL.Record({
     'fee' : IDL.Nat64,
     'status' : Status,
@@ -47,6 +56,7 @@ export const idlFactory = ({ IDL }) => {
     'wallet' : IDL.Principal,
     'created_at_time' : IDL.Nat64,
     'config' : FundingConfig,
+    'reconciliation' : IDL.Opt(ReconciliationState),
   });
   const Result_1 = IDL.Variant({ 'Ok' : Payment, 'Err' : Error });
   const CreateVault = IDL.Record({
@@ -220,7 +230,18 @@ export const idlFactory = ({ IDL }) => {
   });
   const Result_15 = IDL.Variant({ 'Ok' : MutationResult, 'Err' : Error });
   const Result_16 = IDL.Variant({ 'Ok' : IDL.Opt(Payment), 'Err' : Error });
-  const Result_17 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : Error });
+  const ReconciliationProgress = IDL.Record({
+    'end' : IDL.Nat,
+    'next' : IDL.Nat,
+    'can_continue' : IDL.Bool,
+    'scanned' : IDL.Nat64,
+    'payment' : Payment,
+  });
+  const Result_17 = IDL.Variant({
+    'Ok' : ReconciliationProgress,
+    'Err' : Error,
+  });
+  const Result_18 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : Error });
   return IDL.Service({
     'account_balance' : IDL.Func([], [Result], ['query']),
     'cancel_quote' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_1], []),
@@ -259,8 +280,9 @@ export const idlFactory = ({ IDL }) => {
     'pay_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_1], []),
     'payment_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_16], ['query']),
     'quote_purchase' : IDL.Func([PurchaseRequest], [Result_1], []),
-    'set_config' : IDL.Func([IDL.Opt(VaultConfig)], [Result_17], []),
-    'set_funding_config' : IDL.Func([IDL.Opt(FundingConfig)], [Result_17], []),
+    'reconcile_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_17], []),
+    'set_config' : IDL.Func([IDL.Opt(VaultConfig)], [Result_18], []),
+    'set_funding_config' : IDL.Func([IDL.Opt(FundingConfig)], [Result_18], []),
   });
 };
 export const init = ({ IDL }) => { return []; };

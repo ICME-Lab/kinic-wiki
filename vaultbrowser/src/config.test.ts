@@ -36,3 +36,8 @@ it('requires separate exact local origin and local provider/replica', () => {
     identityProvider: 'https://evil.test'
   }, c.origin)).toThrow();
 });
+
+it('accepts production funding and rejects unrecognized capability values', () => {
+  expect(validateConfig({...config, fundingMode:'production'}, config.origin).fundingMode).toBe('production');
+  expect(() => validateConfig({...config, fundingMode:'enabled' as any}, config.origin)).toThrow();
+});

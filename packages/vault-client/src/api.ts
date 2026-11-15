@@ -120,6 +120,24 @@ export class VaultClient {
       key_name: h.key_name,
     });
   }
+  async reconcilePurchase(operation: Uint8Array) {
+    this.checkLive();
+    const ticket = this.session.capture();
+    const owner = this.identity.getPrincipal().toText();
+    const request = new Uint8Array(operation);
+    const result = await this.actor.reconcile_purchase(request);
+    this.session.check(ticket);
+    this.checkLive();
+    if (owner !== this.identity.getPrincipal().toText())
+      throw Error("TargetChanged");
+    const progress = ok(result);
+    if (
+      progress.payment.wallet.toText() !== owner ||
+      !equal(bytes(progress.payment.request.operation), request)
+    )
+      throw Error("InvalidReceipt");
+    return progress;
+  }
   async listVaults() {
     this.checkLive();
     const t = this.session.capture();

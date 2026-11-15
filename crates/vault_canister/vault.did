@@ -104,6 +104,7 @@ type Payment = record {
   wallet : principal;
   created_at_time : nat64;
   config : FundingConfig;
+  reconciliation : opt ReconciliationState;
 };
 type PendingUpload = record {
   expires : nat64;
@@ -135,6 +136,22 @@ type Quota = record {
   current : nat64;
   charged : nat64;
 };
+type ReconciliationProgress = record {
+  end : nat;
+  next : nat;
+  can_continue : bool;
+  scanned : nat64;
+  payment : Payment;
+};
+type ReconciliationState = record {
+  end : nat64;
+  next : nat64;
+  lease : nat64;
+  start : nat64;
+  lease_until : nat64;
+  spender : principal;
+  lease_generation : int64;
+};
 type Result = variant { Ok : nat64; Err : Error };
 type Result_1 = variant { Ok : Payment; Err : Error };
 type Result_10 = variant { Ok : RevisionPage; Err : Error };
@@ -144,7 +161,8 @@ type Result_13 = variant { Ok : PendingUploads; Err : Error };
 type Result_14 = variant { Ok : vec Header; Err : Error };
 type Result_15 = variant { Ok : MutationResult; Err : Error };
 type Result_16 = variant { Ok : opt Payment; Err : Error };
-type Result_17 = variant { Ok; Err : Error };
+type Result_17 = variant { Ok : ReconciliationProgress; Err : Error };
+type Result_18 = variant { Ok; Err : Error };
 type Result_2 = variant { Ok : Header; Err : Error };
 type Result_3 = variant { Ok : KeyReply; Err : Error };
 type Result_4 = variant { Ok : blob; Err : Error };
@@ -207,6 +225,7 @@ service : () -> {
   pay_purchase : (blob) -> (Result_1);
   payment_status : (blob) -> (Result_16) query;
   quote_purchase : (PurchaseRequest) -> (Result_1);
-  set_config : (opt VaultConfig) -> (Result_17);
-  set_funding_config : (opt FundingConfig) -> (Result_17);
+  reconcile_purchase : (blob) -> (Result_17);
+  set_config : (opt VaultConfig) -> (Result_18);
+  set_funding_config : (opt FundingConfig) -> (Result_18);
 }

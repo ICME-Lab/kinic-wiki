@@ -131,6 +131,7 @@ export interface Payment {
   'wallet' : Principal,
   'created_at_time' : bigint,
   'config' : FundingConfig,
+  'reconciliation' : [] | [ReconciliationState],
 }
 export interface PendingUpload {
   'expires' : bigint,
@@ -164,6 +165,22 @@ export interface Quota {
   'current' : bigint,
   'charged' : bigint,
 }
+export interface ReconciliationProgress {
+  'end' : bigint,
+  'next' : bigint,
+  'can_continue' : boolean,
+  'scanned' : bigint,
+  'payment' : Payment,
+}
+export interface ReconciliationState {
+  'end' : bigint,
+  'next' : bigint,
+  'lease' : bigint,
+  'start' : bigint,
+  'lease_until' : bigint,
+  'spender' : Principal,
+  'lease_generation' : bigint,
+}
 export type Result = { 'Ok' : bigint } |
   { 'Err' : Error };
 export type Result_1 = { 'Ok' : Payment } |
@@ -182,7 +199,9 @@ export type Result_15 = { 'Ok' : MutationResult } |
   { 'Err' : Error };
 export type Result_16 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
-export type Result_17 = { 'Ok' : null } |
+export type Result_17 = { 'Ok' : ReconciliationProgress } |
+  { 'Err' : Error };
+export type Result_18 = { 'Ok' : null } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : Header } |
   { 'Err' : Error };
@@ -272,8 +291,9 @@ export interface _SERVICE {
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_1>,
   'payment_status' : ActorMethod<[Uint8Array | number[]], Result_16>,
   'quote_purchase' : ActorMethod<[PurchaseRequest], Result_1>,
-  'set_config' : ActorMethod<[[] | [VaultConfig]], Result_17>,
-  'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_17>,
+  'reconcile_purchase' : ActorMethod<[Uint8Array | number[]], Result_17>,
+  'set_config' : ActorMethod<[[] | [VaultConfig]], Result_18>,
+  'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_18>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

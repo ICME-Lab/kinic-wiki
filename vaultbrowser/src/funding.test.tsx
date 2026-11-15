@@ -9,7 +9,10 @@ import {
 import { it, expect, vi, afterEach } from "vitest";
 import { Principal } from "@icp-sdk/core/principal";
 import type { VaultClient } from "@kinic/vault-client";
-import type { Payment } from "@kinic/vault-client/contracts";
+import type {
+  Payment,
+  ReconciliationProgress,
+} from "@kinic/vault-client/contracts";
 const mocks = vi.hoisted(() => ({
   mode: "synthetic-test-only",
   approve: vi.fn(),
@@ -40,6 +43,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 const payment: Payment = {
+  reconciliation: [],
   wallet: Principal.fromText("aaaaa-aa"),
   request: {
     operation: new Uint8Array(16).fill(4),
@@ -212,21 +216,31 @@ it("does not submit a payment after lock while ledger approval is still pending"
   expect(c.actor.pay_purchase).not.toHaveBeenCalled();
 });
 
-it.each(["Quoted", "Unknown"])("production funding keeps %s history readable without approving or paying", async (status) => {
-  mocks.mode = "unavailable";
-  const c = client({ ...payment, status: { [status]: null } } as Payment);
-  render(<Funding client={c} onFunded={async () => {}} />);
-  const check = await screen.findByRole("button", { name: "Check payment status" });
-  expect(screen.getByText(/Production funding is unavailable/)).toBeTruthy();
-  const pay = screen.getByRole("button", { name: status === "Quoted" ? "Approve and pay this quote" : "Retry same payment" });
-  expect((pay as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(pay);
-  fireEvent.click(check);
-  await waitFor(() => expect(c.actor.payment_status).toHaveBeenCalled());
-  expect(mocks.approve).not.toHaveBeenCalled();
-  expect(c.actor.pay_purchase).not.toHaveBeenCalled();
-  expect(c.actor.quote_purchase).not.toHaveBeenCalled();
-});
+it.each(["Quoted", "Unknown"])(
+  "production funding keeps %s history readable without approving or paying",
+  async (status) => {
+    mocks.mode = "unavailable";
+    const c = client({ ...payment, status: { [status]: null } } as Payment);
+    render(<Funding client={c} onFunded={async () => {}} />);
+    const check = await screen.findByRole("button", {
+      name: "Check payment status",
+    });
+    expect(screen.getByText(/Production funding is unavailable/)).toBeTruthy();
+    const pay = screen.getByRole("button", {
+      name:
+        status === "Quoted"
+          ? "Approve and pay this quote"
+          : "Retry same payment",
+    });
+    expect((pay as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(pay);
+    fireEvent.click(check);
+    await waitFor(() => expect(c.actor.payment_status).toHaveBeenCalled());
+    expect(mocks.approve).not.toHaveBeenCalled();
+    expect(c.actor.pay_purchase).not.toHaveBeenCalled();
+    expect(c.actor.quote_purchase).not.toHaveBeenCalled();
+  },
+);
 it("production cannot request new quotes", async () => {
   mocks.mode = "unavailable";
   const c = client();
@@ -237,4 +251,150 @@ it("production cannot request new quotes", async () => {
   expect((quote as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(quote);
   expect(c.actor.quote_purchase).not.toHaveBeenCalled();
+});
+
+it("scans at most ten calls per click and resumes only on another click", async () => {
+  const c = client();
+  const scan = vi.fn(async () => ({
+    payment,
+    scanned: 100n,
+    next: 1000n,
+    end: 3000n,
+    can_continue: true,
+  }));
+  c.reconcilePurchase = scan;
+  render(<Funding client={c} onFunded={async () => {}} />);
+  const button = await screen.findByRole("button", {
+    name: "Scan ledger for this payment",
+  });
+  expect(scan).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await waitFor(() => expect(scan).toHaveBeenCalledTimes(10));
+  const resume = await screen.findByRole("button", {
+    name: "Resume ledger scan",
+  });
+  await waitFor(() =>
+    expect((resume as HTMLButtonElement).disabled).toBe(false),
+  );
+  expect(c.actor.pay_purchase).not.toHaveBeenCalled();
+  fireEvent.click(resume);
+  await waitFor(() => expect(scan).toHaveBeenCalledTimes(20));
+});
+it("stops a scan on failure without replacing or paying the pending payment", async () => {
+  const c = client();
+  c.reconcilePurchase = vi.fn().mockRejectedValue(Error("offline"));
+  render(<Funding client={c} onFunded={async () => {}} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Scan ledger for this payment" }),
+  );
+  await screen.findByRole("alert");
+  expect(c.reconcilePurchase).toHaveBeenCalledTimes(1);
+  expect(c.actor.pay_purchase).not.toHaveBeenCalled();
+  expect(c.actor.quote_purchase).not.toHaveBeenCalled();
+});
+it("accepts certified production capability for quoted payments", async () => {
+  mocks.mode = "production";
+  const c = client({ ...payment, status: { Quoted: null } });
+  render(<Funding client={c} onFunded={async () => {}} />);
+  const button = await screen.findByRole("button", {
+    name: "Approve and pay this quote",
+  });
+  await waitFor(() =>
+    expect((button as HTMLButtonElement).disabled).toBe(false),
+  );
+});
+
+it.each(["lock", "switch", "unmount", "stop"])(
+  "fences pending ledger replies after %s",
+  async (event) => {
+    const c = client();
+    let generation = 0;
+    c.session.capture = () => generation;
+    let resolve!: (value: any) => void;
+    c.reconcilePurchase = vi.fn(
+      () =>
+        new Promise<ReconciliationProgress>((r) => {
+          resolve = r;
+        }),
+    );
+    const funded = vi.fn(async () => {});
+    const view = render(<Funding client={c} onFunded={funded} />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Scan ledger for this payment",
+      }),
+    );
+    await waitFor(() => expect(c.reconcilePurchase).toHaveBeenCalledTimes(1));
+    if (event === "lock") generation++;
+    if (event === "switch")
+      view.rerender(<Funding client={client()} onFunded={funded} />);
+    if (event === "unmount") view.unmount();
+    if (event === "stop")
+      fireEvent.click(screen.getByRole("button", { name: "Stop ledger scan" }));
+    resolve({
+      payment: { ...payment, status: { Paid: 12n } },
+      scanned: 100n,
+      next: 100n,
+      end: 2000n,
+      can_continue: true,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(c.reconcilePurchase).toHaveBeenCalledTimes(1);
+    expect(funded).not.toHaveBeenCalled();
+    expect(screen.queryByText("Paid")).toBeNull();
+  },
+);
+
+it("selects a saved pending payment without starting a ledger request", async () => {
+  const c = client();
+  const second = {
+    ...payment,
+    request: { ...payment.request, operation: new Uint8Array(16).fill(5) },
+    status: { InFlight: null },
+  };
+  vi.mocked(c.actor.list_payments).mockResolvedValue({ Ok: [payment, second] });
+  c.reconcilePurchase = vi.fn(async () => ({
+    payment: second,
+    scanned: 1n,
+    next: 1n,
+    end: 1n,
+    can_continue: false,
+  }));
+  render(<Funding client={c} onFunded={async () => {}} />);
+  fireEvent.change(
+    await screen.findByRole("combobox", { name: "Saved payment" }),
+    { target: { value: "1" } },
+  );
+  expect(c.reconcilePurchase).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Scan ledger for this payment" }),
+  );
+  await waitFor(() =>
+    expect(c.reconcilePurchase).toHaveBeenCalledWith(second.request.operation),
+  );
+  await screen.findByText(/No matching payment evidence found yet/);
+  expect(c.actor.quote_purchase).not.toHaveBeenCalled();
+});
+
+it("shows the persisted ledger cursor after reopening without scanning", async () => {
+  const p: Payment = {
+    ...payment,
+    reconciliation: [
+      {
+        start: 10n,
+        next: 310n,
+        end: 1010n,
+        spender: payment.wallet,
+        lease: 0n,
+        lease_until: 0n,
+        lease_generation: 0n,
+      },
+    ],
+  };
+  const c = client(p);
+  c.reconcilePurchase = vi.fn();
+  render(<Funding client={c} onFunded={async () => {}} />);
+  await screen.findByRole("button", { name: "Resume ledger scan" });
+  expect(screen.getByText(/next 310 of 1010/)).toBeTruthy();
+  expect(c.reconcilePurchase).not.toHaveBeenCalled();
 });

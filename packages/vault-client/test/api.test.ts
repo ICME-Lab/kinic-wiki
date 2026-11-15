@@ -641,3 +641,45 @@ it("retries delete progress exactly and clears delivered cleanup errors", async 
     client.cancelUpload(id, new Uint8Array(16)),
   ).resolves.toBeUndefined();
 });
+
+it("reconciliation uses the exact operation once and fences locked replies", async () => {
+  const { client, actor } = setup();
+  let resolve!: (value: any) => void;
+  actor.reconcile_purchase = vi.fn(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  ) as any;
+  const pending = client.reconcilePurchase(id);
+  expect(actor.reconcile_purchase).toHaveBeenCalledWith(id);
+  client.session.lock();
+  resolve({ Ok: { scanned: 1n } });
+  await expect(pending).rejects.toThrow("Locked");
+  expect(actor.reconcile_purchase).toHaveBeenCalledTimes(1);
+});
+it("reconciliation propagates backend errors without retries", async () => {
+  const { client, actor } = setup();
+  actor.reconcile_purchase = vi.fn(async () => ({
+    Err: { NotFound: null },
+  })) as any;
+  await expect(client.reconcilePurchase(id)).rejects.toThrow("NotFound");
+  expect(actor.reconcile_purchase).toHaveBeenCalledTimes(1);
+});
+
+it("reconciliation rejects a receipt for a different saved operation", async () => {
+  const { client, actor } = setup();
+  actor.reconcile_purchase = vi.fn(async () => ({
+    Ok: {
+      payment: {
+        wallet: owner,
+        request: { operation: new Uint8Array(16).fill(9) },
+      },
+      scanned: 1n,
+      next: 1n,
+      end: 1n,
+      can_continue: false,
+    },
+  })) as any;
+  await expect(client.reconcilePurchase(id)).rejects.toThrow("InvalidReceipt");
+});
