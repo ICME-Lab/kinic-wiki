@@ -14,7 +14,7 @@
     "mock:source-capture-worker": "node scripts/mock-source-capture-worker.mjs",
     "link-preview:generate": "node scripts/generate-link-preview-images.mjs",
     "link-preview:upload:production": "node scripts/generate-link-preview-images.mjs --upload --canister-id 6emaw-iyaaa-aaaay-aacka-cai",
-    "test": "vitest run && node ../scripts/check-staging-worker-deploy.mjs && node scripts/check-candid-drift.mjs && node scripts/check-paths.mjs && node scripts/check-seo.mjs && node scripts/check-legal-content.mjs && node scripts/check-ios-assets.mjs && node scripts/check-ui-helpers.mjs && node scripts/check-wiki-navigation.mjs && node scripts/check-api-errors.mjs && node scripts/check-auth.mjs && node scripts/check-smoke-url.mjs && node scripts/check-dashboard.mjs && node scripts/check-cycles.mjs && node scripts/check-cycles-wallet.mjs && node scripts/check-marketplace.mjs && node scripts/check-profile.mjs && node scripts/check-skill-registry.mjs && node scripts/check-url-security.mjs",
+    "test": "vitest run && node ../scripts/check-staging-worker-deploy.mjs && node scripts/check-candid-drift.mjs && node scripts/check-paths.mjs && node scripts/check-seo.mjs && node scripts/check-legal-content.mjs && node scripts/check-ios-assets.mjs && node scripts/check-ui-helpers.mjs && node scripts/check-shared-editor-css.mjs && node scripts/check-wiki-navigation.mjs && node scripts/check-api-errors.mjs && node scripts/check-auth.mjs && node scripts/check-smoke-url.mjs && node scripts/check-dashboard.mjs && node scripts/check-cycles.mjs && node scripts/check-cycles-wallet.mjs && node scripts/check-marketplace.mjs && node scripts/check-profile.mjs && node scripts/check-skill-registry.mjs && node scripts/check-url-security.mjs",
     "typecheck": "tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate",
     "build:worker": "node ../scripts/cloudflare/deploy.mjs --dry-run",
@@ -66,7 +66,8 @@
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
     "tailwind-merge": "3.6.0",
-    "zod": "^4.6.6"
+    "zod": "^4.6.6",
+    "@kinic/ui": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.57.0",
