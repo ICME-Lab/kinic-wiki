@@ -14,7 +14,7 @@ function setup() {
   const view = render(<VaultDocuments {...props} />);
   return { client, props, view, lock: () => ticket++, done: () => pending };
 }
-it("filters titles without reads, searches contents explicitly, and resets IDs when query/list changes", async () => {
+it("filters titles without reads and preserves body matches across an unchanged refresh", async () => {
   const x = setup();
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), { target: { value: "match" } });
   expect(screen.getByRole("button", { name: "Title match" })).toBeTruthy();
@@ -26,6 +26,8 @@ it("filters titles without reads, searches contents explicitly, and resets IDs w
   expect(x.client.searchNotes).toHaveBeenCalledWith(items, "match", expect.objectContaining({ signal: expect.any(AbortSignal), onProgress: expect.any(Function) }));
   expect(screen.getByRole("button", { name: "Title match" })).toBeTruthy();
   x.view.rerender(<VaultDocuments {...x.props} items={[...items]} />);
+  expect(screen.getByRole("button", { name: "Hidden body" })).toBeTruthy();
+  x.view.rerender(<VaultDocuments {...x.props} items={[items[0], { ...items[1], revision: { ...items[1].revision, revision: 2n } }]} />);
   expect(screen.queryByRole("button", { name: "Hidden body" })).toBeNull();
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), { target: { value: "none" } });
   expect(screen.queryByRole("button", { name: "Title match" })).toBeNull();
@@ -40,7 +42,7 @@ it.each(["lock", "unmount", "client", "items"])("discards late content search af
   if (reason === "lock") x.lock();
   if (reason === "unmount") x.view.unmount();
   if (reason === "client") x.view.rerender(<VaultDocuments {...x.props} client={{ ...x.client } as VaultClient} />);
-  if (reason === "items") x.view.rerender(<VaultDocuments {...x.props} items={[...items]} />);
+  if (reason === "items") x.view.rerender(<VaultDocuments {...x.props} items={[items[0], { ...items[1], revision: { ...items[1].revision, revision: 2n } }]} />);
   await act(async () => { resolve([items[1]]); await Promise.resolve(); });
   expect(screen.queryByRole("button", { name: "Hidden body" })).toBeNull();
 });
