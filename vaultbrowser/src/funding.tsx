@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
-import { IDL } from "@icp-sdk/core/candid";
+import { ledgerIDL } from "./funding/ledger";
+import { formatKinic, parseKinic, paymentId, isPendingPayment, isTerminalPayment } from "./funding/payments";
 import type { VaultClient } from "@kinic/vault-client";
 import { ok } from "@kinic/vault-client";
 import type {
@@ -10,61 +11,6 @@ import type {
 } from "@kinic/vault-client/contracts";
 import { loadConfig } from "./config";
 import { VaultButton } from "./vault/ui";
-const ledgerIDL: IDL.InterfaceFactory = ({ IDL }) => {
-  const Account = IDL.Record({
-    owner: IDL.Principal,
-    subaccount: IDL.Opt(IDL.Vec(IDL.Nat8)),
-  });
-  const Error = IDL.Variant({
-    BadFee: IDL.Record({
-      expected_fee: IDL.Nat,
-    }),
-    InsufficientFunds: IDL.Record({
-      balance: IDL.Nat,
-    }),
-    AllowanceChanged: IDL.Record({
-      current_allowance: IDL.Nat,
-    }),
-    Expired: IDL.Record({
-      ledger_time: IDL.Nat64,
-    }),
-    TooOld: IDL.Null,
-    CreatedInFuture: IDL.Record({
-      ledger_time: IDL.Nat64,
-    }),
-    Duplicate: IDL.Record({
-      duplicate_of: IDL.Nat,
-    }),
-    TemporarilyUnavailable: IDL.Null,
-    GenericError: IDL.Record({
-      error_code: IDL.Nat,
-      message: IDL.Text,
-    }),
-  });
-  return IDL.Service({
-    icrc2_approve: IDL.Func(
-      [
-        IDL.Record({
-          from_subaccount: IDL.Opt(IDL.Vec(IDL.Nat8)),
-          spender: Account,
-          amount: IDL.Nat,
-          expected_allowance: IDL.Opt(IDL.Nat),
-          expires_at: IDL.Opt(IDL.Nat64),
-          fee: IDL.Opt(IDL.Nat),
-          memo: IDL.Opt(IDL.Vec(IDL.Nat8)),
-          created_at_time: IDL.Opt(IDL.Nat64),
-        }),
-      ],
-      [
-        IDL.Variant({
-          Ok: IDL.Nat,
-          Err: Error,
-        }),
-      ],
-      [],
-    ),
-  });
-};
 export function Funding({
   client,
   onFunded,
@@ -89,7 +35,7 @@ export function Funding({
   const [fundingMode, setFundingMode] = useState<string>();
   const fundingEnabled =
     fundingMode === "production" || fundingMode === "synthetic-test-only";
-  const [amount, setAmount] = useState("1");
+  const [draftAmount, setDraftAmount] = useState("1");
   const [quote, setQuoteState] = useState<Payment>();
   const [savedPayments, setSavedPayments] = useState<Payment[]>([]);
   const setQuote = (payment?: Payment) => {
@@ -97,8 +43,7 @@ export function Funding({
     if (payment)
       setSavedPayments((saved) =>
         saved.map((existing) =>
-          Array.from(existing.request.operation).join() ===
-          Array.from(payment.request.operation).join()
+          paymentId(existing) === paymentId(payment)
             ? payment
             : existing,
         ),
@@ -175,12 +120,7 @@ export function Funding({
       .list_payments()
       .then((result) => {
         if (valid()) {
-          const pending = ok(result).filter(
-            (p) =>
-              "Unknown" in p.status ||
-              "InFlight" in p.status ||
-              "Quoted" in p.status,
-          );
+          const pending = ok(result).filter(isPendingPayment);
           setSavedPayments(pending);
           if (pending[0]) setQuote(pending[0]);
           setHistoryReady(true);
@@ -235,8 +175,7 @@ export function Funding({
               quote
                 ? savedPayments.findIndex(
                     (p) =>
-                      Array.from(p.request.operation).join() ===
-                      Array.from(quote.request.operation).join(),
+                      paymentId(p) === paymentId(quote),
                   )
                 : -1
             }
@@ -249,10 +188,8 @@ export function Funding({
             }}
           >
             {savedPayments.map((payment, index) => (
-              <option key={index} value={index}>
-                {Array.from(payment.request.operation)
-                  .map((b) => b.toString(16).padStart(2, "0"))
-                  .join("")}{" "}
+              <option key={paymentId(payment)} value={index}>
+                {paymentId(payment)}{" "}
                 · {Object.keys(payment.status)[0]}
               </option>
             ))}
@@ -265,9 +202,9 @@ export function Funding({
           aria-label="KINIC amount"
           inputMode="decimal"
           className="rounded border border-line p-2"
-          value={amount}
+          value={quote ? formatKinic(quote.request.amount_e8s) : draftAmount}
           disabled={busy || !!quote || !fundingEnabled}
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => setDraftAmount(e.target.value)}
         />
       </label>
       {!quote ? (
@@ -276,12 +213,7 @@ export function Funding({
           onClick={() =>
             work(async (check) => {
               if (!fundingEnabled) throw Error("FundingUnavailable");
-              if (!/^\d+(\.\d{1,8})?$/.test(amount))
-                throw Error("InvalidAmount");
-              const [whole, frac = ""] = amount.split(".");
-              const e8s =
-                BigInt(whole) * 100_000_000n + BigInt(frac.padEnd(8, "0"));
-              if (e8s <= 0n) throw Error("InvalidAmount");
+              const e8s = parseKinic(draftAmount);
               const p = ok(
                 await client.actor.quote_purchase({
                   operation: crypto.getRandomValues(new Uint8Array(16)),
@@ -311,9 +243,7 @@ export function Funding({
           </p>
           <p className="break-all text-xs">
             Payment ID:{" "}
-            {Array.from(quote.request.operation)
-              .map((b) => b.toString(16).padStart(2, "0"))
-              .join("")}
+            {paymentId(quote)}
           </p>
           <output>{Object.keys(quote.status)[0]}</output>
           {"Quoted" in quote.status ? (
@@ -487,26 +417,14 @@ export function Funding({
               Cancel unpaid quote
             </VaultButton>
           ) : null}
-          {[
-            "Paid",
-            "BadFee",
-            "InsufficientFunds",
-            "InsufficientAllowance",
-            "Rejected",
-            "Expired",
-          ].some((k) => k in quote.status) ? (
+          {isTerminalPayment(quote) ? (
             <VaultButton
               disabled={busy}
               onClick={() => {
                 approved.current = false;
                 setProgress(undefined);
                 setQuote(
-                  savedPayments.find(
-                    (payment) =>
-                      "Unknown" in payment.status ||
-                      "InFlight" in payment.status ||
-                      "Quoted" in payment.status,
-                  ),
+                  savedPayments.find(isPendingPayment),
                 );
               }}
             >

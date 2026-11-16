@@ -399,3 +399,33 @@ it("shows the persisted ledger cursor after reopening without scanning", async (
   expect(screen.getByText(/next 310 of 1010/)).toBeTruthy();
   expect(c.reconcilePurchase).not.toHaveBeenCalled();
 });
+
+
+it("displays the exact restored quote amount that approval will spend", async () => {
+  const p: Payment = {
+    ...payment,
+    request: { ...payment.request, amount_e8s: 1_012_345_678n },
+    status: { Quoted: null },
+    uncertain: false,
+  };
+  const c = client(p);
+  mocks.approve.mockResolvedValue({ Ok: 7n });
+  render(<Funding client={c} onFunded={async () => {}} />);
+  const button = await screen.findByRole("button", { name: "Approve and pay this quote" });
+  expect((screen.getByRole("textbox", { name: "KINIC amount" }) as HTMLInputElement).value).toBe("10.12345678");
+  fireEvent.click(button);
+  await waitFor(() => expect(mocks.approve).toHaveBeenCalledWith(expect.objectContaining({ amount: 1_012_345_688n })));
+});
+
+it("updates the displayed amount when selecting another saved quote", async () => {
+  const second: Payment = {
+    ...payment,
+    request: { ...payment.request, operation: new Uint8Array(16).fill(5), amount_e8s: 1n },
+    status: { Quoted: null },
+  };
+  const c = client();
+  vi.mocked(c.actor.list_payments).mockResolvedValue({ Ok: [payment, second] });
+  render(<Funding client={c} onFunded={async () => {}} />);
+  fireEvent.change(await screen.findByRole("combobox", { name: "Saved payment" }), { target: { value: "1" } });
+  expect((screen.getByRole("textbox", { name: "KINIC amount" }) as HTMLInputElement).value).toBe("0.00000001");
+});
