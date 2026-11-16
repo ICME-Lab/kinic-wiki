@@ -60,14 +60,10 @@ export const idlFactory = ({ IDL }) => {
     'reconciliation' : IDL.Opt(ReconciliationState),
   });
   const Result_1 = IDL.Variant({ 'Ok' : Payment, 'Err' : Error });
-  const CreateVault = IDL.Record({
-    'vault' : IDL.Vec(IDL.Nat8),
-    'operation' : IDL.Vec(IDL.Nat8),
-  });
+  const CreateVault = IDL.Record({ 'operation' : IDL.Vec(IDL.Nat8) });
   const VaultState = IDL.Variant({
     'Deleting' : IDL.Null,
     'Active' : IDL.Null,
-    'Deleted' : IDL.Null,
     'Pending' : IDL.Null,
   });
   const Header = IDL.Record({

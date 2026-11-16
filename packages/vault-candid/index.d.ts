@@ -49,10 +49,7 @@ export interface CommittedUpload {
   'revision' : bigint,
   'sequence' : bigint,
 }
-export interface CreateVault {
-  'vault' : Uint8Array | number[],
-  'operation' : Uint8Array | number[],
-}
+export interface CreateVault { 'operation' : Uint8Array | number[] }
 export interface DeriveKey {
   'vault' : Uint8Array | number[],
   'transport' : Uint8Array | number[],
@@ -259,7 +256,6 @@ export type UploadStatus = { 'Committed' : CommittedUpload } |
 export interface VaultConfig { 'minimum_cycles' : bigint, 'key_name' : string }
 export type VaultState = { 'Deleting' : null } |
   { 'Active' : null } |
-  { 'Deleted' : null } |
   { 'Pending' : null };
 export interface _SERVICE {
   'account_balance' : ActorMethod<[], Result>,

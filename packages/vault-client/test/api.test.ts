@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { Principal } from "@icp-sdk/core/principal";
-import { importKey } from "../../vault-crypto/src/index.ts";
+import { importKey } from "@kinic/vault-crypto";
 import type { Header, VaultActor, Action } from "../src/contracts.ts";
-vi.mock("../../vault-crypto/src/context.ts", async (load) => {
+vi.mock("@kinic/vault-crypto/context", async (load) => {
   const actual =
-    await load<typeof import("../../vault-crypto/src/context.ts")>();
+    await load<typeof import("@kinic/vault-crypto/context")>();
   return {
     ...actual,
     verifiedRoot: async () => importKey(new Uint8Array(32).fill(8)),
@@ -29,7 +29,7 @@ function setup() {
   const calls: any[] = [];
   const actor = {
     list_vaults: vi.fn(async () => ({ Ok: [h] })),
-    create_vault: vi.fn(async (req: any) => ({ Ok: { ...h, id: req.vault } })),
+    create_vault: vi.fn(async (req: any) => ({ Ok: h })),
     get_vault_header: vi.fn(async () => ({ Ok: h })),
     derive_vault_key: vi.fn(async () => ({
       Ok: { input: [], public_key: [], encrypted_key: [] },
@@ -88,7 +88,7 @@ function setup() {
   };
 }
 describe("II-only Vault client", () => {
-  it("keeps create IDs on lost reply", async () => {
+  it("keeps the exact creation operation on lost reply", async () => {
     const { client, actor } = setup();
     let first: any;
     vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
@@ -288,7 +288,7 @@ it("clears a failed rootless key attempt when creating and opening another vault
   vi.mocked(actor.derive_vault_key).mockRejectedValueOnce(Error("key lost"));
   await expect(client.open(header())).rejects.toThrow("key lost");
   vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
-    const h = { ...header(), id: new Uint8Array(request.vault) };
+    const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
   });
@@ -308,7 +308,7 @@ it("fences an outstanding open when creation selects a different vault", async (
   const old = client.open(header());
   await vi.waitFor(() => expect(resolve).toBeDefined());
   vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
-    const h = { ...header(), id: new Uint8Array(request.vault) };
+    const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
   });
@@ -354,7 +354,7 @@ it("retries the same creation after switching away from its unresolved attempt",
   await expect(client.create()).rejects.toThrow("lost");
   await client.open(header());
   vi.mocked(actor.create_vault).mockImplementationOnce(async (r) => {
-    const h = { ...header(), id: new Uint8Array(r.vault) };
+    const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
   });
@@ -761,3 +761,192 @@ it("releases only the completed cancellation job after a lost final reply", asyn
   expect(client.hasPendingSave).toBe(false);
   await expect(client.cancelUpload(id, new Uint8Array(16).fill(9))).resolves.toBeUndefined();
 });
+
+import { encryptDocumentV3 } from "@kinic/vault-crypto/documents";
+import type { Item } from "../src/api.ts";
+async function searchFixture(count = 5) {
+  const s = setup();
+  await s.client.open(header());
+  const items: Item[] = [];
+  const ciphertext = new Map<number, Uint8Array[]>();
+  for (let i = 0; i < count; i++) {
+    const kind =
+      count === 5 && i === 2
+        ? "credential"
+        : count === 5 && i === 3
+          ? "attachment"
+          : "note";
+    const object = new Uint8Array(16).fill(i + 1);
+    const metadata = { kind, title: `title ${i}` } as Item["metadata"];
+    const doc = await encryptDocumentV3(
+      s.client.session.root!,
+      {
+        canister: owner.toText(),
+        owner: owner.toText(),
+        vault: id,
+        nonce: new Uint8Array(32).fill(2),
+        key_name: "test_key_1",
+      },
+      object,
+      1n,
+      metadata,
+      new TextEncoder().encode(i === 1 ? "other" : "SeCrEt body"),
+    );
+    items.push({
+      metadata,
+      revision: {
+        vault: id,
+        object,
+        revision: 1n,
+        sequence: BigInt(i),
+        plain_size: 11n,
+        deleted: count === 5 && i === 4,
+        manifest: doc.manifest,
+        chunk_hashes: doc.hashes,
+      },
+    });
+    ciphertext.set(i + 1, doc.chunks);
+  }
+  s.actor.list_objects = vi.fn(async () => ({
+    Ok: { entries: items.map((x) => x.revision), next: [] },
+  })) as unknown as VaultActor["list_objects"];
+  s.actor.list_history = vi.fn(async () => ({
+    Ok: { entries: [{ ...items.at(-1)!.revision, deleted: false }], next: [] },
+  })) as unknown as VaultActor["list_history"];
+  vi.mocked(s.actor.get_chunk).mockImplementation(
+    async (_vault, object, _revision, index) => ({
+      Ok: ciphertext.get(new Uint8Array(object)[0])![index],
+    }),
+  );
+  vi.mocked(s.actor.get_vault_header).mockClear();
+  return { ...s, items };
+}
+it("lists 100 note metadata without reading any content", async () => {
+  const { client, actor } = await searchFixture(100);
+  const items = await client.items();
+  expect(items).toHaveLength(100);
+  expect(items[99].metadata.title).toBe("title 99");
+  expect(actor.get_chunk).not.toHaveBeenCalled();
+  expect(items.some((x) => "searchText" in x)).toBe(false);
+  expect(actor.get_vault_header).toHaveBeenCalledOnce();
+});
+it("searches sequential note bodies using one shared checked header and copied matching IDs", async () => {
+  const { client, actor, items } = await searchFixture();
+  const results = await client.searchNotes(items, "SECRET");
+  expect(results).toEqual([new Uint8Array(16).fill(1)]);
+  expect(results[0]).not.toBe(items[0].revision.object);
+  expect(actor.get_vault_header).toHaveBeenCalledOnce();
+  expect(
+    vi.mocked(actor.get_chunk).mock.calls.map((x) => new Uint8Array(x[1])[0]),
+  ).toEqual([1, 2]);
+});
+it("does no content reads for an empty search query", async () => {
+  const { client, actor, items } = await searchFixture();
+  await expect(client.searchNotes(items, "")).resolves.toEqual([]);
+  expect(actor.get_chunk).not.toHaveBeenCalled();
+});
+it.each(["lock", "switch", "destroy"] as const)(
+  "rejects a search after %s during a header request",
+  async (event) => {
+    const { client, actor, items } = await searchFixture();
+    const reply =
+      deferred<Awaited<ReturnType<VaultActor["get_vault_header"]>>>();
+    vi.mocked(actor.get_vault_header).mockReturnValueOnce(reply.promise);
+    const pending = client.searchNotes(items, "secret");
+    const rejected = expect(pending).rejects.toThrow("Locked");
+    if (event === "lock") client.session.lock();
+    if (event === "destroy") client.destroy();
+    if (event === "switch")
+      await client
+        .open({ ...header(), id: new Uint8Array(16).fill(8) })
+        .catch(() => {});
+    reply.resolve({ Ok: header() });
+    await rejected;
+    expect(actor.get_chunk).not.toHaveBeenCalled();
+  },
+);
+it.each(["lock", "switch", "destroy"] as const)(
+  "rejects a search after %s during a body request",
+  async (event) => {
+    const { client, actor, items } = await searchFixture();
+    const original = vi.mocked(actor.get_chunk).getMockImplementation()!;
+    const reply = deferred<Awaited<ReturnType<VaultActor["get_chunk"]>>>();
+    vi.mocked(actor.get_chunk).mockReturnValueOnce(reply.promise);
+    const pending = client.searchNotes(items, "secret");
+    const rejected = expect(pending).rejects.toThrow("Locked");
+    await vi.waitFor(() => expect(actor.get_chunk).toHaveBeenCalledOnce());
+    if (event === "lock") client.session.lock();
+    if (event === "destroy") client.destroy();
+    if (event === "switch")
+      await client
+        .open({ ...header(), id: new Uint8Array(16).fill(8) })
+        .catch(() => {});
+    reply.resolve(await original(id, items[0].revision.object, 1n, 0));
+    await rejected;
+    expect(actor.get_chunk).toHaveBeenCalledOnce();
+  },
+);
+it("fences search dispatch if context resolution becomes stale", async () => {
+  const { client, actor, items } = await searchFixture();
+  const checked = (client as any).checkedContext.bind(client);
+  vi.spyOn(client as any, "checkedContext").mockImplementation(async () => {
+    const c = await checked();
+    queueMicrotask(() => client.session.lock());
+    return c;
+  });
+  await expect(client.searchNotes(items, "secret")).rejects.toThrow("Locked");
+  expect(actor.get_chunk).not.toHaveBeenCalled();
+});
+it("standalone reads refresh and reject a changed header before content dispatch", async () => {
+  const { client, actor, items, change } = await searchFixture();
+  change({ ...header(), nonce: new Uint8Array(32).fill(8) });
+  await expect(client.read(items[0].revision)).rejects.toThrow("TargetChanged");
+  expect(actor.get_vault_header).toHaveBeenCalledOnce();
+  expect(actor.get_chunk).not.toHaveBeenCalled();
+});
+it("accepts a server-assigned creation ID and sends only an operation", async () => {
+  const { client, actor } = setup();
+  vi.mocked(actor.create_vault).mockResolvedValue({ Ok: header() });
+  await expect(client.create()).resolves.toEqual(header());
+  expect(Object.keys(vi.mocked(actor.create_vault).mock.calls[0][0])).toEqual([
+    "operation",
+  ]);
+});
+it("waits for each note before dispatching the next body", async () => {
+  const { client, actor, items } = await searchFixture();
+  const original = vi.mocked(actor.get_chunk).getMockImplementation()!;
+  const reply = deferred<Awaited<ReturnType<VaultActor["get_chunk"]>>>();
+  vi.mocked(actor.get_chunk).mockReturnValueOnce(reply.promise);
+  const pending = client.searchNotes(items, "secret");
+  await vi.waitFor(() => expect(actor.get_chunk).toHaveBeenCalledOnce());
+  expect(actor.get_chunk).toHaveBeenCalledOnce();
+  reply.resolve(await original(id, items[0].revision.object, 1n, 0));
+  await expect(pending).resolves.toEqual([new Uint8Array(16).fill(1)]);
+  expect(actor.get_chunk).toHaveBeenCalledTimes(2);
+});
+it.each(["lock", "switch", "destroy"] as const)(
+  "wipes a decrypted search document when %s occurs before search receives it",
+  async (event) => {
+    const { client, items } = await searchFixture();
+    const original = (client as any).readWithContext.bind(client);
+    let plaintext!: Uint8Array;
+    vi.spyOn(client as any, "readWithContext").mockImplementation(
+      async (...args) => {
+        const doc = await original(...args);
+        plaintext = doc.plaintext;
+        queueMicrotask(() => {
+          if (event === "lock") client.session.lock();
+          if (event === "destroy") client.destroy();
+          if (event === "switch")
+            void client
+              .open({ ...header(), id: new Uint8Array(16).fill(8) })
+              .catch(() => {});
+        });
+        return doc;
+      },
+    );
+    await expect(client.searchNotes(items, "secret")).rejects.toThrow("Locked");
+    expect(plaintext.length).toBeGreaterThan(0);
+    expect(plaintext.every((x) => x === 0)).toBe(true);
+  },
+);

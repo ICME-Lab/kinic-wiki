@@ -2,7 +2,7 @@ import {
   contextInput,
   copyVaultContext,
   type VaultContext,
-} from "../../vault-crypto/src/context.ts";
+} from "@kinic/vault-crypto/context";
 export class Session {
   private cleanups = new Set<() => void>();
   private binding?: VaultContext;
