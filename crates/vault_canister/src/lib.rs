@@ -26,11 +26,21 @@ fn initialize() {
     #[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
     http::initialize();
     ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
-        state::State
-            .vault_settle_storage_timer_batch(now_millis())
-            .expect("Vault maintenance failed")
+        run_maintenance(now_millis());
     });
 }
+fn log_maintenance_error(message: &str) {
+    #[cfg(target_arch = "wasm32")]
+    ic_cdk::println!("{message}");
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("{message}");
+}
+fn run_maintenance(now: i64) {
+    if let Err(error) = state::State.vault_settle_storage_timer_batch(now) {
+        log_maintenance_error(&format!("Vault maintenance failed: {error}"));
+    }
+}
+
 #[ic_cdk::init]
 fn init() {
     initialize()

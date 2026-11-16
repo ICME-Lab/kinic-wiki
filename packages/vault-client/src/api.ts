@@ -1,20 +1,17 @@
 import type { Identity } from "@icp-sdk/core/agent";
-import {
-  TransportSecretKey,
-  randomBytes,
-} from "../../vault-crypto/src/index.ts";
+import { TransportSecretKey, randomBytes } from "@kinic/vault-crypto";
 import {
   copyVaultContext,
   verifiedRoot,
   type VaultContext,
-} from "../../vault-crypto/src/context.ts";
+} from "@kinic/vault-crypto/context";
 import {
   encryptDocumentV3,
   decryptDocumentV3,
   readManifestV3,
   b64,
   type Metadata,
-} from "../../vault-crypto/src/documents-v3.ts";
+} from "@kinic/vault-crypto/documents";
 import type {
   Action,
   BeginRevision,
@@ -37,7 +34,6 @@ export function ok<T>(r: { Ok: T } | { Err: unknown }): T {
 export type Item = {
   revision: Revision;
   metadata: Metadata;
-  searchText?: string;
 };
 type Save = {
   request: BeginRevision;
@@ -48,8 +44,7 @@ type Save = {
   revision?: Revision;
 };
 type RequestState =
-  | { kind: "idle" }
-  | { kind: "sending" | "ambiguous"; mutation: Mutation };
+  { kind: "idle" } | { kind: "sending" | "ambiguous"; mutation: Mutation };
 type SaveState =
   | { kind: "idle" }
   | { kind: "preparing" }
@@ -58,8 +53,7 @@ type CleanupJob = {
   vault: Uint8Array;
   operation: Uint8Array;
 } & (
-  | { kind: "cancel"; upload: Uint8Array; job: Uint8Array }
-  | { kind: "delete" }
+  { kind: "cancel"; upload: Uint8Array; job: Uint8Array } | { kind: "delete" }
 );
 
 export class VaultClient {
@@ -71,7 +65,7 @@ export class VaultClient {
   private live = true;
   header?: Header;
   private pinnedPublicKey?: Uint8Array;
-  private creating?: { vault: Uint8Array; operation: Uint8Array };
+  private creating?: { operation: Uint8Array };
   private keyAttempt?: {
     vault: Uint8Array;
     operation: Uint8Array;
@@ -147,21 +141,19 @@ export class VaultClient {
   }
   async create() {
     this.checkLive();
-    if (
-      !this.creating ||
-      (this.header && !equal(bytes(this.header.id), this.creating.vault))
-    ) {
+    if (!this.creating || this.header) {
       this.session.lock();
       this.header = undefined;
     }
     const t = this.session.capture();
     const attempt = (this.creating ??= {
-      vault: randomBytes(16),
       operation: randomBytes(16),
     });
-    const h = ok(await this.actor.create_vault(attempt));
+    const h = ok(
+      await this.actor.create_vault({ operation: bytes(attempt.operation) }),
+    );
     this.session.check(t);
-    if (!equal(bytes(h.id), attempt.vault)) throw Error("TargetChanged");
+    if (bytes(h.id).length !== 16) throw Error("TargetChanged");
     this.header = structuredClone(h);
     this.creating = undefined;
     return structuredClone(h);
@@ -332,9 +324,7 @@ export class VaultClient {
     return this.mutate(mutation.action, bytes(mutation.operation));
   }
   private get pendingSave() {
-    return "job" in this.saveState
-      ? this.saveState.job
-      : undefined;
+    return "job" in this.saveState ? this.saveState.job : undefined;
   }
   get hasPendingSave() {
     return !!this.pendingSave;
@@ -457,9 +447,11 @@ export class VaultClient {
     const t = this.session.capture();
     const c = await this.checkedContext();
     this.session.check(t);
+    const root = this.session.root!;
     const items: Item[] = [];
     let after = new Uint8Array();
     do {
+      this.checkReadContext(c, root, t);
       const page = ok(await this.actor.list_objects(c.vault, after));
       this.session.check(t);
       for (const r of page.entries) {
@@ -483,44 +475,83 @@ export class VaultClient {
           }
           source = previous;
         }
+        this.checkReadContext(c, root, t);
         const parsed = await readManifestV3(
-          this.session.root!,
+          root,
           c,
           bytes(source.object),
           source.revision,
           bytes(source.manifest),
         );
         this.session.check(t);
-        let searchText = parsed.metadata.title;
-        if (parsed.metadata.kind === "note" && !r.deleted) {
-          const doc = await this.read(r);
-          try {
-            this.session.check(t);
-            searchText += " " + new TextDecoder().decode(doc.plaintext);
-          } finally {
-            doc.plaintext.fill(0);
-          }
-        }
-        items.push({ revision: r, metadata: parsed.metadata, searchText });
+        items.push({ revision: r, metadata: parsed.metadata });
       }
       after = page.next[0] ? bytes(page.next[0]) : new Uint8Array();
     } while (after.length);
     return items;
   }
+  async searchNotes(items: Item[], query: string): Promise<Uint8Array[]> {
+    this.checkLive();
+    const t = this.session.capture();
+    const c = await this.checkedContext();
+    this.session.check(t);
+    const root = this.session.root!;
+    const matches: Uint8Array[] = [];
+    const needle = query.toLowerCase();
+    if (!needle) return matches;
+    for (const item of items) {
+      this.checkReadContext(c, root, t);
+      if (item.revision.deleted || item.metadata.kind !== "note") continue;
+      const doc = await this.readWithContext(item.revision, c, root, t);
+      try {
+        this.checkReadContext(c, root, t);
+        if (
+          doc.metadata.kind === "note" &&
+          new TextDecoder().decode(doc.plaintext).toLowerCase().includes(needle)
+        )
+          matches.push(bytes(item.revision.object));
+      } finally {
+        doc.plaintext.fill(0);
+      }
+    }
+    this.checkReadContext(c, root, t);
+    return matches;
+  }
+  private checkReadContext(c: VaultContext, root: CryptoKey, t: number) {
+    this.session.check(t);
+    this.checkLive();
+    this.session.requireContext(c);
+    if (this.session.root !== root) throw Error("TargetChanged");
+  }
   async read(r: Revision) {
     const t = this.session.capture();
     const c = await this.checkedContext();
     this.session.check(t);
+    return this.readWithContext(r, c, this.session.root!, t);
+  }
+  private async readWithContext(
+    r: Revision,
+    c: VaultContext,
+    root: CryptoKey,
+    t: number,
+  ) {
+    this.checkReadContext(c, root, t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
     const chunks: Uint8Array[] = [];
     for (let i = 0; i < r.chunk_hashes.length; i++) {
-      chunks.push(
-        bytes(ok(await this.actor.get_chunk(r.vault, r.object, r.revision, i))),
+      this.checkReadContext(c, root, t);
+      const reply = await this.actor.get_chunk(
+        r.vault,
+        r.object,
+        r.revision,
+        i,
       );
-      this.session.check(t);
+      this.checkReadContext(c, root, t);
+      chunks.push(bytes(ok(reply)));
     }
+    this.checkReadContext(c, root, t);
     const doc = await decryptDocumentV3(
-      this.session.root!,
+      root,
       c,
       bytes(r.object),
       r.revision,
@@ -529,7 +560,7 @@ export class VaultClient {
       r.chunk_hashes.map(bytes),
     );
     try {
-      this.session.check(t);
+      this.checkReadContext(c, root, t);
       return doc;
     } catch (e) {
       doc.plaintext.fill(0);
@@ -712,7 +743,7 @@ export class VaultClient {
       return await this.mutate(
         { Collect: null },
         this.request.kind !== "idle" &&
-        "Collect" in this.request.mutation.action
+          "Collect" in this.request.mutation.action
           ? bytes(this.request.mutation.operation)
           : undefined,
       );

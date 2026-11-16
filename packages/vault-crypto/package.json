@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./documents": "./src/documents-v3.ts"
+    "./documents": "./src/documents-v3.ts",
+    "./context": "./src/context.ts"
   },
   "dependencies": {
     "@icp-sdk/core": "5.4.0",

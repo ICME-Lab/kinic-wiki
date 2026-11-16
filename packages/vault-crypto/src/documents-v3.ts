@@ -49,6 +49,33 @@ export type Manifest = {
   metadata: ReturnType<typeof pack>;
   nonces: string[];
 };
+const CHUNK_SIZE = 1048576;
+const MAX_METADATA = 8192;
+function validMetadata(value: unknown): value is Metadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const m = value as Metadata;
+  return (
+    ["note", "credential", "attachment"].includes(m.kind) &&
+    typeof m.title === "string" &&
+    m.title.length <= 512 &&
+    (m.filename === undefined || typeof m.filename === "string") &&
+    (m.mime === undefined || typeof m.mime === "string")
+  );
+}
+function validLength(metadata: Metadata, length: number) {
+  return (
+    Number.isSafeInteger(length) &&
+    length >= 0 &&
+    length <= (metadata.kind === "attachment" ? 10 * CHUNK_SIZE : 256 * 1024)
+  );
+}
+const chunkCount = (length: number) =>
+  Math.max(1, Math.ceil(length / CHUNK_SIZE));
+type MetadataPayload = {
+  metadata: Metadata;
+  plaintext_length: number;
+  chunk_count: number;
+};
 export async function encryptDocumentV3(
   root: CryptoKey,
   context: VaultContext,
@@ -57,47 +84,54 @@ export async function encryptDocumentV3(
   metadata: Metadata,
   plaintext: Uint8Array,
 ) {
-  if (
-    plaintext.length > 10 * 1024 * 1024 ||
-    (metadata.kind !== "attachment" && plaintext.length > 256 * 1024) ||
-    metadata.title.length > 512
-  )
+  if (!validMetadata(metadata) || !validLength(metadata, plaintext.length))
     throw Error("SizeLimit");
-  const raw = randomBytes(32);
-  const key = await importKey(raw);
-  const dek = await seal(
-    root,
-    raw,
-    documentAAD(context, object, revision, "dek"),
-  );
-  raw.fill(0);
-  const meta = utf8.encode(JSON.stringify(metadata));
-  if (meta.length > 8192) throw Error("SizeLimit");
-  const encryptedMetadata = await seal(
-    key,
-    meta,
-    documentAAD(context, object, revision, "metadata"),
-  );
-  const chunks: Uint8Array[] = [],
-    nonces: string[] = [];
-  for (let i = 0; i < Math.max(1, Math.ceil(plaintext.length / 1048576)); i++) {
-    const e = await seal(
-      key,
-      plaintext.subarray(i * 1048576, (i + 1) * 1048576),
-      documentAAD(context, object, revision, "chunk", i),
-    );
-    chunks.push(e.ciphertext);
-    nonces.push(b64(e.nonce));
-  }
-  const manifest = utf8.encode(
+  const count = chunkCount(plaintext.length);
+  const meta = utf8.encode(
     JSON.stringify({
-      version: 3,
-      dek: pack(dek),
-      metadata: pack(encryptedMetadata),
-      nonces,
-    } satisfies Manifest),
+      metadata,
+      plaintext_length: plaintext.length,
+      chunk_count: count,
+    } satisfies MetadataPayload),
   );
-  return { manifest, chunks, hashes: await Promise.all(chunks.map(hash)) };
+  const raw = randomBytes(32);
+  try {
+    if (meta.length > MAX_METADATA) throw Error("SizeLimit");
+    const key = await importKey(raw);
+    const dek = await seal(
+      root,
+      raw,
+      documentAAD(context, object, revision, "dek"),
+    );
+    const encryptedMetadata = await seal(
+      key,
+      meta,
+      documentAAD(context, object, revision, "metadata"),
+    );
+    const chunks: Uint8Array[] = [],
+      nonces: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const e = await seal(
+        key,
+        plaintext.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+        documentAAD(context, object, revision, "chunk", i),
+      );
+      chunks.push(e.ciphertext);
+      nonces.push(b64(e.nonce));
+    }
+    const manifest = utf8.encode(
+      JSON.stringify({
+        version: 3,
+        dek: pack(dek),
+        metadata: pack(encryptedMetadata),
+        nonces,
+      } satisfies Manifest),
+    );
+    return { manifest, chunks, hashes: await Promise.all(chunks.map(hash)) };
+  } finally {
+    raw.fill(0);
+    meta.fill(0);
+  }
 }
 export async function readManifestV3(
   root: CryptoKey,
@@ -111,10 +145,12 @@ export async function readManifestV3(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes),
   ) as Manifest;
   if (
+    !m ||
     m.version !== 3 ||
     !Array.isArray(m.nonces) ||
     m.nonces.length < 1 ||
-    m.nonces.length > 10
+    m.nonces.length > 10 ||
+    m.nonces.some((n) => typeof n !== "string" || unb64(n).length !== 12)
   )
     throw Error("InvalidManifest");
   const raw = await open(
@@ -122,23 +158,43 @@ export async function readManifestV3(
     unpack(m.dek),
     documentAAD(context, object, revision, "dek"),
   );
-  const key = await importKey(raw);
-  raw.fill(0);
-  const metadata: Metadata = JSON.parse(
-    new TextDecoder("utf-8", { fatal: true }).decode(
-      await open(
-        key,
-        unpack(m.metadata),
-        documentAAD(context, object, revision, "metadata"),
-      ),
-    ),
+  let key: CryptoKey;
+  try {
+    key = await importKey(raw);
+  } finally {
+    raw.fill(0);
+  }
+  const meta = await open(
+    key,
+    unpack(m.metadata),
+    documentAAD(context, object, revision, "metadata"),
   );
-  if (
-    !["note", "credential", "attachment"].includes(metadata.kind) ||
-    typeof metadata.title !== "string"
-  )
-    throw Error("InvalidMetadata");
-  return { manifest: m, key, metadata };
+  try {
+    if (meta.length > MAX_METADATA) throw Error("InvalidMetadata");
+    const payload = strictJSON(
+      new TextDecoder("utf-8", { fatal: true }).decode(meta),
+    ) as MetadataPayload;
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      Object.keys(payload).length !== 3 ||
+      !validMetadata(payload.metadata) ||
+      !validLength(payload.metadata, payload.plaintext_length) ||
+      payload.chunk_count !== chunkCount(payload.plaintext_length) ||
+      payload.chunk_count !== m.nonces.length
+    )
+      throw Error("InvalidMetadata");
+    return {
+      manifest: m,
+      key,
+      metadata: payload.metadata,
+      plaintext_length: payload.plaintext_length,
+      chunk_count: payload.chunk_count,
+    };
+  } finally {
+    meta.fill(0);
+  }
 }
 export async function decryptDocumentV3(
   root: CryptoKey,
@@ -157,25 +213,35 @@ export async function decryptDocumentV3(
     manifest,
   );
   if (
-    chunks.length !== parsed.manifest.nonces.length ||
-    hashes.length !== chunks.length
+    chunks.length !== parsed.chunk_count ||
+    hashes.length !== parsed.chunk_count
   )
     throw Error("MissingChunk");
   const plain: Uint8Array[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    if (b64(await hash(chunks[i])) !== b64(hashes[i]))
-      throw Error("CorruptChunk");
-    plain.push(
-      await open(
-        parsed.key,
-        {
-          version: 3,
-          nonce: unb64(parsed.manifest.nonces[i]),
-          ciphertext: chunks[i],
-        },
-        documentAAD(context, object, revision, "chunk", i),
-      ),
-    );
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      if (b64(await hash(chunks[i])) !== b64(hashes[i]))
+        throw Error("CorruptChunk");
+      plain.push(
+        await open(
+          parsed.key,
+          {
+            version: 3,
+            nonce: unb64(parsed.manifest.nonces[i]),
+            ciphertext: chunks[i],
+          },
+          documentAAD(context, object, revision, "chunk", i),
+        ),
+      );
+      const expected =
+        i < chunks.length - 1
+          ? CHUNK_SIZE
+          : parsed.plaintext_length - i * CHUNK_SIZE;
+      if (plain[i].length !== expected) throw Error("InvalidExtent");
+    }
+    const plaintext = concat(...plain);
+    return { metadata: parsed.metadata, plaintext };
+  } finally {
+    plain.forEach((p) => p.fill(0));
   }
-  return { metadata: parsed.metadata, plaintext: concat(...plain) };
 }

@@ -34,7 +34,6 @@ pub enum VaultState {
     Pending,
     Active,
     Deleting,
-    Deleted,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Header {
@@ -47,7 +46,6 @@ pub struct Header {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct CreateVault {
-    pub vault: Id,
     pub operation: Id,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
