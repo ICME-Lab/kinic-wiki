@@ -19,30 +19,50 @@ fn replay<T: serde::de::DeserializeOwned + candid::CandidType>(
 }
 pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Header> {
     authenticate(env)?;
-    id(&r.vault)?;
     id(&r.operation)?;
-    let digest = ops::digest(b"create-vault/v1", &r)?;
+    let digest = ops::digest(b"create-vault/v2", &r)?;
     if let Some(result) = replay(env, &r.operation, &digest)? {
         return Ok(result);
     }
     env.require_spending()?;
-    let (token,mut h)=env.transaction(|db|{
-  let config=store::config(db)?;
-  let existing:Option<Vec<u8>>=db.query_row("SELECT operation FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![r.vault],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-  let h=if let Some(operation)=existing {
-   if operation!=r.operation{return Err(Error::Conflict)}
-   let h=store::header(db,&r.vault)?;if h.state!=VaultState::Pending{return Err(Error::Conflict)}h
-  }else{
-   let count:i64=db.query_row("SELECT count(*) FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND json_extract(header,'$.state')<>'Deleted'",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
-   let total:i64=db.query_row("SELECT count(*) FROM vaults",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
-   if count>=3 || total>=10000{return Err(Error::QuotaExceeded)}
-   store::content::check_capacity(db,16384)?;
-   let h=Header{id:r.vault.clone(),nonce:vec![],state:VaultState::Pending,sequence:0,key_name:config.key_name,public_key:vec![]};
-   let raw=serde_json::to_string(&h).map_err(|_|Error::Storage)?;
-   db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![r.vault,r.operation,raw]).map_err(|_|Error::Storage)?;h
-  };
-  let token=ops::begin(db,&r.operation,&digest,env.now())?;Ok((token,h))
- })?;
+    let (token, mut h) = env.transaction(|db| {
+        let config = store::config(db)?;
+        let existing: Option<Id> = db.query_row(
+            "SELECT id FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",
+            params![r.operation], |row| sql::row_get(row, 0),
+        ).optional().map_err(|_| Error::Storage)?;
+        if let Some(vault) = existing {
+            let h = store::header(db, &vault)?;
+            if h.state != VaultState::Pending {
+                return Err(Error::Conflict);
+            }
+            let token = ops::begin(db, &r.operation, &digest, env.now())?;
+            return Ok((token, h));
+        }
+        let count: i64 = db.query_row(
+            "SELECT count(*) FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
+            params![], |row| sql::row_get(row, 0),
+        ).map_err(|_| Error::Storage)?;
+        let total: i64 = db.query_row("SELECT count(*) FROM vaults", params![], |row| sql::row_get(row, 0)).map_err(|_| Error::Storage)?;
+        if count >= 3 || total >= 10000 {
+            return Err(Error::QuotaExceeded);
+        }
+        let token = ops::begin(db, &r.operation, &digest, env.now())?;
+        store::content::check_capacity(db, 16384)?;
+        // The persistent global operation serial is positive i64 and never reset.
+        // Zero extension to u128 makes every server-issued ID distinct forever.
+        let h = Header {
+            id: (token as u128).to_be_bytes().to_vec(), nonce: vec![],
+            state: VaultState::Pending, sequence: 0, key_name: config.key_name,
+            public_key: vec![],
+        };
+        let raw = serde_json::to_string(&h).map_err(|_| Error::Storage)?;
+        db.execute(
+            "INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",
+            params![h.id, r.operation, raw],
+        ).map_err(|_| Error::Storage)?;
+        Ok((token, h))
+    })?;
     let result = async {
         if h.nonce.is_empty() {
             let nonce = env.random().await?;
@@ -51,7 +71,7 @@ pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Head
             }
             h = env.transaction(|db| {
                 ops::fence(db, &r.operation, token)?;
-                let mut h = store::header(db, &r.vault)?;
+                let mut h = store::header(db, &h.id)?;
                 if h.state != VaultState::Pending {
                     return Err(Error::Conflict);
                 }
@@ -67,7 +87,7 @@ pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Head
         env.transaction(|db| {
             ops::fence(db, &r.operation, token)?;
             store::config(db)?;
-            let mut current = store::header(db, &r.vault)?;
+            let mut current = store::header(db, &h.id)?;
             if current != h || current.state != VaultState::Pending {
                 return Err(Error::Conflict);
             }
@@ -290,10 +310,7 @@ fn cleanup_backing(db: &sql::Connection, action: &Action, now: u64) -> Result<bo
             Ok(true)
         }
         Action::DeleteVault { vault } => {
-            let h = store::header(db, vault)?;
-            if h.state == VaultState::Deleted {
-                return Err(Error::Conflict);
-            }
+            store::header(db, vault)?;
             let budget:i64=db.query_row("SELECT cleanup_budget FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![vault.as_slice()],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
             if budget <= 0 {
                 return Err(Error::Storage);
@@ -306,7 +323,7 @@ fn cleanup_backing(db: &sql::Connection, action: &Action, now: u64) -> Result<bo
             if backed != 0 {
                 return Ok(true);
             }
-            let any:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND json_extract(header,'$.state')<>'Deleted') OR EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM upload_outcomes WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+            let any:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM upload_outcomes WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) OR EXISTS(SELECT 1 FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1))",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
             if any == 0 {
                 return Err(Error::NotFound);
             }
@@ -317,9 +334,6 @@ fn cleanup_backing(db: &sql::Connection, action: &Action, now: u64) -> Result<bo
 }
 fn delete_vault_batch(db: &sql::Connection, v: &[u8], now: u64) -> Result<bool> {
     let mut h = store::header(db, v)?;
-    if h.state == VaultState::Deleted {
-        return Ok(true);
-    }
     h.state = VaultState::Deleting;
     store::put_header(db, &h)?;
     let upload:Option<(Id,Option<Id>)>=db.query_row("SELECT id,cancel_job FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 LIMIT 1",params![v],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).optional().map_err(|_|Error::Storage)?;
@@ -341,8 +355,11 @@ fn delete_vault_batch(db: &sql::Connection, v: &[u8], now: u64) -> Result<bool> 
         }
     }
     store::content::release_cleanup_credits(db, v, 1)?;
-    h.state = VaultState::Deleted;
-    store::put_header(db, &h)?;
+    db.execute(
+        "DELETE FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",
+        params![v],
+    )
+    .map_err(|_| Error::Storage)?;
     Ok(true)
 }
 #[cfg(test)]

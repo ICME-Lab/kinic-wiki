@@ -55,11 +55,10 @@ impl AdmissionClass {
 /// The durable creation identity outlives its async lease and completed receipt.
 fn check_creation_binding(db: &Connection, operation: &[u8], request_digest: &[u8]) -> Result<()> {
     let vault:Option<Id>=db.query_row("SELECT id FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND operation=?1",params![operation],|r|sql::row_get(r,0)).optional().map_err(|_|Error::Storage)?;
-    if let Some(vault) = vault {
+    if vault.is_some() {
         let bound = digest(
-            b"create-vault/v1",
+            b"create-vault/v2",
             &CreateVault {
-                vault,
                 operation: operation.to_vec(),
             },
         )?;

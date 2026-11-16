@@ -665,6 +665,14 @@ fn schema_eight_reopen_preserves_pending_upload_operation_receipt_balance_and_cu
         .unwrap(),
         "01"
     );
+    vault_store::OwnerContext::authenticated(p(1))
+        .unwrap()
+        .run(&db, |db| {
+            let token = vault_store::operations::begin(db, &[10; 16], &[11; 32], 2)?;
+            assert_eq!(token, 2, "reopening must preserve the global serial");
+            Ok(())
+        })
+        .unwrap();
     drop(db);
     std::fs::remove_file(path).unwrap();
 }

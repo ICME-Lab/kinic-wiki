@@ -4,6 +4,9 @@ use futures::{FutureExt, executor::block_on};
 use sha2::{Digest, Sha256};
 use std::cell::{Cell, RefCell};
 use store::kinic_sqlite_compat::Connection;
+fn vault_id(serial: u64) -> Id {
+    (serial as u128).to_be_bytes().to_vec()
+}
 type Hook = Box<dyn FnOnce(&Env)>;
 struct Env {
     db: RefCell<Connection>,
@@ -14,6 +17,7 @@ struct Env {
     derives: Cell<u64>,
     paid: Cell<u64>,
     fail_public: Cell<bool>,
+    fail_random: Cell<bool>,
     hook: RefCell<Option<Hook>>,
     random_hook: RefCell<Option<Hook>>,
     public_hook: RefCell<Option<Hook>>,
@@ -43,6 +47,7 @@ impl Env {
             derives: Cell::new(0),
             paid: Cell::new(0),
             fail_public: Cell::new(false),
+            fail_random: Cell::new(false),
             hook: RefCell::new(None),
             random_hook: RefCell::new(None),
             public_hook: RefCell::new(None),
@@ -52,7 +57,6 @@ impl Env {
         block_on(create_vault(
             self,
             CreateVault {
-                vault: vec![1; 16],
                 operation: vec![2; 16],
             },
         ))
@@ -70,7 +74,7 @@ impl Env {
     fn begin(&self) -> BeginRevision {
         let bytes = vec![7; 17];
         let r = BeginRevision {
-            vault: vec![1; 16],
+            vault: vault_id(1),
             object: vec![3; 16],
             operation: vec![4; 16],
             expected_revision: 0,
@@ -143,6 +147,9 @@ impl Environment for Env {
         self.transaction(|db| runtime::settle_key_reservation_in(db, token, self.now(), actual))
     }
     async fn random(&self) -> Result<Vec<u8>> {
+        if self.fail_random.replace(false) {
+            return Err(Error::KeyService);
+        }
         self.randoms.set(self.randoms.get() + 1);
         let nonce = vec![self.randoms.get() as u8; 32];
         let hook = self.random_hook.borrow_mut().take();
