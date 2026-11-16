@@ -115,7 +115,7 @@ fn acknowledged_paid_day_reservation_survives_gc() {
     ack_credit(p(9), o, 2).unwrap();
     transaction(|db| {
         admit(db, p(3), 301_000_000_000)?;
-        assert!(load(db, p(1), &vec![7; 16])?.is_some());
+        assert!(load(db, p(1), &[7; 16])?.is_some());
         Ok(())
     })
     .unwrap();
@@ -184,7 +184,7 @@ fn claimed_link_is_protected_after_expiry() {
     ack_link(p(9), proof).unwrap();
     transaction(|db| {
         admit(db, p(3), 301_000_000_000)?;
-        assert!(load(db, p(1), &vec![1; 16])?.is_none());
+        assert!(load(db, p(1), &[1; 16])?.is_none());
         Ok(())
     })
     .unwrap();
@@ -359,7 +359,7 @@ fn old_json_remains_readable_and_bridge_collision_is_not_icrc() {
     })
     .unwrap();
     assert_eq!(
-        crate::funding::begin_payment(p(1), &vec![2; 16], 1),
+        crate::funding::begin_payment(p(1), &[2; 16], 1),
         Err(Error::Conflict)
     );
 }
@@ -367,7 +367,7 @@ fn old_json_remains_readable_and_bridge_collision_is_not_icrc() {
 #[test]
 fn callback_preparation_fence_changes_across_configuration_updates() {
     setup();
-    let before = transaction(|db| settings(db)).unwrap();
+    let before = transaction(settings).unwrap();
     let snapshot = lookup_snapshot(p(1), &offer().operation).unwrap();
     configure(BridgeConfig {
         enabled: false,
@@ -449,7 +449,7 @@ fn link_preview_displays_recipient_without_claiming_before_consent() {
     );
     transaction(|db| {
         assert!(matches!(
-            load(db, p(1), &vec![1; 16])?,
+            load(db, p(1), &[1; 16])?,
             Some(Record::Link {
                 wiki_owner: None,
                 ..

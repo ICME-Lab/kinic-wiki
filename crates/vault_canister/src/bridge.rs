@@ -372,25 +372,24 @@ fn revoke(owner: Principal) -> Result<BridgeRevocation> {
         s.serial = s.serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
         save_settings(db, &s)?;
         for (w, op, r) in rows(db)? {
-            if w == owner {
-                if let Record::Link {
+            if w == owner
+                && let Record::Link {
                     challenge,
                     wiki_owner,
                     ..
                 } = r
-                {
-                    save(
-                        db,
-                        w,
-                        &op,
-                        Record::Link {
-                            challenge,
-                            wiki_owner,
-                            revoked: true,
-                            acknowledged: false,
-                        },
-                    )?;
-                }
+            {
+                save(
+                    db,
+                    w,
+                    &op,
+                    Record::Link {
+                        challenge,
+                        wiki_owner,
+                        revoked: true,
+                        acknowledged: false,
+                    },
+                )?;
             }
         }
         Ok(BridgeRevocation {
@@ -403,21 +402,19 @@ fn revoke(owner: Principal) -> Result<BridgeRevocation> {
 fn finish_revoke(revocation: &BridgeRevocation) -> Result<()> {
     transaction(|db| {
         for (w, op, r) in rows(db)? {
-            if w == revocation.vault_owner {
-                if let Record::Link {
+            if w == revocation.vault_owner
+                && let Record::Link {
                     challenge,
                     revoked: true,
                     ..
                 } = r
-                {
-                    if challenge.generation <= revocation.through_generation {
-                        db.execute(
-                            "DELETE FROM payments WHERE wallet=?1 AND operation=?2",
-                            params![w.to_text(), op],
-                        )
-                        .map_err(|_| Error::Storage)?;
-                    }
-                }
+                && challenge.generation <= revocation.through_generation
+            {
+                db.execute(
+                    "DELETE FROM payments WHERE wallet=?1 AND operation=?2",
+                    params![w.to_text(), op],
+                )
+                .map_err(|_| Error::Storage)?;
             }
         }
         Ok(())
@@ -515,12 +512,10 @@ fn prepare(
             if let Record::Credit {
                 offer, status, day, ..
             } = r
+                && (status == CreditStatus::Prepared
+                    || (day == now / DAY && status == CreditStatus::Accepted))
             {
-                if status == CreditStatus::Prepared
-                    || (day == now / DAY && status == CreditStatus::Accepted)
-                {
-                    daily += u128::from(offer.amount_cycles)
-                }
+                daily += u128::from(offer.amount_cycles)
             }
         }
         if daily > u128::from(s.config.daily_limit_cycles) {

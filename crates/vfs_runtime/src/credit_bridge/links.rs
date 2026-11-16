@@ -41,10 +41,11 @@ impl VfsService {
                 Err(e) if e == "Disabled" => None,
                 Err(e) => return Err(e),
             };
-            if let Some(old) = &old {
-                if old.config.peer != config.peer {
-                    return Err("Conflict".into());
-                }
+            if old
+                .as_ref()
+                .is_some_and(|old| old.config.peer != config.peer)
+            {
+                return Err("Conflict".into());
             }
             let s = Settings {
                 config,
