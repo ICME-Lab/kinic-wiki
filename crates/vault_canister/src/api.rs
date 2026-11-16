@@ -328,7 +328,7 @@ mod read_accounting_tests {
         let owner = Principal::from_slice(&[41]);
         crate::state::transaction(|db| {
             db.execute(
-                "INSERT INTO accounts VALUES(?1,100000000,0,0)",
+                "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,100000000,0,0)",
                 kinic_sqlite_compat::params![owner.to_text()],
             )
             .unwrap();

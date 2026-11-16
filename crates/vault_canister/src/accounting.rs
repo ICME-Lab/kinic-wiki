@@ -3,6 +3,7 @@ use crate::state::{State, transaction};
 use kinic_sqlite_compat::{self as sqlite, Connection, OptionalExtension, params};
 use vault_types::Error;
 const DAY_MS: i64 = 86_400_000;
+const STORAGE_DENOMINATOR: u128 = 1_073_741_824 * 1000;
 const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
 
 fn sql_error(e: sqlite::Error) -> String {
@@ -124,48 +125,121 @@ fn require_account(db: &Connection, owner: &str) -> Result<(), String> {
         Err("prepaid account required".into())
     }
 }
+// Preserve SQLite codes only across the settlement path: owner constraints can
+// be isolated, while database/schema/I/O failures must abort the whole batch.
+#[derive(Debug)]
+enum BillingError {
+    Sql(sqlite::Error),
+    Account(Error),
+    Arithmetic(&'static str),
+}
+impl From<sqlite::Error> for BillingError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sql(error)
+    }
+}
+impl From<&'static str> for BillingError {
+    fn from(error: &'static str) -> Self {
+        Self::Arithmetic(error)
+    }
+}
+impl From<Error> for BillingError {
+    fn from(error: Error) -> Self {
+        Self::Account(error)
+    }
+}
+impl std::fmt::Display for BillingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sql(e) => write!(f, "{e}"),
+            Self::Account(e) => write!(f, "account ledger failure: {e:?}"),
+            Self::Arithmetic(e) => f.write_str(e),
+        }
+    }
+}
+impl BillingError {
+    fn owner_failure(&self) -> bool {
+        match self {
+            Self::Sql(error) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    matches!(error, sqlite::Error::SqliteFailure(e, _) if e.extended_code & 0xff == 19)
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    matches!(error, sqlite::Error::Sqlite(code, _) if code & 0xff == 19)
+                }
+            }
+            Self::Account(_) | Self::Arithmetic(_) => true,
+        }
+    }
+}
 fn settle_storage(tx: &Connection, owner: &str, now: i64) -> Result<(), String> {
-    let row: Option<(i64, i64)> = tx
-        .query_row(
-            "SELECT storage_bytes,storage_charged_at_ms FROM accounts WHERE owner=?1",
-            params![owner],
-            |r| Ok((sqlite::row_get(r, 0)?, sqlite::row_get(r, 1)?)),
-        )
-        .optional()
-        .map_err(sql_error)?;
-    let Some((bytes, at)) = row else {
+    settle_storage_checked(tx, owner, now).map_err(|error| error.to_string())
+}
+fn settle_storage_checked(tx: &Connection, owner: &str, now: i64) -> Result<(), BillingError> {
+    let row: Option<(i64, i64, i64, i64)> = tx.query_row(
+        "SELECT storage_bytes,storage_charged_at_ms,storage_charge_remainder,balance_cycles FROM accounts WHERE owner=?1",
+        params![owner],
+        |r| Ok((sqlite::row_get(r, 0)?, sqlite::row_get(r, 1)?, sqlite::row_get(r, 2)?, sqlite::row_get(r, 3)?)),
+    ).optional()?;
+    let Some((bytes, at, remainder, balance)) = row else {
         return Ok(());
     };
-    let elapsed = now.saturating_sub(at);
-    if elapsed < 1000 {
+    if now <= at {
         return Ok(());
     }
-    let cost = storage_cost(bytes as u64, elapsed)?;
-    let balance = load_balance(tx, owner)?;
-    let paid = balance.max(0).min(i64::try_from(cost).unwrap_or(i64::MAX));
+    let bytes = u128::try_from(bytes).map_err(|_| "negative storage bytes")?;
+    let remainder = u128::try_from(remainder).map_err(|_| "negative storage remainder")?;
+    if remainder >= STORAGE_DENOMINATOR {
+        return Err("invalid storage remainder".into());
+    }
+    // Subtract in i128 first so even the full signed timestamp span is exact.
+    let elapsed =
+        u128::try_from(i128::from(now) - i128::from(at)).map_err(|_| "storage time overflow")?;
+    let numerator = bytes
+        .checked_mul(elapsed)
+        .and_then(|value| value.checked_mul(127_000))
+        .and_then(|value| value.checked_add(remainder))
+        .ok_or("storage charge overflow")?;
+    let cost = numerator / STORAGE_DENOMINATOR;
+    let available = u128::try_from(balance).map_err(|_| "negative account balance")?;
+    let paid = i64::try_from(cost.min(available)).map_err(|_| "storage payment overflow")?;
+    // Exhaustion never creates debt, including the fraction accrued at exhaustion.
+    let next_remainder = if cost >= available {
+        0
+    } else {
+        (numerator % STORAGE_DENOMINATOR) as i64
+    };
     if paid > 0 {
-        adjust_balance(tx, owner, -paid, now)?;
+        adjust_balance_checked(tx, owner, -paid, now)?;
     }
     tx.execute(
-        "UPDATE accounts SET storage_charged_at_ms=?2 WHERE owner=?1",
-        params![owner, now],
-    )
-    .map_err(sql_error)?;
+        "UPDATE accounts SET storage_charged_at_ms=?2,storage_charge_remainder=?3 WHERE owner=?1",
+        params![owner, now, next_remainder],
+    )?;
     Ok(())
 }
 fn adjust_balance(tx: &Connection, owner: &str, delta: i64, now: i64) -> Result<(), String> {
+    adjust_balance_checked(tx, owner, delta, now).map_err(|error| error.to_string())
+}
+fn adjust_balance_checked(
+    tx: &Connection,
+    owner: &str,
+    delta: i64,
+    now: i64,
+) -> Result<(), BillingError> {
     if delta == 0 {
         return Ok(());
     }
-    let balance = load_balance(tx, owner)?
+    let balance = load_balance_sql(tx, owner)?
         .checked_add(delta)
         .ok_or("account balance overflow")?;
     tx.execute(
         "UPDATE accounts SET balance_cycles=?2 WHERE owner=?1",
         params![owner, balance],
-    )
-    .map_err(sql_error)?;
-    record_entry(
+    )?;
+    record_entry_checked(
         tx,
         owner,
         if delta < 0 { "charge" } else { "refund" },
@@ -173,9 +247,7 @@ fn adjust_balance(tx: &Connection, owner: &str, delta: i64, now: i64) -> Result<
         balance,
         now,
         None,
-    )
-    .map_err(|_| "account ledger failure")?;
-
+    )?;
     Ok(())
 }
 
@@ -230,20 +302,37 @@ pub fn validate_vault_config(config: &vault_types::VaultConfig) -> vault_types::
 impl State {
     /// Bounded, durable round-robin sweep; storage fees continue while owners are offline.
     pub fn vault_settle_storage_timer_batch(&self, now: i64) -> Result<(), String> {
-        self.vault_maintain_expired((now.max(0) as u64) / 1000)
-            .map_err(|_| "Vault expiry maintenance failed")?;
-        self.write_index(|tx|{
-            let saved:Option<(String,i64)>=tx.query_row("SELECT cursor_owner,billing_now_ms FROM vault_storage_billing_state WHERE slot=1",params![],|r|Ok((sqlite::row_get(r,0)?,sqlite::row_get(r,1)?))).optional().map_err(sql_error)?;
-            let (cursor,billing_now)=saved.unwrap_or_else(||(String::new(),now));
-            let mut stmt=tx.prepare("SELECT owner FROM accounts WHERE owner>?1 ORDER BY owner LIMIT 1001").map_err(sql_error)?;
-            let owners:Vec<String>=sqlite::query_map(&mut stmt,params![cursor],|r|sqlite::row_get(r,0)).map_err(sql_error)?;
-            for owner in owners.iter().take(1000){settle_storage(tx,owner,billing_now)?;}
-            if owners.len()>1000 {
-                tx.execute("INSERT INTO vault_storage_billing_state(slot,cursor_owner,billing_now_ms) VALUES(1,?1,?2) ON CONFLICT(slot) DO UPDATE SET cursor_owner=excluded.cursor_owner,billing_now_ms=excluded.billing_now_ms",params![owners[999],billing_now]).map_err(sql_error)?;
-            }else{tx.execute("DELETE FROM vault_storage_billing_state WHERE slot=1",params![]).map_err(sql_error)?;}
+        if let Err(error) = self.vault_maintain_expired((now.max(0) as u64) / 1000) {
+            crate::log_maintenance_error(&format!("Vault expiry maintenance failed: {error:?}"));
+        }
+        self.write_index(|tx| {
+            let saved: Option<(String, i64)> = tx.query_row(
+                "SELECT cursor_owner,billing_now_ms FROM vault_storage_billing_state WHERE slot=1",
+                params![], |r| Ok((sqlite::row_get(r, 0)?, sqlite::row_get(r, 1)?)),
+            ).optional().map_err(sql_error)?;
+            let (cursor, billing_now) = saved.unwrap_or_else(|| (String::new(), now));
+            let owners: Vec<String> = {
+                let mut stmt = tx.prepare("SELECT owner FROM accounts WHERE owner>?1 ORDER BY owner LIMIT 1001").map_err(sql_error)?;
+                sqlite::query_map(&mut stmt, params![cursor], |r| sqlite::row_get(r, 0)).map_err(sql_error)?
+            };
+            for owner in owners.iter().take(1000) {
+                tx.execute_batch("SAVEPOINT vault_owner_billing").map_err(sql_error)?;
+                if let Err(error) = settle_storage_checked(tx, owner, billing_now) {
+                    tx.execute_batch("ROLLBACK TO vault_owner_billing").map_err(sql_error)?;
+                    if !error.owner_failure() { return Err(error.to_string()); }
+                    crate::log_maintenance_error(&format!("Vault storage billing failed for {owner}: {error}"));
+                }
+                tx.execute_batch("RELEASE vault_owner_billing").map_err(sql_error)?;
+            }
+            if owners.len() > 1000 {
+                tx.execute("INSERT INTO vault_storage_billing_state(slot,cursor_owner,billing_now_ms) VALUES(1,?1,?2) ON CONFLICT(slot) DO UPDATE SET cursor_owner=excluded.cursor_owner,billing_now_ms=excluded.billing_now_ms", params![owners[999], billing_now]).map_err(sql_error)?;
+            } else {
+                tx.execute("DELETE FROM vault_storage_billing_state WHERE slot=1", params![]).map_err(sql_error)?;
+            }
             Ok(())
         })
     }
+
     /// Completion accounting remains possible after a controller disables new Vault operations.
     pub fn vault_settle_key_flight(
         &self,
@@ -378,6 +467,9 @@ impl State {
 }
 
 fn load_balance(db: &Connection, owner: &str) -> Result<i64, String> {
+    load_balance_sql(db, owner).map_err(sql_error)
+}
+fn load_balance_sql(db: &Connection, owner: &str) -> sqlite::Result<i64> {
     db.query_row(
         "SELECT balance_cycles FROM accounts WHERE owner=?1",
         params![owner],
@@ -385,14 +477,8 @@ fn load_balance(db: &Connection, owner: &str) -> Result<i64, String> {
     )
     .optional()
     .map(|balance: Option<i64>| balance.unwrap_or(0))
-    .map_err(sql_error)
 }
-fn storage_cost(bytes: u64, elapsed: i64) -> Result<u128, String> {
-    Ok(
-        u128::from(bytes) * u128::try_from(elapsed.max(0) / 1000).map_err(|_| "time")? * 127_000
-            / 1_073_741_824,
-    )
-}
+
 impl State {
     fn write_index<T>(
         &self,
@@ -450,6 +536,22 @@ pub(crate) fn record_entry(
     now: i64,
     operation: Option<&[u8]>,
 ) -> vault_types::Result<()> {
+    record_entry_checked(db, owner, kind, amount, balance, now, operation).map_err(|error| {
+        match error {
+            BillingError::Account(error) => error,
+            BillingError::Sql(_) | BillingError::Arithmetic(_) => Error::Storage,
+        }
+    })
+}
+fn record_entry_checked(
+    db: &Connection,
+    owner: &str,
+    kind: &str,
+    amount: i64,
+    balance: i64,
+    now: i64,
+    operation: Option<&[u8]>,
+) -> Result<(), BillingError> {
     use vault_types::capacity::*;
     if owner.len() > PRINCIPAL_TEXT
         || kind.len() > KIND
@@ -461,12 +563,12 @@ pub(crate) fn record_entry(
         .ok_or(Error::QuotaExceeded)?
             > SMALL_ROW
     {
-        return Err(Error::InvalidInput);
+        return Err(Error::InvalidInput.into());
     }
     // Audit is disposable history only: payment receipts and reservation/checkpoint
     // journals carry the exactly-once state. Evict BEFORE allocating the new row.
-    db.execute("DELETE FROM account_ledger WHERE id IN (SELECT id FROM account_ledger ORDER BY id LIMIT max(0,(SELECT count(*) FROM account_ledger)-9999))",params![]).map_err(|_|Error::Storage)?;
-    db.execute("INSERT INTO account_ledger(owner,kind,amount_cycles,balance_after,at_ms,operation) VALUES(?1,?2,?3,?4,?5,?6)",params![owner,kind,amount,balance,now,operation.unwrap_or(&[])]).map_err(|_|Error::Storage)?;
+    db.execute("DELETE FROM account_ledger WHERE id IN (SELECT id FROM account_ledger ORDER BY id LIMIT max(0,(SELECT count(*) FROM account_ledger)-9999))",params![])?;
+    db.execute("INSERT INTO account_ledger(owner,kind,amount_cycles,balance_after,at_ms,operation) VALUES(?1,?2,?3,?4,?5,?6)",params![owner,kind,amount,balance,now,operation.unwrap_or(&[])])?;
     Ok(())
 }
 
