@@ -38,7 +38,7 @@ Synthetic/historical payment admission counts existing accounts plus distinct ab
 
 Unknown payments beyond 23 hours or 100 attempts remain durable and must use reconciliation rather than another transfer. Use the manual authoritative ledger/archive reconciliation path after those bounds. The wallet could have been debited without beneficiary credit. Retaining a journal, screenshot or controller assertion does not recover funds. Do not automatically issue a replacement transfer or manually create compensating credit. Missing or unavailable evidence keeps the payment pending without creating a replacement transfer.
 
-Only fresh complete schema 8 and compatible schema 8 upgrades are supported. Schemas 1–7 and malformed/foreign schemas are refused unchanged. There is no legacy archive import/export or old-schema migration. See [operations](vault/operations.md) and [validation](vault/validation.md) for current release boundaries and provenance.
+Schema 8 is the initial release format. Only fresh complete schema 8 and compatible schema 8 upgrades are supported; there is no existing schema 7 database to migrate under the approved release scope. Schemas 1–7 and malformed/foreign schemas are refused unchanged. There is no legacy archive import/export or old-schema migration. See [operations](vault/operations.md) and [validation](vault/validation.md) for current release boundaries and provenance.
 
 
 ## Production reconciliation follow-up — 2026-11-16

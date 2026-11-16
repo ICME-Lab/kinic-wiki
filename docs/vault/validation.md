@@ -2,7 +2,7 @@
 
 ## Current implementation
 
-The approved2026-11-16 follow-up enables pinned KINIC production funding and user-triggered authoritative ledger/archive reconciliation. Default backend Wasm builds without browser assets; only distribution builds enable embedded-assets. Fresh/current stores use schema8, older schemas reject unchanged. No production deployment, DNS change, existing-canister reinstall or live-funds transfer was performed.
+The approved2026-11-16 follow-up enables pinned KINIC production funding and user-triggered authoritative ledger/archive reconciliation. Default backend Wasm builds without browser assets; only distribution builds enable embedded-assets. Schema 8 is the initial release format: fresh stores initialize at 8, compatible schema 8 upgrades preserve data, and unsupported/foreign/malformed stores are rejected unchanged. No schema 7 database migration is required or implemented; this is the approved release assumption, not a production database observation. No production deployment, DNS change, existing-canister reinstall or live-funds transfer was performed.
 
 ## Reproduce
 
@@ -49,3 +49,10 @@ Vlmkit0.23 integrity is CLEAN at1280/768/375, scroll passes and interactions pas
 Two independent reviews identified and verified fixes for: known-unsent tip-preparation recovery, missing didc in isolated Wasm CI, compiler-override distribution risk and stale funding-disabled operational text. Full sharedUI and independent prerequisite CI, then backend/client and final integration CI must be evaluated on their published heads; local results alone do not authorize merge or deployment. Job durations and artifact sizes are recorded by CI for comparison with the previous15min53sec integrated Vault job.
 
 See [PR dependencies](pr-split.md) and [operations](operations.md).
+
+
+## Initial release schema clarification — 2026-11-16
+
+The approved scope has no existing schema 7 database; no 7-to-8 migration is needed. The stale temporary filename in the schema 8 reopen test was renamed from `vault-seven-pending` to `vault-eight-pending`; its assertions and production code are unchanged.
+
+`cargo test -p vault-canister --lib --locked` passed all 53 tests in the current working tree, including fresh schema 8 initialization/idempotence, unchanged refusal of unsupported/foreign/malformed stores, pending upload/receipt/balance/cursor reopen, payment JSON defaults and reconciliation generation/lease recovery. This working tree also contains independently owned uncommitted funding/boundary refactors, which were not included in this correction. Existing Wasm upgrade coverage was inspected in `vault-capacity.test.mjs` and `vault-funding-ledger.test.mjs` (Unknown payments/balances and bounded scan cursor continuity); those Wasm tests and the browser suite were not rerun for this documentation/temporary-filename change. The earlier acceptance evidence above remains tied to its recorded source revision. No running production database was queried.
