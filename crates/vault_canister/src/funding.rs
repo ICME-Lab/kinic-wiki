@@ -1,7 +1,9 @@
 //! Durable ICRC-2 quotes. Only the authenticated wallet can debit its own allowance.
 use crate::state::transaction;
+mod api;
+mod ledger;
 mod reconciliation;
-use candid::{CandidType, Nat, Principal};
+use candid::{CandidType, Principal};
 use kinic_sqlite_compat::{self as sql, OptionalExtension, params};
 pub use reconciliation::{ReconciliationProgress, ReconciliationState};
 use serde::{Deserialize, Serialize};
@@ -77,6 +79,18 @@ fn load(db: &sql::Connection, w: Principal, id: &[u8]) -> Result<Option<Payment>
         .map_err(|_| Error::Storage)?;
     raw.map(|v| serde_json::from_str(&v).map_err(|_| Error::Storage))
         .transpose()
+}
+/// Shared bounded payment scan for admission checks. Decode lazily so callers can
+/// stop at the first capacity/lease conflict without interpreting unrelated rows.
+pub(crate) fn all_payments(db: &sql::Connection) -> Result<impl Iterator<Item = Result<Payment>>> {
+    let mut statement = db
+        .prepare("SELECT record FROM payments")
+        .map_err(|_| Error::Storage)?;
+    let records: Vec<String> = sql::query_map(&mut statement, params![], |r| sql::row_get(r, 0))
+        .map_err(|_| Error::Storage)?;
+    Ok(records
+        .into_iter()
+        .map(|raw| serde_json::from_str(&raw).map_err(|_| Error::Storage)))
 }
 fn payment_size(p: &Payment) -> Result<usize> {
     let raw = serde_json::to_string(p).map_err(|_| Error::Storage)?;
@@ -392,14 +406,8 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         let refunds:i64=db.query_row("SELECT coalesce(sum(CASE WHEN actual IS NULL THEN reserved WHEN in_flight=1 THEN actual ELSE 0 END),0) FROM vault_cycle_reservations WHERE owner=?1",params![beneficiary],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
         let mut capacity =
             u128::from(balance as u64) + u128::from(refunds as u64) + u128::from(p.credits);
-        let mut statement = db
-            .prepare("SELECT record FROM payments")
-            .map_err(|_| Error::Storage)?;
-        let records: Vec<String> =
-            sql::query_map(&mut statement, params![], |r| sql::row_get(r, 0))
-                .map_err(|_| Error::Storage)?;
-        for raw in records {
-            let other: Payment = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
+        for other in all_payments(db)? {
+            let other = other?;
             if other.request.beneficiary == p.request.beneficiary
                 && (other.wallet != p.wallet || other.request.operation != p.request.operation)
                 && matches!(other.status, Status::InFlight | Status::Unknown)
@@ -499,245 +507,17 @@ pub fn complete_payment(sent: &Payment, outcome: Outcome) -> Result<Payment> {
         Ok(p)
     })
 }
-#[ic_cdk::update]
-fn set_funding_config(config: Option<FundingConfig>) -> vault_types::Result<()> {
-    if !ic_cdk::api::is_controller(&ic_cdk::api::msg_caller()) {
-        return Err(Error::Unauthorized);
-    }
-    if let Some(c) = &config {
-        auth(c.ledger)?;
-        require_ledger(c.ledger)?;
-        auth(c.recipient)?;
-        if c.cycles_per_kinic == 0 || c.cycles_per_kinic > i64::MAX as u64 {
-            return Err(Error::InvalidInput);
-        }
-    }
-    transaction(|db| {
-        db.execute("INSERT INTO global_settings(key,value) VALUES('funding',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serde_json::to_string(&config).map_err(|_|Error::Storage)?]).map_err(|_|Error::Storage)?;
-        Ok(())
-    })
-}
-#[ic_cdk::query]
-fn account_balance() -> vault_types::Result<u64> {
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    crate::state::State.balance(&caller.to_text())
-}
-#[ic_cdk::query]
-fn payment_status(operation: Vec<u8>) -> vault_types::Result<Option<Payment>> {
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    if operation.len() != 16 {
-        return Err(Error::InvalidInput);
-    }
-    transaction(|db| load(db, caller, &operation))
-}
-#[ic_cdk::update]
-async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment> {
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    auth(request.beneficiary)?;
-    if request.operation.len() != 16 {
-        return Err(Error::InvalidInput);
-    }
-    if let Some(p) = transaction(|db| load(db, caller, &request.operation))? {
-        return if p.request == request {
-            Ok(p)
-        } else {
-            Err(Error::Conflict)
-        };
-    }
-    let config: FundingConfig = transaction(|db| {
-        let raw: String = db
-            .query_row(
-                "SELECT value FROM global_settings WHERE key='funding'",
-                params![],
-                |r| sql::row_get(r, 0),
-            )
-            .map_err(|_| Error::Unauthorized)?;
-        serde_json::from_str::<Option<FundingConfig>>(&raw)
-            .map_err(|_| Error::Storage)?
-            .ok_or(Error::Unauthorized)
-    })?;
-    require_ledger(config.ledger)?;
-    let flight = match admit_quote(caller, request, config, crate::now_nanos())? {
-        QuoteAdmission::Existing(payment) => return Ok(payment),
-        QuoteAdmission::Fee(flight) => flight,
-    };
-    let fee = async {
-        let response = ic_cdk::call::Call::bounded_wait(flight.payment.config.ledger, "icrc1_fee")
-            .change_timeout(60)
-            .await
-            .map_err(|_| Error::KeyService)?;
-        let fee: Nat = response.candid().map_err(|_| Error::KeyService)?;
-        nat(&fee).ok_or(Error::InvalidInput)
-    }
-    .await;
-    finish_quote(&flight, fee, crate::now_nanos())
-}
-#[derive(CandidType, Deserialize)]
-struct Account {
-    owner: Principal,
-    subaccount: Option<Vec<u8>>,
-}
-#[derive(CandidType, Deserialize)]
-struct TransferFromArg {
-    spender_subaccount: Option<Vec<u8>>,
-    from: Account,
-    to: Account,
-    amount: Nat,
-    fee: Option<Nat>,
-    memo: Option<Vec<u8>>,
-    created_at_time: Option<u64>,
-}
-#[derive(CandidType, Deserialize)]
-enum TransferError {
-    BadFee { expected_fee: Nat },
-    BadBurn { min_burn_amount: Nat },
-    InsufficientFunds { balance: Nat },
-    InsufficientAllowance { allowance: Nat },
-    TooOld,
-    CreatedInFuture { ledger_time: u64 },
-    Duplicate { duplicate_of: Nat },
-    TemporarilyUnavailable,
-    GenericError { error_code: Nat, message: String },
-}
-fn nat(n: &Nat) -> Option<u64> {
-    n.0.to_string().parse().ok()
-}
-#[ic_cdk::update]
-async fn pay_purchase(operation: Vec<u8>) -> vault_types::Result<Payment> {
-    if operation.len() != 16 {
-        return Err(Error::InvalidInput);
-    }
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    let ledger = transaction(|db| {
-        Ok(load(db, caller, &operation)?
-            .ok_or(Error::NotFound)?
-            .config
-            .ledger)
-    })?;
-    require_ledger(ledger)?;
-    let p = begin_payment(caller, &operation, crate::now_nanos())?;
-    if p.reconciliation.is_none() && p.uncertain {
-        return complete_payment(&p, Outcome::Unknown);
-    }
-    // Persist the history lower bound and spender before the first possible debit.
-    // An existing immutable snapshot is retained for byte-for-byte retries.
-    let p = if p.reconciliation.is_none() {
-        reconciliation::begin_preparation(&p)?
-    } else {
-        p
-    };
-    let start = match &p.reconciliation {
-        Some(scan) => scan.start,
-        None => match reconciliation::ledger_tip(p.config.ledger).await {
-            Ok(start) => start,
-            Err(_) => return reconciliation::finish_preparation(&p),
-        },
-    };
-    let p = reconciliation::prepare_dispatch(&p, ic_cdk::api::canister_self(), start)?;
-    let arg = TransferFromArg {
-        spender_subaccount: None,
-        from: Account {
-            owner: p.wallet,
-            subaccount: None,
-        },
-        to: Account {
-            owner: p.config.recipient,
-            subaccount: None,
-        },
-        amount: p.request.amount_e8s.into(),
-        fee: Some(p.fee.into()),
-        memo: Some(p.memo.clone()),
-        created_at_time: Some(p.created_at_time),
-    };
-    let outcome = match ic_cdk::call::Call::bounded_wait(p.config.ledger, "icrc2_transfer_from")
-        .change_timeout(60)
-        .with_arg(arg)
-        .await
-    {
-        Err(_) => Outcome::Unknown,
-        Ok(response) => match response.candid::<std::result::Result<Nat, TransferError>>() {
-            Ok(Ok(block))
-            | Ok(Err(TransferError::Duplicate {
-                duplicate_of: block,
-            })) => nat(&block).map(Outcome::Paid).unwrap_or(Outcome::Unknown),
-            Ok(Err(TransferError::BadFee { expected_fee })) => nat(&expected_fee)
-                .map(|f| Outcome::Rejected(Status::BadFee(f)))
-                .unwrap_or(Outcome::Unknown),
-            Ok(Err(TransferError::InsufficientFunds { .. })) => {
-                Outcome::Rejected(Status::InsufficientFunds)
-            }
-            Ok(Err(TransferError::InsufficientAllowance { .. })) => {
-                Outcome::Rejected(Status::InsufficientAllowance)
-            }
-            // TooOld after an unknown first attempt does not prove the original transfer failed.
-            Ok(Err(TransferError::TooOld)) => Outcome::Unknown,
-            Ok(Err(_)) => Outcome::Rejected(Status::Rejected),
-            Err(_) => Outcome::Unknown,
-        },
-    };
-    complete_payment(&p, outcome)
-}
-
-#[ic_cdk::query]
-fn list_payments() -> vault_types::Result<Vec<Payment>> {
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    transaction(|db| {
-        let mut statement = db
-            .prepare("SELECT record FROM payments WHERE wallet=?1 ORDER BY expires DESC LIMIT 16")
-            .map_err(|_| Error::Storage)?;
-        let rows: Vec<String> = sql::query_map(&mut statement, params![caller.to_text()], |r| {
-            sql::row_get(r, 0)
-        })
-        .map_err(|_| Error::Storage)?;
-        rows.into_iter()
-            .map(|r| serde_json::from_str(&r).map_err(|_| Error::Storage))
-            .collect()
-    })
-}
-#[ic_cdk::update]
-fn cancel_quote(operation: Vec<u8>) -> vault_types::Result<Payment> {
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    if operation.len() != 16 {
-        return Err(Error::InvalidInput);
-    }
-    transaction(|db| {
-        let mut p = load(db, caller, &operation)?.ok_or(Error::NotFound)?;
-        if !matches!(p.status, Status::Quoted) {
-            return Err(Error::Conflict);
-        }
-        p.status = Status::Expired;
-        save(db, &p)?;
-        Ok(p)
-    })
-}
-
-fn require_ledger(ledger: Principal) -> Result<()> {
-    if cfg!(feature = "synthetic-funding-test-only")
-        || ledger
-            == Principal::from_text("73mez-iiaaa-aaaaq-aaasq-cai").expect("KINIC ledger principal")
-    {
-        Ok(())
-    } else {
-        Err(Error::Unauthorized)
-    }
-}
 #[cfg(all(test, not(feature = "synthetic-funding-test-only")))]
 mod production_ledger_tests {
     use super::*;
     #[test]
     fn only_pinned_kinic_ledger_can_debit_production_payments() {
         assert_eq!(
-            require_ledger(Principal::from_text("73mez-iiaaa-aaaaq-aaasq-cai").unwrap()),
+            ledger::require_ledger(Principal::from_text("73mez-iiaaa-aaaaq-aaasq-cai").unwrap()),
             Ok(())
         );
         assert_eq!(
-            require_ledger(Principal::from_slice(&[7])),
+            ledger::require_ledger(Principal::from_slice(&[7])),
             Err(Error::Unauthorized)
         );
     }

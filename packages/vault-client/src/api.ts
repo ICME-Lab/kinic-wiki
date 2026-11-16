@@ -53,7 +53,7 @@ type RequestState =
 type SaveState =
   | { kind: "idle" }
   | { kind: "preparing" }
-  | { kind: "ready" | "sending"; job: Save };
+  | { kind: "ready" | "sending" | "cancelling"; job: Save };
 type CleanupJob = {
   vault: Uint8Array;
   operation: Uint8Array;
@@ -332,7 +332,7 @@ export class VaultClient {
     return this.mutate(mutation.action, bytes(mutation.operation));
   }
   private get pendingSave() {
-    return this.saveState.kind === "ready" || this.saveState.kind === "sending"
+    return "job" in this.saveState
       ? this.saveState.job
       : undefined;
   }
@@ -393,7 +393,7 @@ export class VaultClient {
   async resumeSave(progress: (n: number) => void = () => {}) {
     const j = this.pendingSave;
     if (!j) throw Error("NoPendingSave");
-    if (this.saveState.kind === "sending") throw Error("SaveInProgress");
+    if (this.saveState.kind !== "ready") throw Error("SaveInProgress");
     const sending: SaveState = { kind: "sending", job: j };
     this.saveState = sending;
     try {
@@ -598,30 +598,46 @@ export class VaultClient {
   async cancelSave() {
     const j = this.pendingSave;
     if (!j) throw Error("NoPendingSave");
-    if (this.saveState.kind === "sending") throw Error("SaveInProgress");
-    const t = this.session.capture();
-    if (this.request.kind !== "idle") {
-      await this.retryMutation();
+    if (this.saveState.kind !== "ready") throw Error("SaveInProgress");
+    const cancelling: SaveState = { kind: "cancelling", job: j };
+    this.saveState = cancelling;
+    const cleanup = this.cleanupState;
+    try {
+      const t = this.session.capture();
+      if (this.request.kind !== "idle") {
+        await this.retryMutation();
+        this.session.check(t);
+      }
+      const status = await this.uploadStatus(bytes(j.request.operation));
       this.session.check(t);
+      if ("Pending" in status) {
+        if (!equal(bytes(status.Pending.request.vault), bytes(j.request.vault)))
+          throw Error("TargetChanged");
+        await this.cancelUpload(
+          bytes(j.request.vault),
+          bytes(j.request.operation),
+          status.Pending.cancel_job[0]
+            ? bytes(status.Pending.cancel_job[0])
+            : undefined,
+        );
+      }
+      this.session.check(t);
+      j.chunks.forEach((x) => x.fill(0));
+      if (this.saveState === cancelling) this.saveState = { kind: "idle" };
+      // Replaying a lost final CancelUpload can report a terminal status without
+      // re-entering cleanup(). Release that job, never another resource's retry.
+      if (
+        this.cleanupState === cleanup &&
+        cleanup.kind === "cancel" &&
+        equal(cleanup.vault, bytes(j.request.vault)) &&
+        equal(cleanup.upload, bytes(j.request.operation))
+      )
+        this.cleanupState = { kind: "idle" };
+      return status;
+    } finally {
+      if (this.saveState === cancelling)
+        this.saveState = { kind: "ready", job: j };
     }
-    const status = await this.uploadStatus(bytes(j.request.operation));
-    this.session.check(t);
-    if ("Pending" in status) {
-      if (!equal(bytes(status.Pending.request.vault), bytes(j.request.vault)))
-        throw Error("TargetChanged");
-      await this.cancelUpload(
-        bytes(j.request.vault),
-        bytes(j.request.operation),
-        status.Pending.cancel_job[0]
-          ? bytes(status.Pending.cancel_job[0])
-          : undefined,
-      );
-    }
-    this.session.check(t);
-    j.chunks.forEach((x) => x.fill(0));
-    this.saveState = { kind: "idle" };
-    this.cleanupState = { kind: "idle" };
-    return status;
   }
   async cancelUpload(vault: Uint8Array, upload: Uint8Array, job?: Uint8Array) {
     this.checkLive();
