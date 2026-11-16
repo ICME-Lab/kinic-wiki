@@ -21,10 +21,26 @@ fn main() {
     println!("cargo:rerun-if-env-changed=VAULT_LOCAL_II");
     let mut files = vec![];
     let mut source = String::from("pub const ASSETS:&[(&str,&str,&[u8])]=&[\n");
-    if root.exists() {
+    if env::var_os("CARGO_FEATURE_EMBEDDED_ASSETS").is_some() {
+        assert!(
+            root.join("index.html").is_file(),
+            "Build complete vaultbrowser assets with index.html before enabling embedded-assets"
+        );
         walk(&root, &root, &mut files);
         files.sort();
-        for f in files {
+        let index = fs::read_to_string(root.join("index.html")).expect("read index.html");
+        assert!(
+            !index.trim().is_empty() && index.contains(".js"),
+            "index.html must reference a JavaScript entrypoint"
+        );
+        assert!(
+            files
+                .iter()
+                .any(|f| f.extension().is_some_and(|x| x == "js")
+                    && fs::metadata(root.join(f)).is_ok_and(|m| m.len() > 0)),
+            "assets require a nonempty JavaScript entrypoint"
+        );
+        for f in &files {
             let ext = f.extension().and_then(|x| x.to_str()).unwrap_or("");
             let mime = match ext {
                 "html" => "text/html; charset=utf-8",
@@ -40,10 +56,19 @@ fn main() {
                 root.join(&f)
             ));
         }
-    } else if env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "wasm32" {
-        panic!("Run vaultbrowser build before building dedicated Vault Wasm")
     }
     source.push_str("];\n");
+    if env::var_os("CARGO_FEATURE_EMBEDDED_ASSETS").is_some() {
+        let local = ["VAULT_LOCAL_ORIGIN", "VAULT_LOCAL_HOST", "VAULT_LOCAL_II"]
+            .iter()
+            .any(|key| env::var_os(key).is_some());
+        let synthetic = env::var_os("CARGO_FEATURE_SYNTHETIC_FUNDING_TEST_ONLY").is_some();
+        let metadata = format!(
+            "{{\"embedded_assets\":true,\"local\":{local},\"synthetic\":{synthetic},\"assets\":{}}}",
+            files.len()
+        );
+        source.push_str(&format!("#[cfg(target_arch = \"wasm32\")]\n#[used]\n#[unsafe(link_section = \"kinic:vault-build\")]\nstatic VAULT_BUILD: [u8; {}] = *b{:?};\n", metadata.len(), metadata));
+    }
     fs::write(
         PathBuf::from(env::var("OUT_DIR").unwrap()).join("assets.rs"),
         source,

@@ -3,6 +3,7 @@ mod accounting;
 mod api;
 mod capacity;
 mod funding;
+#[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
 mod http;
 mod key_cost;
 mod schema;
@@ -22,6 +23,7 @@ fn with_service<T>(
 }
 fn initialize() {
     state::initialize().expect("Vault initialization failed");
+    #[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
     http::initialize();
     ic_cdk_timers::set_timer_interval(std::time::Duration::from_secs(60), || async {
         state::State
@@ -37,7 +39,8 @@ fn init() {
 fn post_upgrade() {
     initialize()
 }
-use funding::{FundingConfig, Payment, PurchaseRequest};
+use funding::{FundingConfig, Payment, PurchaseRequest, ReconciliationProgress};
+#[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
 use http::{HttpRequest, HttpResponse};
 ic_cdk::export_candid!();
 #[test]

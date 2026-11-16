@@ -116,6 +116,8 @@ pub fn fixture_old_schema(version:u8) {
     "cargo",
     [
       "build",
+    "--features",
+    "vault-canister/embedded-assets",
       "-p",
       "vault-canister",
       "--target",

@@ -34,11 +34,14 @@ run("cargo", [
   "vault-canister",
   "-p",
   "vfs-canister",
+  "--features",
+  "vault-canister/embedded-assets",
   "--target",
   "wasm32-unknown-unknown",
   "--release",
   "--locked",
 ]);
+run("node", ["scripts/check-vault-release.mjs", resolve(env.CARGO_TARGET_DIR, "wasm32-unknown-unknown/release/vault_canister.wasm")]);
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 const assets = {};
 function walk(dir) {
@@ -73,7 +76,7 @@ writeFileSync(
       diff_sha256: sha(
         execFileSync("git", ["diff", "HEAD", "--binary"], { cwd: root }),
       ),
-      funding_mode: "unavailable",
+      funding_mode: "production",
       assets,
       artifacts,
     },

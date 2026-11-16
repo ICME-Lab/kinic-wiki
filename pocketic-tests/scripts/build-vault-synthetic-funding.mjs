@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, "../..");
 const target = resolve(root, "target/vault-synthetic-funding-build");
 const env = { ...process.env, CARGO_TARGET_DIR: target };
 for (const key of ["VAULT_LOCAL_ORIGIN", "VAULT_LOCAL_HOST", "VAULT_LOCAL_II", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS"]) delete env[key];
-execFileSync("cargo", ["build", "-p", "vault-canister", "--features", "synthetic-funding-test-only", "--target", "wasm32-unknown-unknown", "--release", "--locked"], { cwd: root, env, stdio: "inherit" });
+execFileSync("cargo", ["build", "-p", "vault-canister", "--features", "synthetic-funding-test-only,embedded-assets", "--target", "wasm32-unknown-unknown", "--release", "--locked"], { cwd: root, env, stdio: "inherit" });
 const wasm = resolve(target, "wasm32-unknown-unknown/release/vault_canister.wasm");
 const git = (...args) => execFileSync("git", args, { cwd: root });
 const hash = value => createHash("sha256").update(value).digest("hex");
