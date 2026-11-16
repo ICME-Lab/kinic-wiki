@@ -35,6 +35,7 @@ run(
     "crates/vault_store",
     "crates/vault_service",
     "crates/kinic_sqlite_compat",
+    "crates/credit_bridge_types",
   ],
   { cwd: root },
 );
@@ -45,7 +46,7 @@ writeFileSync(
   readFileSync(cargo, "utf8")
     .replace(
       /members = \[[\s\S]*?\]/,
-      'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat"]',
+      'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat","crates/credit_bridge_types"]',
     )
     .replace('ic-agent = { path = "vendor/ic-agent" }', ""),
 );
@@ -118,6 +119,8 @@ writeFileSync(
     {
       deployable: false,
       source_commit: head,
+      source_archive_sha256: hash(readFileSync(resolve(dir, "source.tar"))),
+      builder_sha256: hash(readFileSync(import.meta.filename)),
       embedded_assets: embedded,
       source_lock_sha256: hash(readFileSync(resolve(root, "Cargo.lock"))),
       fixture_lock_sha256: hash(readFileSync(resolve(dir, "Cargo.lock"))),
