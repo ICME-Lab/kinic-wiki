@@ -481,6 +481,8 @@ try {
   const chunkRetry = finishRetryTrace(chunkTrace);
   const search = vault.getByLabel("Search this Vault locally");
   const noteButton = vault.getByRole("button", { name: title, exact: true });
+  // Save confirmation precedes the asynchronous metadata-list refresh.
+  await expect(noteButton).toBeVisible();
   const readsBeforeTyping = chunkReads;
   await search.fill(plaintext);
   await expect(noteButton).toHaveCount(0);
