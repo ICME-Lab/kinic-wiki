@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { chromium } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
 import { idlFactory } from "../../packages/vault-candid/index.js";
 const require = createRequire(import.meta.url);
 const { Cbor } = require("@icp-sdk/core/agent");
@@ -414,12 +414,10 @@ try {
     "production",
   );
   await vault.getByText("Account & storage", { exact: true }).click();
-  assert.equal(
-    await vault
-      .getByRole("button", { name: "Get quote", exact: true })
-      .isDisabled(),
-    false,
-  );
+  // The form stays disabled until its independent config/history requests finish.
+  await expect(
+    vault.getByRole("button", { name: "Get quote", exact: true }),
+  ).toBeEnabled({ timeout: 60_000 });
   const afterUpgrade = await readback(vault);
   assert.equal(afterUpgrade.principal, owner);
   assert.deepEqual(afterUpgrade.payments, beforeUpgrade.payments);
