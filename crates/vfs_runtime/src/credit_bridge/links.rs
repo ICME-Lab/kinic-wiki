@@ -77,6 +77,7 @@ impl VfsService {
                 params![now_i64],
             )
             .map_err(|e| e.to_string())?;
+            expire_unpaired_fences(c, now_i64)?;
             let existing = load_owner_lease(c, p)?;
             if let Some((epoch, None)) = existing {
                 return Ok(LinkSnapshot {
@@ -154,6 +155,7 @@ impl VfsService {
         }
         self.write_index(|c| {
             validate_snapshot(c, p, snap, now)?;
+            expire_unpaired_fences(c, i64::try_from(now).map_err(|_| "InvalidInput")?)?;
             if ch.generation <= fence(c, ch.vault_owner)? {
                 return Err("Conflict".into());
             }
@@ -206,6 +208,12 @@ impl VfsService {
                 )
                 .map_err(|e| e.to_string())?;
             }
+            // Admission makes a fence permanent, including pending approval.
+            c.execute(
+                "UPDATE credit_bridge_fences SET expires_at_ns=NULL WHERE vault_owner=?1",
+                params![ch.vault_owner.to_text()],
+            )
+            .map_err(|e| e.to_string())?;
             let l = Link {
                 proof: LinkProof {
                     challenge: ch,
@@ -289,19 +297,27 @@ impl VfsService {
             Ok(())
         })
     }
-    pub fn revoke_link_from_vault(&self, peer: Principal, r: BridgeRevocation) -> R<()> {
+    pub fn revoke_link_from_vault(&self, peer: Principal, r: BridgeRevocation, now: u64) -> R<()> {
         self.vault_bridge_peer(peer)?;
         auth(r.vault_owner)?;
         if r.through_generation > i64::MAX as u64 {
             return Err("InvalidInput".into());
         }
+        let expires_at_ns = now
+            .checked_add(TTL)
+            .and_then(|n| i64::try_from(n).ok())
+            .ok_or("InvalidInput")?;
         self.write_index(|c| {
+            expire_unpaired_fences(c, i64::try_from(now).map_err(|_| "InvalidInput")?)?;
             let exists=scalar(c,"SELECT count(*) FROM credit_bridge_fences WHERE vault_owner=?1",&r.vault_owner.to_text())? != 0;
             if !exists && scalar(c,"SELECT count(*) FROM credit_bridge_fences WHERE ?1=?1","")? >= CAP {return Err("Capacity".into());}
             c.execute(
-                "INSERT INTO credit_bridge_fences(vault_owner,generation) VALUES(?1,?2)
-                 ON CONFLICT(vault_owner) DO UPDATE SET generation=max(generation,excluded.generation)",
-                params![r.vault_owner.to_text(),r.through_generation as i64],
+                "INSERT INTO credit_bridge_fences(vault_owner,generation,expires_at_ns) VALUES(?1,?2,?3)
+                 ON CONFLICT(vault_owner) DO UPDATE SET
+                   generation=max(generation,excluded.generation),
+                   expires_at_ns=CASE WHEN credit_bridge_fences.expires_at_ns IS NULL THEN NULL
+                                      ELSE max(credit_bridge_fences.expires_at_ns,excluded.expires_at_ns) END",
+                params![r.vault_owner.to_text(),r.through_generation as i64,expires_at_ns],
             ).map_err(|e|e.to_string())?;
             let row:Option<String>=c.query_row(
                 "SELECT record FROM credit_bridge_links WHERE vault_owner=?1",

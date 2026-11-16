@@ -133,7 +133,7 @@ try {
   const encode = (s) => new TextEncoder().encode(s),
     decode = (b) => new TextDecoder().decode(b);
   let note;
-  for (const phase of ["BeginRevision", "PutChunk", "CommitRevision"]) {
+  for (const phase of ["SaveInline"]) {
     wire.dropNext((n, args) => n === "mutate" && phase in args[0].action);
     const plain = encode("private note " + phase);
     await assert.rejects(
@@ -158,6 +158,21 @@ try {
     );
     note = revision;
   }
+  const inlineMutation = structuredClone(wire.calls.find(
+    (call) => call.name === "mutate" && "SaveInline" in call.args[0].action,
+  ).args[0]);
+  const changedContext = structuredClone(inlineMutation);
+  changedContext.operation = b(210);
+  changedContext.action.SaveInline.request.operation = b(211);
+  changedContext.action.SaveInline.request.object = b(212);
+  changedContext.action.SaveInline.context_hash[0] ^= 1;
+  err(await f.actor.mutate(changedContext), "InvalidInput");
+  const staleRevision = structuredClone(inlineMutation);
+  staleRevision.operation = b(213);
+  staleRevision.action.SaveInline.request.operation = b(214);
+  err(await f.actor.mutate(staleRevision), "Conflict");
+  assert.equal(decode((await client.read(note)).plaintext), "private note SaveInline");
+  console.log("PASS actual Wasm SaveInline rejects a changed immutable Vault context and stale revision without altering the committed note");
   const updated = await client.save(
     { kind: "note", title: "updated" },
     encode("second version"),
@@ -167,7 +182,7 @@ try {
   assert.equal(history.entries.length, 2);
   assert.equal(
     decode((await client.read(note)).plaintext),
-    "private note CommitRevision",
+    "private note SaveInline",
   );
   const credential = await client.save(
     { kind: "credential", title: "credential content" },
@@ -220,7 +235,7 @@ try {
   );
   assert.equal(
     decode((await client.read(note)).plaintext),
-    "private note CommitRevision",
+    "private note SaveInline",
   );
   // Ordinary deletion above preserved both readable versions. Purge must hide
   // every historical manifest/chunk and permanently fence the object identity.
@@ -374,11 +389,13 @@ try {
     decode((await client.read(productionRevision)).plaintext),
     "existing credit remains usable",
   );
+  assert.ok(wire.calls.findLast((call) => call.name === "mutate")?.args[0].action.SaveInline,
+    "production binary should save the small note through SaveInline");
   console.log(
     "PASS funded disposable fixture upgraded to default production Wasm: real vetKD unlock, existing encrypted read and new encrypted save/read",
   );
   console.log(
-    "PASS actual client note/credential/attachment encryption, all save-phase lost replies, history/delete/purge, reopen/second client, physical/logical growth, owner/anonymous isolation; real distinct owner/vault/canister/test_key_1 roots cannot decrypt source",
+    "PASS actual client note/credential/attachment encryption, lost inline-save reply and exact replay, history/delete/purge, reopen/second client, physical/logical growth, owner/anonymous isolation; real distinct owner/vault/canister/test_key_1 roots cannot decrypt source",
   );
 } finally {
   clients.forEach((c) => c.destroy());

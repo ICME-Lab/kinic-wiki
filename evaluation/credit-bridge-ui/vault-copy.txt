@@ -1,0 +1,5 @@
+Vault funding
+Use Wiki database credits
+Link your independently signed-in Wiki account, then manually move database credits to this Vault account. Linking never charges a database. The account pairing is permanent; revocation disables future transfers.
+Charge from Wiki credits
+Refresh Wiki link

@@ -14,6 +14,8 @@ import {
   RefreshCw,
   Wallet,
 } from "lucide-react";
+import { WikiCreditFunding } from "../wiki-credit";
+import { parseLaunch } from "@kinic/credit-bridge-candid/browser";
 import { Funding } from "../funding";
 import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
 import type {
@@ -464,7 +466,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
         </div>
       </div>
       <div className="vault-management-grid">
-        <details className="vault-disclosure [&:not([open])>div]:hidden">
+        <details open={typeof window !== "undefined" && !!parseLaunch(window.location.hash) || undefined} className="vault-disclosure [&:not([open])>div]:hidden">
           <summary>
             <Wallet size={17} aria-hidden />
             Account &amp; storage
@@ -504,6 +506,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                   onFunded={refreshConfiguration}
                 />
               ) : null}
+              <WikiCreditFunding client={client} onFunded={refreshConfiguration} />
             </VaultPanel>
           </div>
         </details>

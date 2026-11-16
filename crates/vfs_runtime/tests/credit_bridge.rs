@@ -183,6 +183,7 @@ fn revoked_prepared_intent_never_dispatches_but_keeps_cleanup() {
                 vault_owner: p(2),
                 through_generation: 1,
             },
+            1,
         )
         .unwrap();
     assert!(
@@ -306,6 +307,7 @@ fn late_link_ack_after_revoke_rejected_and_new_pair_only() {
                 vault_owner: p(2),
                 through_generation: 2,
             },
+            1,
         )
         .unwrap();
     assert!(f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
@@ -928,6 +930,7 @@ fn full_fence_quota_still_allows_existing_owner_and_peer_revocation() {
                 vault_owner: p(2),
                 through_generation: 1,
             },
+            1,
         )
         .unwrap();
     assert!(!f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
@@ -1128,4 +1131,49 @@ fn prerelease_index7_without_lease_column_is_rejected_without_reinitializing_dat
         .unwrap();
     assert!(f.svc.run_index_migrations_for_upgrade(None).is_err());
     assert_eq!(f.bal(), balance);
+}
+
+#[test]
+fn expired_unpaired_revocations_do_not_exhaust_new_link_admission() {
+    let f = Fixture::new();
+    // A valid pair already owns one permanent fence. Unknown owners can revoke
+    // their own Vault side, but those revocations must not consume all slots
+    // indefinitely after every pre-revocation challenge has expired.
+    for n in 0..1023_u32 {
+        let owner = Principal::from_slice(&(n + 1000).to_be_bytes());
+        f.svc
+            .revoke_link_from_vault(
+                p(9),
+                BridgeRevocation {
+                    vault_owner: owner,
+                    through_generation: 1,
+                },
+                1,
+            )
+            .unwrap();
+    }
+    let now = 300_000_000_002;
+    let snap = f.svc.vault_link_snapshot(p(3), now).unwrap();
+    let fences: i64 =
+        f.db.query_row("SELECT count(*) FROM credit_bridge_fences", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(fences, 1, "the admitted pair's permanent fence must remain");
+    assert!(f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
+    let result = f.svc.vault_link_begin(
+        p(3),
+        LinkChallenge {
+            challenge: vec![17; 16],
+            vault_owner: p(5),
+            generation: 1,
+            expires_at_ns: now + 300_000_000_000,
+        },
+        &snap,
+        now,
+    );
+    assert!(
+        result.is_ok(),
+        "expired unpaired revokes blocked a new pair: {result:?}"
+    );
 }

@@ -21,7 +21,7 @@
   "scripts": {
     "contracts:check": "node scripts/generate-contracts.mjs --check",
     "contracts:generate": "node scripts/generate-contracts.mjs",
-    "test": "vitest run --root ../.. packages/vault-client packages/vault-crypto",
+    "test": "vitest run --root ../.. --exclude 'target/**' packages/vault-client packages/vault-crypto",
     "typecheck": "tsc --project tsconfig.json"
   }
 }

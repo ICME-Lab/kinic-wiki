@@ -303,6 +303,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@kinic/credit-bridge-candid':
+        specifier: workspace:*
+        version: link:../packages/credit-bridge-candid
       '@kinic/ui':
         specifier: workspace:*
         version: link:../packages/ui
@@ -388,6 +391,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@kinic/credit-bridge-candid':
+        specifier: workspace:*
+        version: link:../packages/credit-bridge-candid
       '@kinic/deepseek-client':
         specifier: workspace:*
         version: link:../packages/deepseek-client

@@ -54,7 +54,10 @@ const report = {
     encoding: "utf8",
   }).trim(),
   working_tree_diff_sha256: sha(
-    execFileSync("git", ["diff", "HEAD", "--binary"], { cwd: root }),
+    execFileSync("git", ["diff", "HEAD", "--binary"], {
+      cwd: root,
+      maxBuffer: 64 * 1024 * 1024,
+    }),
   ),
   runtime: { binary, version, sha256: sha(readFileSync(binary)) },
   artifacts,

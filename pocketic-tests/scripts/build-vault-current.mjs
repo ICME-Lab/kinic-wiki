@@ -74,7 +74,10 @@ writeFileSync(
         encoding: "utf8",
       }).trim(),
       diff_sha256: sha(
-        execFileSync("git", ["diff", "HEAD", "--binary"], { cwd: root }),
+        execFileSync("git", ["diff", "HEAD", "--binary"], {
+          cwd: root,
+          maxBuffer: 64 * 1024 * 1024,
+        }),
       ),
       funding_mode: "production",
       assets,

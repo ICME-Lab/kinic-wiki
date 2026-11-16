@@ -138,6 +138,17 @@ fn owner_epoch(c: &Connection, p: Principal) -> R<u64> {
         &p.to_text(),
     )? as u64)
 }
+fn expire_unpaired_fences(c: &Connection, now: i64) -> R<()> {
+    c.execute(
+        "DELETE FROM credit_bridge_fences
+         WHERE expires_at_ns IS NOT NULL AND expires_at_ns<=?1
+           AND NOT EXISTS (SELECT 1 FROM credit_bridge_links
+                           WHERE credit_bridge_links.vault_owner=credit_bridge_fences.vault_owner)",
+        params![now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
 fn fence(c: &Connection, p: Principal) -> R<u64> {
     Ok(scalar(
         c,

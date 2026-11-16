@@ -387,7 +387,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             "credit_bridge_links",
             &["wiki_owner", "vault_owner", "record"][..],
         ),
-        ("credit_bridge_fences", &["vault_owner", "generation"][..]),
+        (
+            "credit_bridge_fences",
+            &["vault_owner", "generation", "expires_at_ns"][..],
+        ),
         (
             "credit_bridge_owners",
             &["wiki_owner", "epoch", "expires_at_ns"][..],

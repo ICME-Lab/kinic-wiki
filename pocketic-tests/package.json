@@ -14,6 +14,9 @@
     "test:learning-revisions": "pnpm run build:learning-baseline && pnpm run build:wiki && KINIC_LEARNING_BASELINE_WASM=../target/learning-baseline.wasm node --test integration/learning-revisions.test.mjs",
     "build:learning-baseline": "node scripts/build-learning-baseline.mjs",
     "build:evidence-baseline": "node scripts/build-evidence-capacity-baseline.mjs",
+    "build:vault-credit-baseline": "node scripts/build-vault-credit-baseline.mjs",
+    "test:wiki-credit-frozen-upgrade": "pnpm run build:vault-credit-baseline && pnpm run build:wiki && node integration/wiki-credit-frozen-upgrade.test.mjs",
+    "test:vault-credit-frozen-upgrade": "node scripts/download-vault-ledger.mjs && pnpm run build:vault-credit-baseline && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/vault-credit-frozen-upgrade.test.mjs",
     "test:evidence-capacity": "pnpm run build:evidence-baseline && pnpm run build:wiki && node --test integration/evidence-capacity.test.mjs",
     "build:bekko-refill-faults": "node scripts/build-bekko-refill-faults.mjs",
     "test:bekko-refill-faults": "pnpm run build:wiki && pnpm run build:bekko-refill-faults && node --test integration/bekko-refill-faults.test.mjs",
@@ -21,7 +24,16 @@
     "build:vault-fixtures": "node scripts/build-vault-fixtures.mjs",
     "build:vault-current": "node scripts/build-vault-current.mjs",
     "build:vault-acceptance": "node scripts/build-vault-current.mjs && node scripts/build-vault-synthetic-funding.mjs && node scripts/build-vault-ledger.mjs && node scripts/build-vault-fixtures.mjs && node scripts/build-vault-client-acceptance.mjs",
-    "test:vault-funding-ledger": "node scripts/download-vault-ledger.mjs && node scripts/build-vault-funding-fault.mjs && node integration/vault-funding-ledger.test.mjs"
+    "test:vault-funding-ledger": "node scripts/download-vault-ledger.mjs && node scripts/build-vault-funding-fault.mjs && node integration/vault-funding-ledger.test.mjs",
+    "test:wiki-credit-fence": "pnpm run build:wiki && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/wiki-credit-fence.test.mjs",
+    "test:wiki-credit-fault": "cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node scripts/build-wiki-credit-fault.mjs && node integration/wiki-credit-fault.test.mjs",
+    "test:wiki-credit-config-aba": "cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node scripts/build-wiki-credit-fault.mjs && node integration/wiki-credit-config-aba.test.mjs",
+    "test:wiki-credit-rollback": "pnpm run build:wiki && node scripts/build-vault-credit-trap.mjs && node integration/wiki-credit-rollback.test.mjs",
+    "test:wiki-credit-ack-loss": "cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node scripts/build-wiki-credit-fault.mjs && node integration/wiki-credit-ack-loss.test.mjs",
+    "test:wiki-credit-revoke": "node scripts/download-vault-ledger.mjs && pnpm run build:wiki && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/wiki-credit-revoke.test.mjs",
+    "test:wiki-credit-unknown-cap": "cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node scripts/build-wiki-credit-fault.mjs && node integration/wiki-credit-unknown-cap.test.mjs",
+    "test:wiki-credit-source-cap": "pnpm run build:wiki && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/wiki-credit-source-cap.test.mjs",
+    "test:wiki-credit-receiver-owner-cap": "pnpm run build:wiki && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/wiki-credit-receiver-owner-cap.test.mjs"
   },
   "devDependencies": {
     "@dfinity/candid": "3.4.3",

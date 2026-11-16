@@ -466,9 +466,9 @@ try {
     plaintext = "actual-browser-private-payload";
   await vault.getByLabel("Document title").fill(title);
   await editor(vault).fill(plaintext);
-  const chunkTrace = startRetryTrace("mutate", "PutChunk");
+  const chunkTrace = startRetryTrace("mutate", "SaveInline");
   dropMethod = "mutate";
-  dropAction = "PutChunk";
+  dropAction = "SaveInline";
   await action(vault, "Save document", true);
   await vault
     .getByRole("button", { name: "Resume save", exact: true })
@@ -497,12 +497,17 @@ try {
   assert.equal(docs.documents[0].plaintext, plaintext);
   const object = docs.documents[0].object;
   pass(
-    "lost real PutChunk replies; frozen editor; exact resume; independent real-client decrypt",
+    "lost real SaveInline reply; frozen editor; exact resume; independent real-client decrypt",
     { retries: [chunkRetry] },
   );
   await action(vault, "New document");
   await vault.getByLabel("Document title").fill("Cancelled upload");
-  await editor(vault).fill("cancelled-private-payload");
+  await vault.getByLabel("Document type").selectOption("attachment");
+  await vault.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
+    name: "cancelled-large.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(256 * 1024 + 1, 0x5a),
+  });
   dropMethod = "mutate";
   dropAction = "PutChunk";
   await action(vault, "Save document", true);
@@ -811,6 +816,174 @@ try {
     .locator("iframe")
     .last()
     .evaluate((frame) => frame.remove());
+  await wiki.getByRole("button", { name: "Create database", exact: true }).click();
+  const createDatabase = wiki.getByRole("dialog", { name: "Create database" });
+  await createDatabase.getByRole("textbox", { name: "Database name" }).fill("Vault bridge acceptance");
+  await createDatabase.getByRole("button", { name: "Create", exact: true }).click();
+  await wiki.waitForURL(/\/db\/[^/]+\//);
+  const wikiDatabaseId = new URL(wiki.url()).pathname.split("/")[2];
+  const balanceBeforeBridge = BigInt((await readback(vault)).balance.Ok);
+  const linkPopupPromise = context.waitForEvent("page", { timeout: 20000 }).catch((error) => error);
+  await action(vault, "Link Wiki account");
+  const linkPopup = await linkPopupPromise;
+  if (linkPopup instanceof Error) throw linkPopup;
+  await linkPopup.setViewportSize({ width: 390, height: 844 });
+  await linkPopup.getByRole("button", { name: "Approve account link" }).click();
+  assert.ok(await linkPopup.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    "mobile account linking should not overflow horizontally");
+  await vault.getByText(/Wiki account linked\. Choose Charge from Wiki credits/).waitFor();
+  const fundingPopupPromise = context.waitForEvent("page");
+  await action(vault, "Charge from Wiki credits");
+  const fundingPopup = await fundingPopupPromise;
+  await fundingPopup.getByText("Connected to your Vault window.").waitFor();
+  await fundingPopup.getByRole("button", { name: "Get transfer estimate" }).click();
+  await fundingPopup.getByText("Quoted", { exact: true }).waitFor();
+  await fundingPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
+  await fundingPopup.getByText("Offered", { exact: true }).waitFor();
+  await fundingPopup.getByRole("button", { name: "Request Vault readiness" }).click();
+  await fundingPopup.getByRole("button", { name: "Send held credits" }).click();
+  await fundingPopup.getByText("Paid", { exact: true }).waitFor();
+  await fundingPopup.getByText(/Fixed transfer: 1,000,000,000 cycles/).waitFor();
+  const balanceAfterBridge = BigInt((await readback(vault)).balance.Ok);
+  assert.ok(balanceAfterBridge > balanceBeforeBridge + 900_000_000n);
+  assert.ok(balanceAfterBridge <= balanceBeforeBridge + 1_000_000_000n);
+  pass("two real II principals link explicitly and move a free Wiki DB credit by an exact manual cycles transfer", {
+    wikiPrincipal,
+    vaultPrincipal: owner,
+    recipientCycles: "1000000000",
+    balanceIncreaseAfterNormalCharges: String(balanceAfterBridge - balanceBeforeBridge),
+  });
+  const allPopupPromise = context.waitForEvent("page");
+  await action(vault, "Charge from Wiki credits");
+  const allPopup = await allPopupPromise;
+  await allPopup.setViewportSize({ width: 390, height: 844 });
+  await allPopup.getByText("Connected to your Vault window.").waitFor();
+  await allPopup.getByRole("radio", { name: "All available credits" }).check();
+  await allPopup.getByRole("button", { name: "Get transfer estimate" }).click();
+  await allPopup.getByText("Quoted", { exact: true }).waitFor();
+  await allPopup.getByRole("checkbox", { name: /I authorize the entire available balance/ }).check();
+  await allPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
+  await allPopup.getByText("Offered", { exact: true }).waitFor();
+  await allPopup.getByRole("button", { name: "Request Vault readiness" }).click();
+  await allPopup.getByRole("button", { name: "Send held credits" }).click();
+  await allPopup.getByText("Paid", { exact: true }).waitFor();
+  assert.ok(await allPopup.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    "mobile AllAvailable transfer should not overflow horizontally");
+  pass("real II mobile-width AllAvailable confirmation fixes the execution-time DB amount and completes a second physical transfer");
+  await allPopup.close();
+  execFileSync("icp", ["canister", "call", "wiki", "grant_database_cycles_from_iap",
+    `(record {database_id="${wikiDatabaseId}";provider="apple_iap";product_id="test.cycles";external_payment_id="browser-credit-recovery";purchaser_principal="${wikiPrincipal}";amount_cycles=3000000000:nat64})`,
+    "--candid", new URL("../../crates/vfs_canister/vfs.did", import.meta.url).pathname,
+    "--project-root-override", process.env.VAULT_ACCEPTANCE_PROJECT,
+    "-e", "acceptance", "--identity", process.env.VAULT_ACCEPTANCE_IDENTITY],
+  { stdio: "inherit" });
+  const lostCreditPopupPromise = context.waitForEvent("page");
+  await action(vault, "Charge from Wiki credits");
+  const lostCreditPopup = await lostCreditPopupPromise;
+  await lostCreditPopup.getByText("Connected to your Vault window.").waitFor();
+  await lostCreditPopup.getByRole("button", { name: "Get transfer estimate" }).click();
+  await lostCreditPopup.getByText("Quoted", { exact: true }).waitFor();
+  await lostCreditPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
+  await lostCreditPopup.getByText("Offered", { exact: true }).waitFor();
+  await lostCreditPopup.getByRole("button", { name: "Request Vault readiness" }).click();
+  let droppedCreditReplies = 0;
+  const dropCreditReply = async (route) => {
+    const body = route.request().postDataBuffer();
+    const method = body ? Cbor.decode(body).content?.method_name : undefined;
+    if (method !== "execute_vault_transfer") return route.continue();
+    const response = await route.fetch();
+    assert.ok(response.ok(), "real Wiki ingress should finish before losing its HTTP reply");
+    droppedCreditReplies++;
+    await route.abort("failed");
+  };
+  await lostCreditPopup.route("**/api/v*/canister/**/call", dropCreditReply);
+  const beforeLostCredit = BigInt((await readback(vault)).balance.Ok);
+  await lostCreditPopup.getByRole("button", { name: "Send held credits" }).click();
+  await lostCreditPopup.getByText(/Request did not complete\. Refresh saved status before retrying/).waitFor();
+  assert.ok(droppedCreditReplies > 0);
+  await lostCreditPopup.unroute("**/api/v*/canister/**/call", dropCreditReply);
+  await lostCreditPopup.getByRole("button", { name: "Refresh transfer status" }).click();
+  await lostCreditPopup.getByText("Paid", { exact: true }).waitFor();
+  await lostCreditPopup.getByRole("button", { name: "Reconcile transfer" }).click();
+  await lostCreditPopup.getByText("Paid", { exact: true }).waitFor();
+  const afterLostCredit = BigInt((await readback(vault)).balance.Ok);
+  assert.ok(afterLostCredit > beforeLostCredit + 900_000_000n);
+  assert.ok(afterLostCredit <= beforeLostCredit + 1_000_000_000n);
+  pass("real II Wiki physical send survives lost HTTP replies and manual refresh/reconcile credits exactly once", {
+    droppedCreditReplies, balanceIncreaseAfterNormalCharges: String(afterLostCredit - beforeLostCredit),
+  });
+  await lostCreditPopup.close();
+  const heldPopupPromise = context.waitForEvent("page");
+  await action(vault, "Charge from Wiki credits");
+  const heldPopup = await heldPopupPromise;
+  await heldPopup.setViewportSize({ width: 390, height: 844 });
+  await heldPopup.getByText("Connected to your Vault window.").waitFor();
+  await heldPopup.getByRole("button", { name: "Get transfer estimate" }).click();
+  await heldPopup.getByText("Quoted", { exact: true }).waitFor();
+  await heldPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
+  await heldPopup.getByText("Offered", { exact: true }).waitFor();
+  await heldPopup.close();
+  const recoveryPopupPromise = context.waitForEvent("page");
+  await action(vault, "Charge from Wiki credits");
+  const recoveryPopup = await recoveryPopupPromise;
+  await recoveryPopup.setViewportSize({ width: 390, height: 844 });
+  await recoveryPopup.getByText("Offered", { exact: true }).waitFor();
+  await recoveryPopup.getByRole("button", { name: "Cancel unsent transfer" }).click();
+  await recoveryPopup.getByText("Refunded", { exact: true }).waitFor();
+  assert.ok(await recoveryPopup.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    "mobile credit recovery should not overflow horizontally");
+  pass("real II mobile-width held transfer survives a closed Wiki window and the owner cancels the recovered unsent receipt");
+  const savedRecoveryUrl = recoveryPopup.url();
+  await recoveryPopup.close();
+  await action(vault, "Revoke Wiki link");
+  await vault.getByText(/Wiki principal: .* · Revoked/).waitFor();
+  const relinkPopupPromise = context.waitForEvent("page");
+  await action(vault, "Link Wiki account");
+  const relinkPopup = await relinkPopupPromise;
+  await relinkPopup.getByRole("button", { name: "Approve account link" }).click();
+  await vault.getByText(/Wiki account linked\. Choose Charge from Wiki credits/).waitFor();
+  pass("Vault revocation blocks new funding and the same real II Wiki/Vault principal pair can explicitly relink");
+  await relinkPopup.getByRole("button", { name: "Revoke account link" }).click();
+  await action(vault, "Refresh Wiki link");
+  await vault.getByText(/Wiki principal: .* · Revoked/).waitFor();
+  pass("Wiki-side account revocation propagates to the authenticated Vault status");
+  await relinkPopup.close();
+  const staleCreditPage = await context.newPage();
+  await staleCreditPage.goto(savedRecoveryUrl);
+  await staleCreditPage.getByText("Refunded", { exact: true }).waitFor();
+  let wikiReplyReady;
+  let wikiReplyDelivered;
+  let releaseWikiReply;
+  const pendingWikiReply = new Promise((resolve) => { wikiReplyReady = resolve; });
+  const deliveredWikiReply = new Promise((resolve) => { wikiReplyDelivered = resolve; });
+  const delayWikiReply = async (route) => {
+    const body = route.request().postDataBuffer();
+    const method = body ? Cbor.decode(body).content?.method_name : undefined;
+    if (method !== "get_vault_transfer") return route.continue();
+    const response = await route.fetch();
+    assert.ok(response.ok(), "delayed Wiki status must come from actual canister ingress");
+    wikiReplyReady();
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(Error("Delayed Wiki reply was not released")), 30000);
+      releaseWikiReply = () => { clearTimeout(timeout); resolve(); };
+    });
+    await route.fulfill({ response });
+    wikiReplyDelivered();
+  };
+  await staleCreditPage.route("**/api/v*/canister/**/call", delayWikiReply);
+  await staleCreditPage.getByRole("button", { name: "Refresh transfer status" }).click();
+  await Promise.race([pendingWikiReply, staleCreditPage.waitForTimeout(30000).then(() => {
+    throw Error("Expected actual Wiki transfer status interception");
+  })]);
+  await staleCreditPage.getByRole("button", { name: "Sign out of Wiki" }).click();
+  await staleCreditPage.getByRole("button", { name: "Sign in with Internet Identity" }).waitFor();
+  releaseWikiReply();
+  await deliveredWikiReply;
+  await staleCreditPage.unroute("**/api/v*/canister/**/call", delayWikiReply);
+  await staleCreditPage.waitForTimeout(300);
+  assert.equal(await staleCreditPage.getByText("Refunded", { exact: true }).count(), 0);
+  pass("late real Wiki transfer reply after logout cannot restore the old receipt");
+  await staleCreditPage.close();
   await wiki.close();
   pass(
     "same II Wiki principal separation; real II derivation-origin attack denied; SOP/opener/frame CSP",
