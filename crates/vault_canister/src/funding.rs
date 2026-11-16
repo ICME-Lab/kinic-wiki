@@ -55,10 +55,8 @@ pub struct Payment {
     pub uncertain: bool,
     pub attempt: u64,
     pub sent_at: u64,
-    #[serde(default)]
     pub reconciliation: Option<ReconciliationState>,
     /// True only while the durable operation is known not to have dispatched a debit.
-    #[serde(default)]
     pub preparing: bool,
 }
 fn auth(p: Principal) -> Result<()> {

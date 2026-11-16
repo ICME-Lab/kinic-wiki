@@ -93,15 +93,13 @@ fn cursor_is_persisted_before_dispatch_and_single_flight_is_owner_bound() {
     ));
 }
 #[test]
-fn old_payment_json_without_reconciliation_remains_readable() {
+fn payment_json_requires_its_dispatch_marker() {
     let p = sent();
     let mut json = serde_json::to_value(&p).unwrap();
-    json.as_object_mut().unwrap().remove("reconciliation");
     json.as_object_mut().unwrap().remove("preparing");
-    let old: Payment = serde_json::from_value(json).unwrap();
-    assert_eq!(old.reconciliation, None);
-    assert!(!old.preparing);
+    assert!(serde_json::from_value::<Payment>(json).is_err());
 }
+
 fn scanning() -> Payment {
     let p = sent();
     let p = prepare_dispatch(&p, principal(95), 123).unwrap();
@@ -293,19 +291,28 @@ fn default_account_encoding_and_modern_block_type_are_validated() {
     assert!(!matches_transfer(&p, &b));
 }
 #[test]
-fn missing_pre_dispatch_cursor_cannot_be_fabricated_on_an_unknown_legacy_record() {
+fn missing_dispatch_cursor_is_corrupt_state_and_is_not_rewritten() {
     let p = sent();
-    complete_payment(&p, Outcome::Unknown).unwrap();
-    let retry = begin_payment(p.wallet, &p.request.operation, 1).unwrap();
-    assert!(prepare_dispatch(&retry, principal(95), 1000).is_err());
+    let dispatched = prepare_dispatch(&p, principal(95), 1000).unwrap();
+    complete_payment(&dispatched, Outcome::Unknown).unwrap();
+    transaction(|db| {
+        db.execute(
+            "UPDATE payments SET record=json_set(record,'$.reconciliation',NULL) WHERE wallet=?1 AND operation=?2",
+            params![p.wallet.to_text(), p.request.operation],
+        ).map_err(|_| Error::Storage)?;
+        Ok(())
+    }).unwrap();
+    let before = transaction(|db| load(db, p.wallet, &p.request.operation)).unwrap();
     assert_eq!(
-        begin_scan(p.wallet, &p.request.operation, 2),
-        Err(Error::Busy)
+        begin_scan(p.wallet, &p.request.operation, 1),
+        Err(Error::Storage)
     );
-    let scan = begin_scan(p.wallet, &p.request.operation, 120_000_000_002).unwrap();
-    assert!(scan.reconciliation.is_none());
-    assert_eq!(scan.status, Status::Unknown);
+    assert_eq!(
+        transaction(|db| load(db, p.wallet, &p.request.operation)).unwrap(),
+        before
+    );
 }
+
 #[test]
 fn widest_reconciliation_record_fits_existing_row_bound_and_round_trips() {
     let mut p = scanning();
