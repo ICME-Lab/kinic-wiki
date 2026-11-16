@@ -350,6 +350,37 @@ try {
   await action(vault, "Approve and pay this quote");
   await vault.getByText("Paid", { exact: true }).waitFor();
   pass("explicit synthetic ledger funding through real ICRC-2 calls");
+  // Actual authenticated update calls through the production UI; the ledger
+  // is explicitly synthetic here. Official ledger/archive proof is separate.
+  const configureLedger = (mode) => execFileSync(
+    "icp", ["canister", "call", "ledger", "configure", `(${mode} : nat8, 10 : nat64)`,
+      "--project-root-override", process.env.VAULT_ACCEPTANCE_PROJECT,
+      "-e", "acceptance", "--identity", process.env.VAULT_ACCEPTANCE_IDENTITY],
+    { stdio: "inherit" },
+  );
+  const fundedBeforeScan = await readback(vault);
+  configureLedger(6);
+  await action(vault, "New quote");
+  await action(vault, "Get quote");
+  await action(vault, "Approve and pay this quote");
+  await vault.getByText("Unknown", { exact: true }).waitFor();
+  const unknownBeforeScan = await readback(vault);
+  assert.ok(BigInt(unknownBeforeScan.balance.Ok) <= BigInt(fundedBeforeScan.balance.Ok), "Unknown must not add credit; execution/storage charges may reduce balance");
+  await action(vault, /^(?:Scan ledger for this payment|Resume ledger scan)$/);
+  await vault.getByText(/No matching payment evidence found yet/).waitFor();
+  const afterScan = await readback(vault);
+  const financialRecords = (rows) => rows.Ok.map(({ wallet, request, config, fee, credits, memo, created_at_time, status }) =>
+    ({ wallet, request, config, fee, credits, memo, created_at_time, status }));
+  assert.deepEqual(financialRecords(afterScan.payments), financialRecords(unknownBeforeScan.payments));
+  assert.ok(BigInt(afterScan.balance.Ok) <= BigInt(unknownBeforeScan.balance.Ok), "unproven scan must not add credit");
+  configureLedger(4);
+  await action(vault, "Retry same payment");
+  await vault.getByText("Paid", { exact: true }).waitFor();
+  const recoveredScan = await readback(vault);
+  assert.equal(recoveredScan.payments.Ok.length, unknownBeforeScan.payments.Ok.length);
+  assert.ok(BigInt(recoveredScan.balance.Ok) > BigInt(afterScan.balance.Ok));
+  configureLedger(0);
+  pass("real II manual ledger update preserves Unknown without evidence and exact synthetic duplicate retry credits once; no implicit replacement");
   const beforeUpgrade = await readback(vault);
   execFileSync(
     "icp",
