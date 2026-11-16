@@ -9,7 +9,6 @@ import {
   other,
   out,
   IDL,
-  b,
   operation,
   VaultClient,
   cryptoLib,

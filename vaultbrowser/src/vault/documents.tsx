@@ -41,35 +41,37 @@ export function VaultDocuments({
   const [bodyMatches, setBodyMatches] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
   // Local ownership also fences unmount/remount while the same client is alive.
-  const searchEpoch = useRef(0);
+  const searchLifecycle = useRef({ epoch: 0 });
   useLayoutEffect(() => {
-    const epoch = ++searchEpoch.current;
+    const owned = searchLifecycle.current;
+    const epoch = ++owned.epoch;
     setBodyMatches([]);
     setSearching(false);
     const detach = client.session.addLockCleanup(() => {
-      searchEpoch.current++;
+      owned.epoch++;
       setBodyMatches([]);
       setSearching(false);
       setQuery("");
     });
     return () => {
-      if (searchEpoch.current === epoch) searchEpoch.current++;
+      if (owned.epoch === epoch) owned.epoch++;
       detach();
     };
   }, [client, items, query]);
   const searchContents = () => {
     if (searching || disabled || !query.trim()) return;
     run(async () => {
-      const epoch = searchEpoch.current;
+      const owned = searchLifecycle.current;
+      const epoch = owned.epoch;
       const ticket = client.session.capture();
       setSearching(true);
       try {
         const matches = await client.searchNotes(items, query);
         client.session.check(ticket);
-        if (searchEpoch.current === epoch)
+        if (owned.epoch === epoch)
           setBodyMatches(matches.map((object) => b64(object)));
       } finally {
-        if (searchEpoch.current === epoch) setSearching(false);
+        if (owned.epoch === epoch) setSearching(false);
       }
     });
   };
