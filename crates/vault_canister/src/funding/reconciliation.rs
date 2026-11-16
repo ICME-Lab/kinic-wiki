@@ -88,7 +88,7 @@ pub(super) fn prepare_dispatch(sent: &Payment, spender: Principal, start: u64) -
                 return Err(Error::Conflict);
             }
         } else {
-            // An old/uncertain record has no authoritative lower bound. Never invent one.
+            // The first search snapshot belongs only to known-unsent preparation.
             if !p.preparing || p.uncertain {
                 return Err(Error::Conflict);
             }
@@ -156,13 +156,12 @@ fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
         }
         p.status = Status::Unknown;
         p.uncertain = true;
-        if let Some(scan) = &mut p.reconciliation {
-            scan.lease = scan.lease.checked_add(1).ok_or(Error::QuotaExceeded)?;
-            scan.lease_until = now
-                .checked_add(180_000_000_000)
-                .ok_or(Error::InvalidInput)?;
-            scan.lease_generation = current;
-        }
+        let scan = p.reconciliation.as_mut().ok_or(Error::Storage)?;
+        scan.lease = scan.lease.checked_add(1).ok_or(Error::QuotaExceeded)?;
+        scan.lease_until = now
+            .checked_add(180_000_000_000)
+            .ok_or(Error::InvalidInput)?;
+        scan.lease_generation = current;
         save(db, &p)?;
         Ok(p)
     })
@@ -384,7 +383,7 @@ async fn scan_ledger(p: &Payment) -> Result<ScanBatch> {
 #[ic_cdk::update]
 async fn reconcile_purchase(operation: Vec<u8>) -> Result<ReconciliationProgress> {
     let p = begin_scan(ic_cdk::api::msg_caller(), &operation, crate::now_nanos())?;
-    if matches!(p.status, Status::Paid(_)) || p.reconciliation.is_none() {
+    if matches!(p.status, Status::Paid(_) | Status::Quoted) {
         return Ok(progress(p, 0, false));
     }
     let batch = match require_ledger(p.config.ledger) {

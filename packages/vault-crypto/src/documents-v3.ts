@@ -179,9 +179,3 @@ export async function decryptDocumentV3(
   }
   return { metadata: parsed.metadata, plaintext: concat(...plain) };
 }
-
-export {
-  encryptDocumentV3 as encryptDocument,
-  readManifestV3 as readManifest,
-  decryptDocumentV3 as decryptDocument,
-};
