@@ -775,6 +775,7 @@ jobs:
           path: |
             target/vault-ii-acceptance/*.json
             target/vault-synthetic-funding-build/provenance.json
+            target/vault-funding-fault/provenance.json
 
   vault-browser-acceptance:
     needs: [changes, vault-wasm-acceptance]
