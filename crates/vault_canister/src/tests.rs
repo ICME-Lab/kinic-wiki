@@ -642,7 +642,7 @@ fn cancellation_reconciliation_is_atomic_owner_scoped_and_survives_disable() {
 fn schema_eight_reopen_preserves_pending_upload_operation_receipt_balance_and_cursor() {
     use kinic_sqlite_compat::{Connection, params};
     let path =
-        std::env::temp_dir().join(format!("vault-seven-pending-{}.sqlite", std::process::id()));
+        std::env::temp_dir().join(format!("vault-eight-pending-{}.sqlite", std::process::id()));
     {
         let db = Connection::open(&path).unwrap();
         schema::initialize_vault_schema(&db).unwrap();

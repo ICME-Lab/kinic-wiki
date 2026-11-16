@@ -14,7 +14,7 @@ impl State {
         self.write_index(|tx| {
             require_account(tx, owner)?;
             settle_storage(tx, owner, now)?;
-            let balance = load_storage_cycle_account(tx, owner)?.balance_cycles;
+            let balance = load_balance(tx, owner)?;
             let min = 20_000_000u64;
             if balance < i64::try_from(min).map_err(|_| "minimum cycle amount overflow")? {
                 return Err("insufficient Vault account balance".into());
@@ -60,7 +60,7 @@ impl State {
             let count:i64=tx.query_row("SELECT count(*) FROM vault_cycle_reservations",params![],|r|sqlite::row_get(r,0)).map_err(sql_error)?;
             if count>=10000{return Err("Vault reservation journal full".into())}
             let amount=i64::try_from(amount).map_err(|_|"cycle reservation overflow")?;
-            let balance=load_storage_cycle_account(tx,owner)?.balance_cycles;
+            let balance=load_balance(tx, owner)?;
             if balance<amount{return Err("insufficient Vault account balance".into())}
             adjust_balance(tx,owner,-amount,now)?;
             tx.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms,generation) VALUES(?1,?2,?3,?4,?5)",params![owner,token,amount,now,generation]).map_err(sql_error)?;
@@ -90,7 +90,7 @@ impl State {
     pub fn vault_charge_execution(&self, owner: &str, amount: u64, now: i64) -> Result<(), String> {
         self.write_index(|tx| {
             require_account(tx, owner)?;
-            let balance = load_storage_cycle_account(tx, owner)?.balance_cycles;
+            let balance = load_balance(tx, owner)?;
             adjust_balance(
                 tx,
                 owner,
@@ -102,7 +102,7 @@ impl State {
         })
     }
 }
-fn require_account_deletion_principal_for_vault(owner: &str) -> Result<(), String> {
+fn require_account_owner(owner: &str) -> Result<(), String> {
     if owner.is_empty() || owner == ANONYMOUS_PRINCIPAL {
         Err("anonymous Vault owner".into())
     } else {
@@ -110,7 +110,7 @@ fn require_account_deletion_principal_for_vault(owner: &str) -> Result<(), Strin
     }
 }
 fn require_account(db: &Connection, owner: &str) -> Result<(), String> {
-    require_account_deletion_principal_for_vault(owner)?;
+    require_account_owner(owner)?;
     let exists: i64 = db
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM accounts WHERE owner=?1)",
@@ -141,7 +141,7 @@ fn settle_storage(tx: &Connection, owner: &str, now: i64) -> Result<(), String> 
         return Ok(());
     }
     let cost = storage_cost(bytes as u64, elapsed)?;
-    let balance = load_storage_cycle_account(tx, owner)?.balance_cycles;
+    let balance = load_balance(tx, owner)?;
     let paid = balance.max(0).min(i64::try_from(cost).unwrap_or(i64::MAX));
     if paid > 0 {
         adjust_balance(tx, owner, -paid, now)?;
@@ -157,9 +157,7 @@ fn adjust_balance(tx: &Connection, owner: &str, delta: i64, now: i64) -> Result<
     if delta == 0 {
         return Ok(());
     }
-    let account = load_storage_cycle_account(tx, owner)?;
-    let balance = account
-        .balance_cycles
+    let balance = load_balance(tx, owner)?
         .checked_add(delta)
         .ok_or("account balance overflow")?;
     tx.execute(
@@ -366,7 +364,7 @@ fn finish_reserved_execution(
         .max(checkpoint);
     let due = total.saturating_sub(billed).max(0);
     if due > 0 {
-        let balance = load_storage_cycle_account(tx, owner)?.balance_cycles.max(0);
+        let balance = load_balance(tx, owner)?.max(0);
         adjust_balance(tx, owner, -balance.min(due), now)?;
         tx.execute("UPDATE vault_cycle_reservations SET execution_billed=?3,execution_checkpoint=max(execution_checkpoint,?3) WHERE owner=?1 AND token=?2",params![owner,token,total]).map_err(sql_error)?;
     }
@@ -379,20 +377,15 @@ impl State {
     }
 }
 
-fn load_storage_cycle_account(db: &Connection, owner: &str) -> Result<Account, String> {
-    let balance_cycles = db
-        .query_row(
-            "SELECT balance_cycles FROM accounts WHERE owner=?1",
-            params![owner],
-            |r| sqlite::row_get(r, 0),
-        )
-        .optional()
-        .map_err(sql_error)?
-        .unwrap_or(0);
-    Ok(Account { balance_cycles })
-}
-struct Account {
-    balance_cycles: i64,
+fn load_balance(db: &Connection, owner: &str) -> Result<i64, String> {
+    db.query_row(
+        "SELECT balance_cycles FROM accounts WHERE owner=?1",
+        params![owner],
+        |r| sqlite::row_get(r, 0),
+    )
+    .optional()
+    .map(|balance: Option<i64>| balance.unwrap_or(0))
+    .map_err(sql_error)
 }
 fn storage_cost(bytes: u64, elapsed: i64) -> Result<u128, String> {
     Ok(
@@ -415,12 +408,7 @@ impl State {
         .map_err(|_| error.unwrap_or_else(|| "private account failure".into()))
     }
     pub fn balance(&self, owner: &str) -> vault_types::Result<u64> {
-        transaction(|db| {
-            Ok(load_storage_cycle_account(db, owner)
-                .map_err(|_| Error::Storage)?
-                .balance_cycles
-                .max(0) as u64)
-        })
+        transaction(|db| Ok(load_balance(db, owner).map_err(|_| Error::Storage)?.max(0) as u64))
     }
 }
 pub(crate) fn track_storage_in(

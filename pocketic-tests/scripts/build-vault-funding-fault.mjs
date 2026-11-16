@@ -64,7 +64,7 @@ writeFileSync(
     { cwd: root },
   ),
 );
-const path = resolve(dir, "crates/vault_canister/src/funding.rs");
+const path = resolve(dir, "crates/vault_canister/src/funding/api.rs");
 const source = readFileSync(path, "utf8"),
   needle = "    complete_payment(&p, outcome)";
 if (source.split(needle).length !== 2)
