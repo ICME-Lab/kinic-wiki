@@ -485,7 +485,7 @@ try {
   await search.fill(plaintext);
   await expect(noteButton).toHaveCount(0);
   assert.equal(chunkReads, readsBeforeTyping, "typing must filter metadata without fetching note bodies");
-  await action(vault, "Search note contents");
+  await action(vault, "Search note bodies");
   await expect(noteButton).toBeVisible();
   assert.ok(chunkReads > readsBeforeTyping, "explicit search reads authenticated note contents");
   await search.fill("absent-body-query");
