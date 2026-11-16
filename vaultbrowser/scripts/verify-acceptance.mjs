@@ -466,9 +466,9 @@ try {
     plaintext = "actual-browser-private-payload";
   await vault.getByLabel("Document title").fill(title);
   await editor(vault).fill(plaintext);
-  const chunkTrace = startRetryTrace("mutate", "PutChunk");
+  const chunkTrace = startRetryTrace("mutate", "SaveInline");
   dropMethod = "mutate";
-  dropAction = "PutChunk";
+  dropAction = "SaveInline";
   await action(vault, "Save document", true);
   await vault
     .getByRole("button", { name: "Resume save", exact: true })
@@ -499,12 +499,17 @@ try {
   assert.equal(docs.documents[0].plaintext, plaintext);
   const object = docs.documents[0].object;
   pass(
-    "lost real PutChunk replies; frozen editor; exact resume; independent real-client decrypt",
+    "lost real SaveInline reply; frozen editor; exact resume; independent real-client decrypt",
     { retries: [chunkRetry] },
   );
   await action(vault, "New document");
   await vault.getByLabel("Document title").fill("Cancelled upload");
-  await editor(vault).fill("cancelled-private-payload");
+  await vault.getByLabel("Document type").selectOption("attachment");
+  await vault.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
+    name: "cancelled-large.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(256 * 1024 + 1, 0x5a),
+  });
   dropMethod = "mutate";
   dropAction = "PutChunk";
   await action(vault, "Save document", true);
