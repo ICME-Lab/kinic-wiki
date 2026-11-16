@@ -1,4 +1,4 @@
-//! Initial release: create v9 once; validate existing v9 without repairing it.
+//! Validate complete schemas and migrate existing v8 accounts to exact billing.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
@@ -24,8 +24,13 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
             db.execute_batch("PRAGMA user_version=9;")
                 .map_err(|_| Error::Storage)?;
         }
-        9 if count == statements.len() as i64 => {
-            let expected: BTreeMap<_, _> = statements
+        8 | 9 if count == statements.len() as i64 => {
+            let expected_statements = if version == 8 {
+                legacy_schema_statements(statements.clone())
+            } else {
+                statements.clone()
+            };
+            let expected: BTreeMap<_, _> = expected_statements
                 .iter()
                 .map(|s| contract(s))
                 .collect::<Result<_>>()?;
@@ -50,10 +55,41 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         }
         _ => return Err(Error::Storage),
     }
+    if version == 8 {
+        db.execute_batch("BEGIN IMMEDIATE;")
+            .map_err(|_| Error::Storage)?;
+        if db
+            .execute_batch(
+                "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); PRAGMA user_version=9; COMMIT;",
+            )
+            .is_err()
+        {
+            let _ = db.execute_batch("ROLLBACK;");
+            return Err(Error::Storage);
+        }
+        // Verify the migrated DDL before exposing the database to callers.
+        return initialize_vault_schema(db);
+    }
     // Connection-local policy is not persisted in the image. Reapply after
     // validation, without creating/repairing schema or changing stored records.
     db.execute_batch("PRAGMA max_page_count=262144;")
         .map_err(|_| Error::Storage)
+}
+
+fn legacy_schema_statements(mut statements: Vec<String>) -> Vec<String> {
+    let account = statements
+        .iter_mut()
+        .find(|ddl| ddl.starts_with("CREATE TABLE IF NOT EXISTS accounts("))
+        .expect("compiled accounts table");
+    *account = "CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY NOT NULL,balance_cycles INTEGER NOT NULL CHECK(balance_cycles>=0),storage_bytes INTEGER NOT NULL DEFAULT 0,storage_charged_at_ms INTEGER NOT NULL);".into();
+    statements
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_legacy_v8(db: &Connection) {
+    db.execute_batch(&legacy_schema_statements(schema_statements()).join("\n"))
+        .unwrap();
+    db.execute_batch("PRAGMA user_version=8;").unwrap();
 }
 
 fn schema_statements() -> Vec<String> {

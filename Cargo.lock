@@ -629,6 +629,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "credit-bridge-types"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "serde",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3854,6 +3862,7 @@ name = "vault-canister"
 version = "0.1.0"
 dependencies = [
  "candid",
+ "credit-bridge-types",
  "ic-cdk 0.20.1",
  "ic-cdk-management-canister",
  "ic-cdk-timers",
@@ -3924,6 +3933,7 @@ version = "0.1.0"
 dependencies = [
  "canbench-rs",
  "candid",
+ "credit-bridge-types",
  "ic-cdk 0.20.1",
  "ic-cdk-timers",
  "ic-http-certification",
@@ -3941,12 +3951,14 @@ name = "vfs-runtime"
 version = "0.1.0"
 dependencies = [
  "candid",
+ "credit-bridge-types",
  "ic-sqlite-vfs",
  "kinic-sqlite-compat",
  "kinic-vfs-types",
  "kinic-wiki-domain",
  "proptest",
  "rusqlite",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",

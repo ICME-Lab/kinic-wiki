@@ -1,6 +1,9 @@
+use candid::Principal;
+use credit_bridge_types::*;
 use vault_types::*;
 mod accounting;
 mod api;
+mod bridge;
 mod capacity;
 mod funding;
 #[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]

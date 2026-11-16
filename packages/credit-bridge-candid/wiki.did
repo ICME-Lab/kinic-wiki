@@ -1,0 +1,62 @@
+type BridgeError = variant {
+  Storage;
+  InvalidInput;
+  Disabled;
+  NotFound;
+  Unauthorized;
+  Capacity;
+  Unavailable;
+  Expired;
+  Conflict;
+};
+type CreditOffer = record {
+  wiki_owner : principal;
+  link_generation : nat64;
+  operation : blob;
+  amount_cycles : nat64;
+  vault_owner : principal;
+  expires_at_ns : nat64;
+};
+type LinkChallenge = record {
+  challenge : blob;
+  generation : nat64;
+  vault_owner : principal;
+  expires_at_ns : nat64;
+};
+type LinkStatus = record {
+  wiki_owner : principal;
+  active : bool;
+  generation : nat64;
+  vault_owner : principal;
+};
+type Result_1 = variant { Ok : LinkStatus; Err : BridgeError };
+type Result_19 = variant { Ok : opt VaultTransfer; Err : BridgeError };
+type Result_4 = variant { Ok : opt LinkStatus; Err : BridgeError };
+type Result_47 = variant { Ok : LinkChallenge; Err : BridgeError };
+type Result_5 = variant { Ok : VaultTransfer; Err : BridgeError };
+type Result_57 = variant { Ok; Err : BridgeError };
+type TransferAmount = variant { All; Exact : nat64 };
+type TransferApproval = variant { Exact : nat64; AllAvailable };
+type TransferPhase = variant { Quoted; Refunded; Paid; Offered; Unknown };
+type VaultTransfer = record {
+  requested : TransferAmount;
+  offer : CreditOffer;
+  receiver_cleanup_pending : bool;
+  balance_at_quote : nat64;
+  database_id : text;
+  phase : TransferPhase;
+  collected_execution_fee_cycles : nat64;
+  estimated_execution_fee_cycles : nat64;
+};
+service : {
+  approve_vault_link : (blob) -> (Result_1);
+  cancel_vault_transfer : (blob) -> (Result_5);
+  execute_vault_transfer : (blob, TransferApproval) -> (Result_5);
+  get_pending_vault_transfer : (opt text) -> (Result_19);
+  get_vault_link : () -> (Result_4) query;
+  get_vault_transfer : (blob) -> (Result_5);
+  preview_vault_link : (blob) -> (Result_47);
+  quote_vault_transfer : (text, TransferAmount, blob) -> (Result_5);
+  reconcile_vault_transfer : (blob) -> (Result_5);
+  revoke_vault_link : () -> (Result_57);
+}

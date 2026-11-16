@@ -154,8 +154,55 @@ pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Res
             owners.insert(p.request.beneficiary.to_text());
         }
     }
+    for (owner, _, _) in crate::bridge::reservations(db)? {
+        owners.insert(owner.to_text());
+    }
     if !owners.contains(&beneficiary.to_text()) && owners.len() >= ACCOUNTS {
         return Err(Error::QuotaExceeded);
     }
     Ok(())
+}
+
+/// Reserve both bridge and ICRC credits and execution refunds before any external debit.
+pub(crate) fn admit_credit(
+    db: &Connection,
+    owner: candid::Principal,
+    wallet: candid::Principal,
+    operation: &[u8],
+    credits: u64,
+) -> Result<()> {
+    use sql::OptionalExtension;
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM accounts WHERE owner=?1",
+            params![owner.to_text()],
+            |r| sql::row_get(r, 0),
+        )
+        .optional()
+        .map_err(|_| Error::Storage)?
+        .unwrap_or(0);
+    let refunds:i64=db.query_row("SELECT coalesce(sum(CASE WHEN actual IS NULL THEN reserved WHEN in_flight=1 THEN actual ELSE 0 END),0) FROM vault_cycle_reservations WHERE owner=?1",params![owner.to_text()],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+    let mut total = u128::from(balance as u64) + u128::from(refunds as u64) + u128::from(credits);
+    for p in crate::funding::all_payments(db)? {
+        let p = p?;
+        if p.request.beneficiary == owner
+            && !(p.wallet == wallet && p.request.operation == operation)
+            && matches!(
+                p.status,
+                crate::funding::Status::InFlight | crate::funding::Status::Unknown
+            )
+        {
+            total += u128::from(p.credits);
+        }
+    }
+    for (beneficiary, id, amount) in crate::bridge::reservations(db)? {
+        if beneficiary == owner && !(beneficiary == wallet && id == operation) {
+            total += u128::from(amount);
+        }
+    }
+    if total > i64::MAX as u128 {
+        Err(Error::QuotaExceeded)
+    } else {
+        Ok(())
+    }
 }

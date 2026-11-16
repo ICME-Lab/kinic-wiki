@@ -757,10 +757,10 @@ fn key_and_financial_callback_settlement_roll_back_together() {
 }
 
 #[test]
-fn compatible_schema_nine_keeps_key_targets_results_and_financial_rows() {
+fn legacy_schema_eight_keeps_key_targets_results_and_financial_rows() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
-    schema::initialize_vault_schema(&db).unwrap();
+    schema::initialize_legacy_v8(&db);
     db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) VALUES(X'01',?1,?2,NULL,300,1,0,3),(X'01',?3,?2,?4,86400,2,0,3)",params![vec![1u8;16],vec![2u8;32],vec![3u8;16],candid::encode_one(true).unwrap()]).unwrap();
     db.execute("INSERT INTO key_flights(owner,vault,token,day,reserved,created,payment) VALUES(X'01',zeroblob(16),1,0,30000000000,0,120000000)",[]).unwrap();
     db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", [])
@@ -1173,4 +1173,24 @@ fn storage_billing_fraction_is_discarded_when_execution_exhausts_balance() {
     .unwrap();
     s.vault_track_storage(&owner, 1_048_576, 16).unwrap(); // only the new 127/128 cycle
     assert_eq!(s.balance(&owner).unwrap(), 100);
+}
+
+#[test]
+fn bridge_upgrade_accepts_v8_and_initializes_v9() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::initialize_legacy_v8(&db);
+    db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", []).unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 9);
+    let account: (i64, i64) = db
+        .query_row(
+            "SELECT balance_cycles,storage_charge_remainder FROM accounts WHERE owner='owner'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(account, (42, 0));
 }

@@ -4,6 +4,7 @@ mod bekko_refill;
 // Why: One canister can host isolated databases while sharing one VFS store implementation.
 mod accounts;
 mod billing;
+pub mod credit_bridge;
 mod cycles;
 mod databases;
 mod revisions;
@@ -72,6 +73,7 @@ const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:003_publication_mutat
 const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:004_iap_cycle_grants";
 const INDEX_SCHEMA_VERSION_VOICE: &str = "database_index:005_voice_billing";
 const INDEX_SCHEMA_VERSION_MAINTENANCE: &str = "database_index:006_database_maintenance";
+const INDEX_SCHEMA_VERSION_BRIDGE: &str = "database_index:007_credit_bridge";
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_INITIAL,
     INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
@@ -79,6 +81,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
     INDEX_SCHEMA_VERSION_VOICE,
     INDEX_SCHEMA_VERSION_MAINTENANCE,
+    INDEX_SCHEMA_VERSION_BRIDGE,
 ];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -1311,6 +1314,11 @@ fn set_cycles_billing_config_value(
 }
 
 const INDEX_SCHEMA_TABLES: &[&str] = &[
+    "credit_bridge_settings",
+    "credit_bridge_links",
+    "credit_bridge_fences",
+    "credit_bridge_owners",
+    "credit_bridge_transfers",
     "voice_rates",
     "voice_policies",
     "voice_reservations",
@@ -1542,6 +1550,8 @@ fn validate_database_cycles_purchase_for_conn(
         return Err(format!("database activation is pending: {database_id}"));
     }
     let reserved = checked_balance_add(balance, pending_cycles_purchase)?;
+    let reserved =
+        checked_balance_add(reserved, credit_bridge::refund_headroom(conn, database_id)?)?;
     checked_balance_add(reserved, cycles)?;
     Ok(())
 }

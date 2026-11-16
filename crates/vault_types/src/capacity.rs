@@ -25,7 +25,7 @@ pub const SETTINGS: usize = 64 * 1024;
 pub const SETTING_SLOTS: usize = 7;
 pub const SETTING_ROW: usize = 8192;
 pub const BILLING_CURSOR_ROW: usize = 512;
-/// Current global keys; two prepaid setting slots remain for future bounded jobs.
+/// Fixed global keys, including the bridge configuration and monotonic challenge serial.
 pub const GLOBAL_SETTING_KEYS: &[&str] = &[
     "config",
     "funding",
@@ -33,6 +33,7 @@ pub const GLOBAL_SETTING_KEYS: &[&str] = &[
     "quote_fee_serial",
     "gc-owner",
     "serial",
+    "bridge",
 ];
 pub const PRINCIPAL_TEXT: usize = 63;
 pub const TOKEN: usize = 128;

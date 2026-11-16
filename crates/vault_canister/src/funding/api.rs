@@ -122,7 +122,11 @@ fn list_payments() -> vault_types::Result<Vec<Payment>> {
         })
         .map_err(|_| Error::Storage)?;
         rows.into_iter()
-            .map(|r| serde_json::from_str(&r).map_err(|_| Error::Storage))
+            .filter_map(|r| match crate::bridge::decode(&r) {
+                Ok(Some(_)) => None,
+                Err(e) => Some(Err(e)),
+                Ok(None) => Some(serde_json::from_str(&r).map_err(|_| Error::Storage)),
+            })
             .collect()
     })
 }
