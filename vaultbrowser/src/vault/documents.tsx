@@ -72,8 +72,19 @@ export function VaultDocuments({
   const previousItems = useRef(items);
   useLayoutEffect(() => {
     if (previousItems.current === items) return;
+    const unchanged =
+      previousItems.current.length === items.length &&
+      previousItems.current.every((previous, index) => {
+        const current = items[index];
+        return (
+          current &&
+          b64(bytes(previous.revision.object)) === b64(bytes(current.revision.object)) &&
+          previous.revision.revision === current.revision.revision &&
+          previous.revision.deleted === current.revision.deleted
+        );
+      });
     previousItems.current = items;
-    if (search.current || bodyMatches) {
+    if (!unchanged && (search.current || bodyMatches)) {
       cancelSearch();
       setSearchStatus("Documents refreshed. Search note bodies again.");
     }
