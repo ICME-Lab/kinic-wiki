@@ -53,7 +53,7 @@ fn main() {
                 "({:?},{:?},include_bytes!({:?})),\n",
                 format!("/{}", f.display()),
                 mime,
-                root.join(&f)
+                root.join(f)
             ));
         }
     }
@@ -63,6 +63,14 @@ fn main() {
             .iter()
             .any(|key| env::var_os(key).is_some());
         let synthetic = env::var_os("CARGO_FEATURE_SYNTHETIC_FUNDING_TEST_ONLY").is_some();
+        if !local && !synthetic {
+            for key in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
+                assert!(
+                    env::var(key).unwrap_or_default().is_empty(),
+                    "Production assets require default compiler flags: {key}"
+                );
+            }
+        }
         let metadata = format!(
             "{{\"embedded_assets\":true,\"local\":{local},\"synthetic\":{synthetic},\"assets\":{}}}",
             files.len()

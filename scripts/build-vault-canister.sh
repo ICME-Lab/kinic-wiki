@@ -6,6 +6,10 @@ if [[ -n "${VAULT_LOCAL_ORIGIN:-}${VAULT_LOCAL_HOST:-}${VAULT_LOCAL_II:-}" && "$
   echo 'Local Vault origins require ICP_ENVIRONMENT=local-vault' >&2
   exit 1
 fi
+if [[ "${ICP_ENVIRONMENT:-}" != "local-vault" && -n "${RUSTFLAGS:-}${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
+  echo 'Production Vault builds require default compiler flags' >&2
+  exit 1
+fi
 pnpm --config.verifyDepsBeforeRun=false --config.managePackageManagerVersions=false --dir vaultbrowser build
 cargo build --package vault-canister --features embedded-assets --release --locked --target wasm32-unknown-unknown
 TASK_WASM="$TASK_ROOT/target/wasm32-unknown-unknown/release/vault_canister.wasm"
