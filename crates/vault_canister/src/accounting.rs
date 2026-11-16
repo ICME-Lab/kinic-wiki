@@ -240,7 +240,7 @@ fn adjust_balance_checked(
         .checked_add(delta)
         .ok_or("account balance overflow")?;
     tx.execute(
-        "UPDATE accounts SET balance_cycles=?2 WHERE owner=?1",
+        "UPDATE accounts SET balance_cycles=?2,storage_charge_remainder=CASE WHEN ?2=0 THEN 0 ELSE storage_charge_remainder END WHERE owner=?1",
         params![owner, balance],
     )?;
     record_entry_checked(
