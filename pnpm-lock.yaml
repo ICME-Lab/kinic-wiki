@@ -53,6 +53,9 @@ importers:
       miniflare:
         specifier: 5.20260801.0-alpha
         version: 5.20260801.0-alpha(@types/node@24.10.1)
+      typescript-parser:
+        specifier: npm:typescript@6.0.3
+        version: typescript@6.0.3
 
   extensions/wiki-clipper:
     dependencies:
