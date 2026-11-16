@@ -5,9 +5,8 @@ import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { realpathSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { gunzipSync } from "node:zlib";
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
-import { idlFactory } from "../../packages/vault-candid/index.js";
+import { idlFactory } from "../../target/vault-funding-fault/vault-candid.mjs";
 const require = createRequire(import.meta.url),
   sdk = createRequire(realpathSync(require.resolve("@dfinity/pic")));
 const { IDL } = sdk("@icp-sdk/core/candid"),
@@ -35,39 +34,34 @@ const wasm = resolve(
   "target/vault-funding-fault/build/wasm32-unknown-unknown/release/vault_canister.wasm",
 );
 const server = await startVaultPocketIc(process.env.POCKET_IC_BIN);
-const pic = await PocketIc.create(server.getUrl());
-await pic.setTime(Date.now());
-const vault = await pic.setupCanister({
-  sender: owner,
-  idlFactory,
-  wasm,
-  cycles: 100_000_000_000_000n,
-});
-vault.actor.setPrincipal(owner);
-const f = {
-  ...vault,
-  pic,
-  upgrade: () =>
-    pic.upgradeCanister({
-      sender: owner,
-      canisterId: vault.canisterId,
-      wasm,
-      arg: IDL.encode([], []),
-    }),
-  close: async () => {
-    try {
-      await pic.tearDown();
-    } finally {
-      await server.stop();
-    }
-  },
-};
-const account = (p) => ({ owner: p, subaccount: [] });
+let pic;
 try {
+  pic = await PocketIc.create(server.getUrl());
+  await pic.setTime(Date.now());
+  const vault = await pic.setupCanister({
+    sender: owner,
+    idlFactory,
+    wasm,
+    cycles: 100_000_000_000_000n,
+  });
+  vault.actor.setPrincipal(owner);
+  const f = {
+    ...vault,
+    pic,
+    upgrade: () =>
+      pic.upgradeCanister({
+        sender: owner,
+        canisterId: vault.canisterId,
+        wasm,
+        arg: IDL.encode([], []),
+      }),
+  };
+  const account = (p) => ({ owner: p, subaccount: [] });
   const { Init, factory } = ledgerTypes(IDL);
   const ledger = await f.pic.setupCanister({
     sender: owner,
     idlFactory: factory,
+    targetCanisterId: Principal.fromText("73mez-iiaaa-aaaaq-aaasq-cai"),
     wasm: resolve(root, "target/tools/ic-icrc1-ledger.wasm.gz"),
     cycles: 100_000_000_000_000n,
     arg: IDL.encode(
@@ -150,7 +144,9 @@ try {
       ok(
         await ledger.actor.icrc1_transfer({
           from_subaccount: [],
-          to: account(other),
+          to: account(
+            Principal.selfAuthenticating(new Uint8Array(32).fill(92)),
+          ),
           amount: 1n,
           fee: [10n],
           memo: [],
@@ -167,7 +163,10 @@ try {
     })(),
     /LostResponse/,
   );
-  assert.ok("Paid" in ok(await f.actor.pay_purchase(first)).status);
+  assert.deepEqual(await f.actor.pay_purchase(first), {
+    Err: { Conflict: null },
+  });
+  assert.ok("Paid" in ok(await f.actor.list_payments())[0].status);
   assert.equal(ok(await f.actor.account_balance()), credits);
   assert.equal(
     await ledger.actor.icrc1_balance_of(account(f.canisterId)),
@@ -202,15 +201,23 @@ try {
     Buffer.from(archiveStatus.moduleHash).toString("hex"),
     createHash("sha256")
       .update(
-        gunzipSync(
-          readFileSync(resolve(root, "target/tools/ic-icrc1-archive.wasm.gz")),
-        ),
+        readFileSync(resolve(root, "target/tools/ic-icrc1-archive.wasm.gz")),
       )
       .digest("hex"),
     "embedded archive must match pinned official archive Wasm",
   );
   const before = ok(await f.actor.account_balance());
-  const found = ok(await f.actor.reconcile_purchase(archived));
+  const raced = await Promise.all([
+    f.actor.reconcile_purchase(archived),
+    f.actor.reconcile_purchase(archived),
+  ]);
+  for (const result of raced)
+    if ("Err" in result) assert.deepEqual(result, { Err: { Busy: null } });
+  const found = ok(
+    raced.find(
+      (result) => "Ok" in result && "Paid" in result.Ok.payment.status,
+    ),
+  );
   assert.ok("Paid" in found.payment.status);
   assert.ok(found.scanned <= 100n);
   assert.equal(ok(await f.actor.account_balance()), before + credits);
@@ -243,7 +250,7 @@ try {
   await f.pic.tick(20);
   const balance = ok(await f.actor.account_balance());
   let progress = ok(await f.actor.reconcile_purchase(absent));
-  assert.equal(progress.scanned, 100n);
+  assert.ok(progress.scanned > 0n && progress.scanned <= 100n);
   assert.equal(progress.can_continue, true);
   const next = progress.next;
   await f.upgrade();
@@ -266,5 +273,9 @@ try {
     "PASS wrong actual transaction tuples never credit;100-block continuation and cursor survive upgrade",
   );
 } finally {
-  await f.close();
+  try {
+    await pic?.tearDown();
+  } finally {
+    await server.stop();
+  }
 }

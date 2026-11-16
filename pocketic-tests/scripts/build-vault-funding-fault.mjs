@@ -1,10 +1,17 @@
 // NONDEPLOYABLE: discard a real ledger reply after awaiting the real transfer.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, cpSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  cpSync,
+  rmSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 const root = resolve(import.meta.dirname, "../..");
 const dir = resolve(root, "target/vault-funding-fault/source");
+rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 const run = (cmd, args, options = {}) =>
   execFileSync(cmd, args, { cwd: dir, stdio: "inherit", ...options });
@@ -42,9 +49,21 @@ writeFileSync(
     )
     .replace('ic-agent = { path = "vendor/ic-agent" }', ""),
 );
-cpSync(resolve(root, "vaultbrowser/dist"), resolve(dir, "vaultbrowser/dist"), {
-  recursive: true,
-});
+const embedded = process.env.VAULT_LEDGER_TEST_EMBEDDED === "1";
+if (embedded)
+  cpSync(
+    resolve(root, "vaultbrowser/dist"),
+    resolve(dir, "vaultbrowser/dist"),
+    { recursive: true },
+  );
+writeFileSync(
+  resolve(root, "target/vault-funding-fault/vault-candid.mjs"),
+  execFileSync(
+    process.env.DIDC_BIN ?? "didc",
+    ["bind", "--target", "js", resolve(dir, "crates/vault_canister/vault.did")],
+    { cwd: root },
+  ),
+);
 const path = resolve(dir, "crates/vault_canister/src/funding.rs");
 const source = readFileSync(path, "utf8"),
   needle = "    complete_payment(&p, outcome)";
@@ -65,20 +84,28 @@ fn fixture_drop_reply() { assert!(ic_cdk::api::is_controller(&ic_cdk::api::msg_c
 `,
 );
 const target = resolve(root, "target/vault-funding-fault/build");
+const env = { ...process.env, CARGO_TARGET_DIR: target };
+for (const key of [
+  "VAULT_LOCAL_ORIGIN",
+  "VAULT_LOCAL_HOST",
+  "VAULT_LOCAL_II",
+  "CARGO_ENCODED_RUSTFLAGS",
+  "RUSTFLAGS",
+])
+  delete env[key];
 run(
   "cargo",
   [
     "build",
     "-p",
     "vault-canister",
-    "--features",
-    "synthetic-funding-test-only,embedded-assets",
+    ...(embedded ? ["--features", "embedded-assets"] : []),
     "--target",
     "wasm32-unknown-unknown",
     "--release",
-    "--locked",
+    "--offline",
   ],
-  { env: { ...process.env, CARGO_TARGET_DIR: target } },
+  { env },
 );
 const wasm = resolve(
   target,
@@ -91,6 +118,9 @@ writeFileSync(
     {
       deployable: false,
       source_commit: head,
+      embedded_assets: embedded,
+      source_lock_sha256: hash(readFileSync(resolve(root, "Cargo.lock"))),
+      fixture_lock_sha256: hash(readFileSync(resolve(dir, "Cargo.lock"))),
       source_sha256: hash(readFileSync(path)),
       wasm,
       wasm_sha256: hash(readFileSync(wasm)),
