@@ -20,14 +20,20 @@ export function assertSeparated(graph, classify) {
 export function checkCargo(metadata) {
   const names = new Map(metadata.packages.map(p => [p.id, p.name]));
   const graph = new Map(metadata.resolve.nodes.map(n => [n.id, n.deps.map(d => d.pkg)]));
-  assertSeparated(graph, id => /^vault[-_]/.test(names.get(id)) ? 'vault' : /^(vfs[-_]|wiki[-_])/.test(names.get(id)) ? 'wiki' : null);
+  assertSeparated(graph, id => /^vault[-_]/.test(names.get(id)) ? 'vault' : /^(?:kinic[-_])?(?:vfs|wiki)[-_]/.test(names.get(id)) ? 'wiki' : null);
 }
 export function imports(ts, text, file = 'module.ts') {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const result = [];
+  const addLiteral = node => {
+    if (node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) result.push(node.text);
+  };
   const walk = node => {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) result.push(node.moduleSpecifier.text);
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) result.push(node.arguments[0].text);
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) addLiteral(node.moduleSpecifier);
+    if (ts.isExternalModuleReference(node)) addLiteral(node.expression);
+    if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) addLiteral(node.argument.literal);
+    // Treat static require calls conservatively, including JavaScript sources.
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) addLiteral(node.arguments[0]);
     ts.forEachChild(node, walk);
   };
   walk(source);
@@ -51,9 +57,14 @@ export function checkTypescript(root, ts = loadParser(root)) {
   }
   for (const e of readdirSync(resolve(root, 'packages'))) {
     const dir = resolve(root, 'packages', e), manifest = resolve(dir, 'package.json');
-    if (existsSync(manifest)) packages.set(JSON.parse(readFileSync(manifest)).name, { dir, ...JSON.parse(readFileSync(manifest)) });
+    if (existsSync(manifest)) {
+      const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
+      packages.set(pkg.name, { dir, ...pkg });
+    }
   }
-  const serviceFiles = new Set(files.filter(p => /\b(?:localStorage|sessionStorage|indexedDB)\b|\bfetch\s*\(/.test(readFileSync(p, 'utf8'))));
+  const sources = new Map(files.map(file => [file, readFileSync(file, 'utf8')]));
+  const usesPersistenceOrNetwork = text => /\b(?:localStorage|sessionStorage|indexedDB)\b|\bfetch\s*\(/.test(text);
+  const serviceFiles = new Set(files.filter(file => usesPersistenceOrNetwork(sources.get(file))));
   const classify = p => {
     const name = relative(root, p).replaceAll('\\', '/');
     if (/^(vaultbrowser|packages\/vault-)/.test(name)) return 'vault';
@@ -67,8 +78,8 @@ export function checkTypescript(root, ts = loadParser(root)) {
   function readdirSafe(p) { try { readdirSync(p); return true; } catch { return false; } }
   const graph = new Map();
   for (const file of files) {
-    const text = readFileSync(file, 'utf8');
-    if (classify(file) === 'ui' && /\b(?:localStorage|sessionStorage|indexedDB)\b|\bfetch\s*\(/.test(text)) throw new Error(`Shared UI persistence/networking: ${file}`);
+    const text = sources.get(file);
+    if (classify(file) === 'ui' && serviceFiles.has(file)) throw new Error(`Shared UI persistence/networking: ${file}`);
     graph.set(file, imports(ts, text, file).map(spec => {
       if (spec.startsWith('.')) return resolveFile(resolve(dirname(file), spec)) ?? resolve(dirname(file), spec);
       if (spec.startsWith('@/')) return resolveFile(resolve(root, relative(root, file).split('/')[0], spec.slice(2))) ?? spec;
