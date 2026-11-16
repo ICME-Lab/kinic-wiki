@@ -73,7 +73,7 @@ writeFileSync(
   path,
   source.replace(
     needle,
-    `    let outcome = if FIXTURE_DROP_REPLY.with(|drop| drop.replace(false)) { Outcome::Unknown } else { outcome };
+    `    let outcome = if FIXTURE_DROP_REPLY.with(|drop| drop.replace(false)) { crate::funding::Outcome::Unknown } else { outcome };
 ${needle}`,
   ) +
     `
