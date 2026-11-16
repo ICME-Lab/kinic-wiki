@@ -56,15 +56,23 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         _ => return Err(Error::Storage),
     }
     if version == 8 {
-        db.execute_batch("BEGIN IMMEDIATE;")
+        db.execute_batch("SAVEPOINT vault_schema_upgrade;")
             .map_err(|_| Error::Storage)?;
-        if db
-            .execute_batch(
-                "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); PRAGMA user_version=9; COMMIT;",
-            )
-            .is_err()
-        {
-            let _ = db.execute_batch("ROLLBACK;");
+        let account_guards = statements
+            .iter()
+            .filter(|ddl| {
+                ddl.starts_with("CREATE TRIGGER IF NOT EXISTS accounting_accounts_")
+                    && ddl.contains("_size ")
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        let migration = format!(
+            "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); DROP TRIGGER accounting_accounts_INSERT_size; DROP TRIGGER accounting_accounts_UPDATE_size; {account_guards} PRAGMA user_version=9; RELEASE vault_schema_upgrade;"
+        );
+        if db.execute_batch(&migration).is_err() {
+            let _ =
+                db.execute_batch("ROLLBACK TO vault_schema_upgrade; RELEASE vault_schema_upgrade;");
             return Err(Error::Storage);
         }
         // Verify the migrated DDL before exposing the database to callers.
@@ -82,6 +90,13 @@ fn legacy_schema_statements(mut statements: Vec<String>) -> Vec<String> {
         .find(|ddl| ddl.starts_with("CREATE TABLE IF NOT EXISTS accounts("))
         .expect("compiled accounts table");
     *account = "CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY NOT NULL,balance_cycles INTEGER NOT NULL CHECK(balance_cycles>=0),storage_bytes INTEGER NOT NULL DEFAULT 0,storage_charged_at_ms INTEGER NOT NULL);".into();
+    for ddl in &mut statements {
+        if ddl.starts_with("CREATE TRIGGER IF NOT EXISTS accounting_accounts_")
+            && ddl.contains("_size ")
+        {
+            *ddl = ddl.replacen("+32)>", "+24)>", 1);
+        }
+    }
     statements
 }
 
