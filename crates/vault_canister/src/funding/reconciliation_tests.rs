@@ -298,7 +298,11 @@ fn missing_pre_dispatch_cursor_cannot_be_fabricated_on_an_unknown_legacy_record(
     complete_payment(&p, Outcome::Unknown).unwrap();
     let retry = begin_payment(p.wallet, &p.request.operation, 1).unwrap();
     assert!(prepare_dispatch(&retry, principal(95), 1000).is_err());
-    let scan = begin_scan(p.wallet, &p.request.operation, 2).unwrap();
+    assert_eq!(
+        begin_scan(p.wallet, &p.request.operation, 2),
+        Err(Error::Busy)
+    );
+    let scan = begin_scan(p.wallet, &p.request.operation, 120_000_000_002).unwrap();
     assert!(scan.reconciliation.is_none());
     assert_eq!(scan.status, Status::Unknown);
 }
@@ -324,6 +328,75 @@ fn widest_reconciliation_record_fits_existing_row_bound_and_round_trips() {
     assert!(payment_size(&p).unwrap() <= 4096);
     let decoded: Payment = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
     assert_eq!(decoded, p);
+}
+#[test]
+fn live_transfer_scan_is_busy_and_preserves_definitive_rejection() {
+    let p = sent();
+    let dispatched = prepare_dispatch(&p, principal(95), 123).unwrap();
+    for now in [1, 120_000_000_000] {
+        assert_eq!(
+            begin_scan(dispatched.wallet, &dispatched.request.operation, now),
+            Err(Error::Busy)
+        );
+        assert_eq!(
+            transaction(|db| load(db, dispatched.wallet, &dispatched.request.operation))
+                .unwrap()
+                .unwrap(),
+            dispatched
+        );
+    }
+    let rejected = complete_payment(
+        &dispatched,
+        Outcome::Rejected(Status::InsufficientAllowance),
+    )
+    .unwrap();
+    assert_eq!(rejected.status, Status::InsufficientAllowance);
+    assert!(!rejected.uncertain);
+    let expires: i64 = transaction(|db| {
+        db.query_row(
+            "SELECT expires FROM payments WHERE wallet=?1 AND operation=?2",
+            params![dispatched.wallet.to_text(), dispatched.request.operation],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)
+    })
+    .unwrap();
+    assert_eq!(expires, 7 * 86400);
+}
+#[test]
+fn orphaned_transfer_scan_preserves_late_success_exactly_once() {
+    let p = sent();
+    let dispatched = prepare_dispatch(&p, principal(95), 123).unwrap();
+    let scan = begin_scan(
+        dispatched.wallet,
+        &dispatched.request.operation,
+        120_000_000_001,
+    )
+    .unwrap();
+    assert_eq!(scan.status, Status::Unknown);
+    complete_payment(&dispatched, Outcome::Paid(123)).unwrap();
+    let result = finish_scan(&scan, Err(Error::KeyService), 120_000_000_002).unwrap();
+    assert_eq!(result.payment.status, Status::Paid(123));
+    complete_payment(&dispatched, Outcome::Paid(123)).unwrap();
+    assert_eq!(
+        crate::state::State
+            .balance(&principal(92).to_text())
+            .unwrap(),
+        dispatched.credits
+    );
+}
+#[test]
+fn upgrade_releases_live_transfer_for_reconciliation() {
+    let p = sent();
+    let dispatched = prepare_dispatch(&p, principal(95), 123).unwrap();
+    crate::state::State.vault_start_generation().unwrap();
+    let scan = begin_scan(dispatched.wallet, &dispatched.request.operation, 1).unwrap();
+    assert_eq!(scan.status, Status::Unknown);
+    assert!(scan.uncertain);
+    assert_eq!(scan.reconciliation.as_ref().unwrap().next, 123);
+    let result = finish_scan(&scan, Err(Error::KeyService), 2).unwrap();
+    assert_eq!(result.payment.status, Status::Unknown);
+    assert!(!result.can_continue);
 }
 #[test]
 fn first_tip_failure_restores_known_unsent_quote_and_can_retry_safely() {
