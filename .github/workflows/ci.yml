@@ -693,6 +693,8 @@ jobs:
           echo "$GITHUB_WORKSPACE/target/tools" >> "$GITHUB_PATH"
       - name: Test boundary graphs and CI selection
         run: node --test scripts/vault-boundary-graph.test.mjs
+      - name: Test backend asset and distribution guards
+        run: node --test scripts/vault-build.test.mjs scripts/vault-release.test.mjs
       - name: Contracts and origin boundary
         run: |
           node scripts/check-vault-boundary.mjs
@@ -747,6 +749,10 @@ jobs:
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
         run: pnpm --dir pocketic-tests test:vault
+      - name: Actual ICRC ledger reconciliation acceptance
+        env:
+          POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
+        run: pnpm --dir pocketic-tests test:vault-funding-ledger
       - name: Seal acceptance artifact handoff
         run: |
           git rev-parse HEAD > target/vault-ii-acceptance/source-commit.txt
