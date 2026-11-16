@@ -1,6 +1,7 @@
 // Actual pinned DFINITY ledger + its embedded archive, with a NONDEPLOYABLE
 // Vault that can discard one post-await response. No history/credit is injected.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { realpathSync, readFileSync } from "node:fs";
@@ -33,6 +34,19 @@ const wasm = resolve(
   root,
   "target/vault-funding-fault/build/wasm32-unknown-unknown/release/vault_canister.wasm",
 );
+assert.ok(
+  process.env.POCKET_IC_BIN,
+  "POCKET_IC_BIN must identify PocketIC16.1.0",
+);
+const pocketIcVersion = execFileSync(process.env.POCKET_IC_BIN, ["--version"], {
+  encoding: "utf8",
+}).trim();
+assert.equal(
+  pocketIcVersion,
+  "pocket-ic-server 16.1.0",
+  "Official ledger acceptance requires the verified PocketIC version",
+);
+console.log(`Runtime: ${pocketIcVersion}`);
 const server = await startVaultPocketIc(process.env.POCKET_IC_BIN);
 let pic;
 try {
