@@ -1127,3 +1127,50 @@ fn storage_billing_caps_a_charge_larger_than_i64_at_the_available_balance() {
     })
     .unwrap();
 }
+
+#[test]
+fn storage_billing_fraction_is_discarded_when_execution_exhausts_balance() {
+    state::initialize().unwrap();
+    let owner = p(231).to_text();
+    credit(p(231), 100);
+    let s = state::State;
+    s.vault_track_storage(&owner, 1_048_576, 0).unwrap();
+    s.vault_track_storage(&owner, 1_048_576, 8).unwrap(); // 127/128 of one cycle
+    state::transaction(|db| {
+        let remainder: i64 = db
+            .query_row(
+                "SELECT storage_charge_remainder FROM accounts WHERE owner=?1",
+                [&owner],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remainder, 1065353216000);
+        Ok(())
+    })
+    .unwrap();
+    s.vault_charge_execution(&owner, 100, 8).unwrap();
+    assert_eq!(billing_account(&owner), (0, 8));
+    state::transaction(|db| {
+        let remainder: i64 = db
+            .query_row(
+                "SELECT storage_charge_remainder FROM accounts WHERE owner=?1",
+                [&owner],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            remainder, 0,
+            "execution exhaustion must discard the accrued fraction immediately"
+        );
+        // Native top-up fixture: no timer or storage settlement before credit.
+        db.execute(
+            "UPDATE accounts SET balance_cycles=100 WHERE owner=?1",
+            [&owner],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    s.vault_track_storage(&owner, 1_048_576, 16).unwrap(); // only the new 127/128 cycle
+    assert_eq!(s.balance(&owner).unwrap(), 100);
+}
