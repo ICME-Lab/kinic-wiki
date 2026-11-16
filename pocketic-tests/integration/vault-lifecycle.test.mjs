@@ -48,6 +48,7 @@ try {
   // Verify a fresh real response independently, then reject forged context/transport/ciphertext.
   const transport = cryptoLib.TransportSecretKey.random(),
     request = {
+      vault: header.id,
       operation: operation(),
       transport: transport.publicKeyBytes(),
     };
