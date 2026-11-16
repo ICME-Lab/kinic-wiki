@@ -167,7 +167,11 @@ impl BillingError {
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    matches!(error, sqlite::Error::Sqlite(code, _) if code & 0xff == 19)
+                    match error {
+                        sqlite::Error::Constraint(_) => true,
+                        sqlite::Error::Sqlite(code, _) => code & 0xff == 19,
+                        _ => false,
+                    }
                 }
             }
             Self::Account(_) | Self::Arithmetic(_) => true,
@@ -622,4 +626,29 @@ pub(crate) fn reconcile_key_gc_in(
     }
     db.execute("INSERT INTO owner_scope(slot,owner) VALUES(1,?1) ON CONFLICT(slot) DO UPDATE SET owner=excluded.owner",params![caller.as_slice()]).map_err(|_|Error::Storage)?;
     Ok(())
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_billing_tests {
+    use super::*;
+
+    #[test]
+    fn constraints_are_owner_failures_but_database_errors_abort_billing() {
+        // The pinned VFS maps primary SQLITE_CONSTRAINT to Constraint; extended
+        // constraint codes may still arrive as Sqlite. Both must be isolated.
+        assert!(
+            BillingError::Sql(sqlite::Error::Constraint("injected owner failure".into()))
+                .owner_failure()
+        );
+        assert!(
+            BillingError::Sql(sqlite::Error::Sqlite(1811, "trigger constraint".into()))
+                .owner_failure()
+        );
+        for code in [1, 10, 11, 13] {
+            assert!(
+                !BillingError::Sql(sqlite::Error::Sqlite(code, "database failure".into()))
+                    .owner_failure()
+            );
+        }
+    }
 }
