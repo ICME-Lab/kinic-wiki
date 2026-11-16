@@ -69,7 +69,7 @@ fn approvals()->Vec<(Principal,Approval)>{APPROVALS.with(|rows|rows.borrow().clo
 #[ic_cdk::query]
 fn icrc1_balance_of(_account:Account)->Nat{Nat::from(1_000_000_000u64)}
 
-// Synthetic empty tip used only to admit transfers in the legacy harness.
+// Synthetic empty tip used only to admit transfers in the synthetic funding harness.
 // This does not claim transaction-history or reconciliation coverage.
 #[derive(CandidType, Deserialize)]
 struct Range { start: Nat, length: Nat }

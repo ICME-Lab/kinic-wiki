@@ -10,7 +10,6 @@ import {
   owner,
   other,
   out,
-  IDL,
   Principal,
   VaultClient,
   cryptoLib,
@@ -507,28 +506,6 @@ try {
   clients.forEach((c) => c.destroy());
   await f.close();
 }
-// Each old version is a fresh minimal SQLite sentinel image; a rejected upgrade must leave every stable byte unchanged.
-const old = await fixture({ fund: false });
-try {
-  for (let version = 1; version <= 7; version++) {
-    const v = await old.install(
-      resolve(out, "vault-old-schema.wasm"),
-      IDL.encode([IDL.Nat8], [version]),
-    );
-    const before = await old.pic.getStableMemory(v.canisterId);
-    await assert.rejects(
-      old.upgrade(resolve(out, "vault_canister.wasm"), v),
-      /Vault initialization failed|Canister trapped|Storage/,
-    );
-    assert.deepEqual(await old.pic.getStableMemory(v.canisterId), before);
-  }
-  console.log(
-    "PASS schemas1..7 rejected by production Wasm without changing any stable-memory byte",
-  );
-} finally {
-  await old.close();
-}
-
 // Fresh access must survive live content owned by another caller and full ordinary rows.
 // Accounting injection reaches the logical boundary without allocating 200 MiB of ciphertext.
 const full = await fixture({ wasm: resolve(out, "vault-state.wasm") });

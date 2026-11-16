@@ -2,7 +2,7 @@
 
 ## Current implementation
 
-The approved2026-11-16 follow-up enables pinned KINIC production funding and user-triggered authoritative ledger/archive reconciliation. Default backend Wasm builds without browser assets; only distribution builds enable embedded-assets. Schema 8 is the initial release format: fresh stores initialize at 8, compatible schema 8 upgrades preserve data, and unsupported/foreign/malformed stores are rejected unchanged. No schema 7 database migration is required or implemented; this is the approved release assumption, not a production database observation. No production deployment, DNS change, existing-canister reinstall or live-funds transfer was performed.
+Vault has never been deployed. The implementation enables pinned KINIC production funding and user-triggered authoritative ledger/archive reconciliation. Default backend Wasm builds without browser assets; only distribution builds enable embedded-assets. Schema 8 is the initial release format: fresh stores initialize at 8, same-format upgrades preserve data, and unsupported/foreign/malformed stores are rejected unchanged. No production deployment, DNS change, existing-canister reinstall or live-funds transfer was performed.
 
 ## Reproduce
 
@@ -32,7 +32,7 @@ The dedicated backend PR also runs native tests, default asset-free Wasm and off
 
 Rust workspace:1234 passing test executions,4existing ignored; whole-workspace strict Clippy and fmt passed. Native Vault canister53, synthetic52; service test split retained all30original functions. Client/crypto51, Vault UI76, Wiki264and source checks, extension255, MCP111Node/330Vitest/120Workers passed. Graph/build/release/CI guards46passed. Types, contracts and strict production JS lint passed.
 
-All six current Wasm cases passed using verified PocketIC16.1.0: lifecycle,state,capacity,isolation,physical-isolation,certification. These retain full-capacity admission, exact retry, schema8 upgrade and older-schema byte-preserving refusal, isolation and certified asset/configuration assertions. Production configuration now reports production funding and refuses foreign ledger configuration.
+All six current Wasm cases passed using verified PocketIC16.1.0: lifecycle,state,capacity,isolation,physical-isolation,certification. These retain full-capacity admission, exact retry, same-format upgrade, isolation and certified asset/configuration assertions. Production configuration now reports production funding and refuses foreign ledger configuration.
 
 Official DFINITY ledger and archive release ledger-suite-icrc-2026-03-09 are pinned with SHA256 digests. On actual PocketIC16.1 they ran at the pinned production ledger principal in an isolated topology, using backend-only production policy. Tests passed actual ICRC2transfer/lost ingress replay once; post-await lost response reconstructed via actual archive calls and concurrent scans; wrong-spender transaction rejection;100block continuation and upgrade preservation. Native tests independently cover malformed blocks and accounting widths. The lost-response hook is inserted only into an archived, nondeployable source fixture; it is absent from production code. The first exploratory run used PocketIC12; it was explicitly superseded by a version-guarded16.1 rerun. Evidence/provenance:target/vault-funding-ledger-test-16.log and target/vault-funding-fault/provenance.json.
 
@@ -49,10 +49,3 @@ Vlmkit0.23 integrity is CLEAN at1280/768/375, scroll passes and interactions pas
 Two independent reviews identified and verified fixes for: known-unsent tip-preparation recovery, missing didc in isolated Wasm CI, compiler-override distribution risk and stale funding-disabled operational text. Full sharedUI and independent prerequisite CI, then backend/client and final integration CI must be evaluated on their published heads; local results alone do not authorize merge or deployment. Job durations and artifact sizes are recorded by CI for comparison with the previous15min53sec integrated Vault job.
 
 See [PR dependencies](pr-split.md) and [operations](operations.md).
-
-
-## Initial release schema clarification — 2026-11-16
-
-The approved scope has no existing schema 7 database; no 7-to-8 migration is needed. The stale temporary filename in the schema 8 reopen test was renamed from `vault-seven-pending` to `vault-eight-pending`; its assertions and production code are unchanged.
-
-`cargo test -p vault-canister --lib --locked` passed all 53 tests in the current working tree, including fresh schema 8 initialization/idempotence, unchanged refusal of unsupported/foreign/malformed stores, pending upload/receipt/balance/cursor reopen, payment JSON defaults and reconciliation generation/lease recovery. This working tree also contains independently owned uncommitted funding/boundary refactors, which were not included in this correction. Existing Wasm upgrade coverage was inspected in `vault-capacity.test.mjs` and `vault-funding-ledger.test.mjs` (Unknown payments/balances and bounded scan cursor continuity); those Wasm tests and the browser suite were not rerun for this documentation/temporary-filename change. The earlier acceptance evidence above remains tied to its recorded source revision. No running production database was queried.

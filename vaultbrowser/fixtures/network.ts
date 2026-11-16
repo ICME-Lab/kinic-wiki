@@ -47,7 +47,6 @@ export function fixtureNetwork() {
         accounting_reserved: 16777216n,
         overcommitted: false,
         overage: 0n,
-        legacy_excess: 0n,
       },
     }),
     list_payments: async () => ({ Ok: [] }),

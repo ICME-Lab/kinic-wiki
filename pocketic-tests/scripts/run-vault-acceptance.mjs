@@ -32,7 +32,6 @@ for (const path of [
   "target/vault-ii-acceptance/vault_canister.wasm",
   "target/vault-ii-acceptance/vfs_canister.wasm",
   "target/vault-ii-acceptance/vault-state.wasm",
-  "target/vault-ii-acceptance/vault-old-schema.wasm",
   "target/vault-synthetic-funding-build/wasm32-unknown-unknown/release/vault_canister.wasm",
   "target/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm",
   "target/vault-ii-acceptance/client/client.mjs",
