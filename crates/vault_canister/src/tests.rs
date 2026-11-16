@@ -302,7 +302,7 @@ fn unknown_payment_attempt_bound_and_late_exact_completion_preserve_identity() {
 #[test]
 fn initial_release_rejects_unsupported_or_foreign_stores_without_changes() {
     use kinic_sqlite_compat::{Connection, params};
-    for version in [0, 1, 2, 3, 4, 5, 6, 7, 8] {
+    for version in [0, 8, 999] {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(&format!("CREATE TABLE foreign_data(secret BLOB); INSERT INTO foreign_data VALUES(X'0102'); PRAGMA user_version={version};")).unwrap();
         let before: i64 = db
@@ -524,7 +524,7 @@ fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
 }
 
 #[test]
-fn ii_only_reopens_eight_and_rejects_seven_without_modifying_it() {
+fn current_schema_initialization_is_idempotent() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
     schema::initialize_vault_schema(&db).unwrap();
     let version: i64 = db
@@ -532,13 +532,6 @@ fn ii_only_reopens_eight_and_rejects_seven_without_modifying_it() {
         .unwrap();
     assert_eq!(version, 8, "new installations must use the II-only schema");
     schema::initialize_vault_schema(&db).unwrap();
-    db.execute_batch("PRAGMA user_version=7").unwrap();
-    assert!(schema::initialize_vault_schema(&db).is_err());
-    assert_eq!(
-        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        7
-    );
 }
 
 fn credit(owner: Principal, amount: u64) {

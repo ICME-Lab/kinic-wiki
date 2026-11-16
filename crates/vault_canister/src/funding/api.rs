@@ -1,7 +1,7 @@
 //! Authenticated funding endpoints and async orchestration.
 use super::ledger::require_ledger;
 use super::{
-    FundingConfig, Outcome, Payment, PurchaseRequest, QuoteAdmission, Status, admit_quote, auth,
+    FundingConfig, Payment, PurchaseRequest, QuoteAdmission, Status, admit_quote, auth,
     begin_payment, complete_payment, finish_quote, ledger, load, reconciliation, save, transaction,
 };
 use kinic_sqlite_compat::{self as sql, params};
@@ -90,9 +90,6 @@ async fn pay_purchase(operation: Vec<u8>) -> vault_types::Result<Payment> {
     })?;
     require_ledger(ledger)?;
     let p = begin_payment(caller, &operation, crate::now_nanos())?;
-    if p.reconciliation.is_none() && p.uncertain {
-        return complete_payment(&p, Outcome::Unknown);
-    }
     // Persist the history lower bound and spender before the first possible debit.
     // An existing immutable snapshot is retained for byte-for-byte retries.
     let p = if p.reconciliation.is_none() {
