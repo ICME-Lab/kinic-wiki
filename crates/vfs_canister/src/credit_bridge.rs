@@ -246,13 +246,13 @@ async fn reconcile(p: Principal, op: &[u8]) -> BridgeResult<VaultTransfer> {
     match peer_call::<CreditReceipt, _>(d.peer, "wiki_credit_status", (d.offer.clone(),)).await {
         Ok(receipt) if receipt.offer == d.offer => {
             let settled = bridge(|s| s.settle_vault_receipt(&d, &receipt, bridge_now()))?;
-            if settled.receiver_cleanup_pending && receipt.status != CreditStatus::Prepared {
-                if peer_call::<(), _>(d.peer, "acknowledge_wiki_credit", (d.offer.clone(),))
+            if settled.receiver_cleanup_pending
+                && receipt.status != CreditStatus::Prepared
+                && peer_call::<(), _>(d.peer, "acknowledge_wiki_credit", (d.offer.clone(),))
                     .await
                     .is_ok()
-                {
-                    bridge(|s| s.finish_vault_cleanup(&d, bridge_now(), false))?;
-                }
+            {
+                bridge(|s| s.finish_vault_cleanup(&d, bridge_now(), false))?;
             }
         }
         Err(BridgeError::NotFound | BridgeError::Conflict)
