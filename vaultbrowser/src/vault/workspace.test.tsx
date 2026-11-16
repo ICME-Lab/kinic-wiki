@@ -857,7 +857,7 @@ it("confirms saved and clears dirty editor before a delayed refresh, then report
   expect(x.calls).toHaveLength(1);
 });
 
-it("announces that refreshed documents invalidate completed body matches", async () => {
+it("preserves completed body matches when refreshed revisions are unchanged", async () => {
   const x = await mounted();
   await x.open();
   await save();
@@ -867,9 +867,14 @@ it("announces that refreshed documents invalidate completed body matches", async
   fireEvent.click(screen.getByText("Search note bodies"));
   await screen.findByText("Note body search complete.");
   expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
+  const list = vi.spyOn(x.actor, "list_objects");
+  const before = list.mock.calls.length;
   fireEvent.click(screen.getByText("Refresh documents"));
-  await screen.findByText("Documents refreshed. Search note bodies again.");
-  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
+  await waitFor(() =>
+    expect(list.mock.calls.length).toBeGreaterThan(before),
+  );
+  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
+  expect(screen.getByText("Note body search complete.")).toBeTruthy();
 });
 it.each(["close", "unmount"])(
   "ignores a confirmed-save refresh failure after %s",
