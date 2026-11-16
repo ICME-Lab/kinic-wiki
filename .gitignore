@@ -135,8 +135,5 @@ workers/payment/cloudflare.production.ts
 /.kinic-learning.json
 /docs/superpowers/
 
-# Retained in immutable Git history; see docs/vault/source-snapshot.json.
-/docs/vault/source-working-tree.patch
-
 # Disposable Vault browser fixtures.
 **/.tmp-vault/

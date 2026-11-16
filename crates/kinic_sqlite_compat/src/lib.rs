@@ -658,7 +658,7 @@ impl ReadPolicy {
         database: Option<&str>,
     ) -> bool {
         match action {
-            21 | 33 => true, // SQLITE_SELECT / SQLITE_RECURSIVE (tables still authorized)
+            21 => true, // SQLITE_SELECT
             20 => {
                 (database == Some("main") || (database.is_none() && arg2 == Some("")))
                     && arg1.is_some_and(|table| {
@@ -688,7 +688,6 @@ pub fn install_read_authorizer<'connection>(
     conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
         let (action, arg1, arg2) = match ctx.action {
             AuthAction::Select => (21, None, None),
-            AuthAction::Recursive => (33, None, None),
             AuthAction::Read {
                 table_name,
                 column_name,
@@ -874,6 +873,7 @@ mod read_authorizer_tests {
             tables: &["fs_nodes"],
         };
         assert!(!policy.permits(999, None, None, None));
+        assert!(!policy.permits(33, None, None, None));
         assert!(!policy.permits(20, Some("fs_nodes"), None, None));
         assert!(!policy.permits(31, None, None, None));
         assert!(!policy.permits(31, None, Some("load_extension"), None));
