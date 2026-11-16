@@ -825,6 +825,15 @@ jobs:
           tar -xJf target/tools/icp.tar.xz -C target/tools
           find "$GITHUB_WORKSPACE/target/tools" -type f -name icp -exec dirname {} \; >> "$GITHUB_PATH"
           pnpm --dir wikibrowser exec playwright install --with-deps chromium
+      - name: Install pinned network launcher without latest API discovery
+        run: |
+          curl -fsSL --retry 3 https://github.com/dfinity/icp-cli-network-launcher/releases/download/v16.1.0-2026-11-06-03-19/icp-cli-network-launcher-x86_64-linux-v16.1.0-2026-11-06-03-19.tar.gz -o target/tools/network-launcher.tar.gz
+          echo "c843d039fbcada6d4ef5fa5dbfcff772c938a8b5e5d0e034fce52dc44f2bd001  target/tools/network-launcher.tar.gz" | sha256sum -c -
+          mkdir -p target/tools/network-launcher
+          tar -xzf target/tools/network-launcher.tar.gz -C target/tools/network-launcher --strip-components=1
+          test -x target/tools/network-launcher/icp-cli-network-launcher
+          test -x target/tools/network-launcher/pocket-ic
+          echo "ICP_CLI_NETWORK_LAUNCHER_PATH=$GITHUB_WORKSPACE/target/tools/network-launcher/icp-cli-network-launcher" >> "$GITHUB_ENV"
       - name: Actual same-II cross-origin browser acceptance
         run: node pocketic-tests/scripts/run-vault-browser-acceptance.mjs
       - name: Preserve current acceptance provenance
