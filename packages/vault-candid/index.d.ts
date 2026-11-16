@@ -33,6 +33,7 @@ export type Action = {
       'expected_revision' : bigint,
     }
   } |
+  { 'SaveInline' : SaveInline } |
   { 'BeginRevision' : BeginRevision };
 export interface BeginRevision {
   'object' : Uint8Array | number[],
@@ -233,6 +234,14 @@ export interface Revision {
 export interface RevisionPage {
   'next' : [] | [bigint],
   'entries' : Array<Revision>,
+}
+/**
+ * One bounded, atomic revision using the unlocked immutable key context.
+ */
+export interface SaveInline {
+  'request' : BeginRevision,
+  'bytes' : Uint8Array | number[],
+  'context_hash' : Uint8Array | number[],
 }
 export type Status = { 'Quoted' : null } |
   { 'InsufficientAllowance' : null } |

@@ -79,6 +79,24 @@ async function save(title = "Secret note", body = "private words") {
     ).toBe(false),
   );
 }
+function largeAttachment(title: string) {
+  fireEvent.change(screen.getByLabelText("Document type"), {
+    target: { value: "attachment" },
+  });
+  fireEvent.change(screen.getByLabelText("Document title"), {
+    target: { value: title },
+  });
+  const bytes = new Uint8Array(262145).fill(7);
+  const file = new File([bytes], "large.bin", {
+    type: "application/octet-stream",
+  });
+  Object.defineProperty(file, "arrayBuffer", {
+    value: async () => bytes.buffer.slice(0),
+  });
+  fireEvent.change(screen.getByLabelText("Attachment (10 MiB maximum)"), {
+    target: { files: [file] },
+  });
+}
 it("opens with II, saves and reads encrypted notes, searches locally, retains drafts and root through refresh", async () => {
   const x = await mounted();
   await x.open();
@@ -109,8 +127,9 @@ it("opens with II, saves and reads encrypted notes, searches locally, retains dr
     target: { value: "private words" },
   });
   expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
-  fireEvent.click(screen.getByText("Search note contents"));
-  await screen.findByRole("button", { name: "Secret note" });
+  fireEvent.click(screen.getByText("Search note bodies"));
+  await screen.findByText("Note body search complete.");
+  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
     target: { value: "absent" },
   });
@@ -141,39 +160,42 @@ it("retries exact create after refresh and key failure without duplicating a Vau
   expect(x.headers).toHaveLength(3);
 });
 it.each([
+  ["resume", "SaveInline"],
+  ["cancel", "SaveInline"],
   ["resume", "BeginRevision"],
   ["resume", "PutChunk"],
   ["resume", "CommitRevision"],
   ["cancel", "BeginRevision"],
   ["cancel", "PutChunk"],
   ["cancel", "CommitRevision"],
-])(
-  "handles %s after a lost %s reply",
-  async (action, phase) => {
-    const x = await mounted();
-    await x.open();
-    x.lose(phase);
+])("handles %s after a lost %s reply", async (action, phase) => {
+  const x = await mounted();
+  await x.open();
+  x.lose(phase);
+  if (phase === "SaveInline") {
     fireEvent.change(screen.getByLabelText("Document title"), {
-      target: { value: "Lost note" },
+      target: { value: "Lost attachment" },
     });
     fireEvent.change(screen.getByLabelText("Private note body"), {
-      target: { value: "lost content" },
+      target: { value: "inline body" },
     });
-    fireEvent.click(screen.getByText("Save document"));
-    await screen.findByRole("alert");
-    expect(x.client.hasPendingSave).toBe(true);
-    fireEvent.click(
-      screen.getByText(action === "resume" ? "Resume save" : "Cancel save"),
-    );
-    await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
-    const retries = x.calls.filter((m) => phase in m.action);
-    expect(retries).toHaveLength(2);
-    expect(retries[0]).toEqual(retries[1]);
-    expect(x.uploads.size).toBe(0);
-    if (action === "resume")
-      await screen.findByRole("button", { name: "Lost note" });
-  },
-);
+  } else largeAttachment("Lost attachment");
+  fireEvent.click(screen.getByText("Save document"));
+  await screen.findByRole("alert");
+  expect(x.client.hasPendingSave).toBe(true);
+  fireEvent.click(
+    screen.getByText(action === "resume" ? "Resume save" : "Cancel save"),
+  );
+  await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
+  const retries = x.calls.filter((m) => phase in m.action);
+  expect(retries).toHaveLength(
+    phase === "SaveInline" && action === "cancel" ? 1 : 2,
+  );
+  if (retries.length === 2) expect(retries[0]).toEqual(retries[1]);
+  expect(x.uploads.size).toBe(0);
+  if (action === "resume")
+    await screen.findByRole("button", { name: "Lost attachment" });
+});
 it("retains history after ordinary deletion and purges the document and history", async () => {
   const x = await mounted();
   await x.open();
@@ -382,7 +404,7 @@ it.each(["Pending", "Deleting"] as const)(
     expect(x.client.session.root).toBeUndefined();
   },
 );
-it("retains the draft after optimistic conflict and lets cancellation reopen the current version", async () => {
+it("retains the draft after definitive optimistic conflict and permits reopening the current version", async () => {
   const x = await mounted();
   await x.open();
   await save();
@@ -413,8 +435,8 @@ it("retains the draft after optimistic conflict and lets cancellation reopen the
   expect(
     (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
   ).toBe("conflicting draft");
-  fireEvent.click(screen.getByText("Cancel save"));
-  await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
+  expect(x.client.hasPendingSave).toBe(false);
+  fireEvent.click(screen.getByText("Refresh documents"));
   await waitFor(() =>
     expect(
       (screen.getByRole("button", { name: "Secret note" }) as HTMLButtonElement)
@@ -527,7 +549,7 @@ it("allows owner credit below the valid canister reserve and reports server deni
   );
   await x.open();
   await save("First", "first body");
-  x.lose("PutChunk");
+  x.lose("SaveInline");
   fireEvent.change(screen.getByLabelText("Private note body"), {
     target: { value: "retry body" },
   });
@@ -656,12 +678,7 @@ it("reconciles a lost cancellation reply while retaining the pending save", asyn
   const x = await mounted();
   await x.open();
   x.lose("PutChunk");
-  fireEvent.change(screen.getByLabelText("Document title"), {
-    target: { value: "Cancelled note" },
-  });
-  fireEvent.change(screen.getByLabelText("Private note body"), {
-    target: { value: "cancelled body" },
-  });
+  largeAttachment("Cancelled attachment");
   fireEvent.click(screen.getByText("Save document"));
   await screen.findByRole("alert");
   x.lose("CancelUpload");
@@ -724,3 +741,157 @@ it("keeps newer opening work busy when an old opening finishes after close", asy
     Array.from(x.headers[1].id),
   );
 });
+
+it("lists titles without body reads and searches note bodies only on explicit request", async () => {
+  const x = await mounted();
+  await x.open();
+  await save();
+  const reads = vi.spyOn(x.actor, "get_chunk");
+  fireEvent.click(screen.getByText("Refresh documents"));
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh documents") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  expect(reads).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
+    target: { value: "private words" },
+  });
+  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
+  expect(reads).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("Search note bodies"));
+  await screen.findByText("Note body search complete.");
+  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
+  expect(reads).toHaveBeenCalledOnce();
+});
+it.each(["stop", "query", "close", "unmount"])(
+  "fences late body search after %s without locking other actions",
+  async (mode) => {
+    const x = await mounted();
+    await x.open();
+    await save();
+    const original = x.actor.get_chunk;
+    let finish!: () => void;
+    vi.spyOn(x.actor, "get_chunk").mockImplementation(
+      (...args) =>
+        new Promise((resolve) => {
+          finish = () => {
+            void original(...args).then(resolve);
+          };
+        }),
+    );
+    fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
+      target: { value: "private words" },
+    });
+    fireEvent.click(screen.getByText("Search note bodies"));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.getByText("Searching note bodies: 0 / 1")).toBeTruthy();
+    expect(
+      (screen.getByText("New document") as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
+    ).toBe(false);
+    if (mode === "stop") fireEvent.click(screen.getByText("Stop search"));
+    else if (mode === "query")
+      fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
+        target: { value: "absent" },
+      });
+    else if (mode === "close") fireEvent.click(screen.getByText("Close Vault"));
+    else x.view.unmount();
+    await act(async () => {
+      finish();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    expect(screen.queryByText("Note body search complete.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
+    if (mode === "close") {
+      await x.open();
+      expect(
+        (screen.getByLabelText("Search this Vault locally") as HTMLInputElement)
+          .value,
+      ).toBe("");
+    }
+  },
+);
+it("confirms saved and clears dirty editor before a delayed refresh, then reports refresh failure as saved", async () => {
+  const x = await mounted();
+  await x.open();
+  let fail!: () => void;
+  vi.spyOn(x.actor, "list_objects").mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = () => reject(Error("network"));
+      }),
+  );
+  fireEvent.change(screen.getByLabelText("Document title"), {
+    target: { value: "Saved first" },
+  });
+  fireEvent.change(screen.getByLabelText("Private note body"), {
+    target: { value: "confirmed body" },
+  });
+  fireEvent.click(screen.getByText("Save document"));
+  await screen.findByText("Saved.");
+  expect(x.revisions).toHaveLength(1);
+  expect(
+    (screen.getByLabelText("Document title") as HTMLInputElement).value,
+  ).toBe("");
+  expect(
+    (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
+  ).toBe("");
+  expect(
+    (screen.getByText("Save document") as HTMLButtonElement).disabled,
+  ).toBe(true);
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  expect(x.client.hasPendingSave).toBe(false);
+  await act(async () => fail());
+  await screen.findByText(
+    "Saved, but the document list could not be refreshed. Refresh documents to update the list.",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("Resume save")).toBeNull();
+  expect(x.calls).toHaveLength(1);
+});
+
+it("announces that refreshed documents invalidate completed body matches", async () => {
+  const x = await mounted();
+  await x.open();
+  await save();
+  fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
+    target: { value: "private words" },
+  });
+  fireEvent.click(screen.getByText("Search note bodies"));
+  await screen.findByText("Note body search complete.");
+  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
+  fireEvent.click(screen.getByText("Refresh documents"));
+  await screen.findByText("Documents refreshed. Search note bodies again.");
+  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
+});
+it.each(["close", "unmount"])(
+  "ignores a confirmed-save refresh failure after %s",
+  async (mode) => {
+    const x = await mounted();
+    await x.open();
+    let fail!: () => void;
+    vi.spyOn(x.actor, "list_objects").mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = () => reject(Error("network"));
+        }),
+    );
+    fireEvent.change(screen.getByLabelText("Private note body"), {
+      target: { value: "private saved text" },
+    });
+    fireEvent.click(screen.getByText("Save document"));
+    await screen.findByText("Saved.");
+    if (mode === "close") fireEvent.click(screen.getByText("Close Vault"));
+    else x.view.unmount();
+    await act(async () => fail());
+    expect(screen.queryByText(/Saved, but/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  },
+);

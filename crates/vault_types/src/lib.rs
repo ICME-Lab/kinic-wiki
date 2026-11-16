@@ -99,6 +99,13 @@ pub struct BeginRevision {
     pub manifest: Vec<u8>,
     pub chunk_hashes: Vec<Vec<u8>>,
 }
+/// One bounded, atomic revision using the unlocked immutable key context.
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct SaveInline {
+    pub request: BeginRevision,
+    pub bytes: Vec<u8>,
+    pub context_hash: Vec<u8>,
+}
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct Upload {
     pub id: Id,
@@ -176,6 +183,7 @@ pub struct Mutation {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum Action {
+    SaveInline(SaveInline),
     BeginRevision(BeginRevision),
     PutChunk {
         upload: Id,

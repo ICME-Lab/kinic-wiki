@@ -16,7 +16,7 @@ import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
 import { VaultPreview } from "./preview";
-import { VaultButton, VaultField, VaultPanel } from "./ui";
+import { VaultButton, VaultField, VaultPanel, vaultError } from "./ui";
 import type { VaultWork } from "./workspace";
 export function VaultDocuments({
   client,
@@ -38,42 +38,76 @@ export function VaultDocuments({
     [client],
   );
   const [query, setQuery] = useState("");
-  const [bodyMatches, setBodyMatches] = useState<string[]>([]);
-  const [searching, setSearching] = useState(false);
-  // Local ownership also fences unmount/remount while the same client is alive.
-  const searchLifecycle = useRef({ epoch: 0 });
+  const search = useRef<AbortController | undefined>(undefined);
+  const [bodyMatches, setBodyMatches] = useState<Item[]>();
+  const [searchStatus, setSearchStatus] = useState("");
+  const [searchProgress, setSearchProgress] = useState<{
+    completed: number;
+    total: number;
+  }>();
+  const [saveStatus, setSaveStatus] = useState("");
+  const saveNotice = useRef(0);
+  const alive = useRef(true);
+  const cancelSearch = () => {
+    search.current?.abort();
+    search.current = undefined;
+    setSearchProgress(undefined);
+    setBodyMatches(undefined);
+  };
   useLayoutEffect(() => {
-    const owned = searchLifecycle.current;
-    const epoch = ++owned.epoch;
-    setBodyMatches([]);
-    setSearching(false);
+    alive.current = true;
     const detach = client.session.addLockCleanup(() => {
-      owned.epoch++;
-      setBodyMatches([]);
-      setSearching(false);
+      cancelSearch();
       setQuery("");
+      setSearchStatus("");
+      setSaveStatus("");
     });
     return () => {
-      if (owned.epoch === epoch) owned.epoch++;
+      alive.current = false;
+      search.current?.abort();
+      search.current = undefined;
       detach();
     };
-  }, [client, items, query]);
-  const searchContents = () => {
-    if (searching || disabled || !query.trim()) return;
-    run(async () => {
-      const owned = searchLifecycle.current;
-      const epoch = owned.epoch;
-      const ticket = client.session.capture();
-      setSearching(true);
-      try {
-        const matches = await client.searchNotes(items, query);
-        client.session.check(ticket);
-        if (owned.epoch === epoch)
-          setBodyMatches(matches.map((object) => b64(object)));
-      } finally {
-        if (owned.epoch === epoch) setSearching(false);
+  }, [client]);
+  const previousItems = useRef(items);
+  useLayoutEffect(() => {
+    if (previousItems.current === items) return;
+    previousItems.current = items;
+    if (search.current || bodyMatches) {
+      cancelSearch();
+      setSearchStatus("Documents refreshed. Search note bodies again.");
+    }
+  }, [items, bodyMatches]);
+  const searchBodies = async () => {
+    cancelSearch();
+    const controller = new AbortController();
+    search.current = controller;
+    const ticket = client.session.capture();
+    const active = () =>
+      alive.current &&
+      search.current === controller &&
+      !controller.signal.aborted &&
+      client.session.capture() === ticket;
+    setSearchStatus("");
+    try {
+      const matches = await client.searchNotes(items, query, {
+        signal: controller.signal,
+        onProgress: (value) => {
+          if (active()) setSearchProgress(value);
+        },
+      });
+      if (!active()) return;
+      setBodyMatches(matches);
+      setSearchStatus("Note body search complete.");
+    } catch (cause) {
+      if (active())
+        setSearchStatus(`Note body search failed: ${vaultError(cause)}`);
+    } finally {
+      if (active()) {
+        search.current = undefined;
+        setSearchProgress(undefined);
       }
-    });
+    }
   };
   const [current, setCurrent] = useState<Item>();
   const [kind, setKind] = useState<Metadata["kind"]>("note");
@@ -91,6 +125,8 @@ export function VaultDocuments({
   const [progress, setProgress] = useState(0);
   const [dirty, setDirty] = useState(false);
   const reset = () => {
+    saveNotice.current++;
+    setSaveStatus("");
     setCurrent(undefined);
     setTitle("");
     setBody("");
@@ -137,6 +173,24 @@ export function VaultDocuments({
       doc.plaintext.fill(0);
     }
   };
+  const confirmed = (ticket: number) => {
+    client.session.check(ticket);
+    reset();
+    setSaveStatus("Saved.");
+    const notice = saveNotice.current;
+    // The committed save is complete. List work must not keep the editor busy
+    // or turn a successful save into an ambiguous operation on refresh failure.
+    void refresh().catch(() => {
+      if (
+        alive.current &&
+        client.session.capture() === ticket &&
+        saveNotice.current === notice
+      )
+        setSaveStatus(
+          "Saved, but the document list could not be refreshed. Refresh documents to update the list.",
+        );
+    });
+  };
   const save = () =>
     run(async () => {
       const g = client.session.capture();
@@ -170,8 +224,7 @@ export function VaultDocuments({
           setProgress(n);
         });
         client.session.check(g);
-        reset();
-        await refresh();
+        confirmed(g);
       } finally {
         plain.fill(0);
       }
@@ -189,7 +242,11 @@ export function VaultDocuments({
       doc.plaintext.fill(0);
     }
   };
-  const changed = () => setDirty(true);
+  const changed = () => {
+    saveNotice.current++;
+    setDirty(true);
+    setSaveStatus("");
+  };
   const pendingSave = client.hasPendingSave;
   const readOnly =
     disabled || writesDisabled || pendingSave || !!current?.revision.deleted;
@@ -208,20 +265,48 @@ export function VaultDocuments({
           type="search"
           placeholder="Find a private document…"
           value={query}
-          disabled={disabled || searching}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            cancelSearch();
+            setSearchStatus("");
+            setQuery(e.target.value);
+          }}
         />
-        <VaultButton
-          disabled={disabled || searching || !query.trim()}
-          onClick={searchContents}
-        >
-          Search note contents
-        </VaultButton>
         <VaultButton disabled={disabled} onClick={() => run(refresh)}>
           <RefreshCw size={15} aria-hidden />
           Refresh documents
         </VaultButton>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <VaultButton
+          disabled={disabled || !query.trim() || !!searchProgress}
+          onClick={() => void searchBodies()}
+        >
+          Search note bodies
+        </VaultButton>
+        <span className="text-sm text-muted">
+          Titles filter immediately. Body search reads notes only.
+        </span>
+        {searchProgress ? (
+          <>
+            <output aria-live="polite">
+              Searching note bodies: {searchProgress.completed} /{" "}
+              {searchProgress.total}
+            </output>
+            <VaultButton
+              onClick={() => {
+                cancelSearch();
+                setSearchStatus("Note body search stopped.");
+              }}
+            >
+              Stop search
+            </VaultButton>
+          </>
+        ) : null}
+        {searchStatus ? (
+          <output aria-live="polite">{searchStatus}</output>
+        ) : null}
+      </div>
+      {saveStatus ? <output aria-live="polite">{saveStatus}</output> : null}
       {pendingSave ? (
         <div className="grid gap-2 rounded-lg border border-line p-3">
           <output>
@@ -240,8 +325,7 @@ export function VaultDocuments({
                     setProgress(n);
                   });
                   client.session.check(ticket);
-                  reset();
-                  await refresh();
+                  confirmed(ticket);
                 })
               }
             >
@@ -254,9 +338,11 @@ export function VaultDocuments({
                   const ticket = client.session.capture();
                   const result = await client.cancelSave();
                   client.session.check(ticket);
-                  if ("Committed" in result) reset();
-                  else setProgress(0);
-                  await refresh();
+                  if ("Committed" in result) confirmed(ticket);
+                  else {
+                    setProgress(0);
+                    await refresh();
+                  }
                 })
               }
             >
@@ -272,9 +358,16 @@ export function VaultDocuments({
             New document
           </VaultButton>
           {items
-            .filter((item) =>
-              item.metadata.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) ||
-              bodyMatches.includes(b64(bytes(item.revision.object))),
+            .filter(
+              (item) =>
+                item.metadata.title
+                  .toLocaleLowerCase()
+                  .includes(query.toLocaleLowerCase()) ||
+                bodyMatches?.some(
+                  (match) =>
+                    b64(bytes(match.revision.object)) ===
+                    b64(bytes(item.revision.object)),
+                ),
             )
             .map((item) => (
               <VaultButton
