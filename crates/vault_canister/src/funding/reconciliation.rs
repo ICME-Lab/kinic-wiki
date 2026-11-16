@@ -1,5 +1,7 @@
 //! Authoritative ICRC-3 reconciliation. Every read is a replicated canister call.
+use super::ledger::{nat, require_ledger};
 use super::*;
+use candid::Nat;
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize, PartialEq)]
 pub struct ReconciliationState {
     pub start: u64,
@@ -119,10 +121,15 @@ fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
             return Err(Error::Conflict);
         }
         let current = generation(db)?;
+        // A live transfer still owns its outcome: starting a scan must not turn
+        // a definitive rejection into durable uncertainty before its callback.
+        if matches!(p.status, Status::InFlight)
+            && p.generation == current
+            && now.saturating_sub(p.sent_at) <= 120_000_000_000
+        {
+            return Err(Error::Busy);
+        }
         if p.preparing {
-            if p.generation == current && now.saturating_sub(p.sent_at) <= 120_000_000_000 {
-                return Err(Error::Busy);
-            }
             // An interrupted preparation never issued transfer_from. Recover its cancellable quote.
             p.preparing = false;
             p.status = Status::Quoted;
@@ -130,15 +137,9 @@ fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
             save(db, &p)?;
             return Ok(p);
         }
-        let mut statement = db
-            .prepare("SELECT record FROM payments")
-            .map_err(|_| Error::Storage)?;
-        let records: Vec<String> =
-            sql::query_map(&mut statement, params![], |r| sql::row_get(r, 0))
-                .map_err(|_| Error::Storage)?;
         let mut active = 0;
-        for raw in records {
-            let other: Payment = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
+        for other in all_payments(db)? {
+            let other = other?;
             if other
                 .reconciliation
                 .as_ref()

@@ -145,13 +145,8 @@ pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Res
         sql::query_map(&mut stmt, params![], |r| sql::row_get::<String>(r, 0))
             .map_err(|_| Error::Storage)?,
     );
-    let mut stmt = db
-        .prepare("SELECT record FROM payments")
-        .map_err(|_| Error::Storage)?;
-    let rows: Vec<String> =
-        sql::query_map(&mut stmt, params![], |r| sql::row_get(r, 0)).map_err(|_| Error::Storage)?;
-    for raw in rows {
-        let p: crate::funding::Payment = serde_json::from_str(&raw).map_err(|_| Error::Storage)?;
+    for payment in crate::funding::all_payments(db)? {
+        let p = payment?;
         if matches!(
             p.status,
             crate::funding::Status::InFlight | crate::funding::Status::Unknown
