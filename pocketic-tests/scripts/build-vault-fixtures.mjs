@@ -24,6 +24,7 @@ const corePaths = [
   "crates/vault_store",
   "crates/vault_service",
   "crates/kinic_sqlite_compat",
+  "crates/credit_bridge_types",
 ];
 if (
   execFileSync("git", ["diff", "HEAD", "--", ...corePaths], { cwd: root })
@@ -56,6 +57,7 @@ run(
     "crates/vault_store",
     "crates/vault_service",
     "crates/kinic_sqlite_compat",
+    "crates/credit_bridge_types",
   ],
   { cwd: root },
 );
@@ -65,7 +67,7 @@ writeFileSync(
   readFileSync(join(dir, "Cargo.toml"), "utf8")
     .replace(
       /members = \[[\s\S]*?\]/,
-      'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat"]',
+      'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat","crates/credit_bridge_types"]',
     )
     .replace('ic-agent = { path = "vendor/ic-agent" }', ""),
 );
