@@ -43,6 +43,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 const payment: Payment = {
+  preparing: false,
   reconciliation: [],
   wallet: Principal.fromText("aaaaa-aa"),
   request: {

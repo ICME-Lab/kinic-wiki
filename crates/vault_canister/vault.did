@@ -95,6 +95,8 @@ type Payment = record {
   fee : nat64;
   status : Status;
   credits : nat64;
+  // True only while the durable operation is known not to have dispatched a debit.
+  preparing : bool;
   attempt : nat64;
   request : PurchaseRequest;
   memo : blob;

@@ -122,6 +122,10 @@ export interface Payment {
   'fee' : bigint,
   'status' : Status,
   'credits' : bigint,
+  /**
+   * True only while the durable operation is known not to have dispatched a debit.
+   */
+  'preparing' : boolean,
   'attempt' : bigint,
   'request' : PurchaseRequest,
   'memo' : Uint8Array | number[],

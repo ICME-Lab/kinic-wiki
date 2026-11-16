@@ -47,6 +47,7 @@ export const idlFactory = ({ IDL }) => {
     'fee' : IDL.Nat64,
     'status' : Status,
     'credits' : IDL.Nat64,
+    'preparing' : IDL.Bool,
     'attempt' : IDL.Nat64,
     'request' : PurchaseRequest,
     'memo' : IDL.Vec(IDL.Nat8),
