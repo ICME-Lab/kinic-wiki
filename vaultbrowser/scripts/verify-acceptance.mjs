@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { chromium } from "../wikibrowser/node_modules/@playwright/test/index.mjs";
-import { idlFactory } from "../packages/vault-candid/index.js";
+import { chromium } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { idlFactory } from "../../packages/vault-candid/index.js";
 const require = createRequire(import.meta.url);
 const { Cbor } = require("@icp-sdk/core/agent");
 const { IDL } = require("@icp-sdk/core/candid");
@@ -20,7 +20,7 @@ for (const url of [vaultURL, wikiURL, iiURL]) {
   assert.ok(["localhost", "127.0.0.1"].includes(h) || h.endsWith(".localhost"));
 }
 const canister = new URL(vaultURL).hostname.split(".")[0];
-const out = new URL("../target/vault-ii-acceptance/browser/", import.meta.url)
+const out = new URL("../../target/vault-ii-acceptance/browser/", import.meta.url)
   .pathname;
 mkdirSync(out, { recursive: true });
 const results = [];
@@ -114,7 +114,7 @@ async function inspector(page) {
         contentType: "text/javascript",
         body: readFileSync(
           new URL(
-            "../target/vault-browser-readback/readback.mjs",
+            "../../target/vault-browser-readback/readback.mjs",
             import.meta.url,
           ),
         ),

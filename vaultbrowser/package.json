@@ -7,7 +7,9 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev": "vite --host vault.localhost --port 3024"
+    "dev": "vite --host vault.localhost --port 3024",
+    "verify:fixture": "node scripts/verify-fixture.mjs",
+    "verify:acceptance": "node scripts/verify-acceptance.mjs"
   },
   "dependencies": {
     "@icp-sdk/auth": "5.0.0",

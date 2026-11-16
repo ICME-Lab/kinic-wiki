@@ -272,7 +272,7 @@ try {
           [
             "pocketic-tests/scripts/run-vault-browser-acceptance.mjs",
             "pocketic-tests/scripts/build-vault-browser-readback.mjs",
-            "vaultbrowser/verify-acceptance.mjs",
+            "vaultbrowser/scripts/verify-acceptance.mjs",
             "vaultbrowser/fixtures/acceptance-readback.ts",
           ].map((path) => [path, hash(readFileSync(join(root, path)))]),
         ),
@@ -318,7 +318,7 @@ try {
     if (i === 119) throw Error("Wiki server did not start");
     await new Promise((r) => setTimeout(r, 250));
   }
-  run("node", ["vaultbrowser/verify-acceptance.mjs"], {
+  run("node", ["vaultbrowser/scripts/verify-acceptance.mjs"], {
     VAULT_ACCEPTANCE_URL: vaultURL,
     WIKI_ACCEPTANCE_URL: wikiURL,
     II_ACCEPTANCE_URL: iiURL,

@@ -34,7 +34,7 @@ For the owned synthetic browser gate, in separate terminals:
 
 ```sh
 pnpm --dir vaultbrowser exec vite --config fixtures/vite.config.ts --host 127.0.0.1 --port 3023
-node vaultbrowser/verify-fixture.mjs
+pnpm --dir vaultbrowser verify:fixture
 wikibrowser/node_modules/.bin/vlmkit check integrity 'http://127.0.0.1:3023/?state=opened'
 wikibrowser/node_modules/.bin/vlmkit check copy 'http://127.0.0.1:3023/?state=opened' --manifest vaultbrowser/fixtures/copy.txt
 wikibrowser/node_modules/.bin/vlmkit scan scroll 'http://127.0.0.1:3023/?state=opened'

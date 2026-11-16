@@ -1,6 +1,6 @@
 // Synthetic UI + real document encryption. Not actual II/vetKD acceptance.
 import assert from "node:assert/strict";
-import { chromium } from "../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { chromium } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({
