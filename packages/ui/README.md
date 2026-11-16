@@ -3,3 +3,5 @@
 Pure React editor, Markdown, Button/Input and class utilities, plus the common stylesheet and Tailwind preset. Both apps own their content scan paths and rendering policy. Wiki keeps its existing facade imports. Vault supplies non-submit/no-autofill defaults and private Markdown components; `unstyled` forwards the caller’s exact class string without applying Wiki widget styling.
 
 This package must not import application code, authentication, actors, private-session state, networking, persistence or AI. `scripts/check-vault-boundary.mjs` checks those boundaries. The shared stylesheet preserves existing light-only behavior and dormant dark tokens; sharing it does not enable a new theme feature.
+
+Sensitive editor hosts must register `sensitiveCleanup` with their session and synchronously wipe the editor on lock. Wiping removes visible text and editor history; it does not reset the host's React state. The host must also discard private state and unmount/remount the editor before reuse (for example, key it by the session generation). Reusing a wiped instance with stale controlled content can restore secrets.

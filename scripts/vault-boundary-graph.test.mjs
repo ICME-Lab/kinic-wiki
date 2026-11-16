@@ -122,7 +122,7 @@ test('checker rejects an optional target-specific Cargo cross-app dependency', (
  'crates/vfs_runtime/src/lib.rs': '',
  'crates/vfs_runtime/Cargo.toml': '',
  'packages/vfs-candid/index.ts': '',
- 'wikibrowser/components/admin-shell.tsx': 'export const url = "https://vault.kinic.xyz"',
+ 'wikibrowser/components/admin-shell.tsx': 'export const url = "/dashboard"',
  'vaultbrowser/icp.yaml': 'name: vault',
  'vaultbrowser/src/start.ts': '',
  'packages/ui/src/index.ts': '',

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
   Download,
   FileKey2,
@@ -38,6 +38,41 @@ export function VaultDocuments({
     [client],
   );
   const [query, setQuery] = useState("");
+  const [bodyMatches, setBodyMatches] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
+  // Local ownership also fences unmount/remount while the same client is alive.
+  const searchEpoch = useRef(0);
+  useLayoutEffect(() => {
+    const epoch = ++searchEpoch.current;
+    setBodyMatches([]);
+    setSearching(false);
+    const detach = client.session.addLockCleanup(() => {
+      searchEpoch.current++;
+      setBodyMatches([]);
+      setSearching(false);
+      setQuery("");
+    });
+    return () => {
+      if (searchEpoch.current === epoch) searchEpoch.current++;
+      detach();
+    };
+  }, [client, items, query]);
+  const searchContents = () => {
+    if (searching || disabled || !query.trim()) return;
+    run(async () => {
+      const epoch = searchEpoch.current;
+      const ticket = client.session.capture();
+      setSearching(true);
+      try {
+        const matches = await client.searchNotes(items, query);
+        client.session.check(ticket);
+        if (searchEpoch.current === epoch)
+          setBodyMatches(matches.map((object) => b64(object)));
+      } finally {
+        if (searchEpoch.current === epoch) setSearching(false);
+      }
+    });
+  };
   const [current, setCurrent] = useState<Item>();
   const [kind, setKind] = useState<Metadata["kind"]>("note");
   const [title, setTitle] = useState("");
@@ -171,8 +206,15 @@ export function VaultDocuments({
           type="search"
           placeholder="Find a private document…"
           value={query}
+          disabled={disabled || searching}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <VaultButton
+          disabled={disabled || searching || !query.trim()}
+          onClick={searchContents}
+        >
+          Search note contents
+        </VaultButton>
         <VaultButton disabled={disabled} onClick={() => run(refresh)}>
           <RefreshCw size={15} aria-hidden />
           Refresh documents
@@ -229,9 +271,8 @@ export function VaultDocuments({
           </VaultButton>
           {items
             .filter((item) =>
-              (item.searchText ?? item.metadata.title)
-                .toLocaleLowerCase()
-                .includes(query.toLocaleLowerCase()),
+              item.metadata.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) ||
+              bodyMatches.includes(b64(bytes(item.revision.object))),
             )
             .map((item) => (
               <VaultButton

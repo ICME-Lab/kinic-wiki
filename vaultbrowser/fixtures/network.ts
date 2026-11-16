@@ -30,6 +30,8 @@ export function fixtureNetwork() {
   const receipts = new Map<string, MutationResult>();
   const calls: Mutation[] = [];
   const creation: unknown[] = [];
+  const created = new Map<string, Header>();
+  let serial = 2n;
   let balance = 50_000_000_000n;
   let lostPhase = "";
   let keyFailure = false;
@@ -55,9 +57,12 @@ export function fixtureNetwork() {
       request: Parameters<VaultActor["create_vault"]>[0],
     ) => {
       creation.push(structuredClone(request));
-      let h = headers.find((x) => key(x.id) === key(request.vault));
+      let h = created.get(key(request.operation));
       if (!h) {
-        h = { ...fixtureHeader(3), id: request.vault };
+        const assigned = new Uint8Array(16);
+        new DataView(assigned.buffer).setBigUint64(8, ++serial);
+        h = { ...fixtureHeader(3), id: assigned };
+        created.set(key(request.operation), h);
         headers.push(h);
       }
       if (createFailure) {

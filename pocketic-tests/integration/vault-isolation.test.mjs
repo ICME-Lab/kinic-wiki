@@ -48,7 +48,6 @@ try {
   assert.ok(
     "Err" in
       (await actor.create_vault({
-        vault: new Uint8Array(16),
         operation: new Uint8Array(16).fill(1),
       })),
   );
@@ -346,7 +345,6 @@ try {
   assert.equal(ok(await actor.account_balance()), 1_000_000_000n);
   const reserved = ok(
     await actor.create_vault({
-      vault: new Uint8Array(16).fill(7),
       operation: new Uint8Array(16).fill(8),
     }),
   );

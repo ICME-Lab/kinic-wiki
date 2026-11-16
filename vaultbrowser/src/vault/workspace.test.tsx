@@ -108,7 +108,9 @@ it("opens with II, saves and reads encrypted notes, searches locally, retains dr
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
     target: { value: "private words" },
   });
-  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
+  fireEvent.click(screen.getByText("Search note contents"));
+  await screen.findByRole("button", { name: "Secret note" });
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
     target: { value: "absent" },
   });

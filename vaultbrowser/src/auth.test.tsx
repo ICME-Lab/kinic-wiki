@@ -7,7 +7,7 @@ import {
   waitFor,
   cleanup,
 } from "@testing-library/react";
-import { afterEach, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, it, expect, vi } from "vitest";
 const mock = vi.hoisted(() => ({
   create: vi.fn(),
   load: vi.fn(),
@@ -36,9 +36,12 @@ function Child() {
     </>
   );
 }
+beforeEach(() => {
+  mock.load.mockResolvedValue({ identityProvider: "https://id.ai", derivationOrigin: "https://vault.example" });
+});
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   vi.useRealTimers();
 });
 it("opens II with only its own certified derivation origin and removes identity before async logout completes", async () => {
@@ -300,7 +303,7 @@ it.each(["idle", "manual"] as const)(
       // Deliberately bypass a disabled UI control: the provider API must guard entry too.
       await act(async () => fireEvent.click(screen.getByText("login")));
       expect(c.login).not.toHaveBeenCalled();
-      expect(mock.load).not.toHaveBeenCalled();
+      expect(mock.load).toHaveBeenCalledOnce();
       // Repeated logout notifications must not launch another storage deletion.
       await act(async () => options.idleOptions.onIdle());
       expect(c.logout).toHaveBeenCalledTimes(1);
@@ -368,9 +371,10 @@ it.each(["resolve", "reject"] as const)(
         <Child />
       </VaultAuthProvider>,
     );
-    await screen.findByText("ready");
+    await waitFor(() => expect(mock.load).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("loading")).toBeTruthy();
     fireEvent.click(screen.getByText("login"));
-    await waitFor(() => expect(mock.load).toHaveBeenCalled());
+    expect(next.login).not.toHaveBeenCalled();
     await act(async () => {
       finish();
       oldOptions.idleOptions.onIdle();
@@ -386,8 +390,9 @@ it.each(["resolve", "reject"] as const)(
         derivationOrigin: "https://vault.example",
       }),
     );
-    expect(screen.getByTestId("auth-principal").textContent).toBe("new");
     expect(screen.getByText("ready")).toBeTruthy();
+    fireEvent.click(screen.getByText("login"));
+    await waitFor(() => expect(screen.getByTestId("auth-principal").textContent).toBe("new"));
   },
 );
 
@@ -477,4 +482,52 @@ it("ignores an old validity poll after a new login and refreshes changed identit
   });
   expect(screen.getByTestId("auth-principal").textContent).toBe("refreshed");
   vi.useRealTimers();
+});
+
+it("prepares config before enabling sign-in and invokes SDK login synchronously on the click", async () => {
+  let finish!: (config: unknown) => void;
+  const login = vi.fn();
+  mock.create.mockResolvedValue({ isAuthenticated: async () => false, login });
+  mock.load.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const view = render(<VaultAuthProvider><Child /></VaultAuthProvider>);
+  await waitFor(() => expect(mock.load).toHaveBeenCalledOnce());
+  expect(screen.getByText("loading")).toBeTruthy();
+  fireEvent.click(screen.getByText("login"));
+  expect(login).not.toHaveBeenCalled();
+  await act(async () => finish({ identityProvider: "https://id.ai", derivationOrigin: "https://vault.example" }));
+  expect(screen.getByText("ready")).toBeTruthy();
+  fireEvent.click(screen.getByText("login"));
+  expect(login).toHaveBeenCalledOnce();
+  expect(mock.load).toHaveBeenCalledOnce();
+  view.unmount();
+  login.mock.calls[0][0].onSuccess();
+});
+
+it("requires reload after config failure, then prepares a fresh provider without a click-time fetch", async () => {
+  const login = vi.fn();
+  mock.create.mockResolvedValue({ isAuthenticated: async () => false, login });
+  mock.load.mockRejectedValueOnce(Error("ConfigurationUnavailable"));
+  const first = render(<VaultAuthProvider><Child /></VaultAuthProvider>);
+  await screen.findByText("Sign-in initialization failed. Reload to try again.");
+  fireEvent.click(screen.getByText("login"));
+  expect(login).not.toHaveBeenCalled();
+  expect(mock.load).toHaveBeenCalledOnce();
+  first.unmount();
+  render(<VaultAuthProvider><Child /></VaultAuthProvider>);
+  await screen.findByText("ready");
+  fireEvent.click(screen.getByText("login"));
+  expect(login).toHaveBeenCalledOnce();
+  expect(mock.load).toHaveBeenCalledTimes(2);
+});
+it("does not open a delayed sign-in when config finishes after provider unmount", async () => {
+  const login = vi.fn();
+  let resolve!: (config: unknown) => void;
+  mock.create.mockResolvedValue({ isAuthenticated: async () => false, login });
+  mock.load.mockImplementation(() => new Promise(r => { resolve = r; }));
+  const view = render(<VaultAuthProvider><Child /></VaultAuthProvider>);
+  await waitFor(() => expect(mock.load).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByText("login"));
+  view.unmount();
+  await act(async () => resolve({ identityProvider: "https://id.ai", derivationOrigin: "https://vault.example" }));
+  expect(login).not.toHaveBeenCalled();
 });

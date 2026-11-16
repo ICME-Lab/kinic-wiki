@@ -8,16 +8,18 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { loadConfig } from "./config";
+import { loadConfig, type BrowserConfig } from "./config";
 type Session = {
   identity?: Identity;
   loading: boolean;
+  ready: boolean;
   error: string;
   login: () => void;
   logout: () => void;
 };
 const Context = createContext<Session>({
   loading: true,
+  ready: false,
   error: "",
   login: () => {},
   logout: () => {},
@@ -29,6 +31,8 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const client = useRef<AuthClient | undefined>(undefined);
   const live = useRef(true);
+  const preparedConfig = useRef<BrowserConfig | undefined>(undefined);
+  const [ready, setReady] = useState(false);
   const serial = useRef(0);
   const logoutPending = useRef<
     { client: AuthClient; token: number } | undefined
@@ -66,7 +70,10 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     let disposed = false;
     let ownedClient: AuthClient | undefined;
     const initializing = serial.current;
-    void AuthClient.create({
+    const configuration = loadConfig().then((config) => {
+      if (!disposed) preparedConfig.current = config;
+    });
+    const authentication = AuthClient.create({
       idleOptions: {
         idleTimeout: 5 * 60 * 1000,
         disableDefaultIdleCallback: true,
@@ -91,7 +98,13 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
         const authenticated = await c.isAuthenticated();
         if (!disposed && serial.current === initializing) {
           setIdentity(authenticated ? c.getIdentity() : undefined);
-          setLoading(false);
+        }
+      });
+    void Promise.all([authentication, configuration])
+      .then(() => {
+        if (!disposed) {
+          setReady(true);
+          if (!logoutPending.current) setLoading(false);
         }
       })
       .catch(() => {
@@ -104,6 +117,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
       disposed = true;
       live.current = false;
       client.current = undefined;
+      preparedConfig.current = undefined;
     };
   }, []);
   // SDK 5.0.0 checks delegation validity locally. Activity never extends its TTL.
@@ -142,46 +156,43 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   }, [identity]);
   const login = () => {
     const c = client.current;
-    if (!live.current || !c || logoutPending.current) return;
+    const config = preparedConfig.current;
+    if (!live.current || !c || !config || !ready || loading || logoutPending.current) return;
     const token = ++serial.current;
     setIdentity(undefined);
     setError("");
     setLoading(true);
-    void loadConfig()
-      .then((config) => {
-        if (!live.current || serial.current !== token) return;
-        return c.login({
-          identityProvider: config.identityProvider,
-          derivationOrigin: config.derivationOrigin,
-          maxTimeToLive: 8n * 3600n * 1_000_000_000n,
-          onSuccess: () => {
-            if (live.current && serial.current === token) {
-              setIdentity(c.getIdentity());
-              setLoading(false);
-            }
-          },
-          onError: () => {
-            if (live.current && serial.current === token) {
-              setError("Sign-in did not complete. Try again.");
-              setLoading(false);
-            }
-          },
-        });
-      })
-      .catch(() => {
-        if (live.current && serial.current === token) {
-          setError(
-            "Vault sign-in configuration is unavailable. Reload to try again.",
-          );
-          setLoading(false);
-        }
-      });
+    const current = () => live.current && client.current === c && serial.current === token;
+    const failed = () => {
+      if (current()) {
+        setError("Sign-in did not complete. Try again.");
+        setLoading(false);
+      }
+    };
+    // Opening the popup must stay within the user's click activation.
+    try {
+      void Promise.resolve(c.login({
+        identityProvider: config.identityProvider,
+        derivationOrigin: config.derivationOrigin,
+        maxTimeToLive: 8n * 3600n * 1_000_000_000n,
+        onSuccess: () => {
+          if (current()) {
+            setIdentity(c.getIdentity());
+            setLoading(false);
+          }
+        },
+        onError: failed,
+      })).catch(failed);
+    } catch {
+      failed();
+    }
   };
   return (
     <Context
       value={{
         identity,
         loading,
+        ready,
         error,
         login,
         logout,

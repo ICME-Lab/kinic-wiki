@@ -50,9 +50,14 @@ try {
         owner.toText() +
         "'),'reserved',(SELECT sum(reserved) FROM uploads),'operations',(SELECT json_group_array(hex(operation)||':'||hex(result)) FROM operations),'outcomes',(SELECT json_group_array(hex(upload)||':'||result) FROM upload_outcomes),'cycle_reservations',(SELECT count(*) FROM vault_cycle_reservations))",
     );
+  await f.controls.fixture_execute("UPDATE accounts SET storage_charge_remainder=123456;");
+  const serialBefore = await f.controls.fixture_read("SELECT value FROM global_settings WHERE key='serial'");
+  const remainderBefore = await f.controls.fixture_read("SELECT CAST(storage_charge_remainder AS TEXT) FROM accounts WHERE owner='" + owner.toText() + "'");
   const before = await snapshot();
   await f.upgrade();
   assert.equal(await snapshot(), before);
+  assert.equal(await f.controls.fixture_read("SELECT value FROM global_settings WHERE key='serial'"), serialBefore);
+  assert.equal(await f.controls.fixture_read("SELECT CAST(storage_charge_remainder AS TEXT) FROM accounts WHERE owner='" + owner.toText() + "'"), remainderBefore);
   assert.deepEqual(ok(await f.actor.get_upload_status(pending.upload)), status);
   assert.equal(ok(await f.actor.get_quota(header.id)).reserved, quota.reserved);
   assert.equal(
@@ -65,7 +70,7 @@ try {
   await client.open(header);
   assert.deepEqual((await client.read(completed)).plaintext, pendingPlaintext);
   console.log(
-    "PASS schema8 same-Wasm upgrade keeps content, pending ciphertext/upload, exact operation receipts, balance and reservations; real client resumes save and decrypts the original pending plaintext after reopening",
+    "PASS schema9 same-Wasm upgrade keeps content, pending ciphertext/upload, exact operation receipts, balance and reservations; real client resumes save and decrypts the original pending plaintext after reopening",
   );
   // Max file, max vaults, optimistic conflict and immutable creation binding.
   const bad = {
@@ -84,12 +89,13 @@ try {
     }),
     "InvalidInput",
   );
+  const extraVaults = [];
   for (let i = 0; i < 2; i++)
-    ok(
-      await f.actor.create_vault({ vault: b(180 + i), operation: operation() }),
-    );
+    extraVaults.push(ok(await f.actor.create_vault({ operation: operation() })));
+  assert.ok(BigInt('0x' + hex(extraVaults[0].id)) > BigInt('0x' + hex(header.id)), "post-upgrade allocation advances the existing serial");
+  assert.ok(BigInt('0x' + hex(extraVaults[1].id)) > BigInt('0x' + hex(extraVaults[0].id)));
   err(
-    await f.actor.create_vault({ vault: b(182), operation: operation() }),
+    await f.actor.create_vault({ operation: operation() }),
     "QuotaExceeded",
   );
   err(
@@ -389,16 +395,16 @@ try {
   err(await f.actor.get_manifest(header.id, committed.object, 0n), "NotFound");
   const emptyDeletion = {
     operation: operation(),
-    action: { DeleteVault: { vault: b(180) } },
+    action: { DeleteVault: { vault: extraVaults[0].id } },
   };
   const deletion = ok(await f.actor.mutate(emptyDeletion));
   assert.deepEqual(ok(await f.actor.mutate(emptyDeletion)), deletion);
   if (!deletion.Progress)
     assert.equal(
-      ok(await send({ DeleteVault: { vault: b(180) } })).Progress,
+      ok(await send({ DeleteVault: { vault: extraVaults[0].id } })).Progress,
       true,
     );
-  assert.ok("Deleted" in ok(await f.actor.get_vault_header(b(180))).state);
+  err(await f.actor.get_vault_header(extraVaults[0].id), "NotFound");
   let collected = 0;
   for (; collected < 20; collected++) {
     const result = await send({ Collect: null });
@@ -421,6 +427,9 @@ try {
   await f.controls.fixture_execute(
     "UPDATE accounts SET balance_cycles=2000000000000;",
   );
+  const replacementVault = ok(await f.actor.create_vault({ operation: operation() }));
+  assert.ok(BigInt('0x' + hex(replacementVault.id)) > BigInt('0x' + hex(extraVaults[1].id)), "deleted Vault IDs are never reused");
+  err(await f.actor.get_vault_header(extraVaults[0].id), "NotFound");
   wire.dropNext(
     (name, args) => name === "mutate" && "PutChunk" in args[0].action,
   );
@@ -611,7 +620,7 @@ try {
   assert.ok(neverOpened.session.root);
   assert.equal(ok(await full.actor.global_capacity()).used, capacity.limit);
   assert.ok(ok(await full.actor.get_quota(h.id)).charged <= capacity.limit);
-  // Protected receipts and accounting survive compatible current8 upgrade.
+  // Protected receipts and accounting survive compatible current9 upgrade.
   const snapshot = await full.controls.fixture_read(
     "SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||admission||':'||hex(result)) FROM operations),'balances',(SELECT json_group_array(owner||':'||balance_cycles) FROM accounts),'reservations',(SELECT json_group_array(token||':'||reserved||':'||coalesce(actual,0)) FROM vault_cycle_reservations))",
   );
@@ -627,9 +636,59 @@ try {
     ok(keyCalls[1].result),
   );
   console.log(
-    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema8 protected receipt preservation at full cross-owner live content and 10000 ordinary receipts; fixed prepaid capacity conserved",
+    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema9 protected receipt preservation at full cross-owner live content and 10000 ordinary receipts; fixed prepaid capacity conserved",
   );
 } finally {
   fullClients.forEach((c) => c.destroy());
   await full.close();
+}
+
+// Real VFS maps RAISE(ABORT) to DbError::Constraint, unlike native SQLite.
+// Exercise the normal 60-second timer, without a test-only billing entry point.
+const billing = await fixture({ wasm: resolve(out, "vault-state.wasm"), fund: false });
+try {
+  const [failedOwner, healthyOwner] = [owner.toText(), other.toText()].sort();
+  const at = Math.floor(await billing.pic.getTime());
+  const initialBalance = 1_000_000_000_000n;
+  const storageBytes = 1_048_576n;
+  const remainder = 123456n;
+  await billing.controls.fixture_execute(
+    `INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms,storage_charge_remainder) VALUES('${failedOwner}',${initialBalance},${storageBytes},${at},${remainder}),('${healthyOwner}',${initialBalance},${storageBytes},${at},${remainder});
+     INSERT INTO global_settings(key,value) VALUES('serial','9000') ON CONFLICT(key) DO UPDATE SET value='9000';`,
+  );
+  const read = async () => JSON.parse(await billing.controls.fixture_read(
+    "SELECT json_group_array(json_object('owner',owner,'balance',balance_cycles,'at',storage_charged_at_ms,'remainder',storage_charge_remainder)) FROM (SELECT * FROM accounts ORDER BY owner)",
+  ));
+  const seeded = await read();
+  await billing.upgrade();
+  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "9");
+  assert.deepEqual(await read(), seeded, "schema9 preserves fractional fees and checkpoints");
+  assert.equal(await billing.controls.fixture_read("SELECT value FROM global_settings WHERE key='serial'"), "9000", "upgrade preserves the never-reused ID serial");
+  await billing.controls.fixture_execute(
+    `CREATE TRIGGER fixture_fail_owner_billing BEFORE UPDATE OF balance_cycles ON accounts WHEN OLD.owner='${failedOwner}' BEGIN SELECT RAISE(ABORT,'injected owner billing failure'); END;`,
+  );
+  const tick = async () => {
+    await billing.pic.advanceTime(60_001);
+    await billing.pic.tick(5);
+  };
+  const assertBilled = (row) => {
+    const numerator = remainder + storageBytes * (BigInt(row.at) - BigInt(at)) * 127000n;
+    const denominator = 1073741824n * 1000n;
+    assert.ok(row.at > at, "normal timer must advance the successful account checkpoint");
+    assert.equal(BigInt(row.balance), initialBalance - numerator / denominator);
+    assert.equal(BigInt(row.remainder), numerator % denominator);
+  };
+  await tick();
+  const [failed, healthy] = await read();
+  assert.deepEqual(failed, seeded[0], "Constraint failure rolls back this owner's balance/checkpoint/remainder");
+  assertBilled(healthy);
+  await billing.controls.fixture_execute("DROP TRIGGER fixture_fail_owner_billing;");
+  await tick();
+  const [recovered, stillHealthy] = await read();
+  assertBilled(recovered);
+  assertBilled(stillHealthy);
+  assert.ok(recovered.balance < healthy.balance, "failed owner catches up from its unchanged checkpoint");
+  console.log("PASS actual schema9 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
+} finally {
+  await billing.close();
 }

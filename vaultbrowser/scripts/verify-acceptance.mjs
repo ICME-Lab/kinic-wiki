@@ -249,11 +249,13 @@ try {
     };
   };
   let delayedReady;
+  let chunkReads = 0;
   // Execute real ingress, then drop or hold the actual HTTP reply. No fabricated reply.
   await vault.route("**/api/v*/canister/**/call", async (route) => {
     const body = route.request().postDataBuffer();
     const content = body ? Cbor.decode(body).content : undefined;
     const method = content?.method_name;
+    if (method === "get_chunk") chunkReads++;
     let actionName;
     if (method === "mutate")
       actionName = Object.keys(
@@ -477,6 +479,18 @@ try {
   chunkTrace.phase = "post-click-application-retry";
   await action(vault, "Resume save");
   const chunkRetry = finishRetryTrace(chunkTrace);
+  const search = vault.getByLabel("Search this Vault locally");
+  const noteButton = vault.getByRole("button", { name: title, exact: true });
+  const readsBeforeTyping = chunkReads;
+  await search.fill(plaintext);
+  await expect(noteButton).toHaveCount(0);
+  assert.equal(chunkReads, readsBeforeTyping, "typing must filter metadata without fetching note bodies");
+  await action(vault, "Search note contents");
+  await expect(noteButton).toBeVisible();
+  assert.ok(chunkReads > readsBeforeTyping, "explicit search reads authenticated note contents");
+  await search.fill("absent-body-query");
+  await expect(noteButton).toHaveCount(0);
+  await search.fill("");
   await action(vault, title);
   assert.equal(await editor(vault).innerText(), plaintext);
   const docs = await inspect(vault, "clientRead", canister, vaultURL, vaultId);

@@ -36,6 +36,15 @@ try {
   );
   const title = page.getByLabel("Document title");
   await title.waitFor();
+  const search = page.getByLabel("Search this Vault locally");
+  const syntheticNote = page.getByRole("button", { name: "Synthetic private note", exact: true });
+  await search.fill("Private fixture text");
+  assert.equal(await syntheticNote.count(), 0, "typing filters titles only");
+  await page.getByRole("button", { name: "Search note contents", exact: true }).click();
+  await syntheticNote.waitFor();
+  await search.fill("absent-body-query");
+  assert.equal(await syntheticNote.count(), 0, "query changes discard body IDs");
+  await search.fill("");
   await page
     .getByRole("button", { name: "Synthetic private note", exact: true })
     .click();

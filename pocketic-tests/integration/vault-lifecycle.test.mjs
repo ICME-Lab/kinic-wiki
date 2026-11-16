@@ -33,7 +33,7 @@ try {
   assert.deepEqual(creates[0].args, creates[1].args);
   assert.deepEqual(creates[0].result, creates[1].result);
   err(
-    await f.actor.create_vault({ ...creates[0].args[0], vault: b(222) }),
+    await f.actor.mutate({ operation: creates[0].args[0].operation, action: { Collect: null } }),
     "Conflict",
   );
   wire.dropNext((n) => n === "derive_vault_key");
@@ -48,7 +48,6 @@ try {
   // Verify a fresh real response independently, then reject forged context/transport/ciphertext.
   const transport = cryptoLib.TransportSecretKey.random(),
     request = {
-      vault: header.id,
       operation: operation(),
       transport: transport.publicKeyBytes(),
     };
@@ -309,8 +308,9 @@ try {
   // Positive derivation for distinct real owner/canister/vault contexts, followed by failed cross-context decryption.
   await f.fundOwner(other);
   const foreignHeader = ok(
-    await foreign.create_vault({ vault: header.id, operation: operation() }),
+    await foreign.create_vault({ operation: operation() }),
   );
+  assert.notDeepEqual(foreignHeader.id, header.id);
   const foreignClient = new VaultClient({
     actor: foreign,
     identity: { getPrincipal: () => other },
@@ -323,7 +323,7 @@ try {
     cryptoLib.open(foreignClient.session.root, sealed, b(7)),
   );
   const newVault = ok(
-    await f.actor.create_vault({ vault: b(88), operation: operation() }),
+    await f.actor.create_vault({ operation: operation() }),
   );
   await second.open(newVault);
   await assert.rejects(cryptoLib.open(second.session.root, sealed, b(7)));
@@ -336,7 +336,6 @@ try {
   await f.fundOwner(owner, 2_000_000_000_000n, separate);
   const separateHeader = ok(
     await separate.actor.create_vault({
-      vault: header.id,
       operation: operation(),
     }),
   );

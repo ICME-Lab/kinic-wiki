@@ -51,3 +51,5 @@ Run `node pocketic-tests/scripts/run-vault-browser-acceptance.mjs` from the root
 Production KINIC funding supports authoritative user-requested ledger reconciliation. Existing payment status is readable; do not send replacement payments for uncertain records. Production accepts only the pinned KINIC ledger; a separately labelled synthetic-test-only build permits disposable test ledgers. `get_config` now supplies the key name and minimum cycles; RP/origin registration is not part of Vault authorization.
 
 Shared storage capacity is separate from prepaid balance. Owner cleanup, including interrupted-upload cancellation and whole-Vault deletion, remains available with zero prepaid balance. No deployment, DNS change, production mutation or real-funds transfer is part of these checks.
+
+Document lists decrypt metadata only. Typing in the local search field filters titles without reading note bodies. Use **Search note contents** to read notes transiently and include matching bodies; the browser keeps only matching object IDs and discards them when the query/list changes or the Vault closes. There is no persistent full-text index or cache.

@@ -184,7 +184,6 @@ try {
   assert.ok(
     "Err" in
       (await production.actor.create_vault({
-        vault: b(1),
         operation: operation(),
       })),
   );

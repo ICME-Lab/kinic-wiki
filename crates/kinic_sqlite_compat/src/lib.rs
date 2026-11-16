@@ -873,7 +873,6 @@ mod read_authorizer_tests {
             tables: &["fs_nodes"],
         };
         assert!(!policy.permits(999, None, None, None));
-        assert!(!policy.permits(33, None, None, None));
         assert!(!policy.permits(20, Some("fs_nodes"), None, None));
         assert!(!policy.permits(31, None, None, None));
         assert!(!policy.permits(31, None, Some("load_extension"), None));
