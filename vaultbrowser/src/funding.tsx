@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { IDL } from "@icp-sdk/core/candid";
@@ -79,6 +79,11 @@ export function Funding({
   currentClient.current = client;
   const stopped = useRef(false);
   const run = useRef(0);
+  const invalidateRequests = useCallback(() => {
+    run.current++;
+    alive.current = false;
+    stopped.current = true;
+  }, []);
   const [progress, setProgress] = useState<ReconciliationProgress>();
   const [scanning, setScanning] = useState(false);
   const [fundingMode, setFundingMode] = useState<string>();
@@ -189,11 +194,9 @@ export function Funding({
       });
     return () => {
       active = false;
-      run.current++;
-      alive.current = false;
-      stopped.current = true;
+      invalidateRequests();
     };
-  }, [client]);
+  }, [client, invalidateRequests]);
   const refresh = async (check: () => void) => {
     if (!quote) return;
     const p = ok(await client.actor.payment_status(quote.request.operation))[0];

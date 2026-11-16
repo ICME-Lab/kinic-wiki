@@ -252,7 +252,7 @@ try {
     JSON.stringify(
       {
         funding_mode:
-          "synthetic-test-only funding, then upgrade to default unavailable",
+          "synthetic-test-only funding, then upgrade to pinned production funding",
         deployable: false,
         source_commit: output("git", ["rev-parse", "HEAD"]),
         working_tree_diff_sha256: hash(

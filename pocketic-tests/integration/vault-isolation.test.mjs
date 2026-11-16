@@ -387,7 +387,7 @@ try {
     wasm: resolve(root, "target/vault-ii-acceptance/vault_canister.wasm"),
     arg: IDL.encode([], []),
   });
-  ok(
+  assert.deepEqual(
     await actor.set_funding_config([
       {
         ledger: fake.canisterId,
@@ -395,6 +395,7 @@ try {
         cycles_per_kinic: 1_000_000_000n,
       },
     ]),
+    { Err: { Unauthorized: null } },
   );
   assert.deepEqual(await actor.quote_purchase(await request(156)), {
     Err: { Unauthorized: null },

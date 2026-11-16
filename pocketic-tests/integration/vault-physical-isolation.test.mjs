@@ -160,7 +160,7 @@ try {
     recipient: production.canisterId,
     cycles_per_kinic: 1000000000n,
   };
-  ok(await production.actor.set_funding_config([config]));
+  assert.ok("Err" in (await production.actor.set_funding_config([config])), "production refuses foreign ledger configuration");
   assert.ok(
     "Err" in
       (await production.actor.quote_purchase({
@@ -189,7 +189,7 @@ try {
       })),
   );
   console.log(
-    "PASS dedicated production Wasm funding compiled unavailable, no test control exports, unfunded content admission denied",
+    "PASS dedicated production Wasm funding pinned to KINIC, no test control exports, unfunded content admission denied",
   );
 } finally {
   await production.close();

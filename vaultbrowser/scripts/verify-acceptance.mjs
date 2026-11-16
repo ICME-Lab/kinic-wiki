@@ -380,14 +380,14 @@ try {
     await vault.evaluate(
       async () => (await (await fetch("/config.json")).json()).fundingMode,
     ),
-    "unavailable",
+    "production",
   );
   await vault.getByText("Account & storage", { exact: true }).click();
   assert.equal(
     await vault
       .getByRole("button", { name: "Get quote", exact: true })
       .isDisabled(),
-    true,
+    false,
   );
   const afterUpgrade = await readback(vault);
   assert.equal(afterUpgrade.principal, owner);
@@ -397,7 +397,7 @@ try {
       BigInt(afterUpgrade.balance.Ok) <= BigInt(beforeUpgrade.balance.Ok),
   );
   pass(
-    "fresh owned canister upgraded to default-feature local Wasm; certified funding unavailable, paid journal and prepaid credit retained",
+    "fresh owned canister upgraded to default-feature local Wasm; certified production funding mode, paid journal and prepaid credit retained",
   );
 
   const createTrace = startRetryTrace("create_vault");

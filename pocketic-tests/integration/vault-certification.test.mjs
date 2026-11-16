@@ -65,7 +65,7 @@ try {
     );
     if (path === "/config.json") {
       const config = JSON.parse(new TextDecoder().decode(response.body));
-      assert.equal(config.fundingMode, "unavailable");
+      assert.equal(config.fundingMode, "production");
       assert.equal(config.local, false);
       assert.equal(config.origin, "https://vault.kinic.xyz");
       assert.equal(config.identityProvider, "https://id.ai");
