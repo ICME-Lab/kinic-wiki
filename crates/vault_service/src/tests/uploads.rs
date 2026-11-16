@@ -59,7 +59,7 @@ fn admitted_upload_can_finish_when_other_work_consumes_shared_headroom() {
     let e = Env::new();
     e.create();
     let r = e.begin();
-    e.transaction(|db|{let fill=TOTAL_MAX-store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![99u8;16],vec![0u8;64],fill as i64]).unwrap();assert_eq!(store::content::global_usage(db)?,TOTAL_MAX);Ok(())}).unwrap();
+    e.transaction(|db|{let fill=TOTAL_MAX-store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![99u8;16],vec![0u8;64],fill as i64]).unwrap();assert_eq!(store::content::global_usage(db)?,TOTAL_MAX);Ok(())}).unwrap();
     assert!(matches!(
         e.change(
             6,
@@ -110,7 +110,7 @@ fn fresh_id_duplicate_chunk_preserves_all_remaining_prepaid_receipts() {
     let first = vec![7u8; CHUNK_MAX];
     let last = vec![8u8; 17];
     let r = BeginRevision {
-        vault: vec![1; 16],
+        vault: vault_id(1),
         object: vec![3; 16],
         operation: vec![4; 16],
         expected_revision: 0,
@@ -140,7 +140,7 @@ fn fresh_id_duplicate_chunk_preserves_all_remaining_prepaid_receipts() {
         },
     )
     .unwrap();
-    e.transaction(|db|{assert_eq!(db.query_row("SELECT receipt_budget FROM uploads",[],|r|r.get::<_,i64>(0)).unwrap(),2*ops::CHARGE as i64);let fill=TOTAL_MAX-store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![99u8;16],vec![0u8;64],fill as i64]).unwrap();Ok(())}).unwrap();
+    e.transaction(|db|{assert_eq!(db.query_row("SELECT receipt_budget FROM uploads",[],|r|r.get::<_,i64>(0)).unwrap(),2*ops::CHARGE as i64);let fill=TOTAL_MAX-store::content::global_usage(db)?;db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![99u8;16],vec![0u8;64],fill as i64]).unwrap();Ok(())}).unwrap();
     e.change(
         9,
         Action::PutChunk {

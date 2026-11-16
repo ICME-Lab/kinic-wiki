@@ -44,7 +44,7 @@ pub fn active(db: &Connection, vault: &[u8]) -> Result<Header> {
     Ok(h)
 }
 pub fn list(db: &Connection) -> Result<Vec<Header>> {
-    let mut stmt=db.prepare("SELECT header FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND json_extract(header,'$.state')<>'Deleted' ORDER BY id LIMIT 3").map_err(|_|Error::Storage)?;
+    let mut stmt=db.prepare("SELECT header FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) ORDER BY id LIMIT 3").map_err(|_|Error::Storage)?;
     let rows: Vec<String> =
         sql::query_map(&mut stmt, params![], |r| sql::row_get(r, 0)).map_err(|_| Error::Storage)?;
     rows.into_iter()

@@ -31,7 +31,7 @@ type CommittedUpload = record {
   revision : nat64;
   sequence : nat64;
 };
-type CreateVault = record { vault : blob; operation : blob };
+type CreateVault = record { operation : blob };
 type DeriveKey = record { vault : blob; transport : blob; operation : blob };
 type Error = variant {
   Storage;
@@ -204,7 +204,7 @@ type UploadStatus = variant {
   Pending : PendingUpload;
 };
 type VaultConfig = record { minimum_cycles : nat64; key_name : text };
-type VaultState = variant { Deleting; Active; Deleted; Pending };
+type VaultState = variant { Deleting; Active; Pending };
 service : () -> {
   account_balance : () -> (Result) query;
   cancel_quote : (blob) -> (Result_1);

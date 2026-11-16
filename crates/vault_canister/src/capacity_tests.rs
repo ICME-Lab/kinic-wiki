@@ -29,7 +29,7 @@ fn seed_accounts(count: u32) {
     state::transaction(|db| {
         for n in 0..count {
             db.execute(
-                "INSERT INTO accounts VALUES(?1,1,0,0)",
+                "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,1,0,0)",
                 params![principal(n).to_text()],
             )
             .unwrap();
@@ -336,7 +336,7 @@ fn capacity_fee_reservation_and_account_fields_reject_one_byte_excess() {
         let exact=format!("{raw}{}"," ".repeat(max-raw.len()));
         db.execute("UPDATE quote_fee_flights SET record=?1",params![exact]).unwrap();
         assert!(db.execute("UPDATE quote_fee_flights SET record=?1",params![format!("{exact} ")]).is_err());
-        assert!(db.execute("INSERT INTO accounts VALUES(?1,0,0,0)",params!["x".repeat(64)]).is_err());
+        assert!(db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,0,0,0)",params!["x".repeat(64)]).is_err());
         assert!(db.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) VALUES(?1,?2,0,0)",params![principal(1).to_text(),"x".repeat(129)]).is_err());
         db.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) VALUES(?1,?2,0,0)",params![principal(1).to_text(),"x".repeat(128)]).unwrap();
         assert!(db.execute("UPDATE vault_cycle_reservations SET token=?1",params!["x".repeat(129)]).is_err());
@@ -352,7 +352,7 @@ fn key_gc_refreshes_offline_other_owner_billing_and_restores_caller_scope() {
     state::transaction(|db|{
         let now=3*vault_types::DAY;
         let account=other.to_text();
-        db.execute("INSERT INTO accounts VALUES(?1,1000000000,0,0)",params![account]).unwrap();
+        db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,1000000000,0,0)",params![account]).unwrap();
         vault_store::OwnerContext::authenticated(other)?.run(db,|db|{
             vault_store::keys::reserve(db, &[1; 16], 1,1,0)?;
             vault_store::keys::settle(db,1,2,0)?;

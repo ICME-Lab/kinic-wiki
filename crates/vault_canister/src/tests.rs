@@ -384,12 +384,12 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v8_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v9_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
     db.execute(
-        "INSERT INTO accounts VALUES('owner',123,456,789)",
+        "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',123,456,789)",
         params![],
     )
     .unwrap();
@@ -398,7 +398,7 @@ fn initial_release_creates_v8_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','receipts')",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('vault_cycle_reservations') WHERE name='account_owner'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let before: i64 = db
@@ -413,20 +413,24 @@ fn initial_release_creates_v8_and_reopens_without_rewriting_data() {
         })
         .unwrap();
     assert_eq!(before, after);
-    let account: (i64, i64, i64) = db
+    db.execute("UPDATE accounts SET storage_charge_remainder=123456", [])
+        .unwrap();
+    crate::schema::initialize_vault_schema(&db).unwrap();
+    let account: (i64, i64, i64, i64) = db
         .query_row(
-            "SELECT balance_cycles,storage_bytes,storage_charged_at_ms FROM accounts",
+            "SELECT balance_cycles,storage_bytes,storage_charged_at_ms,storage_charge_remainder FROM accounts",
             params![],
             |r| {
                 Ok((
                     kinic_sqlite_compat::row_get(r, 0)?,
                     kinic_sqlite_compat::row_get(r, 1)?,
                     kinic_sqlite_compat::row_get(r, 2)?,
+                    kinic_sqlite_compat::row_get(r, 3)?,
                 ))
             },
         )
         .unwrap();
-    assert_eq!(account, (123, 456, 789));
+    assert_eq!(account, (123, 456, 789, 123456));
 }
 
 #[test]
@@ -458,7 +462,7 @@ fn initial_release_rejects_sqlite_similar_foreign_names_without_changes() {
 }
 
 #[test]
-fn initial_release_rejects_changed_v8_contract_without_repair() {
+fn initial_release_rejects_changed_v9_contract_without_repair() {
     use kinic_sqlite_compat::{Connection, params};
     for damage in [
         "ALTER TABLE operations ADD COLUMN future_column TEXT",
@@ -491,7 +495,7 @@ fn initial_release_rejects_changed_v8_contract_without_repair() {
 fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
     use kinic_sqlite_compat::{Connection, params};
     let path = std::env::temp_dir().join(format!(
-        "vault-v8-policy-{}-{}.sqlite",
+        "vault-v9-policy-{}-{}.sqlite",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -530,14 +534,17 @@ fn current_schema_initialization_is_idempotent() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 8, "new installations must use the II-only schema");
+    assert_eq!(
+        version, 9,
+        "new installations must use exact storage accounting"
+    );
     schema::initialize_vault_schema(&db).unwrap();
 }
 
 fn credit(owner: Principal, amount: u64) {
     state::transaction(|db| {
         db.execute(
-            "INSERT INTO accounts VALUES(?1,?2,0,0)",
+            "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,?2,0,0)",
             kinic_sqlite_compat::params![owner.to_text(), amount as i64],
         )
         .unwrap();
@@ -632,16 +639,16 @@ fn cancellation_reconciliation_is_atomic_owner_scoped_and_survives_disable() {
     .unwrap();
 }
 #[test]
-fn schema_eight_reopen_preserves_pending_upload_operation_receipt_balance_and_cursor() {
+fn schema_nine_reopen_preserves_pending_upload_operation_receipt_balance_and_cursor() {
     use kinic_sqlite_compat::{Connection, params};
     let path =
-        std::env::temp_dir().join(format!("vault-eight-pending-{}.sqlite", std::process::id()));
+        std::env::temp_dir().join(format!("vault-nine-pending-{}.sqlite", std::process::id()));
     {
         let db = Connection::open(&path).unwrap();
         schema::initialize_vault_schema(&db).unwrap();
         db.execute("INSERT INTO global_settings VALUES('gc-owner','01')", [])
             .unwrap();
-        db.execute("INSERT INTO accounts VALUES('owner',42,7,8)", [])
+        db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms,storage_charge_remainder) VALUES('owner',42,7,8,123456)", [])
             .unwrap();
         let scope = vault_store::OwnerContext::authenticated(p(1)).unwrap();
         scope.run(&db,|db|{let h=vault_types::Header{id:vec![1;16],nonce:vec![2;32],state:vault_types::VaultState::Active,sequence:0,key_name:"test_key_1".into(),public_key:vec![3;96]};db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![h.id,vec![9u8;16],serde_json::to_string(&h).unwrap()]).unwrap();vault_store::content::begin(db,vault_types::BeginRevision{vault:vec![1;16],object:vec![2;16],expected_revision:0,operation:vec![3;16],plain_size:0,manifest:vec![4;64],chunk_hashes:vec![vec![5;32]]},1)?;vault_store::operations::begin(db,&[7;16],&[8;32],1)?;vault_store::keys::reserve(db, &[1; 16], 1,1,10)?;Ok(())}).unwrap();
@@ -665,6 +672,22 @@ fn schema_eight_reopen_preserves_pending_upload_operation_receipt_balance_and_cu
         .unwrap(),
         "01"
     );
+    assert_eq!(
+        db.query_row("SELECT storage_charge_remainder FROM accounts", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        123456
+    );
+    vault_store::OwnerContext::authenticated(p(1))
+        .unwrap()
+        .run(&db, |db| {
+            let token = vault_store::operations::begin(db, &[10; 16], &[11; 32], 2)?;
+            assert_eq!(token, 2, "reopening must preserve the global serial");
+            Ok(())
+        })
+        .unwrap();
     drop(db);
     std::fs::remove_file(path).unwrap();
 }
@@ -734,13 +757,13 @@ fn key_and_financial_callback_settlement_roll_back_together() {
 }
 
 #[test]
-fn compatible_schema_eight_keeps_key_targets_results_and_financial_rows() {
+fn compatible_schema_nine_keeps_key_targets_results_and_financial_rows() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     schema::initialize_vault_schema(&db).unwrap();
     db.execute("INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) VALUES(X'01',?1,?2,NULL,300,1,0,3),(X'01',?3,?2,?4,86400,2,0,3)",params![vec![1u8;16],vec![2u8;32],vec![3u8;16],candid::encode_one(true).unwrap()]).unwrap();
     db.execute("INSERT INTO key_flights(owner,vault,token,day,reserved,created,payment) VALUES(X'01',zeroblob(16),1,0,30000000000,0,120000000)",[]).unwrap();
-    db.execute("INSERT INTO accounts VALUES('owner',42,7,8)", [])
+    db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", [])
         .unwrap();
     db.execute("INSERT INTO vault_cycle_reservations(owner,token,reserved,created_at_ms) VALUES('owner','derive:1',120000000,0)",[]).unwrap();
     let snapshot = || {
@@ -749,4 +772,358 @@ fn compatible_schema_eight_keeps_key_targets_results_and_financial_rows() {
     let before = snapshot();
     schema::initialize_vault_schema(&db).unwrap();
     assert_eq!(snapshot(), before);
+}
+
+// Exact billing tests use independently known rates: 1 GiB/ms = 127 cycles,
+// and 1 MiB over 1024 ms = 127 cycles.
+#[test]
+fn storage_billing_is_independent_of_settlement_partition() {
+    state::initialize().unwrap();
+    let whole = p(220).to_text();
+    let split = p(221).to_text();
+    credit(p(220), 10_000);
+    credit(p(221), 10_000);
+    let s = state::State;
+    s.vault_track_storage(&whole, 1_048_576, 0).unwrap();
+    s.vault_track_storage(&split, 1_048_576, 0).unwrap();
+    s.vault_track_storage(&whole, 1_048_576, 1024).unwrap();
+    for now in 1..=1024 {
+        s.vault_track_storage(&split, 1_048_576, now).unwrap();
+    }
+    assert_eq!(s.balance(&whole).unwrap(), 9_873);
+    assert_eq!(s.balance(&split).unwrap(), 9_873);
+}
+
+#[test]
+fn storage_billing_settles_subsecond_usage_before_changing_bytes() {
+    state::initialize().unwrap();
+    credit(p(222), 10_000);
+    let owner = p(222).to_text();
+    let s = state::State;
+    s.vault_track_storage(&owner, 1_073_741_824, 0).unwrap();
+    s.vault_track_storage(&owner, 0, 1).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 9_873);
+    s.vault_track_storage(&owner, 0, 1000).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 9_873);
+}
+
+#[test]
+fn storage_billing_carries_fraction_across_size_changes() {
+    state::initialize().unwrap();
+    credit(p(223), 100);
+    let owner = p(223).to_text();
+    let s = state::State;
+    s.vault_track_storage(&owner, 1_048_576, 0).unwrap();
+    s.vault_track_storage(&owner, 2_097_152, 8).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 100);
+    s.vault_track_storage(&owner, 0, 12).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 99);
+}
+
+#[test]
+fn storage_billing_does_not_rewind_checkpoint_when_clock_moves_backwards() {
+    state::initialize().unwrap();
+    credit(p(224), 1_000_000);
+    let owner = p(224).to_text();
+    let s = state::State;
+    s.vault_track_storage(&owner, 1_073_741_824, 1000).unwrap();
+    s.vault_track_storage(&owner, 1_073_741_824, 500).unwrap();
+    s.vault_track_storage(&owner, 0, 1500).unwrap();
+    assert_eq!(s.balance(&owner).unwrap(), 936_500);
+    state::transaction(|db| {
+        let at: i64 = db
+            .query_row(
+                "SELECT storage_charged_at_ms FROM accounts WHERE owner=?1",
+                [owner],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(at, 1500);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn storage_billing_discards_unpaid_usage_and_fraction_at_zero_balance() {
+    state::initialize().unwrap();
+    let owner = p(225).to_text();
+    credit(p(225), 1);
+    let s = state::State;
+    s.vault_track_storage(&owner, 1_048_576, 0).unwrap();
+    s.vault_track_storage(&owner, 1_048_576, 16).unwrap(); // 1 + 126/128 cycles
+    assert_eq!(s.balance(&owner).unwrap(), 0);
+    state::transaction(|db| {
+        let remainder: i64 = db
+            .query_row(
+                "SELECT storage_charge_remainder FROM accounts WHERE owner=?1",
+                [&owner],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            remainder, 0,
+            "exact exhaustion must discard its fraction immediately"
+        );
+        Ok(())
+    })
+    .unwrap();
+    s.vault_track_storage(&owner, 1_048_576, 32).unwrap(); // unpaid usage is discarded
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE accounts SET balance_cycles=100 WHERE owner=?1",
+            [owner.clone()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    s.vault_track_storage(&owner, 1_048_576, 40).unwrap(); // 127/128 cycles, no debt
+    assert_eq!(s.balance(&owner).unwrap(), 100);
+}
+
+fn billing_account(owner: &str) -> (i64, i64) {
+    state::transaction(|db| {
+        Ok(db
+            .query_row(
+                "SELECT balance_cycles,storage_charged_at_ms FROM accounts WHERE owner=?1",
+                [owner],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap())
+    })
+    .unwrap()
+}
+fn seed_billing_round() {
+    state::initialize().unwrap();
+    state::transaction(|db| {
+        for n in 0..1001 {
+            db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,10000,1048576,0)", [format!("a{n:04}")]).unwrap();
+        }
+        Ok(())
+    }).unwrap();
+}
+#[test]
+fn storage_billing_isolates_owner_failure_advances_cursor_and_retries_next_round() {
+    seed_billing_round();
+    state::transaction(|db| {
+        // Fail after balance debit, so isolation must roll back the debit too.
+        db.execute_batch("CREATE TRIGGER fail_one_owner BEFORE INSERT ON account_ledger WHEN NEW.owner='a0000' BEGIN SELECT RAISE(ABORT,'injected owner failure'); END;").unwrap();
+        Ok(())
+    }).unwrap();
+    let s = state::State;
+    s.vault_settle_storage_timer_batch(1024).unwrap();
+    assert_eq!(billing_account("a0000"), (10000, 0));
+    assert_eq!(billing_account("a0001"), (9873, 1024));
+    assert_eq!(billing_account("a1000"), (10000, 0));
+    state::transaction(|db| {
+        assert_eq!(
+            db.query_row(
+                "SELECT cursor_owner FROM vault_storage_billing_state",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "a0999"
+        );
+        Ok(())
+    })
+    .unwrap();
+    s.vault_settle_storage_timer_batch(2048).unwrap();
+    assert_eq!(billing_account("a1000"), (9873, 1024));
+    state::transaction(|db| {
+        db.execute_batch("DROP TRIGGER fail_one_owner").unwrap();
+        Ok(())
+    })
+    .unwrap();
+    s.vault_settle_storage_timer_batch(2048).unwrap();
+    assert_eq!(billing_account("a0000"), (9746, 2048));
+    assert_eq!(billing_account("a0001"), (9746, 2048));
+}
+
+#[test]
+fn storage_billing_database_failure_aborts_the_outer_batch() {
+    state::initialize().unwrap();
+    credit(p(226), 10000);
+    state::State
+        .vault_track_storage(&p(226).to_text(), 1_048_576, 0)
+        .unwrap();
+    state::transaction(|db| {
+        db.execute_batch("DROP TABLE account_ledger").unwrap();
+        Ok(())
+    })
+    .unwrap();
+    assert!(state::State.vault_settle_storage_timer_batch(1024).is_err());
+    assert_eq!(billing_account(&p(226).to_text()), (10000, 0));
+}
+
+#[test]
+fn storage_billing_cursor_failure_rolls_back_successful_owners() {
+    seed_billing_round();
+    state::transaction(|db| { db.execute_batch("CREATE TRIGGER fail_cursor BEFORE INSERT ON vault_storage_billing_state BEGIN SELECT RAISE(ABORT,'injected cursor failure'); END;").unwrap(); Ok(()) }).unwrap();
+    assert!(state::State.vault_settle_storage_timer_batch(1024).is_err());
+    assert_eq!(billing_account("a0000"), (10000, 0));
+    assert_eq!(billing_account("a0999"), (10000, 0));
+}
+
+#[test]
+fn storage_billing_continues_after_independent_expiry_failure() {
+    state::initialize().unwrap();
+    credit(p(227), 10000);
+    let owner = p(227).to_text();
+    state::State
+        .vault_track_storage(&owner, 1_048_576, 0)
+        .unwrap();
+    // Expiry's initial lookup fails; billing still has all of its own tables.
+    state::transaction(|db| {
+        db.execute_batch("DROP TABLE uploads").unwrap();
+        Ok(())
+    })
+    .unwrap();
+    state::State.vault_settle_storage_timer_batch(1024).unwrap();
+    assert_eq!(billing_account(&owner), (9873, 1024));
+}
+
+#[test]
+fn storage_billing_upgrade_preserves_remainder_and_continues_exactly() {
+    state::initialize().unwrap();
+    credit(p(228), 100);
+    let owner = p(228).to_text();
+    state::State
+        .vault_track_storage(&owner, 1_048_576, 0)
+        .unwrap();
+    state::State
+        .vault_track_storage(&owner, 1_048_576, 8)
+        .unwrap();
+    state::initialize().unwrap(); // real initialization / generation boundary
+    state::State.vault_track_storage(&owner, 0, 16).unwrap();
+    assert_eq!(state::State.balance(&owner).unwrap(), 99);
+}
+
+#[test]
+fn initial_release_rejects_development_schema_eight_without_changes() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    db.execute_batch("INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES('owner',42,7); PRAGMA user_version=8;").unwrap();
+    let before: i64 = db
+        .query_row("SELECT total_changes()", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        schema::initialize_vault_schema(&db),
+        Err(vault_types::Error::Storage)
+    );
+    assert_eq!(
+        db.query_row("SELECT total_changes()", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        db.query_row("SELECT balance_cycles FROM accounts", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        42
+    );
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        8
+    );
+}
+
+#[test]
+fn storage_billing_failed_checkpoint_preserves_fraction_balance_and_ledger() {
+    state::initialize().unwrap();
+    let owner = p(229).to_text();
+    credit(p(229), 10000);
+    state::State
+        .vault_track_storage(&owner, 1_048_576, 0)
+        .unwrap();
+    state::State
+        .vault_track_storage(&owner, 1_048_576, 8)
+        .unwrap();
+    state::transaction(|db| {
+        db.execute_batch("CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF storage_charged_at_ms ON accounts BEGIN SELECT RAISE(ABORT,'injected checkpoint failure'); END;").unwrap();
+        Ok(())
+    }).unwrap();
+    state::State.vault_settle_storage_timer_batch(16).unwrap();
+    assert_eq!(billing_account(&owner), (10000, 8));
+    state::transaction(|db| {
+        assert_eq!(
+            db.query_row("SELECT storage_charge_remainder FROM accounts", [], |r| r
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            1065353216000
+        ); // 127/128 of denominator
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM account_ledger", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        db.execute_batch("DROP TRIGGER fail_checkpoint").unwrap();
+        Ok(())
+    })
+    .unwrap();
+    state::State.vault_settle_storage_timer_batch(16).unwrap();
+    assert_eq!(billing_account(&owner), (9999, 16));
+}
+
+#[test]
+fn storage_billing_missing_savepoint_aborts_the_outer_batch() {
+    seed_billing_round();
+    state::transaction(|db| {
+        // ROLLBACK invalidates both the owner savepoint and outer transaction.
+        db.execute_batch("CREATE TRIGGER destroy_savepoint BEFORE INSERT ON account_ledger WHEN NEW.owner='a0001' BEGIN SELECT RAISE(ROLLBACK,'injected transaction failure'); END;").unwrap();
+        Ok(())
+    }).unwrap();
+    assert!(state::State.vault_settle_storage_timer_batch(1024).is_err());
+    assert_eq!(billing_account("a0000"), (10000, 0));
+    assert_eq!(billing_account("a0001"), (10000, 0));
+}
+
+#[test]
+fn storage_billing_checked_overflow_keeps_owner_checkpoint_and_continues() {
+    state::initialize().unwrap();
+    state::transaction(|db| {
+        db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('overflow',10000,?1,?2)", kinic_sqlite_compat::params![i64::MAX,i64::MIN]).unwrap();
+        db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('success',10000,1048576,0)", []).unwrap();
+        Ok(())
+    }).unwrap();
+    state::State.vault_settle_storage_timer_batch(1024).unwrap();
+    assert_eq!(billing_account("overflow"), (10000, i64::MIN));
+    assert_eq!(billing_account("success"), (9873, 1024));
+}
+
+#[test]
+fn storage_billing_caps_a_charge_larger_than_i64_at_the_available_balance() {
+    state::initialize().unwrap();
+    credit(p(230), 10000);
+    let owner = p(230).to_text();
+    state::State
+        .vault_track_storage(&owner, 1_073_741_824, 0)
+        .unwrap();
+    state::State
+        .vault_settle_storage_timer_batch(i64::MAX)
+        .unwrap();
+    assert_eq!(billing_account(&owner), (0, i64::MAX));
+    state::transaction(|db| {
+        assert_eq!(
+            db.query_row("SELECT amount_cycles FROM account_ledger", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            -10000
+        );
+        assert_eq!(
+            db.query_row("SELECT storage_charge_remainder FROM accounts", [], |r| r
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
+        Ok(())
+    })
+    .unwrap();
 }

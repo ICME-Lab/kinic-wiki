@@ -4,28 +4,26 @@ use super::*;
 fn vault_deletion_batches_small_chunks_and_metadata_with_bounded_work() {
     let e = Env::new();
     e.create();
-    e.transaction(|db|{for n in 0u8..20 {let object=vec![n;16];db.execute("INSERT INTO objects(owner,vault,object,head) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)",params![vec![1u8;16],object]).unwrap();db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,4096)",params![vec![1u8;16],object,vec![0u8;64]]).unwrap();db.execute("INSERT INTO revision_chunks VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,0,?3)",params![vec![1u8;16],object,vec![0u8;17]]).unwrap();}db.execute("UPDATE vaults SET cleanup_budget=61",[]).unwrap();Ok(())}).unwrap();
+    e.transaction(|db|{for n in 0u8..20 {let object=vec![n;16];db.execute("INSERT INTO objects(owner,vault,object,head) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)",params![vault_id(1),object]).unwrap();db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,4096)",params![vault_id(1),object,vec![0u8;64]]).unwrap();db.execute("INSERT INTO revision_chunks VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,0,?3)",params![vault_id(1),object,vec![0u8;17]]).unwrap();}db.execute("UPDATE vaults SET cleanup_budget=61",[]).unwrap();Ok(())}).unwrap();
     for n in 40..43 {
         assert!(matches!(
-            e.change(n, Action::DeleteVault { vault: vec![1; 16] }),
+            e.change(n, Action::DeleteVault { vault: vault_id(1) }),
             Ok(MutationResult::Progress(false))
         ));
     }
     assert!(matches!(
-        e.change(43, Action::DeleteVault { vault: vec![1; 16] }),
+        e.change(43, Action::DeleteVault { vault: vault_id(1) }),
         Ok(MutationResult::Progress(true))
     ));
     assert!(e.transaction(store::list).unwrap().is_empty());
-    assert!(matches!(
-        block_on(create_vault(
-            &e,
-            CreateVault {
-                vault: vec![1; 16],
-                operation: vec![45; 16]
-            }
-        )),
-        Err(Error::Conflict)
-    ));
+    let next = block_on(create_vault(
+        &e,
+        CreateVault {
+            operation: vec![45; 16],
+        },
+    ))
+    .unwrap();
+    assert_ne!(next.id, vault_id(1));
 }
 #[test]
 fn review_empty_unfunded_collect_cannot_allocate_cleanup_receipts() {
@@ -130,7 +128,7 @@ fn review_no_work_collect_preserves_vault_completion_budget() {
     })
     .unwrap();
     assert!(matches!(
-        e.change(100, Action::DeleteVault { vault: vec![1; 16] }),
+        e.change(100, Action::DeleteVault { vault: vault_id(1) }),
         Ok(MutationResult::Progress(true))
     ));
 }
@@ -163,7 +161,7 @@ fn review_cleanup_credits_follow_commit_retirement_tombstone_and_deletion() {
     for n in 0u8..11 {
         let id = 20 + n * 3;
         let r = BeginRevision {
-            vault: vec![1; 16],
+            vault: vault_id(1),
             object: vec![3; 16],
             operation: vec![id; 16],
             expected_revision: n as u64,
@@ -191,9 +189,11 @@ fn review_cleanup_credits_follow_commit_retirement_tombstone_and_deletion() {
     }
     let budget = || {
         e.transaction(|db| {
-            db.query_row("SELECT cleanup_budget FROM vaults", [], |r| {
-                r.get::<_, i64>(0)
-            })
+            db.query_row(
+                "SELECT COALESCE((SELECT cleanup_budget FROM vaults),0)",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .map_err(|_| Error::Storage)
         })
         .unwrap()
@@ -207,7 +207,7 @@ fn review_cleanup_credits_follow_commit_retirement_tombstone_and_deletion() {
     e.change(
         61,
         Action::DeleteObject {
-            vault: vec![1; 16],
+            vault: vault_id(1),
             object: vec![3; 16],
             expected_revision: 11,
         },
@@ -217,12 +217,12 @@ fn review_cleanup_credits_follow_commit_retirement_tombstone_and_deletion() {
     e.funded.set(false);
     for (id, remaining) in [(70, 13), (71, 2), (72, 1), (73, 0)] {
         assert!(
-            matches!(e.change(id,Action::DeleteVault{vault:vec![1;16]}),Ok(MutationResult::Progress(done)) if done==(remaining==0))
+            matches!(e.change(id,Action::DeleteVault{vault:vault_id(1)}),Ok(MutationResult::Progress(done)) if done==(remaining==0))
         );
         assert_eq!(budget(), remaining);
     }
     assert!(matches!(
-        e.change(73, Action::DeleteVault { vault: vec![1; 16] }),
+        e.change(73, Action::DeleteVault { vault: vault_id(1) }),
         Ok(MutationResult::Progress(true))
     ));
     let count = || {
@@ -238,7 +238,7 @@ fn review_cleanup_credits_follow_commit_retirement_tombstone_and_deletion() {
     };
     let before = count();
     assert!(
-        e.change(74, Action::DeleteVault { vault: vec![1; 16] })
+        e.change(74, Action::DeleteVault { vault: vault_id(1) })
             .is_err()
     );
     assert_eq!(count(), before);

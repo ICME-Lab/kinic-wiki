@@ -39,7 +39,7 @@ pub(crate) fn schema_statements() -> Vec<String> {
         &mut statements,
         "accounts",
         &["owner"],
-        3,
+        4,
         SMALL_ROW,
         &format!("OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT}"),
     );

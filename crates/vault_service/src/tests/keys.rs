@@ -8,7 +8,6 @@ fn creation_retry_keeps_nonce_and_owner_key_input_isolated() {
         block_on(create_vault(
             &e,
             CreateVault {
-                vault: vec![1; 16],
                 operation: vec![2; 16]
             }
         ))
@@ -29,7 +28,6 @@ fn creation_retry_keeps_nonce_and_owner_key_input_isolated() {
         block_on(create_vault(
             &e,
             CreateVault {
-                vault: vec![1; 16],
                 operation: vec![2; 16]
             }
         )),
@@ -44,7 +42,7 @@ fn key_replay_is_transport_bound_and_callback_deletion_discards_key() {
         .unwrap()
         .public_key();
     let r = DeriveKey {
-        vault: vec![1; 16],
+        vault: vault_id(1),
         operation: vec![8; 16],
         transport: transport.clone(),
     };
@@ -61,8 +59,22 @@ fn key_replay_is_transport_bound_and_callback_deletion_discards_key() {
         Err(Error::Conflict)
     );
     e.hook.replace(Some(Box::new(|e| {
-        e.change(40, Action::DeleteVault { vault: vec![1; 16] })
+        e.change(40, Action::DeleteVault { vault: vault_id(1) })
             .unwrap();
+        assert_eq!(
+            e.transaction(|db| store::header(db, &vault_id(1))),
+            Err(Error::NotFound)
+        );
+        let replacement = create_vault(
+            e,
+            CreateVault {
+                operation: vec![41; 16],
+            },
+        )
+        .now_or_never()
+        .unwrap()
+        .unwrap();
+        assert_ne!(replacement.id, vault_id(1));
     })));
     let mut next = r;
     next.operation = vec![9; 16];
@@ -79,6 +91,22 @@ fn key_replay_is_transport_bound_and_callback_deletion_discards_key() {
         })
         .unwrap();
     assert_eq!(pending, 0);
+    e.transaction(|db| {
+        let (count, actual): (i64, i64) = db
+            .query_row(
+                "SELECT count(*),sum(actual) FROM key_flights WHERE vault=?1",
+                params![vault_id(1)],
+                |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+            )
+            .map_err(|_| Error::Storage)?;
+        assert_eq!((count, actual), (2, 24));
+        let rows = store::list(db)?;
+        assert_eq!(rows.len(), 1);
+        assert_ne!(rows[0].id, vault_id(1));
+        assert_eq!(rows[0].state, VaultState::Active);
+        Ok(())
+    })
+    .unwrap();
 }
 #[test]
 fn deleting_other_vault_does_not_cancel_this_key_flight() {
@@ -87,13 +115,12 @@ fn deleting_other_vault_does_not_cancel_this_key_flight() {
     block_on(create_vault(
         &e,
         CreateVault {
-            vault: vec![2; 16],
             operation: vec![12; 16],
         },
     ))
     .unwrap();
     e.hook.replace(Some(Box::new(|e| {
-        e.change(40, Action::DeleteVault { vault: vec![2; 16] })
+        e.change(40, Action::DeleteVault { vault: vault_id(2) })
             .unwrap();
     })));
     let transport = ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
@@ -103,7 +130,7 @@ fn deleting_other_vault_does_not_cancel_this_key_flight() {
         block_on(derive_vault_key(
             &e,
             DeriveKey {
-                vault: vec![1; 16],
+                vault: vault_id(1),
                 operation: vec![8; 16],
                 transport
             }
@@ -120,7 +147,6 @@ fn expired_creation_random_and_public_callbacks_cannot_replace_resumed_attempt()
             create_vault(
                 e,
                 CreateVault {
-                    vault: vec![1; 16],
                     operation: vec![2; 16],
                 },
             )
@@ -134,7 +160,6 @@ fn expired_creation_random_and_public_callbacks_cannot_replace_resumed_attempt()
             e.random_hook.replace(Some(hook));
         }
         let r = CreateVault {
-            vault: vec![1; 16],
             operation: vec![2; 16],
         };
         assert_eq!(block_on(create_vault(&e, r.clone())), Err(Error::Expired));
@@ -156,14 +181,13 @@ fn disabling_configuration_during_callbacks_retains_accounting_but_withholds_key
         block_on(create_vault(
             &e,
             CreateVault {
-                vault: vec![1; 16],
                 operation: vec![2; 16]
             }
         )),
         Err(Error::Unauthorized)
     );
     assert_eq!(
-        e.transaction(|db| store::header(db, &[1; 16]))
+        e.transaction(|db| store::header(db, &vault_id(1)))
             .unwrap()
             .state,
         VaultState::Pending
@@ -182,7 +206,7 @@ fn disabling_configuration_during_callbacks_retains_accounting_but_withholds_key
         block_on(derive_vault_key(
             &e,
             DeriveKey {
-                vault: vec![1; 16],
+                vault: vault_id(1),
                 operation: vec![8; 16],
                 transport
             }
@@ -203,7 +227,7 @@ fn changing_default_key_does_not_change_existing_vault_context() {
     let reply = block_on(derive_vault_key(
         &e,
         DeriveKey {
-            vault: vec![1; 16],
+            vault: vault_id(1),
             operation: vec![8; 16],
             transport,
         },
@@ -227,13 +251,13 @@ fn fresh_key_admission_at_full_shared_content_and_ordinary_receipts() {
         assert_eq!(db.query_row("SELECT count(*) FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND admission=0",[],|r|r.get::<_,i64>(0)).unwrap(),10000);
         assert_eq!(store::content::check_receipt_capacity(db, e.now()), Err(Error::QuotaExceeded));
         let extra = TOTAL_MAX - store::content::global_usage(db)?;
-        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
+        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
         assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
         assert!(store::keys::current(db)?.is_none());
         Ok(())
     }).unwrap();
     let request = DeriveKey {
-        vault: vec![1; 16],
+        vault: vault_id(1),
         operation: vec![99; 16],
         transport: ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
             .unwrap()
@@ -270,12 +294,12 @@ fn normal_key_admission_preserves_rates_and_reuses_transient_control_across_owne
         .public_key();
     for owner in 1..=9 {
         e.owner.set(Principal::from_slice(&[owner + 10]));
-        e.create();
+        let h = e.create();
         for n in 0..if owner == 1 { 100 } else { 1 } {
             block_on(derive_vault_key(
                 &e,
                 DeriveKey {
-                    vault: vec![1; 16],
+                    vault: h.id.clone(),
                     operation: vec![n + 20; 16],
                     transport: transport.clone(),
                 },
@@ -289,7 +313,7 @@ fn normal_key_admission_preserves_rates_and_reuses_transient_control_across_owne
         block_on(derive_vault_key(
             &e,
             DeriveKey {
-                vault: vec![1; 16],
+                vault: vault_id(1),
                 operation: vec![200; 16],
                 transport
             }
@@ -335,7 +359,7 @@ fn protected_key_callback_is_bounded_and_cannot_publish_after_cancellation() {
         .unwrap();
     })));
     let request = DeriveKey {
-        vault: vec![1; 16],
+        vault: vault_id(1),
         operation: vec![90; 16],
         transport: ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
             .unwrap()
@@ -365,11 +389,11 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
     e.transaction(|db| {
         db.execute("WITH RECURSIVE n(x) AS (SELECT 1000 UNION ALL SELECT x+1 FROM n WHERE x<1098) INSERT INTO key_flights(owner,vault,token,day,reserved,actual,created,settled,in_flight) SELECT X'01',zeroblob(16),x,0,30000000000,0,100,100,0 FROM n",[]).unwrap();
         let extra=TOTAL_MAX-store::content::global_usage(db)?;
-        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
+        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
         Ok(())
     }).unwrap();
     let request = DeriveKey {
-        vault: vec![1; 16],
+        vault: vault_id(1),
         operation: vec![90; 16],
         transport: ic_vetkeys::TransportSecretKey::from_seed(vec![8; 32])
             .unwrap()
@@ -450,7 +474,7 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
 fn settled_old_key_callback_cannot_clear_new_target_after_schema_generation_change() {
     let e = Env::new();
     e.transaction(|db| {
-        store::keys::reserve(db, &[1; 16], 1, 1, 20)?;
+        store::keys::reserve(db, &vault_id(1), 1, 1, 20)?;
         store::keys::mark_sent(db, 1, 20)?;
         db.execute("INSERT INTO global_settings VALUES('generation','1')", [])
             .unwrap();
