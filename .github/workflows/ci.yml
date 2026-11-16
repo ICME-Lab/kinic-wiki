@@ -768,6 +768,7 @@ jobs:
             target/vault-ii-acceptance/vault_canister.wasm \
             target/vault-ii-acceptance/vfs_canister.wasm \
             target/vault-ii-acceptance/vault-state.wasm \
+            target/vault-ii-acceptance/physical-memory.json \
             target/vault-ii-acceptance/production.json \
             target/vault-ii-acceptance/state.json \
             target/vault-ii-acceptance/runtime.json \
@@ -788,6 +789,7 @@ jobs:
         with:
           name: vault-wasm-acceptance-provenance
           path: |
+            target/vault-ii-acceptance/physical-memory.json
             target/vault-ii-acceptance/production.json
             target/vault-ii-acceptance/state.json
             target/vault-ii-acceptance/runtime.json
@@ -853,6 +855,7 @@ jobs:
           path: |
             target/vault-browser-provenance.json
             target/vault-browser-teardown.json
+            target/vault-ii-acceptance/physical-memory.json
             target/vault-ii-acceptance/production.json
             target/vault-ii-acceptance/state.json
             target/vault-ii-acceptance/runtime.json
