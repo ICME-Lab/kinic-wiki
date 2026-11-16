@@ -1,7 +1,9 @@
 //! Durable ICRC-2 quotes. Only the authenticated wallet can debit its own allowance.
 use crate::state::transaction;
+mod reconciliation;
 use candid::{CandidType, Nat, Principal};
 use kinic_sqlite_compat::{self as sql, OptionalExtension, params};
+pub use reconciliation::{ReconciliationProgress, ReconciliationState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vault_types::{Error, Result};
@@ -9,15 +11,8 @@ use vault_types::{Error, Result};
 pub const FUNDING_MODE: &str = if cfg!(feature = "synthetic-funding-test-only") {
     "synthetic-test-only"
 } else {
-    "unavailable"
+    "production"
 };
-fn require_synthetic_funding() -> Result<()> {
-    if cfg!(feature = "synthetic-funding-test-only") {
-        Ok(())
-    } else {
-        Err(Error::Unauthorized)
-    }
-}
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize, PartialEq)]
 pub struct FundingConfig {
     pub ledger: Principal,
@@ -58,6 +53,11 @@ pub struct Payment {
     pub uncertain: bool,
     pub attempt: u64,
     pub sent_at: u64,
+    #[serde(default)]
+    pub reconciliation: Option<ReconciliationState>,
+    /// True only while the durable operation is known not to have dispatched a debit.
+    #[serde(default)]
+    pub preparing: bool,
 }
 fn auth(p: Principal) -> Result<()> {
     if p == Principal::anonymous() || p == Principal::management_canister() {
@@ -108,6 +108,17 @@ fn validate_receipts(p: &Payment) -> Result<()> {
     widest.attempt = u64::MAX;
     widest.sent_at = u64::MAX;
     widest.uncertain = false;
+    widest.preparing = false;
+    // Reserve the reconciliation fields even for a quote with no cursor yet.
+    widest.reconciliation = Some(ReconciliationState {
+        start: u64::MAX,
+        next: u64::MAX,
+        end: u64::MAX,
+        spender: Principal::from_slice(&[255; 29]),
+        lease: u64::MAX,
+        lease_until: u64::MAX,
+        lease_generation: i64::MIN,
+    });
     // JSON encodes bytes as decimal arrays, so reserve the largest byte width too.
     widest.memo = vec![255; 32];
     widest.request.operation = vec![255; 16];
@@ -251,6 +262,8 @@ pub fn admit_quote(
             uncertain: false,
             attempt: 0,
             sent_at: 0,
+            reconciliation: None,
+            preparing: false,
         };
         let expires = now
             .checked_add(120_000_000_000)
@@ -341,6 +354,12 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
     transaction(|db| {
         let mut p = load(db, wallet, id)?.ok_or(Error::NotFound)?;
         let current = generation(db)?;
+        if p.reconciliation
+            .as_ref()
+            .is_some_and(|s| s.lease_generation == current && s.lease_until > now)
+        {
+            return Err(Error::Busy);
+        }
         let orphan = matches!(p.status, Status::InFlight)
             && (p.generation < current || now.saturating_sub(p.sent_at) > 120_000_000_000);
         if !matches!(p.status, Status::Quoted | Status::Unknown) && !orphan {
@@ -348,7 +367,7 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         }
         // Unknown payments can only be retried byte-for-byte within ledger dedup window.
         // Beyond it the durable Unknown row requires authoritative ledger reconciliation.
-        let max = if matches!(p.status, Status::Quoted) {
+        let max = if matches!(p.status, Status::Quoted) || p.preparing {
             300_000_000_000
         } else {
             23 * 3600 * 1_000_000_000
@@ -391,7 +410,7 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         if capacity > i64::MAX as u128 {
             return Err(Error::QuotaExceeded);
         }
-        p.uncertain |= orphan || matches!(p.status, Status::Unknown);
+        p.uncertain |= (orphan && !p.preparing) || matches!(p.status, Status::Unknown);
         p.status = Status::InFlight;
         p.generation = current;
         p.attempt = p.attempt.checked_add(1).ok_or(Error::QuotaExceeded)?;
@@ -408,6 +427,32 @@ pub enum Outcome {
     Unknown,
     Rejected(Status),
 }
+fn credit_payment(db: &sql::Connection, p: &Payment) -> Result<()> {
+    let owner = p.request.beneficiary.to_text();
+    let balance: i64 = db
+        .query_row(
+            "SELECT balance_cycles FROM accounts WHERE owner=?1",
+            params![owner],
+            |r| sql::row_get(r, 0),
+        )
+        .optional()
+        .map_err(|_| Error::Storage)?
+        .unwrap_or(0);
+    let next = balance
+        .checked_add(p.credits as i64)
+        .ok_or(Error::QuotaExceeded)?;
+    db.execute("INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,?2,?3) ON CONFLICT(owner) DO UPDATE SET balance_cycles=excluded.balance_cycles",params![owner,next,(p.created_at_time/1_000_000) as i64]).map_err(|_|Error::Storage)?;
+    crate::accounting::record_entry(
+        db,
+        &owner,
+        "purchase",
+        p.credits as i64,
+        next,
+        (p.created_at_time / 1_000_000) as i64,
+        Some(&p.request.operation),
+    )?;
+    Ok(())
+}
 pub fn complete_payment(sent: &Payment, outcome: Outcome) -> Result<Payment> {
     transaction(|db| {
         let mut p = load(db, sent.wallet, &sent.request.operation)?.ok_or(Error::NotFound)?;
@@ -421,35 +466,15 @@ pub fn complete_payment(sent: &Payment, outcome: Outcome) -> Result<Payment> {
             || p.created_at_time != sent.created_at_time
             || p.generation != sent.generation
             || p.attempt != sent.attempt
-            || !matches!(p.status, Status::InFlight)
+            || !(matches!(p.status, Status::InFlight)
+                || (matches!(p.status, Status::Unknown) && matches!(outcome, Outcome::Paid(_))))
         {
             return Err(Error::Conflict);
         }
+        p.preparing = false;
         p.status = match outcome {
             Outcome::Paid(block) => {
-                let owner = p.request.beneficiary.to_text();
-                let balance: i64 = db
-                    .query_row(
-                        "SELECT balance_cycles FROM accounts WHERE owner=?1",
-                        params![owner],
-                        |r| sql::row_get(r, 0),
-                    )
-                    .optional()
-                    .map_err(|_| Error::Storage)?
-                    .unwrap_or(0);
-                let next = balance
-                    .checked_add(p.credits as i64)
-                    .ok_or(Error::QuotaExceeded)?;
-                db.execute("INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,?2,?3) ON CONFLICT(owner) DO UPDATE SET balance_cycles=excluded.balance_cycles",params![owner,next,(p.created_at_time/1_000_000) as i64]).map_err(|_|Error::Storage)?;
-                crate::accounting::record_entry(
-                    db,
-                    &owner,
-                    "purchase",
-                    p.credits as i64,
-                    next,
-                    (p.created_at_time / 1_000_000) as i64,
-                    Some(&p.request.operation),
-                )?;
+                credit_payment(db, &p)?;
                 Status::Paid(block)
             }
             Outcome::Unknown => {
@@ -464,6 +489,12 @@ pub fn complete_payment(sent: &Payment, outcome: Outcome) -> Result<Payment> {
                 }
             }
         };
+        if matches!(p.status, Status::Paid(_)) {
+            p.uncertain = false;
+            if let Some(scan) = &mut p.reconciliation {
+                scan.lease_until = 0;
+            }
+        }
         save(db, &p)?;
         Ok(p)
     })
@@ -475,6 +506,7 @@ fn set_funding_config(config: Option<FundingConfig>) -> vault_types::Result<()> 
     }
     if let Some(c) = &config {
         auth(c.ledger)?;
+        require_ledger(c.ledger)?;
         auth(c.recipient)?;
         if c.cycles_per_kinic == 0 || c.cycles_per_kinic > i64::MAX as u64 {
             return Err(Error::InvalidInput);
@@ -502,7 +534,6 @@ fn payment_status(operation: Vec<u8>) -> vault_types::Result<Option<Payment>> {
 }
 #[ic_cdk::update]
 async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment> {
-    require_synthetic_funding()?;
     let caller = ic_cdk::api::msg_caller();
     auth(caller)?;
     auth(request.beneficiary)?;
@@ -528,6 +559,7 @@ async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment
             .map_err(|_| Error::Storage)?
             .ok_or(Error::Unauthorized)
     })?;
+    require_ledger(config.ledger)?;
     let flight = match admit_quote(caller, request, config, crate::now_nanos())? {
         QuoteAdmission::Existing(payment) => return Ok(payment),
         QuoteAdmission::Fee(flight) => flight,
@@ -575,12 +607,37 @@ fn nat(n: &Nat) -> Option<u64> {
 }
 #[ic_cdk::update]
 async fn pay_purchase(operation: Vec<u8>) -> vault_types::Result<Payment> {
-    // Even an exact retry could newly debit: production must not dispatch it.
-    require_synthetic_funding()?;
     if operation.len() != 16 {
         return Err(Error::InvalidInput);
     }
-    let p = begin_payment(ic_cdk::api::msg_caller(), &operation, crate::now_nanos())?;
+    let caller = ic_cdk::api::msg_caller();
+    auth(caller)?;
+    let ledger = transaction(|db| {
+        Ok(load(db, caller, &operation)?
+            .ok_or(Error::NotFound)?
+            .config
+            .ledger)
+    })?;
+    require_ledger(ledger)?;
+    let p = begin_payment(caller, &operation, crate::now_nanos())?;
+    if p.reconciliation.is_none() && p.uncertain {
+        return complete_payment(&p, Outcome::Unknown);
+    }
+    // Persist the history lower bound and spender before the first possible debit.
+    // An existing immutable snapshot is retained for byte-for-byte retries.
+    let p = if p.reconciliation.is_none() {
+        reconciliation::begin_preparation(&p)?
+    } else {
+        p
+    };
+    let start = match &p.reconciliation {
+        Some(scan) => scan.start,
+        None => match reconciliation::ledger_tip(p.config.ledger).await {
+            Ok(start) => start,
+            Err(_) => return reconciliation::finish_preparation(&p),
+        },
+    };
+    let p = reconciliation::prepare_dispatch(&p, ic_cdk::api::canister_self(), start)?;
     let arg = TransferFromArg {
         spender_subaccount: None,
         from: Account {
@@ -660,31 +717,66 @@ fn cancel_quote(operation: Vec<u8>) -> vault_types::Result<Payment> {
     })
 }
 
-#[cfg(all(test, not(feature = "synthetic-funding-test-only")))]
-mod production_gate_tests {
-    use super::*;
-    use std::{
-        future::Future,
-        pin::pin,
-        task::{Context, Poll, Waker},
-    };
-    fn rejected_before_ic_or_ledger_calls(f: impl Future<Output = Result<Payment>>) {
-        let mut f = pin!(f);
-        let mut cx = Context::from_waker(Waker::noop());
-        assert!(matches!(
-            f.as_mut().poll(&mut cx),
-            Poll::Ready(Err(Error::Unauthorized))
-        ));
+fn require_ledger(ledger: Principal) -> Result<()> {
+    if cfg!(feature = "synthetic-funding-test-only")
+        || ledger
+            == Principal::from_text("73mez-iiaaa-aaaaq-aaasq-cai").expect("KINIC ledger principal")
+    {
+        Ok(())
+    } else {
+        Err(Error::Unauthorized)
     }
+}
+#[cfg(all(test, not(feature = "synthetic-funding-test-only")))]
+mod production_ledger_tests {
+    use super::*;
     #[test]
-    fn production_quote_and_payment_fail_before_caller_fee_or_transfer_calls() {
-        rejected_before_ic_or_ledger_calls(quote_purchase(PurchaseRequest {
-            operation: vec![1; 16],
-            beneficiary: Principal::anonymous(),
-            amount_e8s: 100_000_000,
-            min_credits: 1,
-            created_at_time: 0,
-        }));
-        rejected_before_ic_or_ledger_calls(pay_purchase(vec![1; 16]));
+    fn only_pinned_kinic_ledger_can_debit_production_payments() {
+        assert_eq!(
+            require_ledger(Principal::from_text("73mez-iiaaa-aaaaq-aaasq-cai").unwrap()),
+            Ok(())
+        );
+        assert_eq!(
+            require_ledger(Principal::from_slice(&[7])),
+            Err(Error::Unauthorized)
+        );
+    }
+}
+
+#[cfg(test)]
+mod reconciliation_race_tests {
+    use super::*;
+    #[test]
+    fn late_success_after_uncertainty_credits_exactly_once() {
+        crate::state::initialize().unwrap();
+        let wallet = Principal::from_slice(&[91]);
+        let beneficiary = Principal::from_slice(&[92]);
+        record_quote(
+            wallet,
+            PurchaseRequest {
+                operation: vec![91; 16],
+                beneficiary,
+                amount_e8s: 100_000_000,
+                min_credits: 1,
+                created_at_time: 0,
+            },
+            FundingConfig {
+                ledger: Principal::from_slice(&[93]),
+                recipient: Principal::from_slice(&[94]),
+                cycles_per_kinic: 100_000_000,
+            },
+            10,
+            0,
+        )
+        .unwrap();
+        let sent = begin_payment(wallet, &[91; 16], 0).unwrap();
+        complete_payment(&sent, Outcome::Unknown).unwrap();
+        let paid = complete_payment(&sent, Outcome::Paid(42)).unwrap();
+        assert_eq!(paid.status, Status::Paid(42));
+        complete_payment(&sent, Outcome::Paid(42)).unwrap();
+        assert_eq!(
+            crate::state::State.balance(&beneficiary.to_text()).unwrap(),
+            100_000_000
+        );
     }
 }
