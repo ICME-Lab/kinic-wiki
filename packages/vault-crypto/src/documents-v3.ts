@@ -9,17 +9,6 @@ import {
   concat,
   type Envelope,
 } from "./index.ts";
-async function sealV3(
-  key: CryptoKey,
-  plain: Uint8Array,
-  binding: Uint8Array,
-): Promise<Envelope> {
-  return { ...(await seal(key, plain, binding)), version: 3 };
-}
-async function openV3(key: CryptoKey, envelope: Envelope, binding: Uint8Array) {
-  if (envelope.version !== 3) throw Error("InvalidEnvelope");
-  return open(key, envelope, binding);
-}
 export const b64 = (b: Uint8Array) => {
   let s = "";
   for (const x of b) s += String.fromCharCode(x);
@@ -76,7 +65,7 @@ export async function encryptDocumentV3(
     throw Error("SizeLimit");
   const raw = randomBytes(32);
   const key = await importKey(raw);
-  const dek = await sealV3(
+  const dek = await seal(
     root,
     raw,
     documentAAD(context, object, revision, "dek"),
@@ -84,7 +73,7 @@ export async function encryptDocumentV3(
   raw.fill(0);
   const meta = utf8.encode(JSON.stringify(metadata));
   if (meta.length > 8192) throw Error("SizeLimit");
-  const encryptedMetadata = await sealV3(
+  const encryptedMetadata = await seal(
     key,
     meta,
     documentAAD(context, object, revision, "metadata"),
@@ -92,7 +81,7 @@ export async function encryptDocumentV3(
   const chunks: Uint8Array[] = [],
     nonces: string[] = [];
   for (let i = 0; i < Math.max(1, Math.ceil(plaintext.length / 1048576)); i++) {
-    const e = await sealV3(
+    const e = await seal(
       key,
       plaintext.subarray(i * 1048576, (i + 1) * 1048576),
       documentAAD(context, object, revision, "chunk", i),
@@ -128,7 +117,7 @@ export async function readManifestV3(
     m.nonces.length > 10
   )
     throw Error("InvalidManifest");
-  const raw = await openV3(
+  const raw = await open(
     root,
     unpack(m.dek),
     documentAAD(context, object, revision, "dek"),
@@ -137,7 +126,7 @@ export async function readManifestV3(
   raw.fill(0);
   const metadata: Metadata = JSON.parse(
     new TextDecoder("utf-8", { fatal: true }).decode(
-      await openV3(
+      await open(
         key,
         unpack(m.metadata),
         documentAAD(context, object, revision, "metadata"),
@@ -177,7 +166,7 @@ export async function decryptDocumentV3(
     if (b64(await hash(chunks[i])) !== b64(hashes[i]))
       throw Error("CorruptChunk");
     plain.push(
-      await openV3(
+      await open(
         parsed.key,
         {
           version: 3,

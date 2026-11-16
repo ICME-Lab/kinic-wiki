@@ -70,6 +70,7 @@ function setup() {
       return { Ok: { Done: null } };
     }),
     get_chunk: vi.fn(async () => ({ Ok: chunk })),
+    get_upload_status: vi.fn(async () => ({ Ok: { Absent: null } })),
   } as unknown as VaultActor;
   const client = new VaultClient({
     actor,
@@ -682,4 +683,81 @@ it("reconciliation rejects a receipt for a different saved operation", async () 
     },
   })) as any;
   await expect(client.reconcilePurchase(id)).rejects.toThrow("InvalidReceipt");
+});
+
+
+it("excludes another cancellation and resume while cancellation owns the saved job", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  await expect(client.save({ kind: "note", title: "old" }, new Uint8Array([1]))).rejects.toThrow("network");
+  type Status = Awaited<ReturnType<VaultActor["get_upload_status"]>>;
+  const status = deferred<Status>();
+  vi.mocked(actor.get_upload_status).mockReturnValue(status.promise);
+  const cancelling = client.cancelSave();
+  await vi.waitFor(() => expect(actor.get_upload_status).toHaveBeenCalledOnce());
+  const second = expect(client.cancelSave()).rejects.toThrow("SaveInProgress");
+  const resumed = expect(client.resumeSave()).rejects.toThrow("SaveInProgress");
+  const saved = expect(client.save({ kind: "note", title: "new" }, new Uint8Array([2]))).rejects.toThrow("SavePending");
+  status.resolve({ Ok: { Absent: null } });
+  await Promise.all([cancelling, second, resumed, saved]);
+  expect(client.hasPendingSave).toBe(false);
+  const revision = await client.save({ kind: "note", title: "new" }, new Uint8Array([2]));
+  const doc = await client.read(revision);
+  expect(doc.metadata.title).toBe("new");
+});
+
+it("retains the encrypted save when cancellation status is unavailable", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  await expect(client.save({ kind: "note", title: "keep" }, new Uint8Array([1]))).rejects.toThrow("network");
+  vi.mocked(actor.get_upload_status).mockRejectedValue(Error("status unavailable"));
+  await expect(client.cancelSave()).rejects.toThrow("status unavailable");
+  expect(client.hasPendingSave).toBe(true);
+  const revision = await client.resumeSave();
+  const doc = await client.read(revision);
+  expect(doc.metadata.title).toBe("keep");
+});
+
+it("fences an old cancellation after lock without replacing a new pending save", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  await expect(client.save({ kind: "note", title: "old" }, new Uint8Array([1]))).rejects.toThrow("network");
+  type Status = Awaited<ReturnType<VaultActor["get_upload_status"]>>;
+  const status = deferred<Status>();
+  vi.mocked(actor.get_upload_status).mockReturnValue(status.promise);
+  const cancelling = client.cancelSave();
+  await vi.waitFor(() => expect(actor.get_upload_status).toHaveBeenCalledOnce());
+  client.session.lock();
+  await client.open(header());
+  vi.mocked(actor.mutate).mockRejectedValueOnce(Error("new lost"));
+  await expect(client.save({ kind: "note", title: "new" }, new Uint8Array([2]))).rejects.toThrow("new lost");
+  status.resolve({ Ok: { Absent: null } });
+  await expect(cancelling).rejects.toThrow("Locked");
+  const revision = await client.resumeSave();
+  const doc = await client.read(revision);
+  expect(doc.metadata.title).toBe("new");
+});
+
+
+it("releases only the completed cancellation job after a lost final reply", async () => {
+  const { client, actor, calls } = setup();
+  await client.open(header());
+  await expect(client.save({ kind: "note", title: "old" }, new Uint8Array([1]))).rejects.toThrow("network");
+  const request = calls[0].action.BeginRevision;
+  vi.mocked(actor.get_upload_status)
+    .mockResolvedValueOnce({ Ok: { Pending: { request, cancel_job: [] } } } as never)
+    .mockResolvedValue({ Ok: { Cancelled: null } });
+  const original = vi.mocked(actor.mutate).getMockImplementation()!;
+  let lost = false;
+  vi.mocked(actor.mutate).mockImplementation(async (mutation) => {
+    if ("CancelUpload" in mutation.action && !lost) {
+      lost = true;
+      throw Error("final cancellation lost");
+    }
+    return original(mutation);
+  });
+  await expect(client.cancelSave()).rejects.toThrow("final cancellation lost");
+  await client.cancelSave();
+  expect(client.hasPendingSave).toBe(false);
+  await expect(client.cancelUpload(id, new Uint8Array(16).fill(9))).resolves.toBeUndefined();
 });
