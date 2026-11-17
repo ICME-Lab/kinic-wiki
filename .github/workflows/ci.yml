@@ -761,6 +761,10 @@ jobs:
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
         run: pnpm --dir pocketic-tests test:vault-funding-ledger
+      - name: Reject PR 177 schema 9 downgrade with bridge receipts
+        env:
+          POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
+        run: pnpm --dir pocketic-tests test:vault-schema9-upgrade
       - name: Seal acceptance artifact handoff
         run: |
           git rev-parse HEAD > target/vault-ii-acceptance/source-commit.txt
@@ -793,6 +797,8 @@ jobs:
             target/vault-ii-acceptance/production.json
             target/vault-ii-acceptance/state.json
             target/vault-ii-acceptance/runtime.json
+            target/vault-schema9-baseline/source.json
+            target/vault-schema9-baseline/upgrade.json
             target/vault-synthetic-funding-build/provenance.json
             target/vault-funding-fault/provenance.json
 
