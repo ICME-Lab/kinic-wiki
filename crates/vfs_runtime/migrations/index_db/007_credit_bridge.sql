@@ -1,6 +1,6 @@
 CREATE TABLE credit_bridge_settings (id INTEGER PRIMARY KEY CHECK(id=1), record TEXT NOT NULL CHECK(length(record)<=4096));
 CREATE TABLE credit_bridge_links (wiki_owner TEXT PRIMARY KEY, vault_owner TEXT NOT NULL UNIQUE, record TEXT NOT NULL CHECK(length(record)<=4096));
-CREATE TABLE credit_bridge_fences (vault_owner TEXT PRIMARY KEY, generation INTEGER NOT NULL CHECK(generation>=0), expires_at_ns INTEGER CHECK(expires_at_ns IS NULL OR expires_at_ns>=0));
+CREATE TABLE credit_bridge_fences (vault_owner TEXT PRIMARY KEY, generation INTEGER NOT NULL CHECK(generation>=0));
 CREATE TABLE credit_bridge_owners (wiki_owner TEXT PRIMARY KEY, epoch INTEGER NOT NULL CHECK(epoch>=0), expires_at_ns INTEGER CHECK(expires_at_ns IS NULL OR expires_at_ns>=0));
 CREATE TABLE credit_bridge_transfers (
  operation TEXT PRIMARY KEY, database_id TEXT NOT NULL, payer TEXT NOT NULL,

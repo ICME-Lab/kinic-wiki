@@ -74,6 +74,7 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     apply_voice_migration(&tx)?;
     apply_maintenance_migration(&tx)?;
     apply_bridge_migration(&tx)?;
+    apply_bridge_fence_expiry_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -117,6 +118,7 @@ fn run_index_migrations_in_tx(
     apply_voice_migration(conn)?;
     apply_maintenance_migration(conn)?;
     apply_bridge_migration(conn)?;
+    apply_bridge_fence_expiry_migration(conn)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -189,18 +191,35 @@ fn apply_pending_index_migrations(
         return Ok(());
     }
     let refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
-    if refs == INDEX_SCHEMA_VERSIONS[..6] {
-        return apply_bridge_migration(conn);
+    if refs == INDEX_SCHEMA_VERSIONS[..7] {
+        return apply_bridge_fence_expiry_migration(conn);
     }
-    if versions
-        .iter()
-        .any(|v| v == INDEX_SCHEMA_VERSION_MAINTENANCE || v == INDEX_SCHEMA_VERSION_BRIDGE)
-    {
+    if refs == INDEX_SCHEMA_VERSIONS[..6] {
+        apply_bridge_migration(conn)?;
+        return apply_bridge_fence_expiry_migration(conn);
+    }
+    if versions.iter().any(|v| {
+        v == INDEX_SCHEMA_VERSION_MAINTENANCE
+            || v == INDEX_SCHEMA_VERSION_BRIDGE
+            || v == INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY
+    }) {
         return Err("unsupported index schema version".into());
     }
     apply_index_migrations_through_voice(conn, config)?;
     apply_maintenance_migration(conn)?;
-    apply_bridge_migration(conn)
+    apply_bridge_migration(conn)?;
+    apply_bridge_fence_expiry_migration(conn)
+}
+fn apply_bridge_fence_expiry_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!(
+        "../migrations/index_db/008_credit_bridge_fence_expiry.sql"
+    ))
+    .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
+    Ok(())
 }
 fn apply_bridge_migration(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(include_str!("../migrations/index_db/007_credit_bridge.sql"))

@@ -15,6 +15,48 @@ fn wiki6_migrates_to_private_bridge7_disabled() {
         .unwrap();
     assert_eq!(configs, 0);
 }
+
+#[test]
+fn wiki7_upgrade_adds_fence_expiry_without_losing_existing_fences() {
+    let root = tempdir().unwrap();
+    let path = root.path().join("index.sqlite3");
+    let svc = VfsService::new(path.clone(), root.path().join("db"));
+    svc.run_index_migrations().unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    // Recreate the schema shipped by PR #187 while retaining its applied marker.
+    db.execute_batch(
+        "DROP TABLE credit_bridge_fences;
+         CREATE TABLE credit_bridge_fences (
+           vault_owner TEXT PRIMARY KEY,
+           generation INTEGER NOT NULL CHECK(generation>=0)
+         );
+         DELETE FROM schema_migrations
+         WHERE version='database_index:008_credit_bridge_fence_expiry';
+         INSERT INTO credit_bridge_fences(vault_owner,generation)
+         VALUES('existing-vault',7);",
+    )
+    .unwrap();
+
+    svc.run_index_migrations_for_upgrade(None).unwrap();
+    svc.run_index_migrations_for_upgrade(None).unwrap();
+    let (generation, expiry): (i64, Option<i64>) = db
+        .query_row(
+            "SELECT generation,expires_at_ns FROM credit_bridge_fences WHERE vault_owner='existing-vault'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(generation, 7);
+    assert_eq!(expiry, None);
+    let applied: i64 = db
+        .query_row(
+            "SELECT count(*) FROM schema_migrations WHERE version='database_index:008_credit_bridge_fence_expiry'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(applied, 1);
+}
 use candid::Principal;
 use credit_bridge_types::*;
 use vfs_runtime::credit_bridge::*;
@@ -594,7 +636,7 @@ fn disabled_config_allows_settlement_but_not_new_dispatch_or_peer_change() {
 fn migration6_preserves_balance_members_and_grants() {
     let f = Fixture::new();
     let before = f.bal();
-    f.db.execute_batch("DROP TABLE credit_bridge_links; DROP TABLE credit_bridge_fences; DROP TABLE credit_bridge_owners; DROP TABLE credit_bridge_settings; DROP TABLE credit_bridge_transfers; DELETE FROM schema_migrations WHERE version='database_index:007_credit_bridge';").unwrap();
+    f.db.execute_batch("DROP TABLE credit_bridge_links; DROP TABLE credit_bridge_fences; DROP TABLE credit_bridge_owners; DROP TABLE credit_bridge_settings; DROP TABLE credit_bridge_transfers; DELETE FROM schema_migrations WHERE version='database_index:008_credit_bridge_fence_expiry'; DELETE FROM schema_migrations WHERE version='database_index:007_credit_bridge';").unwrap();
     f.svc.run_index_migrations_for_upgrade(None).unwrap();
     assert_eq!(f.bal(), before);
     assert!(f.svc.vault_bridge_config().unwrap().is_none());
