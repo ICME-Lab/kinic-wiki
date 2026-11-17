@@ -131,6 +131,10 @@ fn scalar(c: &Connection, sql: &str, key: &str) -> R<i64> {
     c.query_row(sql, params![key], |r| crate::sqlite::row_get(r, 0))
         .map_err(|e| e.to_string())
 }
+fn row_count(c: &Connection, sql: &str) -> R<i64> {
+    c.query_row(sql, params![], |r| crate::sqlite::row_get(r, 0))
+        .map_err(|e| e.to_string())
+}
 fn owner_epoch(c: &Connection, p: Principal) -> R<u64> {
     Ok(scalar(
         c,
@@ -145,6 +149,17 @@ fn expire_unpaired_fences(c: &Connection, now: i64) -> R<()> {
            AND NOT EXISTS (SELECT 1 FROM credit_bridge_links
                            WHERE credit_bridge_links.vault_owner=credit_bridge_fences.vault_owner)",
         params![now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+fn expire_unpaired_fence(c: &Connection, vault_owner: Principal, now: i64) -> R<()> {
+    let owner = vault_owner.to_text();
+    c.execute(
+        "DELETE FROM credit_bridge_fences
+         WHERE vault_owner=?1 AND expires_at_ns<=?2
+           AND NOT EXISTS (SELECT 1 FROM credit_bridge_links WHERE vault_owner=?1)",
+        params![owner, now],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -335,7 +350,8 @@ fn link_status(l: &Link) -> LinkStatus {
 pub(crate) fn refund_headroom(c: &Connection, db: &str) -> R<i64> {
     scalar(
         c,
-        "SELECT COALESCE(SUM(refund_reserve),0) FROM credit_bridge_transfers WHERE database_id=?1",
+        "SELECT COALESCE(SUM(refund_reserve),0) FROM credit_bridge_transfers
+         WHERE database_id=?1 AND unresolved=1",
         db,
     )
 }

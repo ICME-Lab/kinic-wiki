@@ -78,7 +78,6 @@ impl VfsService {
                 params![now_i64],
             )
             .map_err(|e| e.to_string())?;
-            expire_unpaired_fences(c, now_i64)?;
             let existing = load_owner_lease(c, p)?;
             if let Some((epoch, None)) = existing {
                 return Ok(LinkSnapshot {
@@ -89,11 +88,7 @@ impl VfsService {
                 });
             }
             if existing.is_none()
-                && scalar(
-                    c,
-                    "SELECT count(*) FROM credit_bridge_owners WHERE ?1=?1",
-                    "",
-                )? >= CAP
+                && row_count(c, "SELECT count(*) FROM credit_bridge_owners")? >= CAP
             {
                 return Err("Capacity".into());
             }
@@ -156,7 +151,8 @@ impl VfsService {
         }
         self.write_index(|c| {
             validate_snapshot(c, p, snap, now)?;
-            expire_unpaired_fences(c, i64::try_from(now).map_err(|_| "InvalidInput")?)?;
+            let now_i64 = i64::try_from(now).map_err(|_| "InvalidInput")?;
+            expire_unpaired_fence(c, ch.vault_owner, now_i64)?;
             if ch.generation <= fence(c, ch.vault_owner)? {
                 return Err("Conflict".into());
             }
@@ -180,11 +176,7 @@ impl VfsService {
             if ch.expires_at_ns <= now {
                 return Err("Expired".into());
             }
-            let count = scalar(
-                c,
-                "SELECT count(*) FROM credit_bridge_links WHERE ?1=?1",
-                "",
-            )?;
+            let count = row_count(c, "SELECT count(*) FROM credit_bridge_links")?;
             if count >= CAP && link(c, p)?.is_none() {
                 return Err("Capacity".into());
             }
@@ -195,23 +187,18 @@ impl VfsService {
                 &ch.vault_owner.to_text(),
             )? == 0
             {
-                if scalar(
-                    c,
-                    "SELECT count(*) FROM credit_bridge_fences WHERE ?1=?1",
-                    "",
-                )? >= CAP
-                {
-                    return Err("Capacity".into());
+                if row_count(c, "SELECT count(*) FROM credit_bridge_fences")? >= CAP {
+                    expire_unpaired_fences(c, now_i64)?;
+                    if row_count(c, "SELECT count(*) FROM credit_bridge_fences")? >= CAP {
+                        return Err("Capacity".into());
+                    }
                 }
-                c.execute(
-                    "INSERT INTO credit_bridge_fences(vault_owner,generation) VALUES(?1,0)",
-                    params![ch.vault_owner.to_text()],
-                )
-                .map_err(|e| e.to_string())?;
             }
             // Admission makes a fence permanent, including pending approval.
             c.execute(
-                "UPDATE credit_bridge_fences SET expires_at_ns=NULL WHERE vault_owner=?1",
+                "INSERT INTO credit_bridge_fences(vault_owner,generation) VALUES(?1,0)
+                 ON CONFLICT(vault_owner) DO UPDATE SET expires_at_ns=NULL
+                 WHERE expires_at_ns IS NOT NULL",
                 params![ch.vault_owner.to_text()],
             )
             .map_err(|e| e.to_string())?;
@@ -309,9 +296,13 @@ impl VfsService {
             .and_then(|n| i64::try_from(n).ok())
             .ok_or("InvalidInput")?;
         self.write_index(|c| {
-            expire_unpaired_fences(c, i64::try_from(now).map_err(|_| "InvalidInput")?)?;
+            let now_i64 = i64::try_from(now).map_err(|_| "InvalidInput")?;
+            expire_unpaired_fence(c, r.vault_owner, now_i64)?;
             let exists=scalar(c,"SELECT count(*) FROM credit_bridge_fences WHERE vault_owner=?1",&r.vault_owner.to_text())? != 0;
-            if !exists && scalar(c,"SELECT count(*) FROM credit_bridge_fences WHERE ?1=?1","")? >= CAP {return Err("Capacity".into());}
+            if !exists && row_count(c,"SELECT count(*) FROM credit_bridge_fences")? >= CAP {
+                expire_unpaired_fences(c, now_i64)?;
+                if row_count(c,"SELECT count(*) FROM credit_bridge_fences")? >= CAP {return Err("Capacity".into());}
+            }
             c.execute(
                 "INSERT INTO credit_bridge_fences(vault_owner,generation,expires_at_ns) VALUES(?1,?2,?3)
                  ON CONFLICT(vault_owner) DO UPDATE SET

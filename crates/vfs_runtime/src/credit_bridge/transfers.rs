@@ -33,6 +33,7 @@ impl VfsService {
                 }
                 return Ok(t.view);
             }
+            let mut transfer_count = 0;
             for old in all(c)? {
                 if terminal(&old)
                     && !old.view.receiver_cleanup_pending
@@ -44,9 +45,11 @@ impl VfsService {
                         params![id(&old.view.offer.operation)?],
                     )
                     .map_err(|e| e.to_string())?;
+                } else {
+                    transfer_count += 1;
                 }
             }
-            if all(c)?.len() >= CAP as usize {
+            if transfer_count >= CAP as usize {
                 return Err("Capacity".into());
             }
             settle_storage(c, db, p, now)?;

@@ -1196,12 +1196,6 @@ fn expired_unpaired_revocations_do_not_exhaust_new_link_admission() {
     }
     let now = 300_000_000_002;
     let snap = f.svc.vault_link_snapshot(p(3), now).unwrap();
-    let fences: i64 =
-        f.db.query_row("SELECT count(*) FROM credit_bridge_fences", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(fences, 1, "the admitted pair's permanent fence must remain");
     assert!(f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
     let result = f.svc.vault_link_begin(
         p(3),
@@ -1217,5 +1211,14 @@ fn expired_unpaired_revocations_do_not_exhaust_new_link_admission() {
     assert!(
         result.is_ok(),
         "expired unpaired revokes blocked a new pair: {result:?}"
+    );
+    let fences: i64 =
+        f.db.query_row("SELECT count(*) FROM credit_bridge_fences", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        fences, 2,
+        "the admitted pair and new pair must retain their fences"
     );
 }
