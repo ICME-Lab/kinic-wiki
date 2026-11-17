@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { IDL } from "@icp-sdk/core/candid";
+import { idlFactory } from "@kinic/vault-candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { importKey } from "@kinic/vault-crypto";
-import type { Header, VaultActor, Action } from "../src/contracts.ts";
+import { contextInput } from "@kinic/vault-crypto/context";
+import { hash } from "@kinic/vault-crypto/documents";
+import type { Header, VaultActor, Action, Revision } from "../src/contracts.ts";
 vi.mock("@kinic/vault-crypto/context", async (load) => {
   const actual =
     await load<typeof import("@kinic/vault-crypto/context")>();
@@ -21,11 +25,11 @@ const header = (): Header => ({
   key_name: "test_key_1",
   sequence: 0n,
 });
-function setup() {
+function setup(loseResponse = true) {
   let h = header();
   let begin: any;
   let chunk: Uint8Array;
-  let lost = true;
+  let lost = loseResponse;
   const calls: any[] = [];
   const actor = {
     list_vaults: vi.fn(async () => ({ Ok: [h] })),
@@ -37,6 +41,14 @@ function setup() {
     mutate: vi.fn(async (m: any) => {
       calls.push(structuredClone(m));
       const a: Action = m.action;
+      if ("SaveInline" in a) {
+        begin = a.SaveInline.request;
+        chunk = new Uint8Array(a.SaveInline.bytes);
+        if (lost) {
+          lost = false;
+          throw Error("network");
+        }
+      }
       if ("BeginRevision" in a) {
         begin = a.BeginRevision;
         return {
@@ -51,7 +63,7 @@ function setup() {
         }
         return { Ok: { Done: null } };
       }
-      if ("CommitRevision" in a)
+      if ("CommitRevision" in a || "SaveInline" in a)
         return {
           Ok: {
             Revision: {
@@ -69,7 +81,10 @@ function setup() {
       if ("CancelUpload" in a) return { Ok: { Progress: true } };
       return { Ok: { Done: null } };
     }),
+    list_objects: vi.fn(async () => ({ Ok: { entries: [], next: [] } })),
+    list_history: vi.fn(async () => ({ Ok: { entries: [], next: [] } })),
     get_chunk: vi.fn(async () => ({ Ok: chunk })),
+    get_manifest: vi.fn(async () => ({ Err: { NotFound: null } })),
     get_upload_status: vi.fn(async () => ({ Ok: { Absent: null } })),
   } as unknown as VaultActor;
   const client = new VaultClient({
@@ -99,7 +114,7 @@ describe("II-only Vault client", () => {
     await client.create();
     expect(actor.create_vault).toHaveBeenLastCalledWith(first);
   });
-  it("retries identical ciphertext and operation after a lost chunk reply, then reads it", async () => {
+  it("retries identical ciphertext and operation after a lost inline reply, then reads it", async () => {
     const { client, calls } = setup();
     await client.open(header());
     await expect(
@@ -110,7 +125,7 @@ describe("II-only Vault client", () => {
     ).rejects.toThrow("network");
     expect(client.hasPendingSave).toBe(true);
     const revision = await client.resumeSave();
-    expect(calls[1]).toEqual(calls[2]);
+    expect(calls[0]).toEqual(calls[1]);
     const read = await client.read(revision);
     expect(new TextDecoder().decode(read.plaintext)).toBe("hello");
   });
@@ -205,7 +220,7 @@ it("replays a lost commit using the same operation and encrypted body", async ()
   });
   await client.open(header());
   await expect(
-    client.save({ kind: "note", title: "test" }, new Uint8Array([1])),
+    client.save({ kind: "attachment", title: "test" }, new Uint8Array(256 * 1024 + 1)),
   ).rejects.toThrow("network");
   await expect(client.resumeSave()).rejects.toThrow("commit lost");
   await client.resumeSave();
@@ -268,7 +283,7 @@ it("prevents a second save while the first is preparing", async () => {
         resolve = r;
       }),
   );
-  const first = client.save({ kind: "note", title: "a" }, new Uint8Array([1]));
+  const first = client.save({ kind: "attachment", title: "a" }, new Uint8Array(256 * 1024 + 1));
   await vi.waitFor(() => expect(resolve).toBeDefined());
   await expect(
     client.save({ kind: "note", title: "b" }, new Uint8Array([2])),
@@ -521,10 +536,12 @@ it.each(["lock", "switch", "destroy"])(
 type MutationReply = Awaited<ReturnType<VaultActor["mutate"]>>;
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 it("rejects concurrent mutation dispatch and keeps a newer flight after old finally", async () => {
@@ -566,14 +583,14 @@ it("does not let old save preparation release a newer preparation", async () => 
   type HeaderReply = Awaited<ReturnType<VaultActor["get_vault_header"]>>;
   const oldHeader = deferred<HeaderReply>();
   vi.mocked(actor.get_vault_header).mockReturnValueOnce(oldHeader.promise);
-  const old = client.save({ kind: "note", title: "old" }, new Uint8Array([1]));
+  const old = client.save({ kind: "attachment", title: "old" }, new Uint8Array(256 * 1024 + 1));
   client.session.lock();
   await client.open(header());
   const newHeader = deferred<HeaderReply>();
   vi.mocked(actor.get_vault_header).mockReturnValueOnce(newHeader.promise);
   const current = client.save(
-    { kind: "note", title: "new" },
-    new Uint8Array([2]),
+    { kind: "attachment", title: "new" },
+    new Uint8Array(256 * 1024 + 1).fill(2),
   );
   oldHeader.resolve({ Ok: header() });
   await expect(old).rejects.toThrow("Locked");
@@ -586,7 +603,7 @@ it("does not let old save preparation release a newer preparation", async () => 
   const revision = await client.resumeSave();
   const doc = await client.read(revision);
   expect(doc.metadata.title).toBe("new");
-  expect(doc.plaintext).toEqual(new Uint8Array([2]));
+  expect(doc.plaintext).toEqual(new Uint8Array(256 * 1024 + 1).fill(2));
 });
 
 it("does not let an old save flight release or replace a newer encrypted job", async () => {
@@ -613,7 +630,8 @@ it("does not let an old save flight release or replace a newer encrypted job", a
   await expect(
     client.save({ kind: "note", title: "third" }, new Uint8Array([3])),
   ).rejects.toThrow("SavePending");
-  newReply.resolve(await original(vi.mocked(actor.mutate).mock.calls[1][0]));
+  await expect(original(vi.mocked(actor.mutate).mock.calls[1][0])).rejects.toThrow("network");
+  newReply.reject(Error("network"));
   await expect(current).rejects.toThrow("network");
   const revision = await client.resumeSave();
   const doc = await client.read(revision);
@@ -689,7 +707,7 @@ it("reconciliation rejects a receipt for a different saved operation", async () 
 it("excludes another cancellation and resume while cancellation owns the saved job", async () => {
   const { client, actor } = setup();
   await client.open(header());
-  await expect(client.save({ kind: "note", title: "old" }, new Uint8Array([1]))).rejects.toThrow("network");
+  await expect(client.save({ kind: "attachment", title: "old" }, new Uint8Array(256*1024+1))).rejects.toThrow("network");
   type Status = Awaited<ReturnType<VaultActor["get_upload_status"]>>;
   const status = deferred<Status>();
   vi.mocked(actor.get_upload_status).mockReturnValue(status.promise);
@@ -709,7 +727,7 @@ it("excludes another cancellation and resume while cancellation owns the saved j
 it("retains the encrypted save when cancellation status is unavailable", async () => {
   const { client, actor } = setup();
   await client.open(header());
-  await expect(client.save({ kind: "note", title: "keep" }, new Uint8Array([1]))).rejects.toThrow("network");
+  await expect(client.save({ kind: "attachment", title: "keep" }, new Uint8Array(256*1024+1))).rejects.toThrow("network");
   vi.mocked(actor.get_upload_status).mockRejectedValue(Error("status unavailable"));
   await expect(client.cancelSave()).rejects.toThrow("status unavailable");
   expect(client.hasPendingSave).toBe(true);
@@ -721,7 +739,7 @@ it("retains the encrypted save when cancellation status is unavailable", async (
 it("fences an old cancellation after lock without replacing a new pending save", async () => {
   const { client, actor } = setup();
   await client.open(header());
-  await expect(client.save({ kind: "note", title: "old" }, new Uint8Array([1]))).rejects.toThrow("network");
+  await expect(client.save({ kind: "attachment", title: "old" }, new Uint8Array(256*1024+1))).rejects.toThrow("network");
   type Status = Awaited<ReturnType<VaultActor["get_upload_status"]>>;
   const status = deferred<Status>();
   vi.mocked(actor.get_upload_status).mockReturnValue(status.promise);
@@ -742,7 +760,7 @@ it("fences an old cancellation after lock without replacing a new pending save",
 it("releases only the completed cancellation job after a lost final reply", async () => {
   const { client, actor, calls } = setup();
   await client.open(header());
-  await expect(client.save({ kind: "note", title: "old" }, new Uint8Array([1]))).rejects.toThrow("network");
+  await expect(client.save({ kind: "attachment", title: "old" }, new Uint8Array(256*1024+1))).rejects.toThrow("network");
   const request = calls[0].action.BeginRevision;
   vi.mocked(actor.get_upload_status)
     .mockResolvedValueOnce({ Ok: { Pending: { request, cancel_job: [] } } } as never)
@@ -764,7 +782,7 @@ it("releases only the completed cancellation job after a lost final reply", asyn
 
 import { encryptDocumentV3 } from "@kinic/vault-crypto/documents";
 import type { Item } from "../src/api.ts";
-async function searchFixture(count = 5) {
+async function largeSearchFixture(count = 5) {
   const s = setup();
   await s.client.open(header());
   const items: Item[] = [];
@@ -822,87 +840,13 @@ async function searchFixture(count = 5) {
   return { ...s, items };
 }
 it("lists 100 note metadata without reading any content", async () => {
-  const { client, actor } = await searchFixture(100);
+  const { client, actor } = await largeSearchFixture(100);
   const items = await client.items();
   expect(items).toHaveLength(100);
   expect(items[99].metadata.title).toBe("title 99");
   expect(actor.get_chunk).not.toHaveBeenCalled();
   expect(items.some((x) => "searchText" in x)).toBe(false);
   expect(actor.get_vault_header).toHaveBeenCalledOnce();
-});
-it("searches sequential note bodies using one shared checked header and copied matching IDs", async () => {
-  const { client, actor, items } = await searchFixture();
-  const results = await client.searchNotes(items, "SECRET");
-  expect(results).toEqual([new Uint8Array(16).fill(1)]);
-  expect(results[0]).not.toBe(items[0].revision.object);
-  expect(actor.get_vault_header).toHaveBeenCalledOnce();
-  expect(
-    vi.mocked(actor.get_chunk).mock.calls.map((x) => new Uint8Array(x[1])[0]),
-  ).toEqual([1, 2]);
-});
-it("does no content reads for an empty search query", async () => {
-  const { client, actor, items } = await searchFixture();
-  await expect(client.searchNotes(items, "")).resolves.toEqual([]);
-  expect(actor.get_chunk).not.toHaveBeenCalled();
-});
-it.each(["lock", "switch", "destroy"] as const)(
-  "rejects a search after %s during a header request",
-  async (event) => {
-    const { client, actor, items } = await searchFixture();
-    const reply =
-      deferred<Awaited<ReturnType<VaultActor["get_vault_header"]>>>();
-    vi.mocked(actor.get_vault_header).mockReturnValueOnce(reply.promise);
-    const pending = client.searchNotes(items, "secret");
-    const rejected = expect(pending).rejects.toThrow("Locked");
-    if (event === "lock") client.session.lock();
-    if (event === "destroy") client.destroy();
-    if (event === "switch")
-      await client
-        .open({ ...header(), id: new Uint8Array(16).fill(8) })
-        .catch(() => {});
-    reply.resolve({ Ok: header() });
-    await rejected;
-    expect(actor.get_chunk).not.toHaveBeenCalled();
-  },
-);
-it.each(["lock", "switch", "destroy"] as const)(
-  "rejects a search after %s during a body request",
-  async (event) => {
-    const { client, actor, items } = await searchFixture();
-    const original = vi.mocked(actor.get_chunk).getMockImplementation()!;
-    const reply = deferred<Awaited<ReturnType<VaultActor["get_chunk"]>>>();
-    vi.mocked(actor.get_chunk).mockReturnValueOnce(reply.promise);
-    const pending = client.searchNotes(items, "secret");
-    const rejected = expect(pending).rejects.toThrow("Locked");
-    await vi.waitFor(() => expect(actor.get_chunk).toHaveBeenCalledOnce());
-    if (event === "lock") client.session.lock();
-    if (event === "destroy") client.destroy();
-    if (event === "switch")
-      await client
-        .open({ ...header(), id: new Uint8Array(16).fill(8) })
-        .catch(() => {});
-    reply.resolve(await original(id, items[0].revision.object, 1n, 0));
-    await rejected;
-    expect(actor.get_chunk).toHaveBeenCalledOnce();
-  },
-);
-it("fences search dispatch if context resolution becomes stale", async () => {
-  const { client, actor, items } = await searchFixture();
-  const checked = (client as any).checkedContext.bind(client);
-  vi.spyOn(client as any, "checkedContext").mockImplementation(async () => {
-    const c = await checked();
-    queueMicrotask(() => client.session.lock());
-    return c;
-  });
-  await expect(client.searchNotes(items, "secret")).rejects.toThrow("Locked");
-  expect(actor.get_chunk).not.toHaveBeenCalled();
-});
-it("standalone reads refresh and reject a changed header before content dispatch", async () => {
-  const { client, actor, items, change } = await searchFixture();
-  change({ ...header(), nonce: new Uint8Array(32).fill(8) });
-  await expect(client.read(items[0].revision)).rejects.toThrow("TargetChanged");
-  expect(actor.get_vault_header).toHaveBeenCalledOnce();
-  expect(actor.get_chunk).not.toHaveBeenCalled();
 });
 it("accepts a server-assigned creation ID and sends only an operation", async () => {
   const { client, actor } = setup();
@@ -912,41 +856,618 @@ it("accepts a server-assigned creation ID and sends only an operation", async ()
     "operation",
   ]);
 });
-it("waits for each note before dispatching the next body", async () => {
-  const { client, actor, items } = await searchFixture();
-  const original = vi.mocked(actor.get_chunk).getMockImplementation()!;
-  const reply = deferred<Awaited<ReturnType<VaultActor["get_chunk"]>>>();
-  vi.mocked(actor.get_chunk).mockReturnValueOnce(reply.promise);
-  const pending = client.searchNotes(items, "secret");
-  await vi.waitFor(() => expect(actor.get_chunk).toHaveBeenCalledOnce());
-  expect(actor.get_chunk).toHaveBeenCalledOnce();
-  reply.resolve(await original(id, items[0].revision.object, 1n, 0));
-  await expect(pending).resolves.toEqual([new Uint8Array(16).fill(1)]);
-  expect(actor.get_chunk).toHaveBeenCalledTimes(2);
-});
-it.each(["lock", "switch", "destroy"] as const)(
-  "wipes a decrypted search document when %s occurs before search receives it",
-  async (event) => {
-    const { client, items } = await searchFixture();
-    const original = (client as any).readWithContext.bind(client);
-    let plaintext!: Uint8Array;
-    vi.spyOn(client as any, "readWithContext").mockImplementation(
-      async (...args) => {
-        const doc = await original(...args);
-        plaintext = doc.plaintext;
-        queueMicrotask(() => {
-          if (event === "lock") client.session.lock();
-          if (event === "destroy") client.destroy();
-          if (event === "switch")
-            void client
-              .open({ ...header(), id: new Uint8Array(16).fill(8) })
-              .catch(() => {});
-        });
-        return doc;
-      },
+it.each([0, 256 * 1024])(
+  "saves %i bytes with one update and no pre-save queries after unlock",
+  async (size) => {
+    const { client, actor, calls } = setup(false);
+    await client.open(header());
+    vi.mocked(actor.get_vault_header).mockClear();
+    vi.mocked(actor.derive_vault_key).mockClear();
+    const plain = new Uint8Array(size).fill(11);
+    const revision = await client.save(
+      { kind: "note", title: "inline" },
+      plain,
     );
-    await expect(client.searchNotes(items, "secret")).rejects.toThrow("Locked");
-    expect(plaintext.length).toBeGreaterThan(0);
-    expect(plaintext.every((x) => x === 0)).toBe(true);
+    expect(actor.mutate).toHaveBeenCalledTimes(1);
+    expect(actor.get_vault_header).not.toHaveBeenCalled();
+    expect(actor.derive_vault_key).not.toHaveBeenCalled();
+    const request = calls[0].action.SaveInline;
+    expect(request).toBeDefined();
+    expect(request.context_hash).toEqual(
+      await hash(
+        contextInput({
+          canister: owner.toText(),
+          owner: owner.toText(),
+          vault: id,
+          nonce: new Uint8Array(32).fill(2),
+          key_name: "test_key_1",
+        }),
+      ),
+    );
+    expect(request.bytes.length).toBe(size + 16);
+    expect(request.request.chunk_hashes).toHaveLength(1);
+    expect(client.hasPendingSave).toBe(false);
+    const doc = await client.read(revision);
+    expect(doc.plaintext).toEqual(plain);
   },
 );
+it("retains the byte-identical inline mutation after a committed response is lost", async () => {
+  const { client, actor, calls } = setup(false);
+  const execute = vi.mocked(actor.mutate).getMockImplementation()!;
+  let lose = true;
+  vi.mocked(actor.mutate).mockImplementation(async (mutation) => {
+    const committed = await execute(mutation);
+    if (lose) {
+      lose = false;
+      throw Error("network");
+    }
+    return committed;
+  });
+  await client.open(header());
+  vi.mocked(actor.get_vault_header).mockClear();
+  await expect(
+    client.save({ kind: "note", title: "retry" }, new Uint8Array([1, 2, 3])),
+  ).rejects.toThrow("network");
+  expect(calls[0].action.SaveInline).toBeDefined();
+  await expect(
+    client.save({ kind: "note", title: "changed" }, new Uint8Array([9])),
+  ).rejects.toThrow("SavePending");
+  const revision = await client.resumeSave();
+  expect(calls).toHaveLength(2);
+  expect(calls[0]).toEqual(calls[1]);
+  const mutationType = idlFactory({ IDL })._fields.find(
+    ([name]) => name === "mutate",
+  )![1].argTypes;
+  expect(new Uint8Array(IDL.encode(mutationType, [calls[0]]))).toEqual(
+    new Uint8Array(IDL.encode(mutationType, [calls[1]])),
+  );
+  expect(actor.get_vault_header).not.toHaveBeenCalled();
+  expect((await client.read(revision)).plaintext).toEqual(
+    new Uint8Array([1, 2, 3]),
+  );
+});
+it("keeps attachments above the inline boundary on the chunked flow", async () => {
+  const { client, calls } = setup(false);
+  await client.open(header());
+  await client.save(
+    { kind: "attachment", title: "large" },
+    new Uint8Array(256 * 1024 + 1),
+  );
+  expect(calls.map((c) => Object.keys(c.action)[0])).toEqual([
+    "BeginRevision",
+    "PutChunk",
+    "CommitRevision",
+  ]);
+});
+it.each(["nonce", "invalid_nonce", "key_name", "public_key", "vault"])(
+  "rejects locally changed cached %s before inline save",
+  async (field) => {
+    const { client, actor } = setup(false);
+    await client.open(header());
+    if (field === "nonce") client.header!.nonce = new Uint8Array(32).fill(9);
+    if (field === "invalid_nonce") client.header!.nonce = new Uint8Array(1);
+    if (field === "key_name") client.header!.key_name = "other";
+    if (field === "public_key")
+      client.header!.public_key = new Uint8Array(96).fill(9);
+    if (field === "vault") client.header!.id = new Uint8Array(16).fill(9);
+    await expect(
+      client.save({ kind: "note", title: "changed" }, new Uint8Array([1])),
+    ).rejects.toThrow("TargetChanged");
+    expect(actor.mutate).not.toHaveBeenCalled();
+    expect(client.session.root).toBeUndefined();
+  },
+);
+it.each(["Conflict", "InvalidInput", "QuotaExceeded", "NotFound"])(
+  "releases an inline job after delivered %s without cancelling a nonexistent upload",
+  async (kind) => {
+    const { client, actor } = setup(false);
+    await client.open(header());
+    vi.mocked(actor.mutate).mockResolvedValueOnce({
+      Err: { [kind]: null },
+    } as never);
+    await expect(
+      client.save({ kind: "note", title: "rejected" }, new Uint8Array([1])),
+    ).rejects.toThrow(kind);
+    expect(client.hasPendingSave).toBe(false);
+    expect(actor.get_upload_status).not.toHaveBeenCalled();
+    await expect(client.retryMutation()).rejects.toThrow("NoPendingMutation");
+    await expect(
+      client.save({ kind: "note", title: "corrected" }, new Uint8Array([2])),
+    ).resolves.toBeDefined();
+  },
+);
+
+it("reopens a server-changed immutable context after inline rejection", async () => {
+  const { client, actor, change } = setup(false);
+  await client.open(header());
+  const changed = header();
+  changed.nonce = new Uint8Array(32).fill(9);
+  change(changed);
+  vi.mocked(actor.mutate).mockResolvedValueOnce({
+    Err: { InvalidInput: null },
+  });
+  await expect(
+    client.save({ kind: "note", title: "old context" }, new Uint8Array([1])),
+  ).rejects.toThrow("InvalidInput");
+  expect(client.hasPendingSave).toBe(false);
+  await expect(client.refreshHeader()).rejects.toThrow("TargetChanged");
+  expect(client.session.root).toBeUndefined();
+  await client.open(changed);
+  await expect(
+    client.save({ kind: "note", title: "new context" }, new Uint8Array([2])),
+  ).resolves.toBeDefined();
+});
+it.each(["Expired", "Storage"])(
+  "keeps reconciliation ciphertext on %s after an uncertain inline commit",
+  async (kind) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    await expect(
+      client.save({ kind: "note", title: "unknown" }, new Uint8Array([1])),
+    ).rejects.toThrow("network");
+    vi.mocked(actor.mutate).mockResolvedValue({
+      Err: { [kind]: null },
+    } as never);
+    await expect(client.resumeSave()).rejects.toThrow(kind);
+    expect(client.hasPendingSave).toBe(true);
+    await expect(client.resumeSave()).rejects.toThrow(kind);
+    expect(client.hasPendingSave).toBe(true);
+  },
+);
+it.each(["Conflict", "QuotaExceeded", "InvalidInput", "Unauthorized"])(
+  "retains a previously ambiguous inline payload across repeated delivered %s",
+  async (kind) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    await expect(
+      client.save(
+        { kind: "note", title: "committed?" },
+        new Uint8Array([1, 2, 3]),
+      ),
+    ).rejects.toThrow("network");
+    const original = structuredClone(vi.mocked(actor.mutate).mock.calls[0][0]);
+    vi.mocked(actor.mutate).mockResolvedValue({
+      Err: { [kind]: null },
+    } as never);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(client.resumeSave()).rejects.toThrow(kind);
+      expect(client.hasPendingSave).toBe(true);
+      expect(vi.mocked(actor.mutate).mock.lastCall![0]).toEqual(original);
+    }
+    await expect(client.cancelSave()).rejects.toThrow();
+    expect(client.hasPendingSave).toBe(true);
+  },
+);
+
+function committedInline(actor: VaultActor): Revision {
+  const action = vi.mocked(actor.mutate).mock.calls[0][0].action;
+  if (!("SaveInline" in action)) throw Error("Expected inline mutation");
+  const r = action.SaveInline.request;
+  return structuredClone({
+    vault: r.vault,
+    object: r.object,
+    revision: r.expected_revision + 1n,
+    sequence: 1n,
+    plain_size: r.plain_size,
+    manifest: r.manifest,
+    chunk_hashes: r.chunk_hashes,
+    deleted: false,
+  });
+}
+it.each(["resume", "cancel"])(
+  "reconciles the full encrypted revision via %s after receipt collection",
+  async (method) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    await expect(
+      client.save(
+        { kind: "note", title: "committed" },
+        new Uint8Array([1, 2, 3]),
+      ),
+    ).rejects.toThrow("network");
+    const committed = committedInline(actor);
+    vi.mocked(actor.mutate).mockResolvedValue({ Err: { Conflict: null } });
+    vi.mocked(actor.get_manifest).mockResolvedValue({ Ok: committed });
+    if (method === "resume")
+      expect(await client.resumeSave()).toEqual(committed);
+    else
+      expect(await client.cancelSave()).toEqual({
+        Committed: {
+          vault: committed.vault,
+          object: committed.object,
+          revision: committed.revision,
+          sequence: committed.sequence,
+        },
+      });
+    expect(actor.get_manifest).toHaveBeenLastCalledWith(
+      committed.vault,
+      committed.object,
+      1n,
+    );
+    expect(client.hasPendingSave).toBe(false);
+    await expect(client.retryMutation()).rejects.toThrow("NoPendingMutation");
+    expect((await client.read(committed)).plaintext).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  },
+);
+it("resolves the retained mutation when another response is lost but the encrypted revision proves commit", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  await expect(
+    client.save({ kind: "note", title: "committed" }, new Uint8Array([1])),
+  ).rejects.toThrow("network");
+  const committed = committedInline(actor);
+  vi.mocked(actor.mutate).mockRejectedValue(Error("network again"));
+  vi.mocked(actor.get_manifest).mockResolvedValue({ Ok: committed });
+  await expect(client.resumeSave()).resolves.toEqual(committed);
+  expect(client.hasPendingSave).toBe(false);
+  await expect(client.retryMutation()).rejects.toThrow("NoPendingMutation");
+});
+it.each([
+  "vault",
+  "object",
+  "revision",
+  "plain_size",
+  "manifest",
+  "hash",
+  "deleted",
+  "sequence",
+])(
+  "rejects mismatched %s as evidence for an uncertain inline commit",
+  async (field) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    await expect(
+      client.save({ kind: "note", title: "uncertain" }, new Uint8Array([1])),
+    ).rejects.toThrow("network");
+    const r = committedInline(actor);
+    if (field === "vault") r.vault = new Uint8Array(16).fill(9);
+    if (field === "object") r.object = new Uint8Array(16).fill(9);
+    if (field === "revision") r.revision++;
+    if (field === "plain_size") r.plain_size++;
+    if (field === "manifest") r.manifest = new Uint8Array([9]);
+    if (field === "hash") r.chunk_hashes = [new Uint8Array(32).fill(9)];
+    if (field === "deleted") r.deleted = true;
+    if (field === "sequence") r.sequence = 0n;
+    vi.mocked(actor.mutate).mockResolvedValue({ Err: { Conflict: null } });
+    vi.mocked(actor.get_manifest).mockResolvedValue({ Ok: r });
+    await expect(client.resumeSave()).rejects.toThrow("Conflict");
+    expect(client.hasPendingSave).toBe(true);
+    await expect(client.cancelSave()).rejects.toThrow("InvalidReceipt");
+    expect(client.hasPendingSave).toBe(true);
+  },
+);
+it("fences late inline reconciliation after lock while retaining the new session's save", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  await expect(
+    client.save({ kind: "note", title: "old" }, new Uint8Array([1])),
+  ).rejects.toThrow("network");
+  const committed = committedInline(actor);
+  const proof = deferred<Awaited<ReturnType<VaultActor["get_manifest"]>>>();
+  vi.mocked(actor.mutate).mockResolvedValueOnce({ Err: { Conflict: null } });
+  vi.mocked(actor.get_manifest).mockReturnValueOnce(proof.promise);
+  const old = client.resumeSave();
+  await vi.waitFor(() => expect(actor.get_manifest).toHaveBeenCalledOnce());
+  client.session.lock();
+  await client.open(header());
+  vi.mocked(actor.mutate).mockRejectedValueOnce(Error("new lost"));
+  await expect(
+    client.save({ kind: "note", title: "new" }, new Uint8Array([2])),
+  ).rejects.toThrow("new lost");
+  proof.resolve({ Ok: committed });
+  await expect(old).rejects.toThrow("Locked");
+  expect(client.hasPendingSave).toBe(true);
+  const r = await client.resumeSave();
+  expect((await client.read(r)).metadata.title).toBe("new");
+});
+it.each(["resume", "cancel"])(
+  "preserves an unrelated cancellation flight when %s proof resolves in the same session",
+  async (method) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    await expect(
+      client.save({ kind: "note", title: "saved" }, new Uint8Array([1])),
+    ).rejects.toThrow("network");
+    const committed = committedInline(actor);
+    vi.mocked(actor.mutate).mockResolvedValueOnce({ Err: { Conflict: null } });
+    if (method === "cancel")
+      await expect(client.resumeSave()).rejects.toThrow("Conflict");
+    vi.mocked(actor.get_manifest).mockClear();
+    const proof = deferred<Awaited<ReturnType<VaultActor["get_manifest"]>>>();
+    vi.mocked(actor.get_manifest).mockReturnValueOnce(proof.promise);
+    const reconciliation =
+      method === "resume" ? client.resumeSave() : client.cancelSave();
+    await vi.waitFor(() => expect(actor.get_manifest).toHaveBeenCalledOnce());
+    const reply = deferred<MutationReply>();
+    vi.mocked(actor.mutate).mockReturnValueOnce(reply.promise);
+    const upload = new Uint8Array(16).fill(12);
+    const cancellation = client.cancelUpload(id, upload);
+    const cancellationFailure =
+      expect(cancellation).rejects.toThrow("other reply lost");
+    const original = structuredClone(vi.mocked(actor.mutate).mock.lastCall![0]);
+    proof.resolve({ Ok: committed });
+    await reconciliation;
+    reply.reject(Error("other reply lost"));
+    await cancellationFailure;
+    await expect(client.collect()).rejects.toThrow("ResolvePendingMutation");
+    vi.mocked(actor.mutate).mockResolvedValueOnce({ Ok: { Progress: true } });
+    await client.cancelUpload(id, upload);
+    expect(vi.mocked(actor.mutate).mock.lastCall![0]).toEqual(original);
+  },
+);
+it("does not claim an unrelated request already sending before cancellation proof begins", async () => {
+  const { client, actor } = setup();
+  await client.open(header());
+  await expect(
+    client.save({ kind: "note", title: "saved" }, new Uint8Array([1])),
+  ).rejects.toThrow("network");
+  const committed = committedInline(actor);
+  vi.mocked(actor.mutate).mockResolvedValueOnce({ Err: { Conflict: null } });
+  await expect(client.resumeSave()).rejects.toThrow("Conflict");
+  const reply = deferred<MutationReply>();
+  vi.mocked(actor.mutate).mockReturnValueOnce(reply.promise);
+  const collecting = client.collect();
+  const lost = expect(collecting).rejects.toThrow("collect lost");
+  const original = structuredClone(vi.mocked(actor.mutate).mock.lastCall![0]);
+  const proof = deferred<Awaited<ReturnType<VaultActor["get_manifest"]>>>();
+  vi.mocked(actor.get_manifest).mockReturnValueOnce(proof.promise);
+  const cancelling = client.cancelSave();
+  proof.resolve({ Ok: committed });
+  await cancelling;
+  reply.reject(Error("collect lost"));
+  await lost;
+  vi.mocked(actor.mutate).mockResolvedValueOnce({ Ok: { Collected: 1n } });
+  await expect(client.retryMutation()).resolves.toEqual({ Collected: 1n });
+  expect(vi.mocked(actor.mutate).mock.lastCall![0]).toEqual(original);
+});
+it.each(["resume", "cancel"])(
+  "retains an active retry of the same inline operation when %s proof resolves",
+  async (method) => {
+    const { client, actor } = setup();
+    await client.open(header());
+    await expect(
+      client.save({ kind: "note", title: "saved" }, new Uint8Array([1])),
+    ).rejects.toThrow("network");
+    const committed = committedInline(actor);
+    const proof = deferred<Awaited<ReturnType<VaultActor["get_manifest"]>>>();
+    vi.mocked(actor.get_manifest).mockReturnValueOnce(proof.promise);
+    const activeReply = deferred<MutationReply>();
+    let active!: ReturnType<VaultClient["retryMutation"]>;
+    let reconciliation: Promise<unknown>;
+    if (method === "resume") {
+      const failedReply = deferred<MutationReply>();
+      vi.mocked(actor.mutate)
+        .mockReturnValueOnce(failedReply.promise)
+        .mockReturnValueOnce(activeReply.promise);
+      reconciliation = client.resumeSave();
+      // Attach after mutate's await: its finally first restores ambiguous, this
+      // reaction starts the same-op flight, then resumeSave captures proof state.
+      void failedReply.promise.catch(() => {
+        active = client.retryMutation();
+      });
+      failedReply.reject(Error("retry reply lost"));
+    } else {
+      vi.mocked(actor.mutate).mockReturnValueOnce(activeReply.promise);
+      active = client.retryMutation();
+      reconciliation = client.cancelSave();
+    }
+    await vi.waitFor(() => expect(actor.get_manifest).toHaveBeenCalledOnce());
+    expect(active).toBeDefined();
+    proof.resolve({ Ok: committed });
+    await reconciliation;
+    await expect(client.collect()).rejects.toThrow("ResolvePendingMutation");
+    activeReply.resolve({ Ok: { Revision: committed } });
+    await expect(active).resolves.toEqual({ Revision: committed });
+    const collectReply = deferred<MutationReply>();
+    vi.mocked(actor.mutate).mockReturnValueOnce(collectReply.promise);
+    const collecting = client.collect();
+    const lost = expect(collecting).rejects.toThrow("later collect lost");
+    const original = structuredClone(vi.mocked(actor.mutate).mock.lastCall![0]);
+    collectReply.reject(Error("later collect lost"));
+    await lost;
+    vi.mocked(actor.mutate).mockResolvedValueOnce({ Ok: { Collected: 1n } });
+    await client.retryMutation();
+    expect(vi.mocked(actor.mutate).mock.lastCall![0]).toEqual(original);
+  },
+);
+
+async function searchFixture() {
+  const x = setup(false);
+  await x.client.open(header());
+  const payloads = new Map<string, Uint8Array>();
+  const revisions: Revision[] = [];
+  for (const [kind, title, body] of [
+    ["note", "Alpha", "needle in body"],
+    ["note", "Beta", "other text"],
+    ["note", "Gamma", "NEEDLE again"],
+    ["credential", "Login", "needle password"],
+    ["attachment", "File", "needle file"],
+  ] as const) {
+    const revision = await x.client.save(
+      { kind, title },
+      new TextEncoder().encode(body),
+    );
+    revisions.push(revision);
+    payloads.set(
+      Array.from(revision.object).join(","),
+      new Uint8Array(x.calls.at(-1).action.SaveInline.bytes),
+    );
+  }
+  vi.mocked(x.actor.list_objects).mockResolvedValue({
+    Ok: { entries: revisions, next: [] },
+  });
+  vi.mocked(x.actor.get_chunk).mockImplementation(async (_v, object) => ({
+    Ok: payloads.get(Array.from(object).join(","))!,
+  }));
+  vi.mocked(x.actor.get_chunk).mockClear();
+  return { ...x, revisions };
+}
+it("lists metadata without reading any live note bodies", async () => {
+  const x = await searchFixture();
+  const items = await x.client.items();
+  expect(items.map((x) => x.metadata.title)).toEqual([
+    "Alpha",
+    "Beta",
+    "Gamma",
+    "Login",
+    "File",
+  ]);
+  expect(x.actor.get_chunk).not.toHaveBeenCalled();
+  expect(items.every((x) => !("searchText" in x))).toBe(true);
+});
+it("rejects a changed Vault context before fetching a note body", async () => {
+  const x = await searchFixture();
+  const items = await x.client.items();
+  vi.mocked(x.actor.get_chunk).mockClear();
+  x.change({ ...header(), nonce: new Uint8Array(32).fill(8) });
+  await expect(x.client.searchNotes(items, "needle")).rejects.toThrow(
+    "Locked",
+  );
+  expect(x.actor.get_chunk).not.toHaveBeenCalled();
+});
+it("explicitly searches note bodies with at most two reads and progress, without caching plaintext", async () => {
+  const x = await searchFixture();
+  const items = await x.client.items();
+  let active = 0,
+    maximum = 0;
+  const original = vi.mocked(x.actor.get_chunk).getMockImplementation()!;
+  const finishes: (() => void)[] = [];
+  vi.mocked(x.actor.get_chunk).mockImplementation(
+    (...args) =>
+      new Promise((resolve) => {
+        maximum = Math.max(maximum, ++active);
+        finishes.push(() => {
+          active--;
+          void original(...args).then(resolve);
+        });
+      }),
+  );
+  const progress = vi.fn();
+  const pending = x.client.searchNotes(items, "needle", {
+    onProgress: progress,
+  });
+  await vi.waitFor(() => expect(finishes).toHaveLength(2));
+  expect(active).toBe(2);
+  finishes.shift()!();
+  finishes.shift()!();
+  await vi.waitFor(() => expect(finishes).toHaveLength(1));
+  finishes.shift()!();
+  const matches = await pending;
+  expect(maximum).toBe(2);
+  expect(matches.map((x) => x.metadata.title)).toEqual(["Alpha", "Gamma"]);
+  expect(progress).toHaveBeenLastCalledWith({ completed: 3, total: 3 });
+  expect(items.every((x) => !("searchText" in x))).toBe(true);
+});
+it.each(["cancel", "lock"])(
+  "fences a late body search on %s and stops scheduling",
+  async (mode) => {
+    const x = await searchFixture();
+    const items = await x.client.items();
+    const finishes: (() => void)[] = [];
+    const original = vi.mocked(x.actor.get_chunk).getMockImplementation()!;
+    vi.mocked(x.actor.get_chunk).mockImplementation(
+      (...args) =>
+        new Promise((resolve) => {
+          finishes.push(() => {
+            void original(...args).then(resolve);
+          });
+        }),
+    );
+    vi.mocked(x.actor.get_chunk).mockClear();
+    const controller = new AbortController(),
+      progress = vi.fn();
+    const pending = x.client.searchNotes(items, "needle", {
+      signal: controller.signal,
+      onProgress: progress,
+    });
+    const rejected = expect(pending).rejects.toThrow(
+      mode === "lock" ? "Locked" : "SearchCancelled",
+    );
+    await vi.waitFor(() => expect(finishes).toHaveLength(2));
+    if (mode === "lock") x.client.session.lock();
+    else controller.abort();
+    await rejected;
+    const updates = progress.mock.calls.length;
+    finishes.forEach((f) => f());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(x.actor.get_chunk).toHaveBeenCalledTimes(2);
+    expect(progress).toHaveBeenCalledTimes(updates);
+  },
+);
+
+it("bounds overlapping cancelled searches to two in-flight reads across the client", async () => {
+  const x = await searchFixture();
+  const items = await x.client.items();
+  const original = vi.mocked(x.actor.get_chunk).getMockImplementation()!;
+  const finishes: (() => void)[] = [];
+  vi.mocked(x.actor.get_chunk).mockImplementation(
+    (...args) =>
+      new Promise((resolve) => {
+        finishes.push(() => {
+          void original(...args).then(resolve);
+        });
+      }),
+  );
+  const controller = new AbortController();
+  const first = x.client.searchNotes(items, "needle", {
+    signal: controller.signal,
+  });
+  const rejected = expect(first).rejects.toThrow("SearchCancelled");
+  await vi.waitFor(() => expect(finishes).toHaveLength(2));
+  controller.abort();
+  await rejected;
+  const second = x.client.searchNotes(items, "needle");
+  await Promise.resolve();
+  expect(x.actor.get_chunk).toHaveBeenCalledTimes(2);
+  finishes.shift()!();
+  finishes.shift()!();
+  await vi.waitFor(() => expect(finishes).toHaveLength(2));
+  finishes.shift()!();
+  finishes.shift()!();
+  await vi.waitFor(() => expect(finishes).toHaveLength(1));
+  finishes.shift()!();
+  expect((await second).map((x) => x.metadata.title)).toEqual([
+    "Alpha",
+    "Gamma",
+  ]);
+  expect(x.actor.get_chunk).toHaveBeenCalledTimes(5);
+});
+it("wipes every decrypted search buffer and never reads credential or attachment bodies", async () => {
+  const x = await searchFixture();
+  const items = await x.client.items();
+  const original = x.client.read.bind(x.client),
+    buffers: Uint8Array[] = [];
+  vi.spyOn(x.client, "read").mockImplementation(async (...args) => {
+    const doc = await original(...args);
+    buffers.push(doc.plaintext);
+    return doc;
+  });
+  await x.client.searchNotes(items, "needle");
+  expect(buffers).toHaveLength(3);
+  expect(buffers.every((b) => b.every((v) => v === 0))).toBe(true);
+  expect(x.actor.get_chunk).toHaveBeenCalledTimes(3);
+});
+it("reads only previous metadata for a deleted note list entry", async () => {
+  const x = await searchFixture();
+  const previous = x.revisions[0];
+  const deleted = {
+    ...previous,
+    revision: 2n,
+    manifest: [],
+    chunk_hashes: [],
+    deleted: true,
+  };
+  vi.mocked(x.actor.list_objects).mockResolvedValue({
+    Ok: { entries: [deleted], next: [] },
+  });
+  vi.mocked(x.actor.list_history).mockResolvedValue({
+    Ok: { entries: [deleted, previous], next: [] },
+  });
+  const items = await x.client.items();
+  expect(items[0].metadata.title).toBe("Alpha");
+  expect(items[0].revision.deleted).toBe(true);
+  expect(await x.client.searchNotes(items, "needle")).toEqual([]);
+  expect(x.actor.get_chunk).not.toHaveBeenCalled();
+});

@@ -85,6 +85,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
   const alive = useRef(true);
   const busyRef = useRef(false);
   const workId = useRef(0);
+  const refreshId = useRef(0);
   useLayoutEffect(() => {
     alive.current = true;
     client.session.onLock = () => {
@@ -201,6 +202,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     } else if (listed) select(listed);
   }, [client, select]);
   const refresh = async () => {
+    const request = ++refreshId.current;
     const ticket = client.session.capture();
     const [list, q, header] = await Promise.all([
       client.items(),
@@ -209,6 +211,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     ]);
     client.session.check(ticket);
     if (!alive.current) return;
+    if (refreshId.current !== request) return;
     setItems(list);
     setQuota(q);
     select(header, "open");

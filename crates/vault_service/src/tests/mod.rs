@@ -204,3 +204,5 @@ mod cleanup;
 mod creation;
 mod keys;
 mod uploads;
+
+mod inline;

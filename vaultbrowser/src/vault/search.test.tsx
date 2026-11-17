@@ -14,34 +14,35 @@ function setup() {
   const view = render(<VaultDocuments {...props} />);
   return { client, props, view, lock: () => ticket++, done: () => pending };
 }
-it("filters titles without reads, searches contents explicitly, and resets IDs when query/list changes", async () => {
+it("filters titles without reads and preserves body matches across an unchanged refresh", async () => {
   const x = setup();
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), { target: { value: "match" } });
   expect(screen.getByRole("button", { name: "Title match" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Hidden body" })).toBeNull();
   expect(x.client.searchNotes).not.toHaveBeenCalled();
-  vi.mocked(x.client.searchNotes).mockResolvedValue([new Uint8Array(16).fill(2)]);
-  fireEvent.click(screen.getByRole("button", { name: "Search note contents" }));
+  vi.mocked(x.client.searchNotes).mockResolvedValue([items[1]]);
+  fireEvent.click(screen.getByRole("button", { name: "Search note bodies" }));
   await screen.findByRole("button", { name: "Hidden body" });
-  expect(x.client.searchNotes).toHaveBeenCalledWith(items, "match");
+  expect(x.client.searchNotes).toHaveBeenCalledWith(items, "match", expect.objectContaining({ signal: expect.any(AbortSignal), onProgress: expect.any(Function) }));
   expect(screen.getByRole("button", { name: "Title match" })).toBeTruthy();
   x.view.rerender(<VaultDocuments {...x.props} items={[...items]} />);
+  expect(screen.getByRole("button", { name: "Hidden body" })).toBeTruthy();
+  x.view.rerender(<VaultDocuments {...x.props} items={[items[0], { ...items[1], revision: { ...items[1].revision, revision: 2n } }]} />);
   expect(screen.queryByRole("button", { name: "Hidden body" })).toBeNull();
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), { target: { value: "none" } });
   expect(screen.queryByRole("button", { name: "Title match" })).toBeNull();
 });
 it.each(["lock", "unmount", "client", "items"])("discards late content search after %s and blocks query/reexecution while searching", async (reason) => {
   const x = setup();
-  let resolve!: (ids: Uint8Array[]) => void;
+  let resolve!: (matches: Item[]) => void;
   vi.mocked(x.client.searchNotes).mockImplementation(() => new Promise(r => { resolve = r; }));
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), { target: { value: "match" } });
-  fireEvent.click(screen.getByRole("button", { name: "Search note contents" }));
-  expect((screen.getByLabelText("Search this Vault locally") as HTMLInputElement).disabled).toBe(true);
-  expect((screen.getByRole("button", { name: "Search note contents" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Search note bodies" }));
+  expect((screen.getByLabelText("Search this Vault locally") as HTMLInputElement).disabled).toBe(false);
   if (reason === "lock") x.lock();
   if (reason === "unmount") x.view.unmount();
   if (reason === "client") x.view.rerender(<VaultDocuments {...x.props} client={{ ...x.client } as VaultClient} />);
-  if (reason === "items") x.view.rerender(<VaultDocuments {...x.props} items={[...items]} />);
-  await act(async () => { resolve([new Uint8Array(16).fill(2)]); await x.done(); });
+  if (reason === "items") x.view.rerender(<VaultDocuments {...x.props} items={[items[0], { ...items[1], revision: { ...items[1].revision, revision: 2n } }]} />);
+  await act(async () => { resolve([items[1]]); await Promise.resolve(); });
   expect(screen.queryByRole("button", { name: "Hidden body" })).toBeNull();
 });

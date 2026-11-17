@@ -187,7 +187,7 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
 pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
     authenticate(env)?;
     id(&r.operation)?;
-    let digest = ops::digest(b"mutation/v1", &r)?;
+    let digest = ops::mutation_digest(&r)?;
     if let Some(result) = replay(env, &r.operation, &digest)? {
         return Ok(result);
     }
@@ -237,6 +237,16 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
             }
         };
         let result = match r.action {
+            Action::SaveInline(request) => {
+                let h = store::active(db, &request.request.vault)?;
+                let input = key_input(env.canister(), env.owner(), &h)?;
+                MutationResult::Revision(store::content::save_inline(
+                    db,
+                    request,
+                    &input,
+                    env.now(),
+                )?)
+            }
             Action::BeginRevision(request) => {
                 MutationResult::Upload(store::content::begin(db, request, env.now())?)
             }

@@ -47,6 +47,9 @@ importers:
       '@cloudflare/config':
         specifier: 0.20.0
         version: 0.20.0
+      '@mizchi/vlmkit':
+        specifier: 0.23.0
+        version: 0.23.0(@playwright/test@1.61.1)(playwright@1.61.1)
       jsonc-parser:
         specifier: 3.3.1
         version: 3.3.1

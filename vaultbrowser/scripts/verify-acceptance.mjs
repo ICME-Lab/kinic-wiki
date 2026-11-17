@@ -466,9 +466,9 @@ try {
     plaintext = "actual-browser-private-payload";
   await vault.getByLabel("Document title").fill(title);
   await editor(vault).fill(plaintext);
-  const chunkTrace = startRetryTrace("mutate", "PutChunk");
+  const chunkTrace = startRetryTrace("mutate", "SaveInline");
   dropMethod = "mutate";
-  dropAction = "PutChunk";
+  dropAction = "SaveInline";
   await action(vault, "Save document", true);
   await vault
     .getByRole("button", { name: "Resume save", exact: true })
@@ -481,11 +481,13 @@ try {
   const chunkRetry = finishRetryTrace(chunkTrace);
   const search = vault.getByLabel("Search this Vault locally");
   const noteButton = vault.getByRole("button", { name: title, exact: true });
+  // Save confirmation precedes the asynchronous metadata-list refresh.
+  await expect(noteButton).toBeVisible();
   const readsBeforeTyping = chunkReads;
   await search.fill(plaintext);
   await expect(noteButton).toHaveCount(0);
   assert.equal(chunkReads, readsBeforeTyping, "typing must filter metadata without fetching note bodies");
-  await action(vault, "Search note contents");
+  await action(vault, "Search note bodies");
   await expect(noteButton).toBeVisible();
   assert.ok(chunkReads > readsBeforeTyping, "explicit search reads authenticated note contents");
   await search.fill("absent-body-query");
@@ -497,12 +499,17 @@ try {
   assert.equal(docs.documents[0].plaintext, plaintext);
   const object = docs.documents[0].object;
   pass(
-    "lost real PutChunk replies; frozen editor; exact resume; independent real-client decrypt",
+    "lost real SaveInline reply; frozen editor; exact resume; independent real-client decrypt",
     { retries: [chunkRetry] },
   );
   await action(vault, "New document");
   await vault.getByLabel("Document title").fill("Cancelled upload");
-  await editor(vault).fill("cancelled-private-payload");
+  await vault.getByLabel("Document type").selectOption("attachment");
+  await vault.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
+    name: "cancelled-large.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(256 * 1024 + 1, 0x5a),
+  });
   dropMethod = "mutate";
   dropAction = "PutChunk";
   await action(vault, "Save document", true);

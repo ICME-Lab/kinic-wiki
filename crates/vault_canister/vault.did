@@ -14,6 +14,7 @@ type Action = variant {
     vault : blob;
     expected_revision : nat64;
   };
+  SaveInline : SaveInline;
   BeginRevision : BeginRevision;
 };
 type BeginRevision = record {
@@ -184,6 +185,12 @@ type Revision = record {
   sequence : nat64;
 };
 type RevisionPage = record { next : opt nat64; entries : vec Revision };
+// One bounded, atomic revision using the unlocked immutable key context.
+type SaveInline = record {
+  request : BeginRevision;
+  bytes : blob;
+  context_hash : blob;
+};
 type Status = variant {
   Quoted;
   InsufficientAllowance;

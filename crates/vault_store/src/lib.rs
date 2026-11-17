@@ -11,6 +11,7 @@ pub const CONTENT_SCHEMA: &str = include_str!("content-schema.sql");
 pub const EXPIRY_SCHEMA: &str = include_str!("expiry-schema.sql");
 pub mod content;
 pub mod keys;
+mod mutation_digest;
 pub mod operations;
 #[cfg(test)]
 mod tests;

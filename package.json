@@ -18,6 +18,7 @@
   "devDependencies": {
     "@cloudflare/build-output-utils": "0.8.2",
     "@cloudflare/config": "0.20.0",
+    "@mizchi/vlmkit": "0.23.0",
     "jsonc-parser": "3.3.1",
     "miniflare": "5.20260801.0-alpha",
     "typescript-parser": "npm:typescript@6.0.3"

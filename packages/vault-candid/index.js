@@ -183,6 +183,11 @@ export const idlFactory = ({ IDL }) => {
   });
   const Result_13 = IDL.Variant({ 'Ok' : PendingUploads, 'Err' : Error });
   const Result_14 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
+  const SaveInline = IDL.Record({
+    'request' : BeginRevision,
+    'bytes' : IDL.Vec(IDL.Nat8),
+    'context_hash' : IDL.Vec(IDL.Nat8),
+  });
   const Action = IDL.Variant({
     'CancelUpload' : IDL.Record({
       'job' : IDL.Vec(IDL.Nat8),
@@ -207,6 +212,7 @@ export const idlFactory = ({ IDL }) => {
       'vault' : IDL.Vec(IDL.Nat8),
       'expected_revision' : IDL.Nat64,
     }),
+    'SaveInline' : SaveInline,
     'BeginRevision' : BeginRevision,
   });
   const Mutation = IDL.Record({
