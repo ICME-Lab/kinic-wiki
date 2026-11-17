@@ -14,6 +14,6 @@ export async function wikiCreditActor(canisterId: string, identity: Identity) {
 }
 export async function ownerDatabases(canisterId: string, identity: Identity) {
   return (await listDatabasesAuthenticated(canisterId, identity)).filter(
-    (db) => db.role === "owner" && db.status !== "deleted",
+    (db) => db.role === "owner" && db.status === "active",
   );
 }

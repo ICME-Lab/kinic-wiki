@@ -715,6 +715,7 @@ jobs:
           "$GITHUB_WORKSPACE"/pocketic-tests/integration/wiki-credit*.test.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/scripts/*vault*.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/scripts/build-wiki-credit-fault.mjs
+          "$GITHUB_WORKSPACE"/pocketic-tests/scripts/build-wiki-credit-schema7.mjs
 
   vault-wasm-acceptance:
     needs: [changes, vault-fast-check]
@@ -778,6 +779,7 @@ jobs:
           pnpm --dir pocketic-tests test:wiki-credit-source-cap
           pnpm --dir pocketic-tests test:wiki-credit-receiver-owner-cap
           pnpm --dir pocketic-tests test:wiki-credit-frozen-upgrade
+          pnpm --dir pocketic-tests test:wiki-credit-schema7-upgrade
           pnpm --dir pocketic-tests test:vault-credit-frozen-upgrade
       - name: Reject PR 177 schema 9 downgrade with bridge receipts
         env:
@@ -824,6 +826,7 @@ jobs:
             target/vault-credit-baseline82/source.json
             target/vault-credit-baseline82/wiki-upgrade.json
             target/vault-credit-baseline82/vault-upgrade.json
+            target/wiki-credit-schema7/source.json
 
   vault-browser-acceptance:
     needs: [changes, vault-wasm-acceptance]

@@ -15,6 +15,8 @@
     "build:learning-baseline": "node scripts/build-learning-baseline.mjs",
     "build:evidence-baseline": "node scripts/build-evidence-capacity-baseline.mjs",
     "build:vault-credit-baseline": "node scripts/build-vault-credit-baseline.mjs",
+    "build:wiki-credit-schema7": "node scripts/build-wiki-credit-schema7.mjs",
+    "test:wiki-credit-schema7-upgrade": "pnpm run build:wiki-credit-schema7 && pnpm run build:wiki && node integration/wiki-credit-schema7-upgrade.test.mjs",
     "test:wiki-credit-frozen-upgrade": "pnpm run build:vault-credit-baseline && pnpm run build:wiki && node integration/wiki-credit-frozen-upgrade.test.mjs",
     "test:vault-credit-frozen-upgrade": "node scripts/download-vault-ledger.mjs && pnpm run build:vault-credit-baseline && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/vault-credit-frozen-upgrade.test.mjs",
     "test:vault-schema9-upgrade": "node scripts/build-vault-schema9-baseline.mjs && cargo build -p vault-canister -p vfs-canister --target wasm32-unknown-unknown --release --locked && node integration/vault-schema9-upgrade.test.mjs",
