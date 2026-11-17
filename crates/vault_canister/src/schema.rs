@@ -1,4 +1,5 @@
-//! Initial release: create v9 once; validate existing v9 without repairing it.
+//! Schema 10 fences binaries that cannot read bridge_v1 payment records.
+//! Keep v8 exact-billing migration and v9 data intact before advancing the version.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
@@ -21,11 +22,16 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         0 if count == 0 => {
             db.execute_batch(&statements.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            db.execute_batch("PRAGMA user_version=9;")
+            db.execute_batch("PRAGMA user_version=10;")
                 .map_err(|_| Error::Storage)?;
         }
-        9 if count == statements.len() as i64 => {
-            let expected: BTreeMap<_, _> = statements
+        8..=10 if count == statements.len() as i64 => {
+            let expected_statements = if version == 8 {
+                legacy_schema_statements(statements.clone())
+            } else {
+                statements.clone()
+            };
+            let expected: BTreeMap<_, _> = expected_statements
                 .iter()
                 .map(|s| contract(s))
                 .collect::<Result<_>>()?;
@@ -50,10 +56,62 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         }
         _ => return Err(Error::Storage),
     }
+    if version == 8 {
+        db.execute_batch("SAVEPOINT vault_schema_upgrade;")
+            .map_err(|_| Error::Storage)?;
+        let account_guards = statements
+            .iter()
+            .filter(|ddl| {
+                ddl.starts_with("CREATE TRIGGER IF NOT EXISTS accounting_accounts_")
+                    && ddl.contains("_size ")
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        let migration = format!(
+            "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); DROP TRIGGER accounting_accounts_INSERT_size; DROP TRIGGER accounting_accounts_UPDATE_size; {account_guards} PRAGMA user_version=10; RELEASE vault_schema_upgrade;"
+        );
+        if db.execute_batch(&migration).is_err() {
+            let _ =
+                db.execute_batch("ROLLBACK TO vault_schema_upgrade; RELEASE vault_schema_upgrade;");
+            return Err(Error::Storage);
+        }
+        // Verify the migrated DDL before exposing the database to callers.
+        return initialize_vault_schema(db);
+    }
+    if version == 9 {
+        // DDL is unchanged, but schema-9 code assumes every payment is ICRC-2.
+        // Version the persisted record contract before allowing bridge writes.
+        db.execute_batch("PRAGMA user_version=10;")
+            .map_err(|_| Error::Storage)?;
+    }
     // Connection-local policy is not persisted in the image. Reapply after
     // validation, without creating/repairing schema or changing stored records.
     db.execute_batch("PRAGMA max_page_count=262144;")
         .map_err(|_| Error::Storage)
+}
+
+fn legacy_schema_statements(mut statements: Vec<String>) -> Vec<String> {
+    let account = statements
+        .iter_mut()
+        .find(|ddl| ddl.starts_with("CREATE TABLE IF NOT EXISTS accounts("))
+        .expect("compiled accounts table");
+    *account = "CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY NOT NULL,balance_cycles INTEGER NOT NULL CHECK(balance_cycles>=0),storage_bytes INTEGER NOT NULL DEFAULT 0,storage_charged_at_ms INTEGER NOT NULL);".into();
+    for ddl in &mut statements {
+        if ddl.starts_with("CREATE TRIGGER IF NOT EXISTS accounting_accounts_")
+            && ddl.contains("_size ")
+        {
+            *ddl = ddl.replacen("+32)>", "+24)>", 1);
+        }
+    }
+    statements
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_legacy_v8(db: &Connection) {
+    db.execute_batch(&legacy_schema_statements(schema_statements()).join("\n"))
+        .unwrap();
+    db.execute_batch("PRAGMA user_version=8;").unwrap();
 }
 
 fn schema_statements() -> Vec<String> {

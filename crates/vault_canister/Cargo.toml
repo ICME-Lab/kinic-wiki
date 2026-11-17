@@ -10,6 +10,7 @@ embedded-assets = []
 # Never deploy: exercises synthetic ledger behavior only. Production has no funding switch.
 synthetic-funding-test-only = []
 [dependencies]
+credit-bridge-types = { path = "../credit_bridge_types" }
 vault-service = { path = "../vault_service" }
 vault-store = { path = "../vault_store" }
 vault-types = { path = "../vault_types" }

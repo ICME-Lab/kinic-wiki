@@ -161,3 +161,17 @@ for (const statement of [
 test('shared UI JavaScript cannot require a network service with a static template', () => fixture({
  'packages/ui/src/button.cjs': 'const Auth = require(`@icp-sdk/auth`)',
 }, root => assert.throws(() => checkTypescript(root, ts), /Forbidden ui/)));
+
+test('neutral bridge wire crate permits candid and serde without app dependencies',()=>checkCargo({packages:['vfs-runtime','vault-canister','credit-bridge-types','candid','serde'].map(name=>({id:name,name})),resolve:{nodes:[{id:'vfs-runtime',deps:[{pkg:'credit-bridge-types'}]},{id:'vault-canister',deps:[{pkg:'credit-bridge-types'}]},{id:'credit-bridge-types',deps:[{pkg:'candid'},{pkg:'serde'}]},{id:'candid',deps:[]},{id:'serde',deps:[]}]}}));
+for(const app of ['vfs-runtime','vault-service'])test(`neutral wire crate cannot hide ${app} behind a helper`,()=>assert.throws(()=>checkCargo({packages:['credit-bridge-types','helper',app].map(name=>({id:name,name})),resolve:{nodes:[{id:'credit-bridge-types',deps:[{pkg:'helper'}]},{id:'helper',deps:[{pkg:app}]},{id:app,deps:[]}]}}),/Forbidden bridge/));
+test('both browsers may import neutral factories with Wiki and Vault peer API names',()=>fixture({
+ 'wikibrowser/src/index.ts':'import {quote_vault_transfer} from "@kinic/credit-bridge-candid"',
+ 'vaultbrowser/src/index.ts':'import {quote_vault_transfer} from "@kinic/credit-bridge-candid"',
+ 'packages/credit-bridge-candid/package.json':JSON.stringify({name:'@kinic/credit-bridge-candid',exports:'./index.ts'}),
+ 'packages/credit-bridge-candid/index.ts':'import {Actor} from "@icp-sdk/core/agent"; export const quote_vault_transfer = agent => Actor.createActor({}, {agent})',
+},root=>checkTypescript(root,ts)));
+for(const edge of ['export * from "@icp-sdk/auth"','export * from "../vfs-candid/index"','export * from "../vault-client/index"','export const x=()=>localStorage.getItem("identity")'])test(`neutral transport rejects ${edge}`,()=>fixture({
+ 'packages/credit-bridge-candid/index.ts':edge,
+ 'packages/vfs-candid/index.ts':'export const x=1',
+ 'packages/vault-client/index.ts':'export const x=1',
+},root=>assert.throws(()=>checkTypescript(root,ts),/Forbidden bridge|Shared bridge/)));

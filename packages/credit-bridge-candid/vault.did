@@ -1,0 +1,47 @@
+type BridgeError = variant {
+  Storage;
+  InvalidInput;
+  Disabled;
+  NotFound;
+  Unauthorized;
+  Capacity;
+  Unavailable;
+  Expired;
+  Conflict;
+};
+type BridgeRevocation = record {
+  through_generation : nat64;
+  vault_owner : principal;
+};
+type CreditOffer = record {
+  wiki_owner : principal;
+  link_generation : nat64;
+  operation : blob;
+  amount_cycles : nat64;
+  vault_owner : principal;
+  expires_at_ns : nat64;
+};
+type CreditReceipt = record { status : CreditStatus; offer : CreditOffer };
+type CreditStatus = variant { Prepared; Accepted; NotAccepted };
+type LinkChallenge = record {
+  challenge : blob;
+  generation : nat64;
+  vault_owner : principal;
+  expires_at_ns : nat64;
+};
+type LinkStatus = record {
+  wiki_owner : principal;
+  active : bool;
+  generation : nat64;
+  vault_owner : principal;
+};
+type Result_2 = variant { Ok : LinkChallenge; Err : BridgeError };
+type Result_20 = variant { Ok : CreditReceipt; Err : BridgeError };
+type Result_22 = variant { Ok : BridgeRevocation; Err : BridgeError };
+type Result_24 = variant { Ok : opt LinkStatus; Err : BridgeError };
+service : {
+  begin_wiki_link : (blob) -> (Result_2);
+  prepare_wiki_credit : (blob) -> (Result_20);
+  revoke_wiki_link : () -> (Result_22);
+  wiki_link_status : () -> (Result_24);
+}

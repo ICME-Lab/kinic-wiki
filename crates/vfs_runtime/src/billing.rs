@@ -171,14 +171,14 @@ pub(crate) struct DatabaseLedgerInsert<'a> {
     pub(crate) now: i64,
 }
 
-struct DatabaseCharge<'a> {
-    database_id: &'a str,
-    caller: &'a str,
-    method: &'a str,
-    cycles_delta: u128,
-    now: i64,
-    config: &'a CyclesBillingConfig,
-    computed_charge: i64,
+pub(crate) struct DatabaseCharge<'a> {
+    pub(crate) database_id: &'a str,
+    pub(crate) caller: &'a str,
+    pub(crate) method: &'a str,
+    pub(crate) cycles_delta: u128,
+    pub(crate) now: i64,
+    pub(crate) config: &'a CyclesBillingConfig,
+    pub(crate) computed_charge: i64,
 }
 
 struct AppliedDatabaseCharge {
@@ -780,7 +780,7 @@ pub(crate) fn settle_database_storage_charge_in_tx(
     })
 }
 
-fn charge_database_update_in_tx(
+pub(crate) fn charge_database_update_in_tx(
     tx: &Transaction<'_>,
     charge: DatabaseCharge<'_>,
 ) -> Result<(), String> {
