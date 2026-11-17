@@ -186,12 +186,11 @@ impl VfsService {
                 "SELECT count(*) FROM credit_bridge_fences WHERE vault_owner=?1",
                 &ch.vault_owner.to_text(),
             )? == 0
+                && row_count(c, "SELECT count(*) FROM credit_bridge_fences")? >= CAP
             {
+                expire_unpaired_fences(c, now_i64)?;
                 if row_count(c, "SELECT count(*) FROM credit_bridge_fences")? >= CAP {
-                    expire_unpaired_fences(c, now_i64)?;
-                    if row_count(c, "SELECT count(*) FROM credit_bridge_fences")? >= CAP {
-                        return Err("Capacity".into());
-                    }
+                    return Err("Capacity".into());
                 }
             }
             // Admission makes a fence permanent, including pending approval.
