@@ -17,6 +17,7 @@
     "build:vault-credit-baseline": "node scripts/build-vault-credit-baseline.mjs",
     "test:wiki-credit-frozen-upgrade": "pnpm run build:vault-credit-baseline && pnpm run build:wiki && node integration/wiki-credit-frozen-upgrade.test.mjs",
     "test:vault-credit-frozen-upgrade": "node scripts/download-vault-ledger.mjs && pnpm run build:vault-credit-baseline && cargo build -p vault-canister --target wasm32-unknown-unknown --release --locked && node integration/vault-credit-frozen-upgrade.test.mjs",
+    "test:vault-schema9-upgrade": "node scripts/build-vault-schema9-baseline.mjs && cargo build -p vault-canister -p vfs-canister --target wasm32-unknown-unknown --release --locked && node integration/vault-schema9-upgrade.test.mjs",
     "test:evidence-capacity": "pnpm run build:evidence-baseline && pnpm run build:wiki && node --test integration/evidence-capacity.test.mjs",
     "build:bekko-refill-faults": "node scripts/build-bekko-refill-faults.mjs",
     "test:bekko-refill-faults": "pnpm run build:wiki && pnpm run build:bekko-refill-faults && node --test integration/bekko-refill-faults.test.mjs",

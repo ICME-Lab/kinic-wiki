@@ -1,4 +1,5 @@
-//! Validate complete schemas and migrate existing v8 accounts to exact billing.
+//! Schema 10 fences binaries that cannot read bridge_v1 payment records.
+//! Keep v8 exact-billing migration and v9 data intact before advancing the version.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
@@ -21,10 +22,10 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         0 if count == 0 => {
             db.execute_batch(&statements.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            db.execute_batch("PRAGMA user_version=9;")
+            db.execute_batch("PRAGMA user_version=10;")
                 .map_err(|_| Error::Storage)?;
         }
-        8 | 9 if count == statements.len() as i64 => {
+        8..=10 if count == statements.len() as i64 => {
             let expected_statements = if version == 8 {
                 legacy_schema_statements(statements.clone())
             } else {
@@ -68,7 +69,7 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
             .collect::<Vec<_>>()
             .join("\n");
         let migration = format!(
-            "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); DROP TRIGGER accounting_accounts_INSERT_size; DROP TRIGGER accounting_accounts_UPDATE_size; {account_guards} PRAGMA user_version=9; RELEASE vault_schema_upgrade;"
+            "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); DROP TRIGGER accounting_accounts_INSERT_size; DROP TRIGGER accounting_accounts_UPDATE_size; {account_guards} PRAGMA user_version=10; RELEASE vault_schema_upgrade;"
         );
         if db.execute_batch(&migration).is_err() {
             let _ =
@@ -77,6 +78,12 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         }
         // Verify the migrated DDL before exposing the database to callers.
         return initialize_vault_schema(db);
+    }
+    if version == 9 {
+        // DDL is unchanged, but schema-9 code assumes every payment is ICRC-2.
+        // Version the persisted record contract before allowing bridge writes.
+        db.execute_batch("PRAGMA user_version=10;")
+            .map_err(|_| Error::Storage)?;
     }
     // Connection-local policy is not persisted in the image. Reapply after
     // validation, without creating/repairing schema or changing stored records.
