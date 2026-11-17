@@ -1,6 +1,6 @@
 // Reproducible official DFINITY release; never substitute a synthetic ledger.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 const dir = resolve(import.meta.dirname, "../../target/tools");

@@ -8,6 +8,8 @@ It stores durable knowledge nodes in an Internet Computer canister and exposes t
 - Public MCP: `https://wiki-mcp.kinic.xyz/mcp` (anonymous, read-only)
 - Private MCP: `https://wiki-private-mcp.kinic.xyz/mcp` (OAuth with Internet Identity)
 
+The separate [Kinic Vault](vaultbrowser/README.md) uses Internet Identity ownership and browser-encrypted documents on its own origin and canister. It has no independent Vault recovery; losing II access loses Vault access unless II itself is recovered. Production funding remains disabled. See [Vault validation](docs/vault/validation.md).
+
 ## Why Kinic Wiki
 
 Vector databases are useful for retrieving nearby text fragments from large corpora. Agent memory has a different shape. Agents need stable places for current decisions, source evidence, open questions, operating procedures, and relationships between notes.

@@ -58,3 +58,10 @@ Local document copies support active work; compare them with Wiki before cleanup
 and preserve unpublished changes. Connection settings, selection, sync baselines
 and recovery journals remain local and ignored. Plans 001/002 retain local copies
 because their recorded review/device checks are unresolved.
+
+## Standalone Vault
+
+- [II-only protocol](vault/protocol.md)
+- [Operations and trust boundaries](vault/operations.md)
+- [Validation commands and evidence](vault/validation.md)
+- [Accounting and capacity](vault-accounting-capacity.md)

@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - wikibrowser
+  - vaultbrowser
   - skill-registry-web
   - workers/wiki-mcp
   - workers/wiki-assistant

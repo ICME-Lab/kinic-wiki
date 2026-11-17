@@ -135,3 +135,5 @@ workers/payment/cloudflare.production.ts
 /.kinic-learning.json
 /docs/superpowers/
 
+# Disposable Vault browser fixtures.
+**/.tmp-vault/
