@@ -335,18 +335,26 @@ describe("staging OAuth discovery and registration", () => {
   });
 
   it("limits client registration per connecting IP", async () => {
+    // Miniflare resets fixed windows at each wall-clock minute. Start in the
+    // first half so this burst tests one window even on slower CI runners.
+    const remaining = 60_000 - Date.now() % 60_000;
+    if (remaining < 30_000) {
+      await new Promise(resolve => setTimeout(resolve, remaining));
+    }
+    const window = Math.floor(Date.now() / 60_000);
     const address = "192.0.2.78";
     for (let index = 0; index < 10; index += 1) {
       expect((await register(["https://chatgpt.com/callback"], "none", address)).status).toBe(201);
     }
     const limited = await register(["https://chatgpt.com/callback"], "none", address);
+    expect(Math.floor(Date.now() / 60_000), "registration burst crossed the rate-limit window").toBe(window);
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("60");
     expect(limited.headers.get("cache-control")).toBe("no-store");
     await expect(limited.json()).resolves.toEqual({ error: "temporarily_unavailable" });
 
     expect((await register(["https://chatgpt.com/callback"], "none", "192.0.2.79")).status).toBe(201);
-  });
+  }, 60_000);
 
   it("does not expose staging auth or MCP routes on another origin", async () => {
     for (const path of ["/mcp", "/oauth/register", "/.well-known/oauth-authorization-server"]) {
