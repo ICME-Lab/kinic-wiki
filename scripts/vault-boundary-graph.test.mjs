@@ -24,6 +24,24 @@ test('shared UI allowed but transitive services rejected', () => {
  assert.throws(()=>assertSeparated(new Map([['wiki',['vault']]]),side),/Forbidden wiki/);
 });
 for(const path of ['packages/ui/src/button.tsx','packages/vault-candid/index.ts','vaultbrowser/src/auth.ts','packages/vault-client/src/funding.ts','crates/vault_service/src/funding.rs','scripts/vault-ci-paths.mjs','crates/vfs_canister/vfs.did']) test(`CI selects ${path}`,()=>assert.equal(selectsVault([path]),true));
+test('CI selects neutral bridge Rust and TS changes for every affected check', () => {
+ const rust = 'crates/credit_bridge_types/src/lib.rs';
+ const ts = 'packages/credit-bridge-candid/browser.ts';
+ assert.equal(selectsVault([rust]), true);
+ assert.equal(selectsVault([ts]), true);
+ const workflow = readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8');
+ assert.match(workflow,/set_output canister .*credit_bridge_types/);
+ assert.match(workflow,/set_output rust_all .*credit_bridge_types/);
+ assert.match(workflow,/set_output wikibrowser .*credit-bridge-candid/);
+ assert.match(workflow,/pnpm --dir packages\/credit-bridge-candid test/);
+ assert.match(workflow,/test:wiki-credit-unknown-cap/);
+ assert.match(workflow,/test:wiki-credit-source-cap/);
+ assert.match(workflow,/test:wiki-credit-receiver-owner-cap/);
+ assert.match(workflow,/test:wiki-credit-frozen-upgrade/);
+ assert.match(workflow,/test:wiki-credit-config-aba/);
+ assert.match(workflow,/test:vault-credit-frozen-upgrade/);
+ assert.match(workflow,/target\/vault-credit-baseline82\/vault-upgrade\.json/);
+});
 test('unrelated docs do not select Vault',()=>assert.equal(selectsVault(['docs/CLI.md']),false));
 
 function fixture(entries, run) {

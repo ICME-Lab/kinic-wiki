@@ -37,6 +37,26 @@ vi.mock("@kinic/ui/editor", () => ({
     />
   ),
 }));
+const credit = vi.hoisted(() => ({ prepare: vi.fn() }));
+vi.mock("../wiki-credit-actor", () => ({
+  creditOrigins: () => ({
+    wiki: "https://wiki.kinic.xyz",
+    vault: "https://vault.kinic.xyz",
+  }),
+  vaultCreditActor: async (client: VaultClient) => ({
+    wiki_link_status: async () => ({
+      Ok: [
+        {
+          wiki_owner: client.identity.getPrincipal(),
+          vault_owner: client.identity.getPrincipal(),
+          generation: 1n,
+          active: true,
+        },
+      ],
+    }),
+    prepare_wiki_credit: credit.prepare,
+  }),
+}));
 import { VaultWorkspace } from "./workspace";
 afterEach(() => {
   cleanup();
@@ -898,5 +918,89 @@ it.each(["close", "unmount"])(
     await act(async () => fail());
     expect(screen.queryByText(/Saved, but/)).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
+  },
+);
+
+it.each([false, true])(
+  "hidden auto-lock clears private state without closing authenticated funding (unlocked=%s)",
+  async (unlocked) => {
+    const x = await mounted();
+    let retained: HTMLInputElement | undefined;
+    if (unlocked) {
+      await x.open();
+      fireEvent.change(screen.getByLabelText("Document title"), {
+        target: { value: "private draft" },
+      });
+      retained = screen.getByLabelText("Document title") as HTMLInputElement;
+      expect(x.client.session.root).toBeTruthy();
+    } else expect(x.client.session.root).toBeUndefined();
+    fireEvent.click(
+      screen.getByText("Account & storage", { selector: "summary" }),
+    );
+    const popup = {
+      closed: false,
+      close: vi.fn(),
+      location: { replace: vi.fn() },
+      postMessage: vi.fn(),
+    };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Charge from Wiki credits" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Charge from Wiki credits" }),
+    );
+    await waitFor(() => expect(popup.location.replace).toHaveBeenCalled());
+    const nonce = new URL(popup.location.replace.mock.calls[0][0]).hash.split(
+      "nonce=",
+    )[1];
+    const generation = x.client.session.capture();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
+    await act(async () => {
+      vi.setSystemTime(Date.now() + 60_001);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    vi.useRealTimers();
+    expect(x.client.session.capture()).toBeGreaterThan(generation);
+    expect(x.client.session.root).toBeUndefined();
+    if (retained) expect(retained.value).toBe("");
+    expect(screen.queryByLabelText("Document title")).toBeNull();
+    expect(popup.close).not.toHaveBeenCalled();
+    credit.prepare.mockResolvedValue({
+      Ok: {
+        status: { Prepared: null },
+        offer: {
+          operation: new Uint8Array(16).fill(4),
+          vault_owner: x.client.identity.getPrincipal(),
+        },
+      },
+    });
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        origin: "https://wiki.kinic.xyz",
+        source: popup as unknown as Window,
+        data: {
+          protocol: "kinic-credit-v1",
+          type: "offer",
+          id: "04".repeat(16),
+          nonce,
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(popup.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ready" }),
+        "https://wiki.kinic.xyz",
+      ),
+    );
+    x.view.unmount();
+    expect(popup.close).toHaveBeenCalledTimes(1);
   },
 );

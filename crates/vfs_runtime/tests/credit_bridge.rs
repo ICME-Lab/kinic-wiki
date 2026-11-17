@@ -15,6 +15,48 @@ fn wiki6_migrates_to_private_bridge7_disabled() {
         .unwrap();
     assert_eq!(configs, 0);
 }
+
+#[test]
+fn wiki7_upgrade_adds_fence_expiry_without_losing_existing_fences() {
+    let root = tempdir().unwrap();
+    let path = root.path().join("index.sqlite3");
+    let svc = VfsService::new(path.clone(), root.path().join("db"));
+    svc.run_index_migrations().unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    // Recreate the schema shipped by PR #187 while retaining its applied marker.
+    db.execute_batch(
+        "DROP TABLE credit_bridge_fences;
+         CREATE TABLE credit_bridge_fences (
+           vault_owner TEXT PRIMARY KEY,
+           generation INTEGER NOT NULL CHECK(generation>=0)
+         );
+         DELETE FROM schema_migrations
+         WHERE version='database_index:008_credit_bridge_fence_expiry';
+         INSERT INTO credit_bridge_fences(vault_owner,generation)
+         VALUES('existing-vault',7);",
+    )
+    .unwrap();
+
+    svc.run_index_migrations_for_upgrade(None).unwrap();
+    svc.run_index_migrations_for_upgrade(None).unwrap();
+    let (generation, expiry): (i64, Option<i64>) = db
+        .query_row(
+            "SELECT generation,expires_at_ns FROM credit_bridge_fences WHERE vault_owner='existing-vault'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(generation, 7);
+    assert_eq!(expiry, None);
+    let applied: i64 = db
+        .query_row(
+            "SELECT count(*) FROM schema_migrations WHERE version='database_index:008_credit_bridge_fence_expiry'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(applied, 1);
+}
 use candid::Principal;
 use credit_bridge_types::*;
 use vfs_runtime::credit_bridge::*;
@@ -183,6 +225,7 @@ fn revoked_prepared_intent_never_dispatches_but_keeps_cleanup() {
                 vault_owner: p(2),
                 through_generation: 1,
             },
+            1,
         )
         .unwrap();
     assert!(
@@ -306,6 +349,7 @@ fn late_link_ack_after_revoke_rejected_and_new_pair_only() {
                 vault_owner: p(2),
                 through_generation: 2,
             },
+            1,
         )
         .unwrap();
     assert!(f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
@@ -592,7 +636,7 @@ fn disabled_config_allows_settlement_but_not_new_dispatch_or_peer_change() {
 fn migration6_preserves_balance_members_and_grants() {
     let f = Fixture::new();
     let before = f.bal();
-    f.db.execute_batch("DROP TABLE credit_bridge_links; DROP TABLE credit_bridge_fences; DROP TABLE credit_bridge_owners; DROP TABLE credit_bridge_settings; DROP TABLE credit_bridge_transfers; DELETE FROM schema_migrations WHERE version='database_index:007_credit_bridge';").unwrap();
+    f.db.execute_batch("DROP TABLE credit_bridge_links; DROP TABLE credit_bridge_fences; DROP TABLE credit_bridge_owners; DROP TABLE credit_bridge_settings; DROP TABLE credit_bridge_transfers; DELETE FROM schema_migrations WHERE version='database_index:008_credit_bridge_fence_expiry'; DELETE FROM schema_migrations WHERE version='database_index:007_credit_bridge';").unwrap();
     f.svc.run_index_migrations_for_upgrade(None).unwrap();
     assert_eq!(f.bal(), before);
     assert!(f.svc.vault_bridge_config().unwrap().is_none());
@@ -928,6 +972,7 @@ fn full_fence_quota_still_allows_existing_owner_and_peer_revocation() {
                 vault_owner: p(2),
                 through_generation: 1,
             },
+            1,
         )
         .unwrap();
     assert!(!f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
@@ -1128,4 +1173,52 @@ fn prerelease_index7_without_lease_column_is_rejected_without_reinitializing_dat
         .unwrap();
     assert!(f.svc.run_index_migrations_for_upgrade(None).is_err());
     assert_eq!(f.bal(), balance);
+}
+
+#[test]
+fn expired_unpaired_revocations_do_not_exhaust_new_link_admission() {
+    let f = Fixture::new();
+    // A valid pair already owns one permanent fence. Unknown owners can revoke
+    // their own Vault side, but those revocations must not consume all slots
+    // indefinitely after every pre-revocation challenge has expired.
+    for n in 0..1023_u32 {
+        let owner = Principal::from_slice(&(n + 1000).to_be_bytes());
+        f.svc
+            .revoke_link_from_vault(
+                p(9),
+                BridgeRevocation {
+                    vault_owner: owner,
+                    through_generation: 1,
+                },
+                1,
+            )
+            .unwrap();
+    }
+    let now = 300_000_000_002;
+    let snap = f.svc.vault_link_snapshot(p(3), now).unwrap();
+    assert!(f.svc.get_vault_link(p(1)).unwrap().unwrap().active);
+    let result = f.svc.vault_link_begin(
+        p(3),
+        LinkChallenge {
+            challenge: vec![17; 16],
+            vault_owner: p(5),
+            generation: 1,
+            expires_at_ns: now + 300_000_000_000,
+        },
+        &snap,
+        now,
+    );
+    assert!(
+        result.is_ok(),
+        "expired unpaired revokes blocked a new pair: {result:?}"
+    );
+    let fences: i64 =
+        f.db.query_row("SELECT count(*) FROM credit_bridge_fences", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        fences, 2,
+        "the admitted pair and new pair must retain their fences"
+    );
 }

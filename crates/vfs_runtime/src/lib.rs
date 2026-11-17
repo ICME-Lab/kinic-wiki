@@ -74,6 +74,8 @@ const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:004_iap_cycl
 const INDEX_SCHEMA_VERSION_VOICE: &str = "database_index:005_voice_billing";
 const INDEX_SCHEMA_VERSION_MAINTENANCE: &str = "database_index:006_database_maintenance";
 const INDEX_SCHEMA_VERSION_BRIDGE: &str = "database_index:007_credit_bridge";
+const INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY: &str =
+    "database_index:008_credit_bridge_fence_expiry";
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_INITIAL,
     INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
@@ -82,6 +84,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_VOICE,
     INDEX_SCHEMA_VERSION_MAINTENANCE,
     INDEX_SCHEMA_VERSION_BRIDGE,
+    INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY,
 ];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;

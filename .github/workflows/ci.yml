@@ -107,7 +107,7 @@ jobs:
           set_output cli_docs '^(docs/CLI\.md|\.github/workflows/ci\.yml)$'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(Cargo\.lock$|vendor/ic-agent/|crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
-          set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^packages/ui/|^wikibrowser/)"
+          set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^packages/credit-bridge-candid/|^packages/ui/|^wikibrowser/)"
           set_output extension "($js_workspace|^extensions/wiki-clipper/)"
           set_output wiki_generator "($js_workspace|^packages/deepseek-client/|^workers/wiki-generator/)"
           set_output wiki_mcp "($js_workspace|^packages/vfs-client-core/api-guidance\.json$|^workers/wiki-mcp/)"
@@ -699,6 +699,7 @@ jobs:
         run: |
           node scripts/check-vault-boundary.mjs
           node packages/vault-client/scripts/generate-contracts.mjs --check
+          pnpm --dir packages/credit-bridge-candid test
       - name: Client crypto and UI tests
         run: pnpm --filter './packages/vault-*' --filter vaultbrowser -r test
       - name: Types and strict lint
@@ -711,7 +712,10 @@ jobs:
           pnpm --dir wikibrowser exec oxlint --config "$GITHUB_WORKSPACE/pocketic-tests/vault-oxlint.json" --deny-warnings
           "$GITHUB_WORKSPACE"/pocketic-tests/helpers/vault-*.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/integration/vault-*.test.mjs
+          "$GITHUB_WORKSPACE"/pocketic-tests/integration/wiki-credit*.test.mjs
           "$GITHUB_WORKSPACE"/pocketic-tests/scripts/*vault*.mjs
+          "$GITHUB_WORKSPACE"/pocketic-tests/scripts/build-wiki-credit-fault.mjs
+          "$GITHUB_WORKSPACE"/pocketic-tests/scripts/build-wiki-credit-schema7.mjs
 
   vault-wasm-acceptance:
     needs: [changes, vault-fast-check]
@@ -761,6 +765,22 @@ jobs:
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
         run: pnpm --dir pocketic-tests test:vault-funding-ledger
+      - name: Actual Wiki credit bridge cycles and fault acceptance
+        env:
+          POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
+        run: |
+          pnpm --dir pocketic-tests test:wiki-credit-fence
+          pnpm --dir pocketic-tests test:wiki-credit-fault
+          pnpm --dir pocketic-tests test:wiki-credit-config-aba
+          pnpm --dir pocketic-tests test:wiki-credit-rollback
+          pnpm --dir pocketic-tests test:wiki-credit-ack-loss
+          pnpm --dir pocketic-tests test:wiki-credit-revoke
+          pnpm --dir pocketic-tests test:wiki-credit-unknown-cap
+          pnpm --dir pocketic-tests test:wiki-credit-source-cap
+          pnpm --dir pocketic-tests test:wiki-credit-receiver-owner-cap
+          pnpm --dir pocketic-tests test:wiki-credit-frozen-upgrade
+          pnpm --dir pocketic-tests test:wiki-credit-schema7-upgrade
+          pnpm --dir pocketic-tests test:vault-credit-frozen-upgrade
       - name: Reject PR 177 schema 9 downgrade with bridge receipts
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
@@ -801,6 +821,12 @@ jobs:
             target/vault-schema9-baseline/upgrade.json
             target/vault-synthetic-funding-build/provenance.json
             target/vault-funding-fault/provenance.json
+            target/wiki-credit-fault/provenance.json
+            target/vault-credit-trap/provenance.json
+            target/vault-credit-baseline82/source.json
+            target/vault-credit-baseline82/wiki-upgrade.json
+            target/vault-credit-baseline82/vault-upgrade.json
+            target/wiki-credit-schema7/source.json
 
   vault-browser-acceptance:
     needs: [changes, vault-wasm-acceptance]

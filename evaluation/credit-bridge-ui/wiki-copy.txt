@@ -1,0 +1,11 @@
+Move Wiki credits to Vault
+Sign in to each app separately. Every transfer requires your confirmation.
+Account link
+Manual credit transfer
+Owner database
+Recover pending transfer
+Continue in Vault
+Estimated recipient credit:
+Estimated source reduction including execution fee:
+Estimated remaining source balance:
+These estimates use the quote snapshot.

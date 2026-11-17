@@ -142,7 +142,7 @@ fn bridge_link_status(vault_owner: Principal) -> BridgeResult<Option<LinkStatus>
 #[update]
 fn revoke_link_from_vault(revocation: BridgeRevocation) -> BridgeResult<()> {
     let p = caller()?;
-    bridge(|s| s.revoke_link_from_vault(p, revocation))
+    bridge(|s| s.revoke_link_from_vault(p, revocation, bridge_now()))
 }
 #[update]
 fn bridge_credit_offer(operation: Vec<u8>, vault_owner: Principal) -> BridgeResult<CreditOffer> {
