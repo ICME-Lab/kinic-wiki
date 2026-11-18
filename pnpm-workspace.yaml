@@ -84,12 +84,21 @@ overrides:
 
 # Temporary exception until braces publishes a fix for CVE-2026-93687.
 # Only Tailwind's dev-only glob tooling uses it; both tailwind.config.ts files
-# contain fixed repository globs, with no user-provided patterns. Production
-# audit has no findings. Remove this exception when a patched release exists.
+# contain fixed repository globs, with no user-provided patterns.
+# Remove this exception when a patched release exists.
 # https://github.com/advisories/GHSA-vfj7-8cjw-p6xm
+# Temporary picomatch exception: the registry has no patched release as of
+# 2026-11-18 (latest 4.0.7; installed 2.3.2 and 4.0.7). The affected extglob
+# matcher is pulled in through Tailwind, Vite, TanStack and test/build tooling;
+# repository application code does not accept user-supplied glob patterns.
+# This accepts the residual upstream ReDoS risk; it does not patch picomatch.
+# Keep all other moderate/high findings blocking and remove this exception
+# when a fixed version is published, then upgrade both dependency branches.
+# https://github.com/advisories/GHSA-fc5q-39xc-vjpf
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+    - GHSA-fc5q-39xc-vjpf
 
 patchedDependencies:
   # SDK 6 is used by Node/nodejs_compat servers; its native hash patch is not
