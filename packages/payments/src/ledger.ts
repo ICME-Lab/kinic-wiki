@@ -49,7 +49,9 @@ export async function readLedgerTerms({
   spender: string;
 }): Promise<LedgerTerms> {
   const agent = HttpAgent.createSync({ host, identity: new AnonymousIdentity() });
-  if (agent.isLocal()) await agent.fetchRootKey();
+  const hostname = new URL(host).hostname;
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1")
+    await agent.fetchRootKey();
   const actor = Actor.createActor<LedgerQueries>(ledgerQueries, {
     agent,
     canisterId: Principal.fromText(ledger),

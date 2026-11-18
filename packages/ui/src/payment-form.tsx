@@ -25,11 +25,11 @@ const progress = {
 };
 export function PaymentStatus({phase, message, balanceUnavailable, recoveryActions}: PaymentStatusProps) {
   return <>
-    <div role="status" aria-live="polite" aria-atomic="true" className="grid gap-1 break-words text-sm">
+    <output aria-live="polite" aria-atomic="true" className="grid gap-1 break-words text-sm">
       {progress[phase] && <strong>{progress[phase]}</strong>}
       {message && <span>{message}</span>}
       {balanceUnavailable && <span>Balance unavailable. Your payment was confirmed.</span>}
-    </div>
+    </output>
     {recoveryActions?.map(action => <Button key={action.label} variant="outline" type="button" disabled={action.disabled} onClick={action.run}>{action.label}</Button>)}
   </>;
 }
@@ -77,8 +77,8 @@ export function PaymentForm({sources, selectedSource, targetLabel, amount, summa
       {source && <FundingSource {...source} disabled={locked} />}
     </fieldset>
     <p className="break-words text-sm">Credit to <strong>{targetLabel}</strong></p>
-    <label className="grid gap-1 text-sm font-medium">KINIC amount
-      <Input inputMode="decimal" autoComplete="off" value={summary?.amount ?? amount} disabled={locked || !!summary}
+    <label htmlFor={`${group}-amount`} className="grid gap-1 text-sm font-medium">KINIC amount
+      <Input id={`${group}-amount`} inputMode="decimal" autoComplete="off" value={summary?.amount ?? amount} disabled={locked || !!summary}
         onChange={event => actions.onAmount(event.target.value)} />
     </label>
     {actions.amountError && <p role="alert" className="text-sm">{actions.amountError}</p>}

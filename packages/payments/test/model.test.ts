@@ -126,6 +126,23 @@ function ledgerFixture(decimals: number, expiration: [] | [bigint] = []) {
 const query = { host: "http://localhost:4943", owner, ledger, spender };
 
 it.each([
+  ["http://localhost:4943", false, true],
+  ["http://replica.localhost:4943", false, true],
+  ["http://127.0.0.1:4943", true, true],
+  ["https://icp0.io", false, false],
+  ["https://localhost.example.com", false, false],
+  ["https://notlocalhost", false, false],
+  ["https://icp0.io?host=localhost", false, false],
+  ["https://localhost@icp0.io", false, false],
+])("fetches a development root key only for the configured loopback hostname %s", async (host, sdkIsLocal, fetchRoot) => {
+  const { agent } = ledgerFixture(8);
+  // SDK 5.4 recognizes 127.0.0.1, but not localhost or its subdomains.
+  agent.isLocal.mockReturnValue(sdkIsLocal);
+  await readLedgerTerms({ ...query, host });
+  expect(agent.fetchRootKey).toHaveBeenCalledTimes(fetchRoot ? 1 : 0);
+});
+
+it.each([
   [[], null],
   [[999_000n], 999_000n],
 ] satisfies [([] | [bigint]), bigint | null][])(
