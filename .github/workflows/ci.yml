@@ -694,7 +694,7 @@ jobs:
       - name: Test boundary graphs and CI selection
         run: node --test scripts/vault-boundary-graph.test.mjs
       - name: Test backend asset and distribution guards
-        run: node --test scripts/vault-build.test.mjs scripts/vault-release.test.mjs scripts/vault-ci-jobs.test.mjs
+        run: node --test scripts/vault-build.test.mjs scripts/vault-release.test.mjs scripts/vault-ci-jobs.test.mjs scripts/vault-browser-teardown.test.mjs
       - name: Contracts and origin boundary
         run: |
           node scripts/check-vault-boundary.mjs

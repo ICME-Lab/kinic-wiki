@@ -394,6 +394,15 @@ try {
       cleanupErrors.push(`Port ${ownedPort}: ${e}`);
     }
   }
+  // Keep general-suite mappings for diagnosis. Team runs remove their owned
+  // project before recording success, including a failed removal in the receipt.
+  if (teamEmbeds && cleanupErrors.length === 0) {
+    try {
+      rmSync(project, { recursive: true, force: true });
+    } catch (e) {
+      cleanupErrors.push(`Project removal: ${e}`);
+    }
+  }
   writeFileSync(
     join(root, teamEmbeds ? "target/vault-team-teardown.json" : "target/vault-browser-teardown.json"),
     JSON.stringify(
@@ -414,7 +423,4 @@ try {
     [],
     "Owned local infrastructure must fully stop",
   );
-  // The general suite preserves its local mappings for diagnosis. Team runs
-  // need only the provenance and teardown receipts outside this owned project.
-  if (teamEmbeds) rmSync(project, { recursive: true, force: true });
 }
