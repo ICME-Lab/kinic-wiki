@@ -6,7 +6,11 @@ pub const KEY_OWNER_ROWS: usize = 512;
 pub const KEY_ROW: usize = 256;
 /// Existing conservative owner storage tariff, independent of global row-value accounting.
 pub const KEY_OWNER_CHARGE: u64 = 4096;
-pub const ACCOUNTING_POOL: u64 = 16 * 1024 * 1024;
+pub const ACCOUNTING_POOL: u64 = 19 * 1024 * 1024;
+pub const SUBSIDIES: usize = 1024;
+pub const SUBSIDY_ROW: usize = 256;
+pub const GRANT_RECEIPTS: usize = 16384;
+pub const GRANT_ROW: usize = 128;
 pub const ACCOUNTS: usize = 1024;
 pub const PAYMENTS: usize = 1024;
 pub const FEE_FLIGHTS: usize = 8;
@@ -45,7 +49,9 @@ pub fn row_size(variable: &[usize], scalars: usize) -> Option<usize> {
 }
 #[test]
 fn worst_case_pool_and_rows_fit() {
-    let total = ACCOUNTS * SMALL_ROW
+    let total = SUBSIDIES * SUBSIDY_ROW
+        + GRANT_RECEIPTS * GRANT_ROW
+        + ACCOUNTS * SMALL_ROW
         + PAYMENTS * PAYMENT_ROW
         + FEE_FLIGHTS * PAYMENT_ROW
         + RESERVATIONS * SMALL_ROW
@@ -54,10 +60,10 @@ fn worst_case_pool_and_rows_fit() {
         + KEY_ROWS * KEY_ROW
         + CLEANUP_RECEIPTS * CLEANUP_ROW
         + KEY_CONTROL_ROWS * KEY_CONTROL_ROW;
-    assert_eq!(total, 16_760_832);
+    assert_eq!(total, 19_120_128);
     const { assert!(SETTING_SLOTS * SETTING_ROW + BILLING_CURSOR_ROW <= SETTINGS) };
     assert!(GLOBAL_SETTING_KEYS.len() <= SETTING_SLOTS);
-    assert_eq!(ACCOUNTING_POOL as usize - total, 16_384);
+    assert_eq!(ACCOUNTING_POOL as usize - total, 802_816);
     assert!(row_size(&[29, 16, 32, KEY_CONTROL_RESULT], 4).unwrap() <= KEY_CONTROL_ROW);
     assert!(
         KEY_OWNER_ROWS as u64 * KEY_OWNER_CHARGE
@@ -81,6 +87,7 @@ fn maximum_key_reply_fits_protected_receipt() {
         sequence: u64::MAX,
         key_name: "k".repeat(64),
         public_key: vec![3; 96],
+        name: None,
     };
     let reply = crate::KeyReply {
         encrypted_key: vec![4; 192],

@@ -3,6 +3,8 @@ import {
   copyVaultContext,
   type VaultContext,
 } from "@kinic/vault-crypto/context";
+export const VAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
 export class Session {
   private cleanups = new Set<() => void>();
   private binding?: VaultContext;
@@ -10,7 +12,6 @@ export class Session {
   generation = 0;
   root?: CryptoKey;
   lastActivity = Date.now();
-  hiddenAt?: number;
   urls = new Set<string>();
   onLock = () => {};
   get signal() {
@@ -58,23 +59,18 @@ export class Session {
     for (const url of this.urls) URL.revokeObjectURL(url);
     this.urls.clear();
     this.lastActivity = Date.now();
-    this.hiddenAt = this.hiddenAt === undefined ? undefined : Date.now();
     this.onLock();
   }
   expire(now = Date.now()) {
-    if (
-      now - this.lastActivity >= 300000 ||
-      (this.hiddenAt !== undefined && now - this.hiddenAt >= 60000)
-    )
-      this.lock();
+    if (now - this.lastActivity >= VAULT_IDLE_TIMEOUT_MS) this.lock();
   }
   activity() {
     this.expire();
     this.lastActivity = Date.now();
   }
-  visible(hidden: boolean) {
+  visible(_hidden: boolean) {
+    // Recheck on tab return, including when background timers were throttled.
     this.expire();
-    this.hiddenAt = hidden ? (this.hiddenAt ?? Date.now()) : undefined;
   }
   download(data: Uint8Array, name: string) {
     const url = URL.createObjectURL(new Blob([new Uint8Array(data).buffer]));

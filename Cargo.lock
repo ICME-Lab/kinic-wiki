@@ -2110,6 +2110,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kinic-cycle-grants"
+version = "0.1.0"
+dependencies = [
+ "kinic-sqlite-compat",
+]
+
+[[package]]
 name = "kinic-sqlite-compat"
 version = "0.1.0"
 dependencies = [
@@ -3868,6 +3875,7 @@ dependencies = [
  "ic-cdk-timers",
  "ic-http-certification",
  "ic-sqlite-vfs",
+ "kinic-cycle-grants",
  "kinic-sqlite-compat",
  "serde",
  "serde_json",
@@ -3953,6 +3961,7 @@ dependencies = [
  "candid",
  "credit-bridge-types",
  "ic-sqlite-vfs",
+ "kinic-cycle-grants",
  "kinic-sqlite-compat",
  "kinic-vfs-types",
  "kinic-wiki-domain",

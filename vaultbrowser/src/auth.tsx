@@ -1,3 +1,4 @@
+import { VAULT_IDLE_TIMEOUT_MS } from "@kinic/vault-client/session";
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import {
@@ -10,6 +11,7 @@ import {
 } from "react";
 import { loadConfig, type BrowserConfig } from "./config";
 type Session = {
+  config?: BrowserConfig;
   identity?: Identity;
   loading: boolean;
   ready: boolean;
@@ -75,7 +77,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     });
     const authentication = AuthClient.create({
       idleOptions: {
-        idleTimeout: 5 * 60 * 1000,
+        idleTimeout: VAULT_IDLE_TIMEOUT_MS,
         disableDefaultIdleCallback: true,
         // The SDK creates the manager lazily on a first login. Supplying the
         // callback here also covers restored delegations and later logins.
@@ -190,6 +192,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   return (
     <Context
       value={{
+        config: preparedConfig.current,
         identity,
         loading,
         ready,

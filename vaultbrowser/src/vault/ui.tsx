@@ -8,15 +8,18 @@ import type {
 export function VaultButton({
   className = "",
   tone = "default",
+  size = "md",
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
-  tone?: "default" | "primary" | "danger";
+  tone?: "default" | "primary" | "danger" | "ghost";
+  size?: "sm" | "md" | "lg" | "icon";
 }) {
   return (
     <Button
-      unstyled
+      variant={tone === "primary" ? "default" : tone === "danger" ? "destructive" : tone === "ghost" ? "ghost" : "outline"}
+      size={size === "md" ? "default" : size}
       type="button"
-      className={`vault-button vault-button--${tone} ${className}`}
+      className={`vault-button ${className}`}
       {...props}
     />
   );
@@ -24,16 +27,17 @@ export function VaultButton({
 export function VaultField({
   label,
   labelHidden = false,
+  fieldClassName = "",
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & {
   label: string;
   labelHidden?: boolean;
+  fieldClassName?: string;
 }) {
   return (
-    <label className="grid min-w-0 gap-1 text-sm font-medium">
+    <label className={`vault-field ${fieldClassName}`}>
       <span className={labelHidden ? "sr-only" : undefined}>{label}</span>
       <Input
-        unstyled
         className="vault-input min-w-0"
         autoComplete="off"
         {...props}
@@ -56,7 +60,7 @@ export function VaultPanel({
     <section
       aria-label={label}
       data-vault-sensitive={sensitive ? "true" : undefined}
-      className={`vault-panel grid min-w-0 content-start gap-4 ${className}`}
+      className={`vault-panel ${className}`}
     >
       {children}
     </section>
@@ -90,6 +94,10 @@ const errors: Record<string, string> = {
   VaultDisabled:
     "Vault creation is unavailable until the administrator configures the service.",
   UnsupportedKey: "This Vault uses an unsupported key service anchor.",
+  KeyFundingRequired:
+    "Add prepaid balance here to retrieve this Vault's key. Saved keys can still be used without a retrieval fee.",
+  BalanceUnavailable:
+    "The operation finished, but the balance could not be refreshed. Refresh balance before starting another paid operation.",
   KeyService:
     "The key service is unavailable. Select this Vault to retry opening it.",
 };

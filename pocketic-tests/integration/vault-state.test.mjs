@@ -70,7 +70,7 @@ try {
   await client.open(header);
   assert.deepEqual((await client.read(completed)).plaintext, pendingPlaintext);
   console.log(
-    "PASS schema10 same-Wasm upgrade keeps content, pending ciphertext/upload, exact operation receipts, balance and reservations; real client resumes save and decrypts the original pending plaintext after reopening",
+    "PASS schema12 same-Wasm upgrade keeps content, pending ciphertext/upload, exact operation receipts, balance and reservations; real client resumes save and decrypts the original pending plaintext after reopening",
   );
   // Max file, max vaults, optimistic conflict and immutable creation binding.
   const bad = {
@@ -578,7 +578,7 @@ try {
   );
   const capacity = ok(await full.actor.global_capacity());
   assert.equal(capacity.used, capacity.limit);
-  assert.equal(capacity.accounting_reserved, 16n * 1024n * 1024n);
+  assert.equal(capacity.accounting_reserved, 19n * 1024n * 1024n);
   assert.ok(ok(await full.actor.account_balance()) > 100_000_000_000n);
   const state = async () =>
     JSON.parse(
@@ -636,7 +636,7 @@ try {
     ok(keyCalls[1].result),
   );
   console.log(
-    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema10 protected receipt preservation at full cross-owner live content and 10000 ordinary receipts; fixed prepaid capacity conserved",
+    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema12 protected receipt preservation at full cross-owner live content and 10000 ordinary receipts; fixed prepaid capacity conserved",
   );
 } finally {
   fullClients.forEach((c) => c.destroy());
@@ -661,8 +661,8 @@ try {
   ));
   const seeded = await read();
   await billing.upgrade();
-  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "10");
-  assert.deepEqual(await read(), seeded, "schema10 preserves fractional fees and checkpoints");
+  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "12");
+  assert.deepEqual(await read(), seeded, "schema12 preserves fractional fees and checkpoints");
   assert.equal(await billing.controls.fixture_read("SELECT value FROM global_settings WHERE key='serial'"), "9000", "upgrade preserves the never-reused ID serial");
   await billing.controls.fixture_execute(
     `CREATE TRIGGER fixture_fail_owner_billing BEFORE UPDATE OF balance_cycles ON accounts WHEN OLD.owner='${failedOwner}' BEGIN SELECT RAISE(ABORT,'injected owner billing failure'); END;`,
@@ -688,7 +688,7 @@ try {
   assertBilled(recovered);
   assertBilled(stillHealthy);
   assert.ok(recovered.balance < healthy.balance, "failed owner catches up from its unchanged checkpoint");
-  console.log("PASS actual schema10 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
+  console.log("PASS actual schema12 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
 } finally {
   await billing.close();
 }

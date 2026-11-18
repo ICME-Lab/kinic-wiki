@@ -36,6 +36,8 @@ overrides:
 patchedDependencies:
   '@icp-sdk/core@5.4.0': f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2
   '@icp-sdk/core@6.0.0': 1da842ccc2364f994245118110f84be23490b7ebc14d1db2d5f16ba13da4b74e
+  picomatch@2.3.2: 0d866bf9c81dea016b37de8cd52739632b75c64f628e9d37c6db7b068e87d317
+  picomatch@4.0.7: 472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a
 
 importers:
 
@@ -110,6 +112,43 @@ importers:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
+
+  packages/payments:
+    dependencies:
+      '@dfinity/oisy-wallet-signer':
+        specifier: 4.1.3
+        version: 4.1.3(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@dfinity/zod-schemas@3.2.0(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.6.7))(@icp-sdk/canisters@3.6.0(@dfinity/utils@4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)))(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))(zod@4.6.7)
+      '@dfinity/utils':
+        specifier: 4.2.1
+        version: 4.2.1(@icp-sdk/core@5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2))
+      '@icp-sdk/core':
+        specifier: 5.4.0
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      react:
+        specifier: 19.2.5
+        version: 19.2.5
+    devDependencies:
+      '@testing-library/react':
+        specifier: 16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      '@types/react':
+        specifier: 19.2.7
+        version: 19.2.7
+      jsdom:
+        specifier: 30.0.1
+        version: 30.0.1(@noble/hashes@2.2.0)
+      react-dom:
+        specifier: 19.2.5
+        version: 19.2.5(react@19.2.5)
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
 
   packages/source-contracts: {}
 
@@ -306,6 +345,9 @@ importers:
       '@kinic/credit-bridge-candid':
         specifier: workspace:*
         version: link:../packages/credit-bridge-candid
+      '@kinic/payments':
+        specifier: workspace:*
+        version: link:../packages/payments
       '@kinic/ui':
         specifier: workspace:*
         version: link:../packages/ui
@@ -318,6 +360,12 @@ importers:
       '@kinic/vault-crypto':
         specifier: workspace:*
         version: link:../packages/vault-crypto
+      '@radix-ui/react-dropdown-menu':
+        specifier: 2.1.24
+        version: 2.1.24(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      '@tanstack/react-router':
+        specifier: 1.170.41
+        version: 1.170.41(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       lucide-react:
         specifier: 0.555.0
         version: 0.555.0(react@19.2.5)
@@ -345,7 +393,7 @@ importers:
         version: 19.2.3(@types/react@19.2.7)
       '@vitejs/plugin-react':
         specifier: 6.0.3
-        version: 6.0.3(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
+        version: 6.0.3(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7))
       autoprefixer:
         specifier: 10.4.22
         version: 10.4.22(postcss@8.5.23)
@@ -366,10 +414,10 @@ importers:
         version: 7.0.2
       vite:
         specifier: 8.1.6
-        version: 8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)
+        version: 8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7)
       vitest:
         specifier: 4.1.12
-        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))
+        version: 4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7))
 
   wikibrowser:
     dependencies:
@@ -400,6 +448,9 @@ importers:
       '@kinic/jev-reranker':
         specifier: workspace:*
         version: link:../packages/jev-reranker
+      '@kinic/payments':
+        specifier: workspace:*
+        version: link:../packages/payments
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../packages/source-contracts
@@ -1303,7 +1354,7 @@ packages:
     resolution: {integrity: sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: 4.13.11
+      hono: 4.13.16
 
   '@icp-sdk/auth@5.0.0':
     resolution: {integrity: sha512-TaPfdaELT7s0vTIFOmCnlCmhPdL7kABA7+2Q0YNAUWIa/FFiwq6ffGPLvr0U0+2zFLaLQ4l7UCB2zf7vo6PFPQ==}
@@ -5550,7 +5601,7 @@ snapshots:
 
   '@floating-ui/utils@0.2.11': {}
 
-  '@hono/node-server@2.1.6(hono@4.13.11)':
+  '@hono/node-server@2.1.6(hono@4.13.16)':
     dependencies:
       hono: 4.13.16
 
@@ -5820,7 +5871,7 @@ snapshots:
 
   '@mizchi/vlmkit@0.23.0(@playwright/test@1.61.1)(playwright@1.61.1)':
     dependencies:
-      '@hono/node-server': 2.1.6(hono@4.13.11)
+      '@hono/node-server': 2.1.6(hono@4.13.16)
       cac: 7.0.0
       hono: 4.13.16
       pixelmatch: 7.2.0
@@ -5836,7 +5887,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.0(supports-color@10.2.2)(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 2.1.6(hono@4.13.11)
+      '@hono/node-server': 2.1.6(hono@4.13.16)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -6899,7 +6950,7 @@ snapshots:
       exsolve: 1.1.3
       lightningcss: 1.33.0
       pathe: 2.0.3
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
       seroval: 1.6.11
       source-map: 0.7.6
       srvx: 0.11.22
@@ -7113,6 +7164,11 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
+  '@vitejs/plugin-react@6.0.3(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7))':
+    dependencies:
+      '@rolldown/pluginutils': 1.0.1
+      vite: 8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7)
+
   '@vitejs/plugin-react@6.0.3(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
@@ -7126,6 +7182,14 @@ snapshots:
       '@vitest/utils': 4.1.12
       chai: 6.2.2
       tinyrainbow: 3.1.1
+
+  '@vitest/mocker@4.1.12(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7))':
+    dependencies:
+      '@vitest/spy': 4.1.12
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7)
 
   '@vitest/mocker@4.1.12(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0))':
     dependencies:
@@ -7186,7 +7250,7 @@ snapshots:
   anymatch@3.1.3:
     dependencies:
       normalize-path: 3.0.0
-      picomatch: 2.3.2
+      picomatch: 2.3.2(patch_hash=0d866bf9c81dea016b37de8cd52739632b75c64f628e9d37c6db7b068e87d317)
 
   arg@5.0.2: {}
 
@@ -7587,9 +7651,9 @@ snapshots:
     dependencies:
       reusify: 1.1.0
 
-  fdir@6.5.0(picomatch@4.0.7):
+  fdir@6.5.0(picomatch@4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)):
     optionalDependencies:
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
 
   fetchdts@0.1.7: {}
 
@@ -8251,7 +8315,7 @@ snapshots:
   micromatch@4.0.8:
     dependencies:
       braces: 3.0.3
-      picomatch: 2.3.2
+      picomatch: 2.3.2(patch_hash=0d866bf9c81dea016b37de8cd52739632b75c64f628e9d37c6db7b068e87d317)
 
   mime-db@1.54.0: {}
 
@@ -8397,9 +8461,9 @@ snapshots:
 
   picocolors@1.1.1: {}
 
-  picomatch@2.3.2: {}
+  picomatch@2.3.2(patch_hash=0d866bf9c81dea016b37de8cd52739632b75c64f628e9d37c6db7b068e87d317): {}
 
-  picomatch@4.0.7: {}
+  picomatch@4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a): {}
 
   pify@2.3.0: {}
 
@@ -8559,7 +8623,7 @@ snapshots:
 
   readdirp@3.6.0:
     dependencies:
-      picomatch: 2.3.2
+      picomatch: 2.3.2(patch_hash=0d866bf9c81dea016b37de8cd52739632b75c64f628e9d37c6db7b068e87d317)
 
   readdirp@5.0.0: {}
 
@@ -8872,8 +8936,8 @@ snapshots:
 
   tinyglobby@0.2.17:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.7)
-      picomatch: 4.0.7
+      fdir: 6.5.0(picomatch@4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a))
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
 
   tinyrainbow@3.1.1: {}
 
@@ -8989,7 +9053,7 @@ snapshots:
   unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.1.5)(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)):
     dependencies:
       '@jridgewell/remapping': 2.3.5
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
       webpack-virtual-modules: 0.6.2
     optionalDependencies:
       esbuild: 0.28.1
@@ -9035,10 +9099,23 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
+  vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7):
+    dependencies:
+      lightningcss: 1.33.0
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
+      postcss: 8.5.23
+      rolldown: 1.1.5
+      tinyglobby: 0.2.17
+    optionalDependencies:
+      '@types/node': 24.10.1
+      esbuild: 0.28.1
+      fsevents: 2.3.3
+      jiti: 1.21.7
+
   vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0):
     dependencies:
       lightningcss: 1.33.0
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
       postcss: 8.5.23
       rolldown: 1.1.5
       tinyglobby: 0.2.17
@@ -9051,6 +9128,34 @@ snapshots:
   vitefu@1.1.3(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)):
     optionalDependencies:
       vite: 8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)
+
+  vitest@4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7)):
+    dependencies:
+      '@vitest/expect': 4.1.12
+      '@vitest/mocker': 4.1.12(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7))
+      '@vitest/pretty-format': 4.1.12
+      '@vitest/runner': 4.1.12
+      '@vitest/snapshot': 4.1.12
+      '@vitest/spy': 4.1.12
+      '@vitest/utils': 4.1.12
+      es-module-lexer: 2.3.1
+      expect-type: 1.4.0
+      magic-string: 0.30.21
+      obug: 2.1.4
+      pathe: 2.0.3
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
+      std-env: 4.2.0
+      tinybench: 2.9.0
+      tinyexec: 1.3.0
+      tinyglobby: 0.2.17
+      tinyrainbow: 3.1.1
+      vite: 8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@1.21.7)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 24.10.1
+      jsdom: 30.0.1(@noble/hashes@2.2.0)
+    transitivePeerDependencies:
+      - msw
 
   vitest@4.1.12(@types/node@24.10.1)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.1.6(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)):
     dependencies:
@@ -9066,7 +9171,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.4
       pathe: 2.0.3
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=472b306c24d6dc2e42d10d528a4e3f6968ea205e7ebd0d95bc190fcbb49fc14a)
       std-env: 4.2.0
       tinybench: 2.9.0
       tinyexec: 1.3.0

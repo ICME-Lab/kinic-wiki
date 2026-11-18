@@ -56,26 +56,55 @@ struct InlineMutation<'a> {
     operation: &'a Id,
     request: &'a SaveInline,
 }
+#[derive(CandidType)]
+struct RenameMutation<'a> {
+    operation: &'a Id,
+    vault: &'a Id,
+    name: &'a str,
+    expected_sequence: u64,
+}
 pub fn mutation_digest(r: &Mutation) -> Result<Vec<u8>> {
-    let action = match &r.action {
-        Action::SaveInline(request) => {
+    // An added outer field must receive an explicit hash-version decision.
+    let Mutation { operation, action } = r;
+    let action = match action {
+        Action::RenameVault {
+            vault,
+            name,
+            expected_sequence,
+        } => {
             return operations::digest(
-                b"save-inline/v1",
-                &InlineMutation {
-                    operation: &r.operation,
-                    request,
+                b"rename-vault/v1",
+                &RenameMutation {
+                    operation,
+                    vault,
+                    name,
+                    expected_sequence: *expected_sequence,
                 },
             );
         }
-        Action::BeginRevision(r) => LegacyAction::BeginRevision(LegacyBeginRevision {
-            vault: &r.vault,
-            object: &r.object,
-            expected_revision: r.expected_revision,
-            operation: &r.operation,
-            plain_size: r.plain_size,
-            manifest: &r.manifest,
-            chunk_hashes: &r.chunk_hashes,
-        }),
+        Action::SaveInline(request) => {
+            return operations::digest(b"save-inline/v1", &InlineMutation { operation, request });
+        }
+        Action::BeginRevision(request) => {
+            let BeginRevision {
+                vault,
+                object,
+                expected_revision,
+                operation,
+                plain_size,
+                manifest,
+                chunk_hashes,
+            } = request;
+            LegacyAction::BeginRevision(LegacyBeginRevision {
+                vault,
+                object,
+                expected_revision: *expected_revision,
+                operation,
+                plain_size: *plain_size,
+                manifest,
+                chunk_hashes,
+            })
+        }
         Action::PutChunk {
             upload,
             index,
@@ -110,9 +139,6 @@ pub fn mutation_digest(r: &Mutation) -> Result<Vec<u8>> {
         Action::DeleteVault { vault } => LegacyAction::DeleteVault { vault },
         Action::Collect => LegacyAction::Collect,
     };
-    let request = LegacyMutation {
-        operation: &r.operation,
-        action,
-    };
+    let request = LegacyMutation { operation, action };
     operations::digest(b"mutation/v1", &request)
 }

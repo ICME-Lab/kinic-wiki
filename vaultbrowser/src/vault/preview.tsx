@@ -5,7 +5,7 @@ const privateComponents: MarkdownComponents = {
 };
 export function VaultPreview({ content }: { content: string }) {
   return (
-    <div className="prose min-w-0 break-words text-sm [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto">
+    <div className="markdown-body min-w-0 break-words [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto">
       <Markdown components={privateComponents} skipHtml>
         {content}
       </Markdown>

@@ -1,14 +1,22 @@
 //! Durable ICRC-2 quotes. Only the authenticated wallet can debit its own allowance.
 use crate::state::transaction;
 mod api;
+mod consent;
+#[cfg(test)]
+#[path = "funding/consent_tests.rs"]
+mod consent_tests;
 mod ledger;
 mod reconciliation;
 use candid::{CandidType, Principal};
+pub(crate) use consent::{
+    Icrc10SupportedStandard, Icrc21ConsentMessageRequest, Icrc21ConsentMessageResponse,
+};
 use kinic_sqlite_compat::{self as sql, OptionalExtension, params};
 pub use reconciliation::{ReconciliationProgress, ReconciliationState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vault_types::{Error, Result};
+const QUOTE_LIFETIME_NS: u64 = 300_000_000_000;
 /// Certified build provenance, independent of controller configuration and origin selection.
 pub const FUNDING_MODE: &str = if cfg!(feature = "synthetic-funding-test-only") {
     "synthetic-test-only"
@@ -58,6 +66,16 @@ pub struct Payment {
     pub reconciliation: Option<ReconciliationState>,
     /// True only while the durable operation is known not to have dispatched a debit.
     pub preparing: bool,
+}
+impl Payment {
+    fn with_effective_status(mut self, now: u64) -> Self {
+        if self.status == Status::Quoted
+            && now.saturating_sub(self.created_at_time) > QUOTE_LIFETIME_NS
+        {
+            self.status = Status::Expired;
+        }
+        self
+    }
 }
 fn auth(p: Principal) -> Result<()> {
     if p == Principal::anonymous() || p == Principal::management_canister() {
@@ -193,13 +211,8 @@ pub enum QuoteAdmission {
     Existing(Payment),
     Fee(FeeFlight),
 }
-pub fn admit_quote(
-    wallet: Principal,
-    request: PurchaseRequest,
-    config: FundingConfig,
-    now: u64,
-) -> Result<QuoteAdmission> {
-    auth(wallet)?;
+
+fn validate_quote_request(request: &PurchaseRequest) -> Result<()> {
     auth(request.beneficiary)?;
     if request.operation.len() != 16
         || request.amount_e8s == 0
@@ -208,6 +221,33 @@ pub fn admit_quote(
     {
         return Err(Error::InvalidInput);
     }
+    Ok(())
+}
+
+fn quote_credits(request: &PurchaseRequest, config: &FundingConfig, now: u64) -> Result<u64> {
+    if request.created_at_time > now.saturating_add(60_000_000_000)
+        || now.saturating_sub(request.created_at_time) > QUOTE_LIFETIME_NS
+    {
+        return Err(Error::Expired);
+    }
+    let credits = u64::try_from(
+        u128::from(request.amount_e8s) * u128::from(config.cycles_per_kinic) / 100_000_000,
+    )
+    .map_err(|_| Error::InvalidInput)?;
+    if credits < 20_000_000 || credits < request.min_credits || credits > i64::MAX as u64 {
+        return Err(Error::InvalidInput);
+    }
+    Ok(credits)
+}
+
+pub fn admit_quote(
+    wallet: Principal,
+    request: PurchaseRequest,
+    config: FundingConfig,
+    now: u64,
+) -> Result<QuoteAdmission> {
+    auth(wallet)?;
+    validate_quote_request(&request)?;
     transaction(|db| {
         if let Some(old) = load(db, wallet, &request.operation)? {
             return if old.request == request {
@@ -216,18 +256,7 @@ pub fn admit_quote(
                 Err(Error::Conflict)
             };
         }
-        if request.created_at_time > now.saturating_add(60_000_000_000)
-            || now.saturating_sub(request.created_at_time) > 300_000_000_000
-        {
-            return Err(Error::Expired);
-        }
-        let credits = u64::try_from(
-            u128::from(request.amount_e8s) * u128::from(config.cycles_per_kinic) / 100_000_000,
-        )
-        .map_err(|_| Error::InvalidInput)?;
-        if credits < 20_000_000 || credits < request.min_credits || credits > i64::MAX as u64 {
-            return Err(Error::InvalidInput);
-        }
+        let credits = quote_credits(&request, &config, now)?;
         let generation = generation(db)?;
         let nanos = i64::try_from(now).map_err(|_| Error::InvalidInput)?;
         db.execute(
@@ -386,32 +415,45 @@ pub fn record_quote(
         QuoteAdmission::Fee(f) => finish_quote(&f, Ok(fee), now),
     }
 }
+fn payment_eligibility(p: &Payment, current: i64, now: u64) -> Result<bool> {
+    if p.reconciliation
+        .as_ref()
+        .is_some_and(|s| s.lease_generation == current && s.lease_until > now)
+    {
+        return Err(Error::Busy);
+    }
+    let orphan = matches!(p.status, Status::InFlight)
+        && (p.generation < current || now.saturating_sub(p.sent_at) > 120_000_000_000);
+    if !matches!(p.status, Status::Quoted | Status::Unknown) && !orphan {
+        return Err(Error::Conflict);
+    }
+    // Unknown payments can only be retried byte-for-byte within ledger dedup window.
+    // Beyond it the durable Unknown row requires authoritative ledger reconciliation.
+    let max = if matches!(p.status, Status::Quoted) || p.preparing {
+        QUOTE_LIFETIME_NS
+    } else {
+        23 * 3600 * 1_000_000_000
+    };
+    if now < p.created_at_time || now - p.created_at_time > max {
+        return Err(Error::Expired);
+    }
+    Ok(orphan)
+}
+
+fn next_payment_attempt(payment: &Payment) -> Result<u64> {
+    payment
+        .attempt
+        .checked_add(1)
+        .filter(|attempt| *attempt <= 100)
+        .ok_or(Error::QuotaExceeded)
+}
+
 pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
     auth(wallet)?;
     transaction(|db| {
         let mut p = load(db, wallet, id)?.ok_or(Error::NotFound)?;
         let current = generation(db)?;
-        if p.reconciliation
-            .as_ref()
-            .is_some_and(|s| s.lease_generation == current && s.lease_until > now)
-        {
-            return Err(Error::Busy);
-        }
-        let orphan = matches!(p.status, Status::InFlight)
-            && (p.generation < current || now.saturating_sub(p.sent_at) > 120_000_000_000);
-        if !matches!(p.status, Status::Quoted | Status::Unknown) && !orphan {
-            return Err(Error::Conflict);
-        }
-        // Unknown payments can only be retried byte-for-byte within ledger dedup window.
-        // Beyond it the durable Unknown row requires authoritative ledger reconciliation.
-        let max = if matches!(p.status, Status::Quoted) || p.preparing {
-            300_000_000_000
-        } else {
-            23 * 3600 * 1_000_000_000
-        };
-        if now < p.created_at_time || now - p.created_at_time > max {
-            return Err(Error::Expired);
-        }
+        let orphan = payment_eligibility(&p, current, now)?;
         crate::capacity::admit_beneficiary(db, p.request.beneficiary)?;
         validate_receipts(&p)?;
         crate::capacity::admit_credit(
@@ -424,10 +466,7 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         p.uncertain |= (orphan && !p.preparing) || matches!(p.status, Status::Unknown);
         p.status = Status::InFlight;
         p.generation = current;
-        p.attempt = p.attempt.checked_add(1).ok_or(Error::QuotaExceeded)?;
-        if p.attempt > 100 {
-            return Err(Error::QuotaExceeded);
-        }
+        p.attempt = next_payment_attempt(&p)?;
         p.sent_at = now;
         save(db, &p)?;
         Ok(p)

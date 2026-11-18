@@ -37,6 +37,8 @@ type PageGraphNode = {
 export function ListingDetailClient({ canisterId, listingId }: ListingDetailClientProps) {
   const {
     authClient,
+    connectWallet,
+    walletPaymentReady,
     identityLedgerBalance,
     identityLedgerBalanceError,
     identityLedgerBalanceLoading,
@@ -71,6 +73,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   const selectedBalance = fundingChoice.selected === "ii" ? identityLedgerBalance : walletBalance;
   const selectedBalanceError = fundingChoice.selected === "ii" ? identityLedgerBalanceError : walletBalanceError;
   const selectedBalanceLoading = fundingChoice.selected === "ii" ? identityLedgerBalanceLoading : walletBalanceLoading;
+  const needsPlugConsent = fundingChoice.selected === "wallet" && wallet?.provider === "plug" && !walletPaymentReady;
   const selectedSourceAvailable = fundingChoice.selected === "ii" ? Boolean(authClient && principal) : Boolean(wallet);
   const selectedBalanceSufficient = listing !== null && balanceCanFund(selectedBalance, requiredBalanceE8s);
 
@@ -277,18 +280,16 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                     disabled={
                       !principal ||
                       !selectedSourceAvailable ||
-                      !selectedBalanceSufficient ||
-                      selectedBalanceLoading ||
-                      Boolean(selectedBalanceError) ||
+                      (!needsPlugConsent && (!selectedBalanceSufficient || selectedBalanceLoading || Boolean(selectedBalanceError))) ||
                       (fundingChoice.selected === "wallet" && walletBusyProvider !== null) ||
                       purchaseState === "loading" ||
                       purchaseState === "success"
                     }
                     type="button"
-                    onClick={() => void purchase()}
+                    onClick={() => needsPlugConsent ? void connectWallet("plug") : void purchase()}
                   >
                     <ShoppingCart aria-hidden size={17} />
-                    <span>{purchaseState === "success" ? "Purchased" : `Purchase with ${fundingChoice.selected === "ii" ? "Internet Identity" : wallet?.provider === "plug" ? "Plug" : "OISY"}`}</span>
+                    <span>{purchaseState === "success" ? "Purchased" : needsPlugConsent ? "Authorize Plug for purchase" : `Purchase with ${fundingChoice.selected === "ii" ? "Internet Identity" : wallet?.provider === "plug" ? "Plug" : "OISY"}`}</span>
                   </button>
                   {purchaseState === "success" ? (
                     <Link

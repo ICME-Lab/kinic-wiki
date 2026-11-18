@@ -10,6 +10,54 @@ fn sql_error(e: sqlite::Error) -> String {
     e.to_string()
 }
 
+/// Every incoming credit must leave room for transfers already dispatched and
+/// for cycle reservations that may be refunded. The caller owns the transaction.
+pub(crate) fn admit_credit(
+    db: &Connection,
+    owner: &str,
+    amount: u64,
+    exclude_payment: Option<(&str, &[u8])>,
+) -> vault_types::Result<()> {
+    let balance: i64 = db
+        .query_row(
+            "SELECT COALESCE((SELECT balance_cycles FROM accounts WHERE owner=?1),0)",
+            params![owner],
+            |r| sqlite::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    let refunds:i64=db.query_row("SELECT coalesce(sum(CASE WHEN actual IS NULL THEN reserved WHEN in_flight=1 THEN actual ELSE 0 END),0) FROM vault_cycle_reservations WHERE owner=?1",params![owner],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
+    let mut capacity = u128::from(u64::try_from(balance).map_err(|_| Error::Storage)?)
+        + u128::from(u64::try_from(refunds).map_err(|_| Error::Storage)?)
+        + u128::from(amount);
+    for payment in crate::funding::all_payments(db)? {
+        let payment = payment?;
+        let excluded = exclude_payment.is_some_and(|(wallet, operation)| {
+            payment.wallet.to_text() == wallet && payment.request.operation.as_slice() == operation
+        });
+        if !excluded
+            && payment.request.beneficiary.to_text() == owner
+            && matches!(
+                payment.status,
+                crate::funding::Status::InFlight | crate::funding::Status::Unknown
+            )
+        {
+            capacity += u128::from(payment.credits);
+        }
+    }
+    for (beneficiary, operation, credits) in crate::bridge::reservations(db)? {
+        let excluded = exclude_payment.is_some_and(|(wallet, excluded_operation)| {
+            beneficiary.to_text() == wallet && operation.as_slice() == excluded_operation
+        });
+        if beneficiary.to_text() == owner && !excluded {
+            capacity += u128::from(credits);
+        }
+    }
+    if capacity > i64::MAX as u128 {
+        return Err(Error::QuotaExceeded);
+    }
+    Ok(())
+}
+
 impl State {
     pub fn vault_require_spending(&self, owner: &str, now: i64) -> Result<(), String> {
         self.write_index(|tx| {
@@ -53,6 +101,8 @@ impl State {
             .vault_current_generation()
             .map_err(|_| "Vault generation unavailable")?;
         self.write_index(|tx|{
+            let sponsored=crate::key_subsidy::reserve_in(tx,owner,token,amount).map_err(|e|format!("key subsidy reservation: {e:?}"))?;
+            let amount=amount.checked_sub(sponsored).ok_or("key subsidy exceeds reservation")?;
             if let Some((reserved,settled))=tx.query_row("SELECT reserved,settled_at_ms FROM vault_cycle_reservations WHERE owner=?1 AND token=?2",params![owner,token],|r|Ok((sqlite::row_get::<i64>(r,0)?,sqlite::row_get::<Option<i64>>(r,1)?))).optional().map_err(sql_error)? {
                 return if reserved==amount as i64 && settled.is_none(){Ok(())}else{Err("reservation replay conflict".into())}
             }
@@ -178,7 +228,7 @@ impl BillingError {
         }
     }
 }
-fn settle_storage(tx: &Connection, owner: &str, now: i64) -> Result<(), String> {
+pub(crate) fn settle_storage(tx: &Connection, owner: &str, now: i64) -> Result<(), String> {
     settle_storage_checked(tx, owner, now).map_err(|error| error.to_string())
 }
 fn settle_storage_checked(tx: &Connection, owner: &str, now: i64) -> Result<(), BillingError> {
@@ -392,6 +442,8 @@ fn settle_reservation(
             |r| Ok((sqlite::row_get(r, 0)?, sqlite::row_get(r, 1)?)),
         )
         .map_err(sql_error)?;
+    let actual = crate::key_subsidy::settle_in(tx, owner, token, actual, complete, allow_down)
+        .map_err(|e| format!("key subsidy settlement: {e:?}"))?;
     let actual = i64::try_from(actual).map_err(|_| "cycle settlement overflow")?;
     if actual > reserved {
         return Err("settlement exceeds reservation".into());

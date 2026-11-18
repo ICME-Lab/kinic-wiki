@@ -44,6 +44,23 @@ pub fn active(db: &Connection, vault: &[u8]) -> Result<Header> {
     }
     Ok(h)
 }
+/// Names fit inside the existing prepaid 8 KiB header allocation. No key fields change.
+pub fn rename(db: &Connection, vault: &[u8], name: &str, expected_sequence: u64) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+        return Err(Error::InvalidInput);
+    }
+    let mut h = active(db, vault)?;
+    if h.sequence != expected_sequence {
+        return Err(Error::Conflict);
+    }
+    if h.sequence >= i64::MAX as u64 {
+        return Err(Error::QuotaExceeded);
+    }
+    h.name = Some(name.to_string());
+    h.sequence += 1;
+    put_header(db, &h)
+}
 pub fn list(db: &Connection) -> Result<Vec<Header>> {
     let mut stmt=db.prepare("SELECT header FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) ORDER BY id LIMIT 3").map_err(|_|Error::Storage)?;
     let rows: Vec<String> =

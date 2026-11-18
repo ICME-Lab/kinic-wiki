@@ -1,443 +1,259 @@
-import { useCallback, useEffect, useState, useRef } from "react";
-import { Actor, HttpAgent } from "@icp-sdk/core/agent";
-import { Principal } from "@icp-sdk/core/principal";
-import { ledgerIDL } from "./funding/ledger";
-import { formatKinic, parseKinic, paymentId, isPendingPayment, isTerminalPayment } from "./funding/payments";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { VaultClient } from "@kinic/vault-client";
-import { ok } from "@kinic/vault-client";
-import type {
-  Payment,
-  ReconciliationProgress,
-} from "@kinic/vault-client/contracts";
-import { loadConfig } from "./config";
-import { VaultButton } from "./vault/ui";
-export function Funding({
-  client,
-  onFunded,
-}: {
-  client: VaultClient;
-  onFunded: () => Promise<void>;
+import type { FundingConfig, Payment, ReconciliationProgress } from "@kinic/vault-candid";
+import { formatKinicExact, parseKinic } from "@kinic/payments/amounts";
+import { classifyPaymentFailure, formatPaymentFailure, PaymentFailure } from "@kinic/payments/errors";
+import { readLedgerTerms } from "@kinic/payments/ledger";
+import { browserRecoveryStore, fundingSources, paymentPresentation, useFundingProvider, usePaymentFlow,
+  type FlowBinding, type SourceId } from "@kinic/payments/use-payment-flow";
+import { PaymentForm } from "@kinic/ui/payment-form";
+import { formatCycles } from "@kinic/ui/cycles";
+import { createVaultPaymentAdapter, decodeVaultRecoveryRecord, discoverVaultFundingConfig, listVaultFundingHistory, readVaultHistoryStatus, vaultFundingScopes } from "./funding/adapter";
+import { inspectVaultHistory, readOnlyStatusLabel, savedVaultLedger } from "./funding/history";
+import { isPendingPayment, paymentId, paymentStatusLabel } from "./funding/payments";
+import { useVaultFundingSession } from "./funding/session";
+
+type Props = {client: VaultClient; onFunded: () => Promise<void>};
+const creditLabel = (cycles: bigint) => formatCycles(cycles) + " cycles";
+export function Funding({client, onFunded}: Props) {
+  const {session, snapshot} = useVaultFundingSession();
+  const choice = useFundingProvider("kinic.vault.payment-source", snapshot?.account?.provider);
+  const [paymentAttempt, setPaymentAttempt] = useState(0);
+  if (!session || !snapshot) return <section className="vault-funding"><h3>Add prepaid balance</h3><p>Funding is unavailable.</p></section>;
+  return <VaultPayment key={JSON.stringify([client.identity.getPrincipal().toText(), choice.source, snapshot.generation, client.session.capture(), paymentAttempt])}
+    client={client} onFunded={onFunded} source={choice.source} select={choice.select} session={session} snapshot={snapshot}
+    onNewPayment={() => setPaymentAttempt(attempt => attempt + 1)}/>;
+}
+
+type Environment = ReturnType<typeof useVaultFundingSession>;
+function VaultPayment({client, onFunded, source, select, session, snapshot, onNewPayment}: Props & {
+  onNewPayment: () => void;
+  source:SourceId; select:(id:string)=>void; session: NonNullable<Environment["session"]>; snapshot: NonNullable<Environment["snapshot"]>
 }) {
-  const alive = useRef(true),
-    working = useRef(false),
-    approved = useRef(false);
-  const currentClient = useRef(client);
-  currentClient.current = client;
-  const stopped = useRef(false);
-  const run = useRef(0);
-  const invalidateRequests = useCallback(() => {
-    run.current++;
-    alive.current = false;
-    stopped.current = true;
-  }, []);
-  const [progress, setProgress] = useState<ReconciliationProgress>();
+  const {manager, config} = session;
+  const [amount, setAmount] = useState("1");
+  const [funding, setFunding] = useState<FundingConfig | null>();
+  const [history, setHistory] = useState<Payment[]>();
+  const [selectedId, setSelectedId] = useState<string>();
+  const [balance, setBalance] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
+  const [reading, setReading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [fundingMode, setFundingMode] = useState<string>();
-  const fundingEnabled =
-    fundingMode === "production" || fundingMode === "synthetic-test-only";
-  const [draftAmount, setDraftAmount] = useState("1");
-  const [quote, setQuoteState] = useState<Payment>();
-  const [savedPayments, setSavedPayments] = useState<Payment[]>([]);
-  const setQuote = (payment?: Payment) => {
-    setQuoteState(payment);
-    if (payment)
-      setSavedPayments((saved) =>
-        saved.map((existing) =>
-          paymentId(existing) === paymentId(payment)
-            ? payment
-            : existing,
-        ),
-      );
-  };
-  const [historyReady, setHistoryReady] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const work = (f: (check: () => void) => Promise<void>) => {
-    if (working.current) return;
-    const attempt = ++run.current;
-    const owner = client.identity.getPrincipal().toText();
-    working.current = true;
-    setBusy(true);
-    setMessage("");
-    const generation = client.session.capture();
-    const check = () => {
-      if (
-        !alive.current ||
-        currentClient.current !== client ||
-        owner !== client.identity.getPrincipal().toText() ||
-        attempt !== run.current ||
-        generation !== client.session.capture()
-      )
-        throw Error("Locked");
-    };
-    void f(check)
-      .catch(() => {
-        if (
-          alive.current &&
-          currentClient.current === client &&
-          attempt === run.current &&
-          owner === client.identity.getPrincipal().toText() &&
-          client.session.capture() === generation
-        )
-          setMessage(
-            "Request did not complete. Check the saved payment status before attempting another payment.",
-          );
-      })
-      .finally(() => {
-        if (attempt === run.current) {
-          working.current = false;
-          if (alive.current && currentClient.current === client) setBusy(false);
-        }
-      });
-  };
+  const [progress, setProgress] = useState<ReconciliationProgress>();
+  const stopScan = useRef(false);
+  const [store] = useState(browserRecoveryStore);
+  const beneficiary = client.identity.getPrincipal().toText();
+  const external = snapshot.account?.provider !== "ii" ? snapshot.account : null;
+  const owner = source === "ii" ? beneficiary : external?.provider === source ? external.owner : null;
+  const identity = client.identity;
+  const lifecycle = useRef<() => boolean>(() => false);
+  useLayoutEffect(() => {
+    let live = true;
+    const token = manager.capture(), generation = client.session.capture();
+    lifecycle.current = () => live && manager.isCurrent(token) && client.session.capture() === generation &&
+      client.identity.getPrincipal().toText() === beneficiary;
+    return () => { live = false; stopScan.current = true; };
+  }, [manager,client,beneficiary]);
+  const [journal, setJournal] = useState<{ledger?: string; error?: string}>();
+  useLayoutEffect(() => {
+    try { setJournal({ledger:owner ? savedVaultLedger(config,{provider:source,owner},beneficiary,store) : undefined}); }
+    catch { setJournal({error:"The payment record could not be saved or read."}); }
+  }, [config,source,owner,beneficiary,store]);
   useEffect(() => {
-    let active = true;
-    alive.current = true;
-    const generation = client.session.capture();
-    const owner = client.identity.getPrincipal().toText();
-    const valid = () =>
-      active &&
-      currentClient.current === client &&
-      owner === client.identity.getPrincipal().toText() &&
-      generation === client.session.capture();
-    setQuote(undefined);
-    setSavedPayments([]);
-    setProgress(undefined);
-    setHistoryReady(false);
-    setFundingMode(undefined);
-    setBusy(false);
-    setScanning(false);
-    working.current = false;
-    approved.current = false;
-    void loadConfig()
-      .then((config) => {
-        if (valid()) setFundingMode(config.fundingMode);
-      })
-      .catch(() => {
-        if (valid()) setFundingMode(undefined);
-      });
-    void client.actor
-      .list_payments()
-      .then((result) => {
-        if (valid()) {
-          const pending = ok(result).filter(isPendingPayment);
-          setSavedPayments(pending);
-          if (pending[0]) setQuote(pending[0]);
-          setHistoryReady(true);
-        }
-      })
-      .catch(() => {
-        if (valid())
-          setMessage(
-            "Could not load previous payments. Check payment history before funding.",
-          );
-      });
-    return () => {
-      active = false;
-      invalidateRequests();
-    };
-  }, [client, invalidateRequests]);
-  const refresh = async (check: () => void) => {
-    if (!quote) return;
-    const p = ok(await client.actor.payment_status(quote.request.operation))[0];
-    check();
-    if (p) setQuote(p);
-    await onFunded();
+    let live = true;
+    void discoverVaultFundingConfig(config).then(value => {if (live) setFunding(value);})
+      .catch(() => {if (live) setFunding(null);});
+    return () => {live = false;};
+  }, [config]);
+  const chosen = history?.find(item => paymentId(item) === selectedId) ?? history?.[0];
+  const ledger = journal?.ledger ?? chosen?.config.ledger.toText() ?? funding?.ledger.toText();
+  let journalId: string | undefined;
+  let journalAmount: string | undefined;
+  let storageError = journal?.error;
+  if (!storageError && ledger && owner) {
+    try {
+      const original = store.list({host:config.host, origin:location.origin, spender:config.canister, ledger,
+        payer:{provider:source,owner}, target:{kind:"vault",beneficiary}})[0];
+      if (original) {
+        journalId = original.id;
+        journalAmount = formatKinicExact(decodeVaultRecoveryRecord(original,original.scope).request.amount_e8s);
+      }
+    } catch { storageError = "The payment record could not be saved or read."; }
+  }
+  const scopes = vaultFundingScopes(config.canister,ledger);
+  const granted = manager.hasScopes(scopes);
+  const connected = source === "ii" ? !!manager.getIdentityTransport(scopes)
+    : !!external && external.provider === source && snapshot.state === "connected" && granted;
+  const historyGranted = manager.hasScopes(vaultFundingScopes(config.canister));
+  const authorizedPlug = source === "plug" && historyGranted ? snapshot.transport : undefined;
+  const create = useCallback(({store, isCurrent}: FlowBinding) => {
+    if (!connected || funding === undefined || !journal || journal.error || (!ledger && config.local)) return null;
+    return createVaultPaymentAdapter({config, fundingConfig:funding, recoveryLedger:ledger, source, beneficiaryIdentity:identity,
+      walletSession:manager, authorizedPlug, isCurrent:() => lifecycle.current() && isCurrent(), store, ownerClient:client});
+  }, [connected, funding,journal, ledger, config,source,identity,manager,authorizedPlug,client]);
+  const flowSession = useMemo(() => ({capture: manager.capture,
+    isCurrent: (token: unknown) => lifecycle.current() && manager.isCurrent(token)}), [manager]);
+  const flow = usePaymentFlow(create,flowSession);
+  const {state} = flow;
+  // A reviewed summary remains the operation the user can see, even if another
+  // tab replaces the durable slot before this component renders again.
+  const displayedId = state.summary?.id ?? journalId ?? (chosen && paymentId(chosen));
+  const selected = displayedId ? history?.find(p => paymentId(p) === displayedId) : chosen;
+  const presentation = paymentPresentation(state,flow.approvalPaid,flow.checked,creditLabel);
+  const lastReceipt = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const ref = state.receipt?.reference;
+    if (state.phase === "complete" && ref && lastReceipt.current !== ref) {
+      lastReceipt.current = ref;
+      void onFunded().catch(() => { if (lifecycle.current()) setNotice("Workspace balance unavailable. Your payment was confirmed."); });
+    }
+  }, [state,onFunded]);
+
+  const loadHistory = useCallback(async () => {
+    const current = lifecycle.current;
+    if (!current()) return;
+    setReading(true);
+    try {
+      const payments = await listVaultFundingHistory({config,source,walletSession:manager,authorizedPlug,
+        beneficiaryIdentity:identity,isCurrent:current});
+      if (current()) {
+        setHistory(payments.filter(isPendingPayment).sort((a,b) => Number("Quoted" in a.status) - Number("Quoted" in b.status)));
+        setNotice("");
+      }
+    } catch { if (current()) setNotice("Could not load previous payments. Check payment history before funding."); }
+    finally { if (current()) setReading(false); }
+  }, [config,source,manager,authorizedPlug,identity]);
+  const canList = source === "ii" ? connected : external?.provider === source && snapshot.state === "connected" && historyGranted;
+  useEffect(() => { if (canList && source !== "oisy") void loadHistory(); }, [canList,source,loadHistory]);
+  const paymentComplete = state.phase === "complete";
+  useEffect(() => {
+    let live = true;
+    if (connected && ledger && owner) {
+      void readLedgerTerms({host:config.host,ledger,owner,spender:config.canister}).then(terms => {
+        if (live) setBalance(formatKinicExact(terms.balanceE8s) + " KINIC");
+      }).catch(() => { if (live) setBalance("Unavailable"); });
+    }
+    return () => {live = false;};
+  }, [connected,config,ledger,owner,paymentComplete]);
+  // A settled disabled configuration can still authorize history on the Vault.
+  // While discovery is pending, its ledger is unknown and a grant would be incomplete.
+  const plugGrantReady = funding !== undefined && !!journal;
+  const sources = fundingSources({identity:beneficiary,external,state:snapshot.state,granted,
+    balance:id => id === source ? balance : null, connect:id => {
+      if (id === "plug" && !plugGrantReady) return;
+      const result = manager.connect(id,scopes);
+      void result.catch(() => { if (lifecycle.current()) setNotice("Wallet connection failed. Connect the selected wallet to continue."); });
+    },disconnect:() => { void manager.disconnect().catch(() => setNotice("Could not disconnect the wallet.")); }}).map(item => ({
+      ...item, connectDisabled: item.id === "plug" && !plugGrantReady,
+    }));
+  const check = async () => {
+    if (storageError && selected && canList && !reading) {
+      const current = lifecycle.current;
+      setReading(true);
+      try {
+        const result = await readVaultHistoryStatus({config,source,walletSession:manager,
+          authorizedPlug:source === "plug" ? snapshot.transport : undefined,beneficiaryIdentity:identity,isCurrent:current},selected);
+        if (current()) setNotice(readOnlyStatusLabel(result));
+      } catch (error) {
+        if (current()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error)));
+      } finally { if (current()) setReading(false); }
+      return;
+    }
+    const binding = flow.active.current;
+    if (!binding) return;
+    setNotice("");
+    try {
+      const original = flow.store.list(binding.adapter.scope)[0];
+      if (original && displayedId && original.id !== displayedId) throw new PaymentFailure("AccountChanged");
+      if (selected && !original) {
+        const result = await inspectVaultHistory(binding.adapter,flow.store,selected,binding.isCurrent);
+        if (!binding.isCurrent()) return;
+        if (result) { setNotice(result); return; }
+      }
+      await flow.check(displayedId);
+      if (binding.isCurrent() && binding.controller.getState().phase === "complete") setHistory([]);
+    } catch(error) { if (binding.isCurrent()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error))); }
   };
-  const savedCursor = quote?.reconciliation[0];
-  const scanProgress =
-    progress ??
-    (quote && savedCursor
-      ? {
-          payment: quote,
-          scanned: 0n,
-          next: savedCursor.next,
-          end: savedCursor.end,
-          can_continue: savedCursor.next < savedCursor.end,
-        }
-      : undefined);
-  return (
-    <div className="grid gap-3">
-      <p className="text-sm">
-        {fundingEnabled
-          ? "Approve only the displayed quote. Uncertain payments can be checked against ledger history; do not send replacement payments."
-          : "Production funding is unavailable in this configuration. Existing payment records remain available; do not send replacement payments."}
-      </p>
-      {fundingMode === "synthetic-test-only" ? (
-        <output>Synthetic ledger test build only. Never use real funds.</output>
-      ) : null}
-      {savedPayments.length > 1 ? (
-        <label className="grid gap-1 text-sm">
-          Saved payment
-          <select
-            disabled={busy}
-            value={
-              quote
-                ? savedPayments.findIndex(
-                    (p) =>
-                      paymentId(p) === paymentId(quote),
-                  )
-                : -1
-            }
-            onChange={(event) => {
-              const payment = savedPayments[Number(event.target.value)];
-              if (!payment) return;
-              approved.current = false;
-              setProgress(undefined);
-              setQuote(payment);
-            }}
-          >
-            {savedPayments.map((payment, index) => (
-              <option key={paymentId(payment)} value={index}>
-                {paymentId(payment)}{" "}
-                · {Object.keys(payment.status)[0]}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      <label className="grid gap-1 text-sm">
-        KINIC amount
-        <input
-          aria-label="KINIC amount"
-          inputMode="decimal"
-          className="rounded border border-line p-2"
-          value={quote ? formatKinic(quote.request.amount_e8s) : draftAmount}
-          disabled={busy || !!quote || !fundingEnabled}
-          onChange={(e) => setDraftAmount(e.target.value)}
-        />
-      </label>
-      {!quote ? (
-        <VaultButton
-          disabled={busy || !historyReady || !fundingEnabled}
-          onClick={() =>
-            work(async (check) => {
-              if (!fundingEnabled) throw Error("FundingUnavailable");
-              const e8s = parseKinic(draftAmount);
-              const p = ok(
-                await client.actor.quote_purchase({
-                  operation: crypto.getRandomValues(new Uint8Array(16)),
-                  beneficiary: client.identity.getPrincipal(),
-                  amount_e8s: e8s,
-                  min_credits: 20_000_000n,
-                  created_at_time: BigInt(Date.now()) * 1_000_000n,
-                }),
-              );
-              check();
-              setQuote(p);
-            })
-          }
-        >
-          Get quote
-        </VaultButton>
-      ) : (
-        <>
-          <p className="text-sm">
-            Credit: {quote.credits.toString()} cycles. Transfer fee:{" "}
-            {quote.fee.toString()} e8s. Approval also costs{" "}
-            {quote.fee.toString()} e8s.
-          </p>
-          <p className="break-all text-xs">
-            Ledger: {quote.config.ledger.toText()} · Recipient:{" "}
-            {quote.config.recipient.toText()}
-          </p>
-          <p className="break-all text-xs">
-            Payment ID:{" "}
-            {paymentId(quote)}
-          </p>
-          <output>{Object.keys(quote.status)[0]}</output>
-          {"Quoted" in quote.status ? (
-            <VaultButton
-              disabled={busy || !fundingEnabled}
-              onClick={() =>
-                work(async (check) => {
-                  const config = await loadConfig();
-                  check();
-                  if (
-                    config.fundingMode !== "production" &&
-                    config.fundingMode !== "synthetic-test-only"
-                  )
-                    throw Error("FundingUnavailable");
-                  const agent = HttpAgent.createSync({
-                    host: config.host,
-                    identity: client.identity,
-                  });
-                  if (config.local) await agent.fetchRootKey();
-                  check();
-                  const ledger = Actor.createActor<{
-                    icrc2_approve: (arg: unknown) => Promise<
-                      | {
-                          Ok: bigint;
-                        }
-                      | {
-                          Err: unknown;
-                        }
-                    >;
-                  }>(ledgerIDL, {
-                    agent,
-                    canisterId: quote.config.ledger,
-                  });
-                  if (!approved.current) {
-                    const result = await ledger.icrc2_approve({
-                      from_subaccount: [],
-                      spender: {
-                        owner: Principal.fromText(config.canister),
-                        subaccount: [],
-                      },
-                      amount: quote.request.amount_e8s + quote.fee,
-                      expected_allowance: [],
-                      expires_at: [quote.created_at_time + 300_000_000_000n],
-                      fee: [quote.fee],
-                      memo: [quote.memo],
-                      created_at_time: [quote.created_at_time],
-                    });
-                    check();
-                    if (
-                      "Err" in result &&
-                      !(
-                        typeof result.Err === "object" &&
-                        result.Err !== null &&
-                        "Duplicate" in result.Err
-                      )
-                    )
-                      throw Error("ApprovalFailed");
-                    approved.current = true;
-                  }
-                  const paid = ok(
-                    await client.actor.pay_purchase(quote.request.operation),
-                  );
-                  check();
-                  setQuote(paid);
-                  await onFunded();
-                })
-              }
-            >
-              {approved.current
-                ? "Pay approved quote"
-                : "Approve and pay this quote"}
-            </VaultButton>
-          ) : null}
-          {"Unknown" in quote.status || "InFlight" in quote.status ? (
-            <>
-              <p className="text-sm">
-                The ledger outcome is unknown. Scan ledger history for this
-                exact payment. Each click makes at most ten sequential requests.
-                Stopping the scan does not cancel the payment or create a
-                replacement.
-              </p>
-              {scanProgress ? (
-                <output aria-live="polite">
-                  Ledger scan: next {scanProgress.next.toString()} of{" "}
-                  {scanProgress.end.toString()}. Last request scanned{" "}
-                  {scanProgress.scanned.toString()} blocks.
-                  {!scanProgress.can_continue &&
-                  !("Paid" in scanProgress.payment.status)
-                    ? " No matching payment evidence found yet."
-                    : ""}
-                </output>
-              ) : null}
-              <VaultButton
-                disabled={busy || !fundingEnabled}
-                onClick={() => {
-                  stopped.current = false;
-                  setScanning(true);
-                  work(async (check) => {
-                    try {
-                      for (let call = 0; call < 10; call++) {
-                        check();
-                        if (stopped.current) break;
-                        const result = await client.reconcilePurchase(
-                          new Uint8Array(quote.request.operation),
-                        );
-                        check();
-                        if (stopped.current) break;
-                        setQuote(result.payment);
-                        setProgress(result);
-                        if ("Paid" in result.payment.status) {
-                          await onFunded();
-                          check();
-                          break;
-                        }
-                        if (!result.can_continue) break;
-                      }
-                    } finally {
-                      if (alive.current && currentClient.current === client)
-                        setScanning(false);
-                    }
-                  });
-                }}
-              >
-                {scanProgress
-                  ? "Resume ledger scan"
-                  : "Scan ledger for this payment"}
-              </VaultButton>
-              {scanning ? (
-                <VaultButton
-                  onClick={() => {
-                    stopped.current = true;
-                  }}
-                >
-                  Stop ledger scan
-                </VaultButton>
-              ) : null}
-              <VaultButton
-                disabled={busy || !fundingEnabled}
-                onClick={() =>
-                  work(async (check) => {
-                    if (!fundingEnabled) throw Error("FundingUnavailable");
-                    const paid = ok(
-                      await client.actor.pay_purchase(quote.request.operation),
-                    );
-                    check();
-                    setQuote(paid);
-                    await onFunded();
-                  })
-                }
-              >
-                Retry same payment
-              </VaultButton>
-            </>
-          ) : null}
-          <VaultButton disabled={busy} onClick={() => work(refresh)}>
-            Check payment status
-          </VaultButton>
-          {"Quoted" in quote.status ? (
-            <VaultButton
-              disabled={busy}
-              onClick={() =>
-                work(async (check) => {
-                  const cancelled = ok(
-                    await client.actor.cancel_quote(quote.request.operation),
-                  );
-                  check();
-                  setQuote(cancelled);
-                })
-              }
-            >
-              Cancel unpaid quote
-            </VaultButton>
-          ) : null}
-          {isTerminalPayment(quote) ? (
-            <VaultButton
-              disabled={busy}
-              onClick={() => {
-                approved.current = false;
-                setProgress(undefined);
-                setQuote(
-                  savedPayments.find(isPendingPayment),
-                );
-              }}
-            >
-              New quote
-            </VaultButton>
-          ) : null}
-        </>
-      )}
-      {message ? (
-        <p role="alert" className="text-sm">
-          {message}
-        </p>
-      ) : null}
-    </div>
-  );
+  const scan = async () => {
+    const binding = flow.active.current;
+    if (!binding || scanning) return;
+    const current = binding.isCurrent;
+    setScanning(true); setNotice(""); stopScan.current = false;
+    try {
+      const record = flow.store.list(binding.adapter.scope)[0] ?? (selected && binding.adapter.recordFor(selected));
+      if (!record) return;
+      if (displayedId && record.id !== displayedId) throw new PaymentFailure("AccountChanged");
+      // Each OISY gesture permits a single batch. Silent transports may continue up to ten.
+      for (let batch = 0; batch < (binding.adapter.capabilities.silentCheck ? 10 : 1); batch++) {
+        if (!current() || stopScan.current) break;
+        const result = await binding.adapter.scan(record);
+        if (!current() || stopScan.current) break;
+        setProgress(result);
+        if ("Paid" in result.payment.status) { await check(); break; }
+        if (!result.can_continue) break;
+      }
+    } catch(error) { if (current()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error))); }
+    finally { if (current()) setScanning(false); }
+  };
+  const busy = reading || scanning || ["preparing","paying","approving","checking","refreshing"].includes(state.phase);
+  const enabled = !storageError && !!flow.active.current?.adapter.fundingEnabled;
+  let amountE8s: bigint | undefined;
+  try {amountE8s = parseKinic(amount);} catch { /* Inline correction below. */ }
+  const actions = [];
+  if ((state.phase === "complete" || state.phase === "failed") && !state.balanceUnavailable && !state.cleanupPending && flow.active.current) {
+    const binding = flow.active.current;
+    try {
+      // A terminal result permits a fresh operation only after its durable marker
+      // is cleared. Uncertain dispatches and failed cleanup stay recoverable.
+      if (!flow.store.hasTargetConflict(binding.adapter.scope) && !flow.store.list(binding.adapter.scope).length)
+        actions.push({label:"New payment",disabled:busy,run:() => {
+          try {
+            if (binding.isCurrent() && !flow.store.hasTargetConflict(binding.adapter.scope)
+              && !flow.store.list(binding.adapter.scope).length) onNewPayment();
+          } catch(error) { setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error))); }
+        }});
+    } catch { /* Preserve the controller's storage recovery state. */ }
+  }
+  const hasHistory = !!selected && state.phase !== "complete";
+  if (canList && !busy && !hasHistory && !state.summary && state.phase !== "complete")
+    actions.push({label:"Check payment history",run:() => { void loadHistory(); }});
+  if (((hasHistory || state.phase === "unresolved" || !!state.summary || state.phase === "failed") && state.phase !== "complete")
+    || (state.phase === "complete" && state.cleanupPending))
+    actions.push({label:"Check payment status",disabled:busy || (!flow.active.current && !(storageError && selected && canList)),run:() => { void check(); }});
+  if (!storageError && state.canCancelUnsubmitted)
+    actions.push({label:"Cancel unpaid payment",disabled:busy,run:async () => {
+      const binding = flow.active.current;
+      await binding?.controller.cancelUnsubmitted();
+      if (binding?.isCurrent() && binding.controller.getState().phase === "editing") {
+        setProgress(undefined); await loadHistory(); setNotice("Unpaid payment cancelled. Any existing ledger allowance remains active.");
+      }
+    }});
+  if (state.balanceUnavailable) actions.push({label:"Refresh credit balance",run:() => {void flow.active.current?.controller.refreshBalance();}});
+  const cursor = progress && paymentId(progress.payment) === displayedId ? progress : selected?.reconciliation[0];
+  if (!storageError && (state.phase === "unresolved" || (selected && ("Unknown" in selected.status || "InFlight" in selected.status)))) {
+    actions.push({label:cursor ? "Resume ledger scan" : "Scan ledger for this payment",
+      disabled:busy || !flow.active.current,run:() => { void scan(); }});
+  }
+  if (scanning) actions.push({label:"Stop ledger scan",run:() => {stopScan.current = true;}});
+  return <section className="vault-funding">
+    <h3>Add prepaid balance</h3>
+    {config.fundingMode === "synthetic-test-only" && <p className="vault-notice">Synthetic test funding. No real KINIC is used.</p>}
+    {funding === null && <p className="vault-notice vault-notice--warn">Funding is unavailable. You can still check existing payments.</p>}
+    {storageError && <p role="alert">{storageError}</p>}
+    {snapshot.reason && !connected && <output>Wallet connection requires attention ({snapshot.reason}).</output>}
+    {history && history.length > 1 && <label>Saved payment<select value={displayedId ?? ""} disabled={!!journalId || busy || state.phase !== "editing"}
+      onChange={event => {setSelectedId(event.target.value); setProgress(undefined);}}>{journalId && !selected && <option value={journalId}>{journalId}</option>}{history.map(p =>
+        <option key={paymentId(p)} value={paymentId(p)}>{paymentId(p)} · {paymentStatusLabel(p)}</option>)}</select></label>}
+    {journalId && !selected && !state.summary && <p className="break-all text-sm">Original payment · {journalId}</p>}
+    {hasHistory && selected && !state.summary && <p className="break-all text-sm">{paymentStatusLabel(selected)} · {paymentId(selected)}</p>}
+    <PaymentForm sources={sources} selectedSource={source} amount={state.summary ? formatKinicExact(state.summary.amountE8s) : journalAmount ?? (hasHistory && selected ? formatKinicExact(selected.request.amount_e8s) : amount)}
+      targetLabel={`Vault prepaid account · ${beneficiary}`} summary={presentation.summary}
+      status={{...presentation.status,recoveryActions:actions}} actions={{onSource:select,onAmount:setAmount,locked:busy || state.phase === "ready",
+        canPay:enabled && connected && !busy,onPay:() => {if (state.summary) void flow.active.current?.controller.pay(state.summary.termsKey);},
+        canReview:enabled && connected && !busy && !!amountE8s && !hasHistory && (source === "oisy" || !!history),
+        onReview:() => {if (amountE8s) void flow.active.current?.controller.prepare(amountE8s);},
+        amountError:!amountE8s ? "Enter a positive KINIC amount with up to 8 decimal places." : undefined}}/>
+    {cursor && <output aria-live="polite">Ledger scan: next {cursor.next.toString()} of {cursor.end.toString()}.</output>}
+    {notice && <output>{notice}</output>}
+  </section>;
 }

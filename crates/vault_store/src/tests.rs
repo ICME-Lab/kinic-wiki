@@ -23,6 +23,7 @@ fn seed(db: &Connection, n: u8) {
             sequence: 0,
             key_name: "test_key_1".into(),
             public_key: vec![1; 96],
+            name: None,
         };
         db.execute(
             "INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",
@@ -137,6 +138,7 @@ fn creation_context_encodes_all_fields_without_ambiguity() {
         sequence: 0,
         key_name: "k".into(),
         public_key: vec![],
+        name: None,
     };
     let bytes = key_input(p(9), p(1), &h).unwrap();
     assert_eq!(&bytes[..10], &[0, 0, 0, 1, 9, 0, 0, 0, 1, 1]);

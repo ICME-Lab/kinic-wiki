@@ -21,7 +21,7 @@ it("filters titles without reads and preserves body matches across an unchanged 
   expect(screen.queryByRole("button", { name: "Hidden body" })).toBeNull();
   expect(x.client.searchNotes).not.toHaveBeenCalled();
   vi.mocked(x.client.searchNotes).mockResolvedValue([items[1]]);
-  fireEvent.click(screen.getByRole("button", { name: "Search note bodies" }));
+  fireEvent.click(screen.getByRole("button", { name: "Search note contents" }));
   await screen.findByRole("button", { name: "Hidden body" });
   expect(x.client.searchNotes).toHaveBeenCalledWith(items, "match", expect.objectContaining({ signal: expect.any(AbortSignal), onProgress: expect.any(Function) }));
   expect(screen.getByRole("button", { name: "Title match" })).toBeTruthy();
@@ -37,7 +37,7 @@ it.each(["lock", "unmount", "client", "items"])("discards late content search af
   let resolve!: (matches: Item[]) => void;
   vi.mocked(x.client.searchNotes).mockImplementation(() => new Promise(r => { resolve = r; }));
   fireEvent.change(screen.getByLabelText("Search this Vault locally"), { target: { value: "match" } });
-  fireEvent.click(screen.getByRole("button", { name: "Search note bodies" }));
+  fireEvent.click(screen.getByRole("button", { name: "Search note contents" }));
   expect((screen.getByLabelText("Search this Vault locally") as HTMLInputElement).disabled).toBe(false);
   if (reason === "lock") x.lock();
   if (reason === "unmount") x.view.unmount();

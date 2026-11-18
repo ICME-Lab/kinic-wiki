@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import type { Identity } from "@icp-sdk/core/agent";
@@ -65,4 +65,11 @@ it("destroys a late client initialization after route exit", async () => {
   view.unmount();
   resolve({ destroy: state.destroy });
   await waitFor(() => expect(state.destroy).toHaveBeenCalledTimes(1));
+});
+it("retries a failed initial connection without replacing the authenticated identity", async()=>{
+ signedIn(); state.create.mockRejectedValueOnce(Error("offline"));
+ render(<VaultPage/>);
+ fireEvent.click(await screen.findByRole("button",{name:"Retry connection"}));
+ await screen.findByLabelText("Private editor");
+ expect(state.create).toHaveBeenCalledTimes(2);
 });

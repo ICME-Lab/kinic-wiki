@@ -1,0 +1,38 @@
+{
+  "name": "@kinic/payments",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./use-payment-flow": "./src/use-payment-flow.ts",
+    "./types": "./src/types.ts",
+    "./amounts": "./src/amounts.ts",
+    "./errors": "./src/errors.ts",
+    "./ledger": "./src/ledger.ts",
+    "./terms": "./src/terms.ts",
+    "./controller": "./src/controller.ts",
+    "./recovery-store": "./src/recovery-store.ts",
+    "./wallet-types": "./src/wallet-types.ts",
+    "./wallet-session": "./src/wallet-session.ts",
+    "./react": "./src/react.tsx"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@icp-sdk/core": "5.4.0",
+    "@dfinity/oisy-wallet-signer": "4.1.3",
+    "@dfinity/utils": "4.2.1",
+    "react": "19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12",
+    "@types/react": "19.2.7",
+    "@testing-library/react": "16.3.2",
+    "jsdom": "30.0.1",
+    "react-dom": "19.2.5"
+  }
+}

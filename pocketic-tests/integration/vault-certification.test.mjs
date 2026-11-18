@@ -79,6 +79,10 @@ try {
     );
     assert.equal(headers["x-frame-options"], "DENY");
     assert.equal(headers["cache-control"], "no-store");
+    assert.equal(
+      headers["x-robots-tag"],
+      "noindex, nofollow, noarchive, nosnippet",
+    );
     assert.ok(
       headers["content-security-policy"].includes("frame-ancestors 'none'"),
     );

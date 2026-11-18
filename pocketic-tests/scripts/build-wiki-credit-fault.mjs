@@ -10,7 +10,7 @@ const sourceDir = resolve(out, 'source');
 const targetDir = resolve(out, 'build');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 const head = git('rev-parse', 'HEAD');
-const relevant = ['Cargo.toml', 'Cargo.lock', 'crates/vfs_canister', 'crates/vfs_runtime', 'crates/credit_bridge_types'];
+const relevant = ['Cargo.toml', 'Cargo.lock', 'crates/vfs_canister', 'crates/vfs_runtime', 'crates/credit_bridge_types', 'crates/kinic_cycle_grants'];
 if (git('diff', 'HEAD', '--', ...relevant)) throw Error('Commit current Wiki backend changes before archived fixture build');
 rmSync(sourceDir, { recursive: true, force: true });
 mkdirSync(sourceDir, { recursive: true });

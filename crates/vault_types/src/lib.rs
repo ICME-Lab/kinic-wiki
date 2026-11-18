@@ -43,6 +43,9 @@ pub struct Header {
     pub sequence: u64,
     pub key_name: String,
     pub public_key: Vec<u8>,
+    /// Owner-visible display metadata, deliberately separate from the key context.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub struct CreateVault {
@@ -183,6 +186,11 @@ pub struct Mutation {
 }
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
 pub enum Action {
+    RenameVault {
+        vault: Id,
+        name: String,
+        expected_sequence: u64,
+    },
     SaveInline(SaveInline),
     BeginRevision(BeginRevision),
     PutChunk {

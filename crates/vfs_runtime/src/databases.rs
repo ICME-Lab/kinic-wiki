@@ -983,13 +983,16 @@ pub(crate) fn insert_initial_free_database_grant(
     grant_cycles: i64,
     now: i64,
 ) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO database_free_cycle_grants
-         (principal, database_id, grant_cycles, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![caller, database_id, grant_cycles, now],
-    )
-    .map_err(|error| error.to_string())?;
+    if !kinic_cycle_grants::record_once(
+        conn,
+        kinic_cycle_grants::Scope::Wiki,
+        caller,
+        database_id,
+        u64::try_from(grant_cycles).map_err(|_| "negative grant cycles")?,
+        now,
+    )? {
+        return Err("initial free database grant already used".into());
+    }
     Ok(())
 }
 

@@ -2,6 +2,10 @@ import type { Principal } from '@icp-sdk/core/principal';
 import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 
+export interface AccountInitialization {
+  'balance' : bigint,
+  'grant_cycles' : bigint,
+}
 export type Action = {
     'CancelUpload' : {
       'job' : Uint8Array | number[],
@@ -22,6 +26,13 @@ export type Action = {
       'object' : Uint8Array | number[],
       'vault' : Uint8Array | number[],
       'expected_revision' : bigint,
+    }
+  } |
+  {
+    'RenameVault' : {
+      'vault' : Uint8Array | number[],
+      'name' : string,
+      'expected_sequence' : bigint,
     }
   } |
   { 'DeleteVault' : { 'vault' : Uint8Array | number[] } } |
@@ -114,6 +125,10 @@ export interface GlobalCapacity {
 export interface Header {
   'id' : Uint8Array | number[],
   'public_key' : Uint8Array | number[],
+  /**
+   * Owner-visible display metadata, deliberately separate from the key context.
+   */
+  'name' : [] | [string],
   'state' : VaultState,
   'nonce' : Uint8Array | number[],
   'key_name' : string,
@@ -132,10 +147,47 @@ export interface HttpResponse {
   'upgrade' : [] | [boolean],
   'status_code' : number,
 }
+export interface Icrc10SupportedStandard { 'url' : string, 'name' : string }
+export interface Icrc21ConsentInfo {
+  'metadata' : Icrc21ConsentMessageMetadata,
+  'consent_message' : Icrc21ConsentMessage,
+}
+export type Icrc21ConsentMessage = { 'GenericDisplayMessage' : string };
+export interface Icrc21ConsentMessageMetadata {
+  'utc_offset_minutes' : [] | [number],
+  'language' : string,
+}
+export interface Icrc21ConsentMessageRequest {
+  'arg' : Uint8Array | number[],
+  'method' : string,
+  'user_preferences' : Icrc21ConsentMessageSpec,
+}
+export type Icrc21ConsentMessageResponse = { 'Ok' : Icrc21ConsentInfo } |
+  { 'Err' : Icrc21Error };
+export interface Icrc21ConsentMessageSpec {
+  'metadata' : Icrc21ConsentMessageMetadata,
+  'device_spec' : [] | [Icrc21DeviceSpec],
+}
+export type Icrc21DeviceSpec = { 'GenericDisplay' : null } |
+  { 'FieldsDisplay' : null };
+export type Icrc21Error = { 'GenericError' : Icrc21GenericError } |
+  { 'InsufficientPayment' : Icrc21ErrorInfo } |
+  { 'UnsupportedCanisterCall' : Icrc21ErrorInfo } |
+  { 'ConsentMessageUnavailable' : Icrc21ErrorInfo };
+export interface Icrc21ErrorInfo { 'description' : string }
+export interface Icrc21GenericError {
+  'description' : string,
+  'error_code' : bigint,
+}
 export interface KeyReply {
   'encrypted_key' : Uint8Array | number[],
   'public_key' : Uint8Array | number[],
   'input' : Uint8Array | number[],
+}
+export interface KeyRetrievalCost {
+  'fee' : bigint,
+  'owner_fee' : bigint,
+  'first_key_free' : boolean,
 }
 export interface LinkChallenge {
   'challenge' : Uint8Array | number[],
@@ -237,37 +289,43 @@ export type Result = { 'Ok' : bigint } |
   { 'Err' : Error };
 export type Result_1 = { 'Ok' : null } |
   { 'Err' : BridgeError };
-export type Result_10 = { 'Ok' : Quota } |
+export type Result_10 = { 'Ok' : Revision } |
   { 'Err' : Error };
-export type Result_11 = { 'Ok' : UploadStatus } |
+export type Result_11 = { 'Ok' : Quota } |
   { 'Err' : Error };
-export type Result_12 = { 'Ok' : GlobalCapacity } |
+export type Result_12 = { 'Ok' : UploadStatus } |
   { 'Err' : Error };
-export type Result_13 = { 'Ok' : RevisionPage } |
+export type Result_13 = { 'Ok' : GlobalCapacity } |
   { 'Err' : Error };
-export type Result_14 = { 'Ok' : ObjectPage } |
+export type Result_14 = { 'Ok' : AccountInitialization } |
   { 'Err' : Error };
-export type Result_15 = { 'Ok' : Array<Payment> } |
+export type Result_15 = { 'Ok' : RevisionPage } |
   { 'Err' : Error };
-export type Result_16 = { 'Ok' : PendingUploads } |
+export type Result_16 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_17 = { 'Ok' : Array<Header> } |
+export type Result_17 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_18 = { 'Ok' : MutationResult } |
+export type Result_18 = { 'Ok' : PendingUploads } |
   { 'Err' : Error };
-export type Result_19 = { 'Ok' : [] | [Payment] } |
+export type Result_19 = { 'Ok' : Array<Header> } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : LinkChallenge } |
   { 'Err' : BridgeError };
-export type Result_20 = { 'Ok' : CreditReceipt } |
-  { 'Err' : BridgeError };
-export type Result_21 = { 'Ok' : ReconciliationProgress } |
+export type Result_20 = { 'Ok' : MutationResult } |
   { 'Err' : Error };
-export type Result_22 = { 'Ok' : BridgeRevocation } |
-  { 'Err' : BridgeError };
-export type Result_23 = { 'Ok' : null } |
+export type Result_21 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
-export type Result_24 = { 'Ok' : [] | [LinkStatus] } |
+export type Result_22 = { 'Ok' : CreditReceipt } |
+  { 'Err' : BridgeError };
+export type Result_23 = { 'Ok' : ReconciliationProgress } |
+  { 'Err' : Error };
+export type Result_24 = { 'Ok' : BridgeRevocation } |
+  { 'Err' : BridgeError };
+export type Result_25 = { 'Ok' : null } |
+  { 'Err' : Error };
+export type Result_26 = { 'Ok' : KeyRetrievalCost } |
+  { 'Err' : Error };
+export type Result_27 = { 'Ok' : [] | [LinkStatus] } |
   { 'Err' : BridgeError };
 export type Result_3 = { 'Ok' : Payment } |
   { 'Err' : Error };
@@ -281,7 +339,7 @@ export type Result_7 = { 'Ok' : Uint8Array | number[] } |
   { 'Err' : Error };
 export type Result_8 = { 'Ok' : [] | [VaultConfig] } |
   { 'Err' : Error };
-export type Result_9 = { 'Ok' : Revision } |
+export type Result_9 = { 'Ok' : [] | [FundingConfig] } |
   { 'Err' : Error };
 export interface Revision {
   'deleted' : boolean,
@@ -345,41 +403,52 @@ export interface _SERVICE {
     Result_7
   >,
   'get_config' : ActorMethod<[], Result_8>,
+  'get_funding_config' : ActorMethod<[], Result_9>,
   'get_manifest' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_9
+    Result_10
   >,
-  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_10>,
-  'get_upload_status' : ActorMethod<[Uint8Array | number[]], Result_11>,
+  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_11>,
+  'get_upload_status' : ActorMethod<[Uint8Array | number[]], Result_12>,
   'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result_5>,
-  'global_capacity' : ActorMethod<[], Result_12>,
+  'global_capacity' : ActorMethod<[], Result_13>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
+  'icrc10_supported_standards' : ActorMethod<
+    [],
+    Array<Icrc10SupportedStandard>
+  >,
+  'icrc21_canister_call_consent_message' : ActorMethod<
+    [Icrc21ConsentMessageRequest],
+    Icrc21ConsentMessageResponse
+  >,
+  'initialize_vault_account' : ActorMethod<[], Result_14>,
   'inspect_wiki_link' : ActorMethod<[Uint8Array | number[]], Result_2>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_13
+    Result_15
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_14
+    Result_16
   >,
-  'list_payments' : ActorMethod<[], Result_15>,
-  'list_pending_uploads' : ActorMethod<[Uint8Array | number[]], Result_16>,
-  'list_vaults' : ActorMethod<[], Result_17>,
-  'mutate' : ActorMethod<[Mutation], Result_18>,
+  'list_payments' : ActorMethod<[], Result_17>,
+  'list_pending_uploads' : ActorMethod<[Uint8Array | number[]], Result_18>,
+  'list_vaults' : ActorMethod<[], Result_19>,
+  'mutate' : ActorMethod<[Mutation], Result_20>,
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_3>,
-  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_19>,
-  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_20>,
+  'payment_status' : ActorMethod<[Uint8Array | number[]], Result_21>,
+  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_22>,
   'quote_purchase' : ActorMethod<[PurchaseRequest], Result_3>,
-  'receive_wiki_credit' : ActorMethod<[CreditOffer], Result_20>,
-  'reconcile_purchase' : ActorMethod<[Uint8Array | number[]], Result_21>,
-  'revoke_wiki_link' : ActorMethod<[], Result_22>,
-  'set_config' : ActorMethod<[[] | [VaultConfig]], Result_23>,
-  'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_23>,
+  'receive_wiki_credit' : ActorMethod<[CreditOffer], Result_22>,
+  'reconcile_purchase' : ActorMethod<[Uint8Array | number[]], Result_23>,
+  'revoke_wiki_link' : ActorMethod<[], Result_24>,
+  'set_config' : ActorMethod<[[] | [VaultConfig]], Result_25>,
+  'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_25>,
   'set_wiki_bridge_config' : ActorMethod<[BridgeConfig], Result_1>,
+  'vault_key_cost' : ActorMethod<[[] | [string]], Result_26>,
   'wiki_bridge_config' : ActorMethod<[], [] | [BridgeConfig]>,
-  'wiki_credit_status' : ActorMethod<[CreditOffer], Result_20>,
-  'wiki_link_status' : ActorMethod<[], Result_24>,
+  'wiki_credit_status' : ActorMethod<[CreditOffer], Result_22>,
+  'wiki_link_status' : ActorMethod<[], Result_27>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

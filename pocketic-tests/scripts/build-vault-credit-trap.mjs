@@ -8,7 +8,7 @@ const out = resolve(root, 'target/vault-credit-trap');
 const dir = resolve(out, 'source');
 const target = resolve(out, 'build');
 const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const paths = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/vault_canister', 'crates/vault_types', 'crates/vault_store', 'crates/vault_service', 'crates/kinic_sqlite_compat', 'crates/credit_bridge_types'];
+const paths = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/vault_canister', 'crates/vault_types', 'crates/vault_store', 'crates/vault_service', 'crates/kinic_sqlite_compat', 'crates/credit_bridge_types', 'crates/kinic_cycle_grants'];
 if (execFileSync('git', ['diff', 'HEAD', '--', ...paths], { cwd: root }).length) throw Error('Commit Vault backend before archived fixture build');
 rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
 const archive = resolve(dir, 'source.tar');
@@ -16,7 +16,7 @@ execFileSync('git', ['archive', '--format=tar', '--output', archive, head, ...pa
 execFileSync('tar', ['-xf', archive, '-C', dir]);
 const cargo = resolve(dir, 'Cargo.toml');
 writeFileSync(cargo, readFileSync(cargo, 'utf8')
-  .replace(/members = \[[\s\S]*?\]/, 'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat","crates/credit_bridge_types"]')
+  .replace(/members = \[[\s\S]*?\]/, 'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat","crates/credit_bridge_types","crates/kinic_cycle_grants"]')
   .replace('ic-agent = { path = "vendor/ic-agent" }', ''));
 const file = resolve(dir, 'crates/vault_canister/src/bridge.rs');
 const code = readFileSync(file, 'utf8');

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/kinic_cycle_grants",
     "crates/credit_bridge_types",
     "crates/vault_canister",
     "crates/vault_service",

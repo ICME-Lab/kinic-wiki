@@ -24,6 +24,7 @@ const header = (): Header => ({
   state: { Active: null },
   key_name: "test_key_1",
   sequence: 0n,
+  name: [],
 });
 function setup(loseResponse = true) {
   let h = header();
@@ -243,7 +244,10 @@ it("clears an idle root and fences its existing ticket", async () => {
   const { client } = setup();
   await client.open(header());
   const ticket = client.session.capture();
-  client.session.expire(client.session.lastActivity + 300000);
+  client.session.expire(client.session.lastActivity + 30 * 60 * 1000 - 1);
+  client.session.check(ticket);
+  expect(client.session.root).toBeDefined();
+  client.session.expire(client.session.lastActivity + 30 * 60 * 1000);
   expect(client.session.root).toBeUndefined();
   expect(() => client.session.check(ticket)).toThrow("Locked");
 });
@@ -464,6 +468,7 @@ describe("open authoritative invalidation", () => {
         }),
     );
     const old = client.open(header());
+    await vi.waitFor(() => expect(reply).toBeTypeOf("function"));
     const other = { ...header(), id: new Uint8Array(16).fill(7) };
     vi.mocked(actor.get_vault_header).mockResolvedValue({ Ok: other });
     await client.open(other);
