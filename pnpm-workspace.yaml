@@ -90,9 +90,16 @@ overrides:
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+    # Both resolved picomatch versions are patched below. Registry audit uses
+    # original versions; CI verifies every locked hash and installed behavior.
+    # Remove with the backport once upstream passes the regression gate.
+    # Recheck by 2026-12-02; details and opt-out scope are in patches/README.md.
+    - GHSA-fc5q-39xc-vjpf
 
 patchedDependencies:
   # SDK 6 is used by Node/nodejs_compat servers; its native hash patch is not
   # applied to the SDK 5.4 browser clients.
   '@icp-sdk/core@5.4.0': patches/@icp-sdk__core-bom.patch
   '@icp-sdk/core@6.0.0': patches/@icp-sdk__core-6.patch
+  picomatch@2.3.2: patches/picomatch@2.3.2.patch
+  picomatch@4.0.7: patches/picomatch@4.0.7.patch

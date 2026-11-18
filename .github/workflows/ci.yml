@@ -145,6 +145,8 @@ jobs:
           package-manager-cache: false
       - run: corepack enable && corepack prepare pnpm@11.0.8 --activate
       - run: pnpm install --frozen-lockfile
+      - name: Verify local dependency security patches
+        run: pnpm test:dependency-patches
       - run: pnpm test:cf-config
 
   regression-groups-check:
