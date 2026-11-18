@@ -350,6 +350,10 @@ function VaultAuthSession({
       client.current = undefined;
       preparedConfig.current = undefined;
     };
+    // This keyed provider owns one SDK lifetime. The initial restore/replace
+    // props stay fixed for that lifetime; endSession reads current refs.
+    // Reinitializing on each render would dispose the active client.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // SDK 5.0.0 checks delegation validity locally. Activity never extends its TTL.
   useEffect(() => {
@@ -384,6 +388,8 @@ function VaultAuthSession({
       disposed = true;
       window.clearInterval(interval);
     };
+    // endSession reads current refs; only the identity changes this timer.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [identity]);
   const login = () => {
     const c = client.current;

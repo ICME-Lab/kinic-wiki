@@ -28,8 +28,8 @@ fn loopback_origin(origin: &str) -> bool {
     } else {
         (authority, None)
     };
-    if !matches!(host, "localhost" | "127.0.0.1" | "[::1]")
-        && !(host.ends_with(".localhost")
+    if !(matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+        || host.ends_with(".localhost")
             && host.split('.').all(|label| {
                 !label.is_empty()
                     && label.len() <= 63

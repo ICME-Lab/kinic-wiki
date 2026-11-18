@@ -15,7 +15,7 @@ import {
 import { VaultButton } from "./ui";
 
 function Unavailable() {
-  return <p role="status">This private document is unavailable.</p>;
+  return <output>This private document is unavailable.</output>;
 }
 
 export function VaultEmbedPage({ ids }: { ids?: VaultIds }) {
