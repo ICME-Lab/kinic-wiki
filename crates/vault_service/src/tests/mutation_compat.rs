@@ -18,7 +18,7 @@ fn delete() -> Mutation {
         vault: b"fedcba9876543210".to_vec(),
     })
 }
-// Golden hashes from the independently encoded, released nine-variant Action
+// Golden hashes from the independently encoded pre-rename nine-variant Action
 // and the interim ten-variant Action. Do not regenerate with the current enum.
 const V1_PUT: &str = "62fb44c0c62b42d5768d0844cb84f9e055ce925a0938a856926a4ec2bff68107";
 const V1_DELETE: &str = "2b816d6ee933a5f35eaf5379496bd42f9e5eec5347b2454279697006971dfc00";
