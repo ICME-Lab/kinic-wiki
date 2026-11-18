@@ -14,7 +14,20 @@ impl UploadOutcome {
         }
     }
 }
+// Legacy receipts keep their original externally tagged JSON shape. A shared
+// receipt retains the immutable uploader alongside the same terminal result.
+// The complete encoded value is capacity-accounted and expires in one row.
+#[derive(Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum StoredOutcome {
+    Shared {
+        origin: sharing::UploadOrigin,
+        outcome: UploadOutcome,
+    },
+    Legacy(UploadOutcome),
+}
 pub(crate) struct Outcome {
+    pub origin: Option<sharing::UploadOrigin>,
     pub digest: Vec<u8>,
     pub result: UploadOutcome,
     pub expires: u64,
@@ -25,9 +38,14 @@ pub(crate) fn outcome(db: &Connection, upload: &[u8]) -> Result<Option<Outcome>>
         params![upload], |r| Ok((sql::row_get(r,0)?,sql::row_get(r,1)?,sql::row_get(r,2)?))
     ).optional().map_err(storage)?;
     row.map(|(digest, raw, expires)| {
+        let (origin, result) = match serde_json::from_str(&raw).map_err(|_| Error::Storage)? {
+            StoredOutcome::Shared { origin, outcome } => (Some(origin), outcome),
+            StoredOutcome::Legacy(outcome) => (None, outcome),
+        };
         Ok(Outcome {
             digest,
-            result: serde_json::from_str(&raw).map_err(|_| Error::Storage)?,
+            result,
+            origin,
             expires: expires as u64,
         })
     })
@@ -37,17 +55,22 @@ fn record(db: &Connection, upload: &[u8], digest: &[u8], encoded: &str, now: u64
     db.execute("INSERT INTO upload_outcomes(owner,upload,digest,result,expires) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4)",params![upload,digest,encoded,(now+DAY) as i64]).map_err(storage)?;
     Ok(())
 }
-fn encode(outcome: &UploadOutcome) -> Result<String> {
-    serde_json::to_string(outcome).map_err(|_| Error::Storage)
+fn encode(outcome: UploadOutcome, origin: Option<sharing::UploadOrigin>) -> Result<String> {
+    let stored = match origin {
+        Some(origin) => StoredOutcome::Shared { origin, outcome },
+        None => StoredOutcome::Legacy(outcome),
+    };
+    serde_json::to_string(&stored).map_err(|_| Error::Storage)
 }
 pub(crate) fn record_committed(
     db: &Connection,
     upload: &[u8],
     digest: &[u8],
     revision: &Revision,
+    origin: Option<sharing::UploadOrigin>,
     now: u64,
 ) -> Result<()> {
-    let encoded = encode(&UploadOutcome::Committed(revision.clone()))?;
+    let encoded = encode(UploadOutcome::Committed(revision.clone()), origin)?;
     content::check_receipt_capacity(db, now)?;
     content::check_capacity(db, 4096 + encoded.len() as u64 + digest.len() as u64)?;
     record(db, upload, digest, &encoded, now)
@@ -172,10 +195,13 @@ pub fn cancel_upload_batch(
         }
         return Ok(false);
     }
-    let result = encode(&UploadOutcome::Cancelled {
-        vault: vault.to_vec(),
-        job: job.to_vec(),
-    })?;
+    let result = encode(
+        UploadOutcome::Cancelled {
+            vault: vault.to_vec(),
+            job: job.to_vec(),
+        },
+        sharing::pending_origin(db, vault, upload)?,
+    )?;
     // Replace the upload's already-reserved receipt slot. Neither new headroom nor
     // receipt admission is required, including when the shared capacity is exhausted.
     db.execute(

@@ -2,12 +2,12 @@
 //! IDs before handing a request to the existing owner-funded mutation journal.
 use super::*;
 use candid::Principal;
-use store::sharing::{check_upload_target, scoped_access, scoped_id};
+use store::sharing::{UploadOrigin, resolve_upload, scoped_access, scoped_id};
 
 pub(super) struct SharedMutation<'a> {
     pub caller: Principal,
     pub vault: &'a [u8],
-    pub wire_upload: Option<Id>,
+    pub origin: Option<UploadOrigin>,
 }
 
 pub async fn shared_derive_vault_key(
@@ -45,11 +45,6 @@ pub fn shared_mutate(
     {
         return Err(Error::Unauthorized);
     }
-    let wire_upload = if let BeginRevision(r) = &request.action {
-        Some(r.operation.clone())
-    } else {
-        None
-    };
     let upload = match &mut request.action {
         BeginRevision(r) => Some(&mut r.operation),
         SaveInline(r) => Some(&mut r.request.operation),
@@ -58,10 +53,16 @@ pub fn shared_mutate(
         }
         _ => None,
     };
-    if let Some(upload) = upload {
-        *upload = scoped_id(b"upload", caller, vault, upload)?;
-        env.transaction(|db| check_upload_target(db, vault, upload))?;
-    }
+    let origin = if let Some(upload) = upload {
+        let origin = UploadOrigin {
+            caller,
+            wire: std::mem::take(upload),
+        };
+        *upload = env.transaction(|db| resolve_upload(db, vault, &origin))?;
+        Some(origin)
+    } else {
+        None
+    };
     request.operation = scoped_id(b"operation", caller, vault, &request.operation)?;
     mutate_inner(
         env,
@@ -69,7 +70,7 @@ pub fn shared_mutate(
         Some(SharedMutation {
             caller,
             vault,
-            wire_upload,
+            origin,
         }),
     )
 }

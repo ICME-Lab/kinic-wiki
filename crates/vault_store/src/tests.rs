@@ -53,6 +53,7 @@ fn sweep_advances_idle_owner_and_wraps_across_reopen() {
                 deleted: false,
                 sequence: 1,
             },
+            None,
             1,
         )
     });

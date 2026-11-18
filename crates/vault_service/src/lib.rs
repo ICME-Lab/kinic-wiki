@@ -275,29 +275,23 @@ fn mutate_inner(
                 _ => ops::begin(db, &r.operation, &digest, env.now())?,
             }
         };
+        let origin = shared.as_ref().and_then(|scope| scope.origin.as_ref());
         let result = match r.action {
             Action::SaveInline(request) => {
                 let h = store::active(db, &request.request.vault)?;
                 let input = key_input(env.canister(), env.owner(), &h)?;
-                MutationResult::Revision(store::content::save_inline(
+                MutationResult::Revision(store::content::save_inline_with_origin(
                     db,
                     request,
                     &input,
                     env.now(),
+                    origin,
                 )?)
             }
             Action::BeginRevision(request) => {
-                let mut result = store::content::begin(db, request, env.now())?;
-                if let Some(scope) = shared.as_ref() {
-                    let wire = scope.wire_upload.as_deref().ok_or(Error::Storage)?;
-                    store::sharing::remember_upload(
-                        db,
-                        scope.caller,
-                        scope.vault,
-                        wire,
-                        &result.id,
-                    )?;
-                    result.id = wire.to_vec();
+                let mut result = store::content::begin_with_origin(db, request, env.now(), origin)?;
+                if let Some(origin) = origin {
+                    result.id = origin.wire.clone();
                 }
                 MutationResult::Upload(result)
             }

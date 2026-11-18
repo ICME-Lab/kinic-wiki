@@ -191,33 +191,66 @@ pub fn scoped_id(domain: &[u8], caller: Principal, vault: &[u8], wire: &[u8]) ->
     }
     Ok(hash.finalize()[..16].to_vec())
 }
-/// Match both live and terminal resource bindings before exposing any receipt.
-pub fn check_upload_target(db: &Connection, vault: &[u8], upload: &[u8]) -> Result<()> {
+/// Persisted only for resources created by the shared protocol. Keep both
+/// caller and wire ID: legacy operations may choose any physical upload ID.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UploadOrigin {
+    pub caller: Principal,
+    pub wire: Id,
+}
+pub(crate) fn pending_origin(
+    db: &Connection,
+    vault: &[u8],
+    upload: &[u8],
+) -> Result<Option<UploadOrigin>> {
+    let row:Option<(Vec<u8>,Id)>=db.query_row(
+        "SELECT caller,wire FROM shared_upload_handles WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND upload=?2",
+        params![vault,upload],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))
+    ).optional().map_err(storage)?;
+    row.map(|(caller, wire)| {
+        Ok(UploadOrigin {
+            caller: Principal::try_from_slice(&caller).map_err(|_| Error::Storage)?,
+            wire,
+        })
+    })
+    .transpose()
+}
+/// An unused ID can start an upload. An occupied ID must match both its
+/// physical resource's Vault and the stored protocol, caller and wire ID.
+pub fn resolve_upload(db: &Connection, vault: &[u8], origin: &UploadOrigin) -> Result<Id> {
+    let upload = scoped_id(b"upload", origin.caller, vault, &origin.wire)?;
     let pending:Option<Id>=db.query_row("SELECT vault FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![upload],|r|sql::row_get(r,0)).optional().map_err(storage)?;
-    let actual = match pending {
-        Some(target) => Some(target),
-        None => crate::uploads::outcome(db, upload)?.map(|o| match o.result {
-            crate::uploads::UploadOutcome::Cancelled { vault, .. } => vault,
-            crate::uploads::UploadOutcome::Committed(r) => r.vault,
+    let binding = match pending {
+        Some(target) => {
+            let stored = pending_origin(db, &target, &upload)?;
+            Some((target, stored))
+        }
+        None => crate::uploads::outcome(db, &upload)?.map(|o| {
+            let target = match o.result {
+                crate::uploads::UploadOutcome::Cancelled { vault, .. } => vault,
+                crate::uploads::UploadOutcome::Committed(r) => r.vault,
+            };
+            (target, o.origin)
         }),
     };
-    if actual.is_some_and(|v| v != vault) {
+    if binding.is_some_and(|(target, stored)| target != vault || stored.as_ref() != Some(origin)) {
         return Err(Error::Unauthorized);
     }
-    Ok(())
+    Ok(upload)
 }
-pub fn remember_upload(
+/// Called only on a fresh insert; matching begin retries never assign provenance.
+pub(crate) fn remember_upload(
     db: &Connection,
-    caller: Principal,
     vault: &[u8],
-    wire: &[u8],
     upload: &[u8],
+    origin: &UploadOrigin,
 ) -> Result<()> {
-    // One small handle per live reservation is covered by its metadata overhead.
-    // SQLite deletes it in the same transaction that removes the upload.
-    db.execute("INSERT OR IGNORE INTO shared_upload_handles(owner,vault,upload,caller,wire)
-        SELECT owner,vault,id,?3,?4 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 AND id=?2",
-        params![vault,upload,caller.as_slice(),wire]).map_err(storage)?;
+    db.execute(
+        "INSERT INTO shared_upload_handles(owner,vault,upload,caller,wire)
+        VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3,?4)",
+        params![vault, upload, origin.caller.as_slice(), origin.wire],
+    )
+    .map_err(storage)?;
     Ok(())
 }
 pub fn pending_uploads(
@@ -254,8 +287,14 @@ pub fn upload_status(
     now: u64,
 ) -> Result<UploadStatus> {
     scoped_access(db, caller, vault)?;
-    let upload = scoped_id(b"upload", caller, vault, wire)?;
-    check_upload_target(db, vault, &upload)?;
+    let upload = resolve_upload(
+        db,
+        vault,
+        &UploadOrigin {
+            caller,
+            wire: wire.to_vec(),
+        },
+    )?;
     let mut status = content::upload_status(db, &upload, now)?;
     if let UploadStatus::Pending(p) = &mut status {
         p.request.operation = wire.to_vec();

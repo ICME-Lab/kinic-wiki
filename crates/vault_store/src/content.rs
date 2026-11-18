@@ -193,6 +193,15 @@ fn check_receipt_capacity_for(db: &Connection, now: u64, additional: i64) -> Res
 }
 /// Caller wraps admission, upload, commit, and receipt in one transaction.
 pub fn save_inline(db: &Connection, r: SaveInline, input: &[u8], now: u64) -> Result<Revision> {
+    save_inline_with_origin(db, r, input, now, None)
+}
+pub fn save_inline_with_origin(
+    db: &Connection,
+    r: SaveInline,
+    input: &[u8],
+    now: u64,
+    origin: Option<&sharing::UploadOrigin>,
+) -> Result<Revision> {
     if r.context_hash != Sha256::digest(input).as_slice()
         || r.request.plain_size > NOTE_MAX
         || r.bytes.len() as u64 != r.request.plain_size + 16
@@ -208,11 +217,19 @@ pub fn save_inline(db: &Connection, r: SaveInline, input: &[u8], now: u64) -> Re
     if exists != 0 {
         return Err(Error::Conflict);
     }
-    let upload = begin(db, r.request, now)?;
+    let upload = begin_with_origin(db, r.request, now, origin)?;
     put(db, &upload.id, 0, &r.bytes, now)?;
     commit(db, &upload.id, now)
 }
 pub fn begin(db: &Connection, r: BeginRevision, now: u64) -> Result<Upload> {
+    begin_with_origin(db, r, now, None)
+}
+pub fn begin_with_origin(
+    db: &Connection,
+    r: BeginRevision,
+    now: u64,
+    origin: Option<&sharing::UploadOrigin>,
+) -> Result<Upload> {
     active(db, &r.vault)?;
     id(&r.object)?;
     reject_purged(db, &r.vault, &r.object)?;
@@ -317,6 +334,9 @@ pub fn begin(db: &Connection, r: BeginRevision, now: u64) -> Result<Upload> {
         ],
     )
     .map_err(db_error)?;
+    if let Some(origin) = origin {
+        sharing::remember_upload(db, &r.vault, &r.operation, origin)?;
+    }
     Ok(Upload {
         id: r.operation,
         revision: r.expected_revision + 1,
@@ -451,6 +471,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
     db.execute("UPDATE revisions SET retired=?3 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision<=?4 AND retired IS NULL)",params![rev.vault,rev.object,rev.sequence as i64,rev.revision.saturating_sub(10) as i64]).map_err(db_error)?;
     db.execute("DELETE FROM chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (upload=?1)", params![id])
         .map_err(db_error)?;
+    let origin = sharing::pending_origin(db, &r.vault, id)?;
     db.execute(
         "DELETE FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id=?1)",
         params![id],
@@ -459,7 +480,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
 
     add_cleanup_credits(db, &r.vault, cleanup_credits)?;
     put_header(db, &h)?;
-    crate::uploads::record_committed(db, id, &d, &rev, now)?;
+    crate::uploads::record_committed(db, id, &d, &rev, origin, now)?;
     Ok(rev)
 }
 fn row(r: &sql::Row<'_>) -> sql::Result<Revision> {

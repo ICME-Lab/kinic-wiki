@@ -478,3 +478,227 @@ fn revoking_a_member_releases_admitted_owner_and_global_capacity_at_the_limit() 
     );
     grant(&e, &v, Principal::from_slice(&[92]), AccessRole::Editor).unwrap();
 }
+
+fn matching_legacy_upload(e: &Env, caller: Principal, vault: &[u8]) -> (BeginRevision, Id) {
+    let wire = vec![43; 16];
+    let id = sharing::scoped_id(b"upload", caller, vault, &wire).unwrap();
+    let mut r = BeginRevision {
+        vault: vault.to_vec(),
+        object: vec![5; 16],
+        operation: id.clone(),
+        expected_revision: 0,
+        plain_size: 1,
+        manifest: vec![10; 64],
+        chunk_hashes: vec![Sha256::digest([7; 17]).to_vec()],
+    };
+    e.change(71, Action::BeginRevision(r.clone())).unwrap();
+    r.operation = wire;
+    (r, id)
+}
+
+#[test]
+fn same_vault_legacy_pending_upload_cannot_supply_shared_status_or_accept_shared_writes() {
+    let e = Env::new();
+    let h = e.create();
+    let caller = Principal::from_slice(&[30]);
+    grant(&e, &h.id, caller, AccessRole::Editor).unwrap();
+    let (r, physical) = matching_legacy_upload(&e, caller, &h.id);
+    assert!(matches!(
+        e.transaction(|db| sharing::upload_status(db, caller, &h.id, &r.operation, 100)),
+        Err(Error::Unauthorized)
+    ));
+    let actions = [
+        Action::PutChunk {
+            upload: r.operation.clone(),
+            index: 0,
+            bytes: vec![7; 17],
+        },
+        Action::CancelUpload {
+            vault: h.id.clone(),
+            upload: r.operation.clone(),
+            job: vec![88; 16],
+        },
+        Action::CommitRevision {
+            upload: r.operation,
+        },
+    ];
+    for action in actions {
+        assert!(matches!(
+            shared_mutate(
+                &e,
+                caller,
+                &h.id,
+                Mutation {
+                    operation: vec![76; 16],
+                    action
+                }
+            ),
+            Err(Error::Unauthorized)
+        ));
+    }
+    assert!(
+        matches!(e.transaction(|db|store::content::upload_status(db,&physical,100)),Ok(UploadStatus::Pending(p)) if p.received.is_empty() && p.cancel_job.is_none())
+    );
+}
+
+#[test]
+fn same_vault_matching_begin_cannot_adopt_a_legacy_upload() {
+    let e = Env::new();
+    let h = e.create();
+    let caller = Principal::from_slice(&[30]);
+    grant(&e, &h.id, caller, AccessRole::Editor).unwrap();
+    let (r, _) = matching_legacy_upload(&e, caller, &h.id);
+    let change = Mutation {
+        operation: vec![74; 16],
+        action: Action::BeginRevision(r),
+    };
+    assert!(matches!(
+        shared_mutate(&e, caller, &h.id, change),
+        Err(Error::Unauthorized)
+    ));
+    assert!(
+        e.transaction(|db| sharing::pending_uploads(db, caller, &h.id, &[]))
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+}
+
+#[test]
+fn same_vault_legacy_terminal_outcomes_cannot_supply_shared_status_or_receipts() {
+    for cancel in [false, true] {
+        let e = Env::new();
+        let h = e.create();
+        let caller = Principal::from_slice(&[30]);
+        grant(&e, &h.id, caller, AccessRole::Editor).unwrap();
+        let (r, physical) = matching_legacy_upload(&e, caller, &h.id);
+        if cancel {
+            e.change(
+                72,
+                Action::CancelUpload {
+                    vault: h.id.clone(),
+                    upload: physical,
+                    job: vec![1; 16],
+                },
+            )
+            .unwrap();
+        } else {
+            e.change(
+                72,
+                Action::PutChunk {
+                    upload: physical.clone(),
+                    index: 0,
+                    bytes: vec![7; 17],
+                },
+            )
+            .unwrap();
+            e.change(73, Action::CommitRevision { upload: physical })
+                .unwrap();
+        }
+        assert!(matches!(
+            e.transaction(|db| sharing::upload_status(db, caller, &h.id, &r.operation, 100)),
+            Err(Error::Unauthorized)
+        ));
+        for action in [
+            Action::CommitRevision {
+                upload: r.operation.clone(),
+            },
+            Action::BeginRevision(r),
+        ] {
+            assert!(matches!(
+                shared_mutate(
+                    &e,
+                    caller,
+                    &h.id,
+                    Mutation {
+                        operation: vec![75; 16],
+                        action
+                    }
+                ),
+                Err(Error::Unauthorized)
+            ));
+        }
+    }
+}
+
+#[test]
+fn owner_cancellation_of_shared_upload_preserves_uploader_status_until_outcome_collection() {
+    let e = Env::new();
+    let h = e.create();
+    let caller = Principal::from_slice(&[30]);
+    grant(&e, &h.id, caller, AccessRole::Editor).unwrap();
+    let wire = vec![41; 16];
+    let r = BeginRevision {
+        vault: h.id.clone(),
+        object: vec![5; 16],
+        operation: wire.clone(),
+        expected_revision: 0,
+        plain_size: 1,
+        manifest: vec![10; 64],
+        chunk_hashes: vec![Sha256::digest([7; 17]).to_vec()],
+    };
+    shared_mutate(
+        &e,
+        caller,
+        &h.id,
+        Mutation {
+            operation: vec![60; 16],
+            action: Action::BeginRevision(r),
+        },
+    )
+    .unwrap();
+    let physical = e
+        .transaction(|db| store::content::pending_uploads(db, &[]))
+        .unwrap()
+        .entries[0]
+        .upload
+        .clone();
+    e.change(
+        72,
+        Action::CancelUpload {
+            vault: h.id.clone(),
+            upload: physical,
+            job: vec![1; 16],
+        },
+    )
+    .unwrap();
+    let status = || e.transaction(|db| sharing::upload_status(db, caller, &h.id, &wire, e.now()));
+    assert!(matches!(status(), Ok(UploadStatus::Cancelled)));
+    e.now.set(e.now() + DAY + 1);
+    e.transaction(|db| store::content::collect_expired_upload_outcomes(db, e.now()))
+        .unwrap();
+    assert!(matches!(status(), Ok(UploadStatus::Absent)));
+}
+
+#[test]
+fn shared_wrapper_permits_editor_soft_delete_and_reserves_vault_deletion_for_owner() {
+    let e = Env::new();
+    let r = committed_document(&e);
+    let editor = Principal::from_slice(&[30]);
+    grant(&e, &r.vault, editor, AccessRole::Editor).unwrap();
+    let mutate = |caller, n, action| {
+        shared_mutate(
+            &e,
+            caller,
+            &r.vault,
+            Mutation {
+                operation: vec![n; 16],
+                action,
+            },
+        )
+    };
+    assert!(
+        matches!(mutate(editor,20,Action::DeleteObject{vault:r.vault.clone(),object:r.object,expected_revision:1}),Ok(MutationResult::Revision(rev)) if rev.deleted)
+    );
+    let action = Action::DeleteVault {
+        vault: r.vault.clone(),
+    };
+    assert!(matches!(
+        mutate(editor, 21, action.clone()),
+        Err(Error::Unauthorized)
+    ));
+    assert!(matches!(
+        mutate(e.owner(), 21, action),
+        Ok(MutationResult::Progress(_))
+    ));
+}
