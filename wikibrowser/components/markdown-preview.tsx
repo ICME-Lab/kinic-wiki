@@ -1,11 +1,19 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+import { VaultReferenceCard } from "@/components/vault-reference-card";
 import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { Markdown } from "@/lib/markdown-renderer";
 import { safeMarkdownImageSrc } from "@/lib/markdown-images";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
 import { renderWikilinksAsMarkdown } from "@/lib/markdown-wikilinks";
 import { hrefForMarkdownLink } from "@/lib/paths";
+import { isVaultReferenceUrl, trustedVaultOrigin, vaultReferenceMarkdown } from "@/lib/vault-reference";
+
+// Match the server's ordinary Markdown link on the first hydration render.
+const subscribeToClient = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
 export function MarkdownPreview({
   canisterId,
@@ -18,6 +26,8 @@ export function MarkdownPreview({
   nodePath: string;
   content: string;
 }) {
+  const isClient = useSyncExternalStore(subscribeToClient, clientSnapshot, serverSnapshot);
+  const vaultOrigin = isClient ? trustedVaultOrigin(window.location.origin) : null;
   const frontmatter = splitMarkdownFrontmatter(content);
   const markdown = renderWikilinksAsMarkdown(frontmatter ? frontmatter.body : content);
   return (
@@ -26,6 +36,21 @@ export function MarkdownPreview({
       {frontmatter && frontmatter.fields.length > 0 ? <FrontmatterSummary fields={frontmatter.fields} /> : null}
       <Markdown
         components={{
+          p({ node, children, ...props }) {
+            const link = node?.children[0];
+            if (vaultOrigin && node?.children.length === 1 && link?.type === "element" && link.tagName === "a") {
+              const { href } = link.properties;
+              const start = node.position?.start.offset;
+              const end = node.position?.end.offset;
+              // Inspect the parsed paragraph first. Verify its source to rule out
+              // normalized destinations, escaped syntax, titles and link definitions.
+              if (isVaultReferenceUrl(href, vaultOrigin) && start !== undefined && end !== undefined
+                && markdown.slice(start, end) === vaultReferenceMarkdown(href)) {
+                return <VaultReferenceCard key={JSON.stringify([canisterId, databaseId, nodePath, href])} href={href} />;
+              }
+            }
+            return <p {...props}>{children}</p>;
+          },
           a({ href, children, node: _node, ...props }) {
             const wikiHref = hrefForMarkdownLink(canisterId, databaseId, nodePath, href);
             if (!wikiHref) {

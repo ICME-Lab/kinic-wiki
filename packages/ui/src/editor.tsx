@@ -10,7 +10,7 @@ import {
 import { EditorView } from "@codemirror/view";
 import CodeMirror, { EditorState } from "@uiw/react-codemirror";
 import { Save, RotateCcw } from "lucide-react";
-import { useMemo, useRef, useLayoutEffect } from "react";
+import { useMemo, useRef, useLayoutEffect, type ReactNode } from "react";
 
 export type EditorSaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -73,6 +73,7 @@ export function MarkdownEditor({
   saveState,
   error,
   warning,
+  toolbarActions,
   onChange,
   onRevert,
   onSave,
@@ -86,6 +87,7 @@ export function MarkdownEditor({
   saveState: EditorSaveState;
   error: string | null;
   warning: string | null;
+  toolbarActions?: ReactNode;
   onChange: (content: string) => void;
   onRevert: () => void;
   onSave: () => void;
@@ -145,6 +147,7 @@ export function MarkdownEditor({
           <RotateCcw size={15} />
           Revert
         </button>
+        {toolbarActions}
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusClassName(saveState)}`}
         >

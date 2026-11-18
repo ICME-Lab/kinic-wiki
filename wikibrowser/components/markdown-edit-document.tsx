@@ -7,6 +7,7 @@ import type { WikiNode } from "@/lib/types";
 import { errorMessage } from "@/lib/wiki-helpers";
 import { writeNodeAuthenticated } from "@/lib/vfs-client";
 import { MarkdownEditor, type EditorSaveState } from "@/components/markdown-editor";
+import { VaultPickerButton } from "@/components/vault-picker-button";
 
 type EditStateChange = {
   dirty: boolean;
@@ -14,8 +15,7 @@ type EditStateChange = {
 };
 
 type StoredEditorState = {
-  key: string;
-  path: string;
+  documentKey: string;
   baseEtag: string;
   baseContent: string;
   draft: string;
@@ -43,9 +43,10 @@ export function MarkdownEditDocument({
   onNodeSaved: () => Promise<WikiNode>;
   onEditStateChange?: (state: EditStateChange) => void;
 }) {
-  const currentKey = `${node.path}\n${node.etag}`;
-  const [storedEditor, setStoredEditor] = useState<StoredEditorState>(() => newStoredEditorState(currentKey, node.path, node.etag, node.content));
-  const editor = shouldUseStoredEditor(storedEditor, currentKey, node.path) ? storedEditor : newStoredEditorState(currentKey, node.path, node.etag, node.content);
+  const documentKey = JSON.stringify([canisterId, databaseId, node.path]);
+  const currentKey = JSON.stringify([documentKey, node.etag]);
+  const [storedEditor, setStoredEditor] = useState<StoredEditorState>(() => newStoredEditorState(documentKey, node.etag, node.content));
+  const editor = shouldUseStoredEditor(storedEditor, documentKey, node.etag) ? storedEditor : newStoredEditorState(documentKey, node.etag, node.content);
   const dirty = editor.draft !== editor.baseContent;
   const visibleSaveState: EditorSaveState = editor.saveState === "saving" || editor.saveState === "saved" || editor.saveState === "error" ? editor.saveState : dirty ? "dirty" : "idle";
 
@@ -68,6 +69,20 @@ export function MarkdownEditDocument({
   const lineCount = useMemo(() => countLines(editor.draft), [editor.draft]);
   const draftBytes = useMemo(() => new TextEncoder().encode(editor.draft).length, [editor.draft]);
 
+  function updateDraft(change: (draft: string) => string) {
+    setStoredEditor((stored) => {
+      const current = shouldUseStoredEditor(stored, documentKey, node.etag) ? stored : editor;
+      if (current.saveState === "saving") return stored;
+      return {
+        ...current,
+        draft: change(current.draft),
+        saveState: current.saveState === "saved" || current.saveState === "error" ? "idle" : current.saveState,
+        saveError: current.saveState === "error" ? null : current.saveError,
+        saveWarning: null
+      };
+    });
+  }
+
   async function save() {
     setStoredEditor({ ...editor, saveState: "saving", saveError: null, saveWarning: null });
     try {
@@ -79,7 +94,7 @@ export function MarkdownEditDocument({
         metadataJson: node.metadataJson,
         expectedEtag: editor.baseEtag
       });
-      const savedEditor = newSavedEditorState(`${node.path}\n${result.node.etag}`, node.path, result.node.etag, editor.draft);
+      const savedEditor = newSavedEditorState(documentKey, result.node.etag, editor.draft);
       setStoredEditor(savedEditor);
       let savedNode: WikiNode;
       try {
@@ -93,7 +108,7 @@ export function MarkdownEditDocument({
         });
         return;
       }
-      setStoredEditor(newSavedEditorState(`${savedNode.path}\n${savedNode.etag}`, savedNode.path, savedNode.etag, savedNode.content));
+      setStoredEditor(newSavedEditorState(JSON.stringify([canisterId, databaseId, savedNode.path]), savedNode.etag, savedNode.content));
       toast.success("Saved");
     } catch (cause) {
       const message = errorMessage(cause);
@@ -117,15 +132,17 @@ export function MarkdownEditDocument({
         lineCount={lineCount}
         saveState={visibleSaveState}
         warning={editor.saveWarning}
-        onChange={(nextContent) => {
-          setStoredEditor({
-            ...editor,
-            draft: nextContent,
-            saveState: editor.saveState === "saved" || editor.saveState === "error" ? "idle" : editor.saveState,
-            saveError: editor.saveState === "error" ? null : editor.saveError,
-            saveWarning: null
-          });
-        }}
+        toolbarActions={(
+          <VaultPickerButton
+            key={currentKey}
+            disabled={editor.saveState === "saving"}
+            onInsert={(reference) => updateDraft((draft) => {
+              const gap = !draft || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+              return `${draft}${gap}${reference}\n`;
+            })}
+          />
+        )}
+        onChange={(nextContent) => updateDraft(() => nextContent)}
         onRevert={() => {
           setStoredEditor({ ...editor, draft: editor.baseContent, saveState: "idle", saveError: null, saveWarning: null });
         }}
@@ -152,10 +169,9 @@ function countLines(content: string): number {
   return content.split("\n").length;
 }
 
-function newStoredEditorState(key: string, path: string, etag: string, content: string): StoredEditorState {
+function newStoredEditorState(documentKey: string, etag: string, content: string): StoredEditorState {
   return {
-    key,
-    path,
+    documentKey,
     baseEtag: etag,
     baseContent: content,
     draft: content,
@@ -165,22 +181,13 @@ function newStoredEditorState(key: string, path: string, etag: string, content: 
   };
 }
 
-function shouldUseStoredEditor(editor: StoredEditorState, currentKey: string, path: string): boolean {
-  if (editor.path !== path) return false;
-  if (editor.key === currentKey) return true;
+function shouldUseStoredEditor(editor: StoredEditorState, documentKey: string, etag: string): boolean {
+  if (editor.documentKey !== documentKey) return false;
+  if (editor.baseEtag === etag) return true;
   if (editor.draft !== editor.baseContent) return true;
   return editor.saveState === "saved" || editor.saveState === "saving" || editor.saveState === "error" || editor.saveWarning !== null;
 }
 
-function newSavedEditorState(key: string, path: string, etag: string, content: string): StoredEditorState {
-  return {
-    key,
-    path,
-    baseEtag: etag,
-    baseContent: content,
-    draft: content,
-    saveState: "saved",
-    saveError: null,
-    saveWarning: null
-  };
+function newSavedEditorState(documentKey: string, etag: string, content: string): StoredEditorState {
+  return { ...newStoredEditorState(documentKey, etag, content), saveState: "saved" };
 }
