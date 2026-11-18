@@ -81,7 +81,9 @@ function VaultAuthSession({
   const [waitingForCleanup, setWaitingForCleanup] = useState(false);
   const interruptedCleanup = useRef<string | undefined>(undefined);
   const waitForCleanup = (marker: string | undefined) => {
-    if (!marker?.startsWith("pending:")) {
+    // Memory-only clients never restore or publish shared credentials, so a
+    // pending deletion does not have to block their private login.
+    if (!navigator.locks || !marker?.startsWith("pending:")) {
       setWaitingForCleanup(false);
       interruptedCleanup.current = undefined;
       return;
@@ -89,14 +91,13 @@ function VaultAuthSession({
     setWaitingForCleanup(true);
     // A crashed sender releases its Web Lock even if it left the marker pending.
     // Suppress its stored delegation, but permit a deliberate new II login.
-    if (navigator.locks)
-      void navigator.locks.request(logoutKey, { mode: "shared" }, () => {
-        if (!live.current) return;
-        const current = partitionMarker();
-        if (marker === current) interruptedCleanup.current = marker;
-        if (current === marker || !current?.startsWith("pending:"))
-          setWaitingForCleanup(false);
-      });
+    void navigator.locks.request(logoutKey, { mode: "shared" }, () => {
+      if (!live.current) return;
+      const current = partitionMarker();
+      if (marker === current) interruptedCleanup.current = marker;
+      if (current === marker || !current?.startsWith("pending:"))
+        setWaitingForCleanup(false);
+    });
   };
   const serial = useRef(0);
   const generation = useRef("");
@@ -408,6 +409,7 @@ function VaultAuthSession({
       return;
     const marker = partitionMarker();
     if (
+      navigator.locks &&
       marker?.startsWith("pending:") &&
       interruptedCleanup.current !== marker
     ) {
@@ -460,7 +462,7 @@ function VaultAuthSession({
             }
             if (accepted()) {
               loginInFlight.current = false;
-              if (partitionMarker() === "pending:" + signingIn) {
+              if (navigator.locks && partitionMarker() === "pending:" + signingIn) {
                 try {
                   localStorage.setItem(logoutKey, signingIn);
                 } catch {
