@@ -54,6 +54,18 @@ export async function readback(canister: string, host: string) {
     uploads,
   });
 }
+// Acceptance-only idempotency probe using the real II-issued delegation.
+// An uncertain payment is never retried by the production payment UI.
+export async function retryExactPurchase(
+  canister: string,
+  host: string,
+  operation: number[],
+) {
+  const { actor } = await connect(canister, host);
+  if (operation.length !== 16 || !operation.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255))
+    throw Error("InvalidExactOperation");
+  return publicValue(await actor.pay_purchase(operation));
+}
 export async function deny(
   canister: string,
   host: string,

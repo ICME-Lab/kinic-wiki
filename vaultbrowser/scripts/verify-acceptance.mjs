@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
 import { idlFactory } from "../../packages/vault-candid/index.js";
+import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 const require = createRequire(import.meta.url);
 const { Cbor } = require("@icp-sdk/core/agent");
 const { IDL } = require("@icp-sdk/core/candid");
@@ -328,7 +329,7 @@ try {
   assert.equal(
     await vault
       .locator("summary").filter({ hasText: "Account & storage" })
-      .evaluate((e) => e.open),
+      .evaluate((e) => e.closest("details").open),
     false,
   );
   await vault.getByRole("button", { name: "Back to Vault", exact: true }).click();
@@ -350,9 +351,11 @@ try {
     "actual II login; collapsed management; no second Vault factor",
     { principal: owner },
   );
-  await action(vault, "Get quote");
-  await action(vault, "Approve and pay this quote");
-  await vault.getByText("Paid", { exact: true }).waitFor();
+  await action(vault, "Account settings");
+  await vault.locator("summary").filter({ hasText: "Account & storage" }).click();
+  await action(vault, "Review payment");
+  await action(vault, "Pay 1 KINIC");
+  await vault.getByText("Payment complete", { exact: true }).waitFor();
   pass("explicit synthetic ledger funding through real ICRC-2 calls");
   // Actual authenticated update calls through the production UI; the ledger
   // is explicitly synthetic here. Official ledger/archive proof is separate.
@@ -364,22 +367,35 @@ try {
   );
   const fundedBeforeScan = await readback(vault);
   configureLedger(6);
-  await action(vault, "New quote");
-  await action(vault, "Get quote");
-  await action(vault, "Approve and pay this quote");
-  await vault.getByText("Unknown", { exact: true }).waitFor();
+  await action(vault, "New payment");
+  await action(vault, "Review payment");
+  await action(vault, "Pay 1 KINIC");
+  await vault.getByText("Payment needs a status check", { exact: true }).waitFor();
   const unknownBeforeScan = await readback(vault);
   assert.ok(BigInt(unknownBeforeScan.balance.Ok) <= BigInt(fundedBeforeScan.balance.Ok), "Unknown must not add credit; execution/storage charges may reduce balance");
   await action(vault, /^(?:Scan ledger for this payment|Resume ledger scan)$/);
-  await vault.getByText(/No matching payment evidence found yet/).waitFor();
+  await vault.getByText(/Ledger scan: next \d+ of \d+\./).waitFor();
+  await expect(vault.getByRole("button", { name: "Check payment status", exact: true })).toBeEnabled();
   const afterScan = await readback(vault);
   const financialRecords = (rows) => rows.Ok.map(({ wallet, request, config, fee, credits, memo, created_at_time, status }) =>
     ({ wallet, request, config, fee, credits, memo, created_at_time, status }));
   assert.deepEqual(financialRecords(afterScan.payments), financialRecords(unknownBeforeScan.payments));
   assert.ok(BigInt(afterScan.balance.Ok) <= BigInt(unknownBeforeScan.balance.Ok), "unproven scan must not add credit");
+  // The controller schedules status-only checks at 0/1/3 seconds. Let those
+  // finish while the ledger is still uncertain so the explicit status gesture
+  // below cannot race an automatic check that observes the backend probe.
+  await vault.waitForTimeout(3500);
+  await expect(vault.getByRole("button", { name: "Check payment status", exact: true })).toBeEnabled();
   configureLedger(4);
-  await action(vault, "Retry same payment");
-  await vault.getByText("Paid", { exact: true }).waitFor();
+  const unknownPayment = unknownBeforeScan.payments.Ok.find(payment => "Unknown" in payment.status);
+  assert.ok(unknownPayment, "the original uncertain operation must remain in the journal");
+  // Deliberate backend idempotency probe. The product UI permits status/scan
+  // recovery only; it must never redispatch this uncertain payment itself.
+  assert.equal(await vault.getByRole("button", { name: "Retry same payment", exact: true }).count(), 0);
+  const duplicateRetry = await inspect(vault, "retryExactPurchase", canister, vaultURL, unknownPayment.request.operation);
+  assert.ok("Ok" in duplicateRetry && "Paid" in duplicateRetry.Ok.status);
+  await action(vault, "Check payment status");
+  await vault.getByText("Payment complete", { exact: true }).waitFor();
   const recoveredScan = await readback(vault);
   assert.equal(recoveredScan.payments.Ok.length, unknownBeforeScan.payments.Ok.length);
   assert.ok(BigInt(recoveredScan.balance.Ok) > BigInt(afterScan.balance.Ok));
@@ -407,7 +423,7 @@ try {
     ],
     { stdio: "inherit" },
   );
-  await vault.reload();
+  await vault.goto(vaultURL);
   await vault
     .getByRole("button", { name: "Create Vault", exact: true })
     .waitFor();
@@ -419,10 +435,10 @@ try {
   );
   await vault.getByRole("button", { name: "Account settings", exact: true }).click();
   await vault.locator("summary").filter({ hasText: "Account & storage" }).click();
-  // The form stays disabled until its independent config/history requests finish.
-  await expect(
-    vault.getByRole("button", { name: "Get quote", exact: true }),
-  ).toBeEnabled({ timeout: 60_000 });
+  // The production build must reject the stored synthetic ledger configuration.
+  // Historical paid receipts and credit remain readable without enabling payment.
+  await vault.getByText("Funding is unavailable. You can still check existing payments.", { exact: true }).waitFor();
+  await expect(vault.getByRole("button", { name: "Review payment", exact: true })).toBeDisabled();
   const afterUpgrade = await readback(vault);
   assert.equal(afterUpgrade.principal, owner);
   assert.deepEqual(afterUpgrade.payments, beforeUpgrade.payments);
@@ -1027,6 +1043,13 @@ try {
   );
   pass("late real read reply after close cannot restore editor or plaintext");
 
+  // Reopening normally reuses the persistent key. Explicitly forget it so this
+  // race test still intercepts a real derivation rather than a cache hit.
+  await action(vault, "Account settings");
+  await action(vault, "Delete saved keys from this browser");
+  assertDeviceKeyStore(await vault.evaluate(readDeviceKeyStore), `${canister}:${owner}`);
+  assert.equal((await vault.evaluate(readDeviceKeyStore)).records.filter(record => record.key).length, 0);
+  await action(vault, "Back to Vault");
   delayMethod = "derive_vault_key";
   const keyReady = new Promise((resolve) => {
     delayedReady = resolve;
@@ -1132,13 +1155,14 @@ try {
   const network = new URL(vaultURL);
   const allowedDatabases = [
     "auth-client-db",
+    "kinic-vault-device-keys-v1",
     `icp-sdk-${network.host}`,
     `icp-sdk-localhost:${network.port}`,
   ];
   assert.ok(persistence.databases.some((db) => db.name === "auth-client-db"));
   assert.ok(
     persistence.databases.every((db) => allowedDatabases.includes(db.name)),
-    "Only SDK authentication and public subnet-key caches may persist",
+    "Only SDK authentication, scoped non-extractable Vault roots and public subnet-key caches may persist",
   );
   for (const db of persistence.databases)
     for (const store of db.stores) {
@@ -1154,6 +1178,9 @@ try {
           store.algorithms.every((name) => name === "ECDSA"),
           "No AES Vault root or DEK may persist",
         );
+      } else if (db.name === "kinic-vault-device-keys-v1") {
+        assert.equal(store.name, "entries");
+        assert.ok(store.algorithms.every(name => name === "AES-GCM"));
       } else {
         assert.equal(store.name, "subnetNodeKeys");
         assert.equal(
@@ -1164,8 +1191,11 @@ try {
         assert.deepEqual(store.algorithms, []);
       }
     }
+  const deviceStore = await vault.evaluate(readDeviceKeyStore);
+  assertDeviceKeyStore(deviceStore, `${canister}:${owner}`);
+  assert.ok(deviceStore.records.some(record => record.key), "reopened Vault must save its verified root");
   pass(
-    "no Vault plaintext/root/DEK persistence; only SDK auth and public subnet keys; zero Vault WebAuthn calls",
+    "no Vault plaintext/raw-key/DEK persistence; only scoped non-extractable roots, SDK auth and public subnet keys; zero Vault WebAuthn calls",
     { databases: persistence.databases.map((db) => db.name) },
   );
 

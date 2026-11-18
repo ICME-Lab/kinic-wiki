@@ -177,12 +177,12 @@ try {
     join(project, "internet_identity_frontend.wasm"),
     frontendArgs,
   );
-  run("node", ["pocketic-tests/scripts/build-vault-ledger.mjs"]);
+  run("node", ["pocketic-tests/scripts/build-vault-ledger.mjs", "--browser-preflight"]);
   install(
     "ledger",
     join(
       root,
-      "target/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm",
+      "target/vault-ledger-browser-build/wasm32-unknown-unknown/release/vault_ledger_fixture.wasm",
     ),
     "()",
   );

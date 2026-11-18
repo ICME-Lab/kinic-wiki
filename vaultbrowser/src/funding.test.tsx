@@ -10,7 +10,7 @@ import type { Payment, PurchaseRequest } from "@kinic/vault-candid";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Funding } from "./funding";
 import { VaultFundingProvider } from "./funding/session";
-import { encodeVaultRecoveryContext } from "./funding/adapter";
+import { encodeVaultRecoveryContext, vaultFundingScopes } from "./funding/adapter";
 
 const identity = Ed25519KeyIdentity.generate(), owner = identity.getPrincipal();
 const ledger = Principal.fromUint8Array(Uint8Array.of(5,1));
@@ -301,4 +301,46 @@ it("retries confirmed-payment journal cleanup before allowing another payment",a
   await click("Check payment status");await button("New payment");
   expect(actor.payment_status).toHaveBeenCalledTimes(statusCalls);
   expect(actor.pay_purchase).toHaveBeenCalledOnce();
+});
+
+it("restores an OISY preference without prompting for permission or history", async () => {
+  const openSigner = vi.fn();
+  wallet = createWalletSessionManager({origin:location.origin, host:config.host, signerUrl:location.origin + "/sign",
+    identity, transports:{openSigner}});
+  const key = "kinic.payments.wallet.v1:" + JSON.stringify([location.origin,config.host]);
+  localStorage.setItem(key,JSON.stringify({version:1,origin:location.origin,host:config.host,provider:"oisy",owner:owner.toText()}));
+  mount();
+  expect(await button("Reconnect OISY")).toBeTruthy();
+  expect((await button("Review payment")).disabled).toBe(true);
+  expect(openSigner).not.toHaveBeenCalled();
+  expect(wallet.getSnapshot().state).toBe("remembered");
+});
+
+it("requires a restored Plug to grant scopes, keeps it connected through an II payment, and releases it on sign-out", async () => {
+  const externalOwner = Principal.fromUint8Array(Uint8Array.of(33,1));
+  const plug = {isConnected:vi.fn(async()=>true),requestConnect:vi.fn(async()=>true),
+    agent:{getPrincipal:async()=>externalOwner},disconnect:vi.fn(async()=>{}),createActor:vi.fn(async()=>({
+      list_payments:async()=>({Ok:[]}),
+    }))};
+  wallet = createWalletSessionManager({origin:location.origin,host:config.host,signerUrl:location.origin + "/sign",
+    identity,transports:{getPlug:()=>plug}});
+  localStorage.setItem("kinic.payments.wallet.v1:" + JSON.stringify([location.origin,config.host]),
+    JSON.stringify({version:1,origin:location.origin,host:config.host,provider:"plug",owner:externalOwner.toText()}));
+  const c=client(quoted());
+  const funded=vi.fn(async()=>{});
+  const view=renderReact(<VaultFundingProvider config={config} identity={identity} manager={wallet}><Funding client={c} onFunded={funded}/></VaultFundingProvider>);
+  await button("Authorize Plug");
+  expect(plug.requestConnect).not.toHaveBeenCalled();
+  expect((await button("Review payment")).disabled).toBe(true);
+  await click("Authorize Plug");
+  await waitFor(()=>expect(wallet.getSnapshot().state).toBe("connected"));
+  await waitFor(()=>expect(wallet.hasScopes(vaultFundingScopes(config.canister,ledger.toText()))).toBe(true));
+  fireEvent.click(screen.getByRole("radio",{name:"Internet Identity"}));
+  await click("Check payment status");await click("Pay 1 KINIC");await screen.findByText("Payment complete");
+  expect(actor.pay_purchase).toHaveBeenCalledExactlyOnceWith(saved[0].request.operation);
+  expect(wallet.getSnapshot().account?.owner).toBe(externalOwner.toText());
+  view.rerender(<VaultFundingProvider config={config} identity={identity} manager={wallet}><p>Another route</p></VaultFundingProvider>);
+  expect(plug.disconnect).not.toHaveBeenCalled();
+  view.rerender(<VaultFundingProvider config={config} manager={wallet}><p>Signed out</p></VaultFundingProvider>);
+  await waitFor(()=>expect(plug.disconnect).toHaveBeenCalledOnce());
 });

@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { chromium } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 const root=fileURLToPath(new URL("../../",import.meta.url)).replace(/\/$/,"");
 const url=process.env.VAULT_FIXTURE_URL ?? "http://127.0.0.1:3137";
 const browser=await chromium.launch({headless:true});
@@ -43,6 +44,13 @@ try {
   const second=await context.newPage();
   await second.goto(`${url}/?state=welcome`);
   assert.equal((await exercise(second,false)).saved,"saved");
+  const persisted = await page.evaluate(readDeviceKeyStore);
+  const scope = "rrkah-fqaaa-aaaaa-aaaaq-cai:rrkah-fqaaa-aaaaa-aaaaq-cai";
+  assertDeviceKeyStore(persisted, scope);
+  assert.ok(persisted.records.some(record => record.key), "real non-extractable root must persist");
+  const record = persisted.records.find(record => record.key);
+  assert.throws(() => assertDeviceKeyStore({ ...persisted, records: [{ ...record, key: { ...record.key, extractable: true } }] }, scope));
+  assert.throws(() => assertDeviceKeyStore({ ...persisted, records: [{ ...record, scope: "different-owner" }] }, scope));
   await page.evaluate(async()=>{
     const {client,store,binding}=window.deviceTest;
     const epoch=await store.epoch();
@@ -52,5 +60,8 @@ try {
     if(await store.get(binding,await store.epoch()))throw Error("key still stored");
   });
   await second.waitForFunction(()=>!window.deviceTest.client.session.root);
+  const forgotten = await page.evaluate(readDeviceKeyStore);
+  assertDeviceKeyStore(forgotten, scope);
+  assert.equal(forgotten.records.filter(record => record.key).length, 0);
   console.log("PASS: non-extractable key persistence, real client cache hit after reload, no derive call, stale-write rejection and cross-tab forget. Synthetic actor only.");
 }finally{await browser.close();}
