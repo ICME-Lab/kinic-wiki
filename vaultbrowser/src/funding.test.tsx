@@ -326,15 +326,21 @@ it("requires a restored Plug to grant scopes, keeps it connected through an II p
     identity,transports:{getPlug:()=>plug}});
   localStorage.setItem("kinic.payments.wallet.v1:" + JSON.stringify([location.origin,config.host]),
     JSON.stringify({version:1,origin:location.origin,host:config.host,provider:"plug",owner:externalOwner.toText()}));
+  let finishDiscovery!: () => void;
+  const discovery = new Promise(resolve => {finishDiscovery = () => resolve({Ok:[funding]});});
+  actor.get_funding_config.mockReturnValue(discovery);
   const c=client(quoted());
   const funded=vi.fn(async()=>{});
   const view=renderReact(<VaultFundingProvider config={config} identity={identity} manager={wallet}><Funding client={c} onFunded={funded}/></VaultFundingProvider>);
-  await button("Authorize Plug");
+  const authorize = await button("Authorize Plug");
+  await act(async () => { fireEvent.click(authorize); });
   expect(plug.requestConnect).not.toHaveBeenCalled();
+  await act(async () => finishDiscovery());
   expect((await button("Review payment")).disabled).toBe(true);
   await click("Authorize Plug");
   await waitFor(()=>expect(wallet.getSnapshot().state).toBe("connected"));
-  await waitFor(()=>expect(wallet.hasScopes(vaultFundingScopes(config.canister,ledger.toText()))).toBe(true));
+  await waitFor(()=>expect(plug.requestConnect).toHaveBeenCalledWith(expect.objectContaining({whitelist:[config.canister,ledger.toText()]})));
+  expect(wallet.hasScopes(vaultFundingScopes(config.canister,ledger.toText()))).toBe(true);
   fireEvent.click(screen.getByRole("radio",{name:"Internet Identity"}));
   await click("Check payment status");await click("Pay 1 KINIC");await screen.findByText("Payment complete");
   expect(actor.pay_purchase).toHaveBeenCalledExactlyOnceWith(saved[0].request.operation);

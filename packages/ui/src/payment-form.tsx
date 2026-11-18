@@ -10,6 +10,7 @@ export type PaymentSource = {
   connectionState: "connected" | "disconnected" | "remembered" | "grant" | "connecting";
   onConnect?: () => void;
   onDisconnect?: () => void;
+  connectDisabled?: boolean;
 };
 type Action = {label: string; run: () => void; disabled?: boolean};
 export type PaymentStatusProps = {
@@ -34,14 +35,14 @@ export function PaymentStatus({phase, message, balanceUnavailable, recoveryActio
   </>;
 }
 
-export function FundingSource({label, account, balanceLabel, connectionState, onConnect, onDisconnect, disabled}:
+export function FundingSource({label, account, balanceLabel, connectionState, onConnect, onDisconnect, connectDisabled, disabled}:
   Omit<PaymentSource, "id"> & {disabled?: boolean}) {
   const connectLabel = connectionState === "remembered" ? "Reconnect" : connectionState === "grant" ? "Authorize" : "Connect";
   return <div className="grid min-w-0 gap-2 text-sm">
     {account && <span className="break-all font-mono text-xs">{account}</span>}
     {balanceLabel && <span>Balance · {balanceLabel}</span>}
     {onConnect && connectionState !== "connected" &&
-      <Button type="button" variant="outline" disabled={disabled || connectionState === "connecting"} onClick={onConnect}>{connectLabel} {label}</Button>}
+      <Button type="button" variant="outline" disabled={disabled || connectDisabled || connectionState === "connecting"} onClick={onConnect}>{connectLabel} {label}</Button>}
     {onDisconnect && connectionState === "connected" &&
       <Button type="button" variant="outline" disabled={disabled} onClick={onDisconnect}>Disconnect {label}</Button>}
   </div>;
