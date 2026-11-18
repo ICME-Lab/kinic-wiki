@@ -16,8 +16,7 @@ const fixtureIdentity = Ed25519KeyIdentity.generate();
 const network = fixtureNetwork(fixtureIdentity.getPrincipal());
 class UIFixtureClient extends VaultClient {
   override async open(h: Header) {
-    if (!this.header || String(this.header.id) !== String(h.id))
-      this.session.lock();
+    this.selectOwnedVault(h);
     const ticket = this.session.capture();
     const root = await importKey(new Uint8Array(32).fill(8));
     this.session.check(ticket);
