@@ -90,3 +90,18 @@ test("saved fixture article round-trips the editor payload into the actual previ
   await page.getByRole("button", { name: "Open private document" }).click();
   await expect(page.locator("iframe")).toHaveAttribute("src", embed);
 });
+
+test("a reloaded picker reconnects and inserts into the existing draft", async ({ page }) => {
+  await page.goto("/");
+  const [picker] = await Promise.all([
+    page.waitForEvent("popup"), page.getByRole("button", { name: "Insert private document" }).click()
+  ]);
+  await expect(picker.getByRole("status")).toHaveText("Connected to Wiki");
+  await picker.reload();
+  await expect(picker.getByRole("status")).toHaveText("Connected to Wiki");
+  await Promise.all([picker.waitForEvent("close"), picker.getByRole("button", { name: "Select fixture document" }).click()]);
+  const draft = page.getByRole("textbox");
+  await expect(draft.locator(".cm-line").first()).toHaveText("Original draft.");
+  await expect(draft.locator(".cm-line").nth(2)).toHaveText(reference);
+  await expect(draft.getByText("非公開資料", { exact: true })).toHaveCount(1);
+});

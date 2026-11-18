@@ -60,6 +60,28 @@ afterEach(() => {
 });
 
 describe("Wiki editor Vault picker", () => {
+  it("reconnects the owned picker after reload and inserts only once", async () => {
+    const { popup, postMessage, close } = createPopup();
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    const { container } = render(editor());
+    fireEvent.click(screen.getByRole("button", { name: "Insert private document" }));
+    send(popup, ready);
+    postMessage.mockClear();
+
+    // A reloaded document keeps its WindowProxy but restarts the handshake.
+    send(popup, ready, "https://evil.example");
+    send(window, ready);
+    send(popup, { ...ready, extra: true });
+    expect(postMessage).not.toHaveBeenCalled();
+    send(popup, ready);
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "kinic-vault-picker-connect" }, origin);
+    send(popup, selection);
+    send(popup, selection);
+    await waitFor(() => expect([...container.querySelectorAll(".cm-line")].map((line) => line.textContent))
+      .toEqual([node.content, "", link, ""]));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("inserts only one generic reference after the owned popup handshake", async () => {
     const { popup, postMessage, close } = createPopup();
     const open = vi.spyOn(window, "open").mockReturnValue(popup);

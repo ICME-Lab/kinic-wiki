@@ -36,7 +36,8 @@ export function VaultPickerButton({
       const data = event.data as Record<string, unknown>;
       const keys = Object.keys(data);
       if (!keys.includes("type")) return;
-      if (data.type === "kinic-vault-picker-ready" && keys.length === 1 && !connected) {
+      // Reloading keeps the owned WindowProxy but resets the picker's listener.
+      if (data.type === "kinic-vault-picker-ready" && keys.length === 1) {
         popup.postMessage({ type: "kinic-vault-picker-connect" }, origin);
         connected = true;
         return;
