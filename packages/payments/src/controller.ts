@@ -251,8 +251,13 @@ export function createPaymentController<C>({
         // A surviving marker is reconciled against the backend on reload.
         let cleanupError: unknown;
         try {
-          store.put({ ...r, stage: "paid" });
-          record = { ...r, stage: "paid" };
+          const context = result.acknowledgedContext === undefined ? r.context : {
+            acknowledged: result.acknowledgedContext,
+            receipt: { reference: result.receipt.reference, creditedCycles: result.receipt.creditedCycles.toString() },
+          };
+          const paidRecord = { ...r, stage: "paid" as const, context };
+          store.put(paidRecord);
+          record = paidRecord;
           clear(r);
         } catch (error) { cleanupError = error; }
         if (silentOnly && !adapter.capabilities.silentCheck)

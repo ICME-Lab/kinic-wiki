@@ -2,7 +2,7 @@ import { AnonymousIdentity, Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { afterEach, expect, it, vi } from "vitest";
 import { formatKinicExact, parseKinic, totalDebit } from "../src/amounts";
-import { classifyPaymentFailure } from "../src/errors";
+import { classifyPaymentFailure, formatPaymentFailure } from "../src/errors";
 import { assertLedgerFee, readLedgerTerms } from "../src/ledger";
 import { freezeTerms } from "../src/terms";
 import type { PaymentScope, PreparedPayment } from "../src/types";
@@ -164,4 +164,9 @@ it("rejects a runtime fee incompatible with Wiki's fixed server fee", async () =
   const live = await readLedgerTerms(query);
   expect(() => assertLedgerFee(live.feeE8s, 100_000n)).toThrow(expect.objectContaining({ code: "BadFee" }));
   expect(() => assertLedgerFee(live.feeE8s, 10n)).not.toThrow();
+});
+
+it("formats a confirmed payment refusal with a fixed message", () => {
+  expect(formatPaymentFailure({stage: "paying", code: "PaymentRejected"}))
+    .toBe("Payment failed. The service rejected the payment.");
 });

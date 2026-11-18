@@ -58,6 +58,15 @@ vi.mock("../wiki-credit-actor", () => ({
   }),
 }));
 import { VaultWorkspace } from "./workspace";
+import { VaultFundingProvider } from "../funding/session";
+vi.mock("../funding/adapter", async original => ({
+  ...await original<object>(), discoverVaultFundingConfig: async () => null, listVaultFundingHistory: async () => [],
+}));
+function workspace(client: VaultClient) {
+  const config = {canister:client.canister, host:"http://localhost:4943", origin:location.origin, local:true,
+    identityProvider:"http://id.localhost",derivationOrigin:"http://" + client.canister + ".localhost",fundingMode:"unavailable" as const};
+  return <VaultFundingProvider config={config} identity={client.identity}><VaultWorkspace client={client}/></VaultFundingProvider>;
+}
 HTMLDialogElement.prototype.showModal = function () { this.open = true; };
 HTMLDialogElement.prototype.close = function () { this.open = false; };
 afterEach(() => {
@@ -78,7 +87,7 @@ async function mounted() {
     canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
     local: true,
   });
-  const view = render(<VaultWorkspace client={client} />);
+  const view = render(workspace(client));
   await screen.findByText("Vault 1");
   const open = async (n = 1) => {
     clickAndDiscard(screen.getByText(`Vault ${n}`));
@@ -600,7 +609,7 @@ it("opens account funding in settings from the low balance action", async () => 
   const settings = screen.getByRole("region", { name: "Account settings" });
   const summary = within(settings).getByText("Account & storage").closest("summary")!;
   expect(summary.closest("details")?.open).toBe(true);
-  expect(within(settings).getByRole("button", { name: "Get quote" })).toBeTruthy();
+  expect(within(settings).getByRole("button", { name: "Review payment" })).toBeTruthy();
   await waitFor(() => expect(document.activeElement).toBe(summary));
 });
 it("keeps production funding disabled", async () => {
@@ -611,7 +620,7 @@ it("keeps production funding disabled", async () => {
   );
   const account = screen.getByRole("region", { name: "Vault account" });
   expect(
-    (within(account).getByText("Get quote") as HTMLButtonElement).disabled,
+    (within(account).getByText("Review payment") as HTMLButtonElement).disabled,
   ).toBe(true);
 });
 it.each(["Pending", "Deleting"] as const)(
@@ -774,7 +783,7 @@ it("shows funding directly beside the first Vault creation step at zero balance"
   expect(details.open).toBe(false);
   const setup = screen.getByRole("region", { name: "Choose a Vault" });
   expect(within(setup).getByLabelText("KINIC amount")).toBeTruthy();
-  expect(within(setup).getByRole("button", { name: "Get quote" })).toBeTruthy();
+  expect(within(setup).getByRole("button", { name: "Review payment" })).toBeTruthy();
   expect(details.open).toBe(false);
 });
 it("allows owner credit below the valid canister reserve and reports server denial", async () => {
@@ -986,7 +995,7 @@ it("initializes a free account before allowing creation and retries a lost initi
   let resolve!: (value: Awaited<ReturnType<typeof network.actor.initialize_vault_account>>) => void;
   vi.spyOn(network.actor,"initialize_vault_account").mockImplementation(() => new Promise((r)=>{resolve=r;}));
   const client=new VaultClient({actor:network.actor,identity:Ed25519KeyIdentity.generate(),canister:"rrkah-fqaaa-aaaaa-aaaaq-cai",local:true});
-  render(<VaultWorkspace client={client}/>);
+  render(workspace(client));
   await screen.findByText("Preparing your Vault account…");
   expect((screen.getByText("Create Vault") as HTMLButtonElement).disabled).toBe(true);
   await act(async()=>resolve({Ok:{balance:10_000_000_000n,grant_cycles:10_000_000_000n}}));
@@ -997,7 +1006,7 @@ it("offers retry after account initialization loses its reply", async()=>{
   const network=fixtureNetwork();
   const initialize=vi.spyOn(network.actor,"initialize_vault_account").mockRejectedValueOnce(Error("network"));
   const client=new VaultClient({actor:network.actor,identity:Ed25519KeyIdentity.generate(),canister:"rrkah-fqaaa-aaaaa-aaaaq-cai",local:true});
-  render(<VaultWorkspace client={client}/>);
+  render(workspace(client));
   clickAndDiscard(await screen.findByRole("button",{name:"Retry account setup"}));
   await screen.findByRole("button",{name:"Create your Vault"});
   expect(initialize).toHaveBeenCalledTimes(2);
@@ -1123,7 +1132,7 @@ it("creates the first Vault with 10B and a sponsored key, then gates later paid 
   vi.spyOn(network.actor,"initialize_vault_account").mockResolvedValue({Ok:{balance:10_000_000_000n,grant_cycles:10_000_000_000n}});
   const derive=vi.spyOn(network.actor,"derive_vault_key");
   const client=new VaultClient({actor:network.actor,identity:Ed25519KeyIdentity.generate(),canister:"rrkah-fqaaa-aaaaa-aaaaq-cai",local:true});
-  render(<VaultWorkspace client={client}/>);
+  render(workspace(client));
   await screen.findByLabelText("Prepaid balance: 10,000,000,000 cycles");
   expect(screen.queryByText(/Your first key retrieval is included|Getting a key on a new browser/)).toBeNull();
   const create=screen.getByRole("button",{name:/^Create Vault$/}) as HTMLButtonElement;

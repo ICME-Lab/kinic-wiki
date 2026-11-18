@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
+    "./payment-form": "./src/payment-form.tsx",
     "./editor": "./src/editor.tsx",
     "./markdown": "./src/markdown.tsx",
     "./button": "./src/button.tsx",

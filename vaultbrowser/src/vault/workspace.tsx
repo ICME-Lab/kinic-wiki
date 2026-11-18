@@ -387,7 +387,7 @@ function Workspace({ client }: { client: VaultClient }) {
   const canAffordCurrentOperation = opened
     ? eligible
     : selected ? canRetrieveKey : canCreateVault;
-  const inlineFunding = !settingsOpen && accountReady && !!config && !!capacity && !opened
+  const inlineFunding = nav.view === "workspace" && !settingsOpen && accountReady && !!config && !!capacity && !opened
     && (selected ? needsKeyFunding && !canRetrieveKey : keyCost !== undefined && !canCreateVault);
   const retryable = !!error && client.hasPendingMutation;
   const retryButton = (className = "") => (
@@ -781,7 +781,7 @@ function Workspace({ client }: { client: VaultClient }) {
                       Browser key storage is unavailable. Your next session will need a paid key retrieval.
                     </p>
                   ) : null}
-                  {capacity && !inlineFunding ? (
+                  {capacity && nav.view === "settings" && !inlineFunding ? (
                     <Funding
                       key={`funding-${generation}`}
                       client={client}

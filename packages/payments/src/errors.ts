@@ -54,6 +54,7 @@ const stageLabels: Record<PaymentPhase, string> = {
 const errorMessages: Record<PaymentErrorCode, string> = {
   InsufficientFunds: "There is not enough KINIC to cover the amount and fees.",
   ApprovalRejected: "The wallet or ledger rejected the approval.",
+  PaymentRejected: "The service rejected the payment.",
   Expired: "The quote has expired.",
   BadFee: "The ledger fee changed. Review the payment terms.",
   TermsChanged: "The payment terms changed. Review the current terms and confirm again.",

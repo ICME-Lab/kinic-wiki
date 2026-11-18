@@ -11,7 +11,7 @@ import type {
 import type { WalletSessionManager } from "@kinic/payments/wallet-session";
 import type { FundingTransport, WalletAccess } from "@kinic/payments/wallet-types";
 import {
-  idlFactory, type _SERVICE, type FundingConfig, type Payment, type PurchaseRequest, type ReconciliationProgress,
+  idlFactory, type _SERVICE, type Error as VaultError, type FundingConfig, type Payment, type PurchaseRequest, type ReconciliationProgress,
 } from "@kinic/vault-candid";
 import { validateConfig, type BrowserConfig } from "../config";
 import { paymentId } from "./payments";
@@ -135,19 +135,24 @@ function payerAccess(options: VaultHistoryOptions, config: BrowserConfig, ledger
     }
     checkCurrent(current);
   }
-  async function call<M extends Method>(method: M, ...args: Parameters<_SERVICE[M]>): Promise<Success<M>> {
+  async function callResult<M extends Method>(
+    method: M, args: Parameters<_SERVICE[M]>, dispatchCurrent = current,
+  ): Promise<{Ok: Success<M>} | {Err: VaultError}> {
     checkCurrent(current);
     const fn = service._fields.find(([name]) => name === method)![1];
     const reply = await transport!.call({
-      canisterId: config.canister, interfaceFactory: idlFactory, method, isCurrent: current,
+      canisterId: config.canister, interfaceFactory: idlFactory, method, isCurrent: dispatchCurrent,
       mode: fn.annotations.includes("query") ? "query" : "update", arg: IDL.encode(fn.argTypes, args),
     });
     checkCurrent(current);
     let result;
     try { [result] = IDL.decode(fn.retTypes, reply); } catch { return invalid(); }
-    return unwrap(result as {Ok: Success<M>} | {Err: unknown});
+    return result as {Ok: Success<M>} | {Err: VaultError};
   }
-  return {transport, account, current, validate, call, beneficiary};
+  async function call<M extends Method>(method: M, ...args: Parameters<_SERVICE[M]>): Promise<Success<M>> {
+    return unwrap(await callResult(method, args));
+  }
+  return {transport, account, current, validate, call, callResult, beneficiary};
 }
 
 function encodeRequest(req: PurchaseRequest) {
@@ -262,6 +267,7 @@ function outcome(p: Payment): PaymentCheck {
   if ("Paid" in status) return {kind: "paid", receipt: {reference: status.Paid.toString(), creditedCycles: p.credits}};
   if (p.uncertain || p.preparing || "Unknown" in status || "InFlight" in status) return pending(paymentId(p));
   if ("Quoted" in status) return {kind: "unsubmitted", expired: false};
+  if ("Rejected" in status) return {kind: "rejected", code: "PaymentRejected"};
   return {kind: "rejected", code: classifyPaymentFailure("paying", status).code};
 }
 
@@ -363,7 +369,24 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       const record: RecoveryRecord = {version: 1, scope, stage: "quote-dispatched", id: hex(request.operation, 16),
         context: encodeVaultRecoveryContext(request, null)};
       store.put(record);
-      const payment = await call("quote_purchase", request);
+      const reply = await access.callResult("quote_purchase", [request]);
+      if ("Err" in reply) {
+        // Admission rejects capacity, authorization and invalid requests before saving a Payment.
+        // An invalid/failed fee lookup also returns before finish_quote saves its Payment.
+        const error = reply.Err;
+        if ("Busy" in error || "QuotaExceeded" in error || "Unauthorized" in error || "InvalidInput" in error || "KeyService" in error) {
+          checkCurrent(current);
+          const slot = store.list(scope)[0];
+          if (slot?.id === record.id && slot.stage === "quote-dispatched") {
+            const saved = decodeVaultRecoveryRecord(slot, scope);
+            if (saved.quote === null && JSON.stringify(encodeRequest(saved.request)) === JSON.stringify(encodeRequest(request)))
+              store.remove(scope, record.id);
+          }
+          throw new PaymentFailure("InvalidInput" in error ? "PaymentRejected" : "Unavailable");
+        }
+        throw new PaymentFailure(classifyPaymentFailure("preparing", error).code);
+      }
+      const payment = reply.Ok;
       verifyPayment(payment, scope, {request, quote: null});
       store.put(recordFor(payment));
       allowMoney(payment);
@@ -403,7 +426,8 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       allowMoney(prepared.context.payment);
       const record = savedPayment(prepared, ["purchase-dispatched"]);
       const previous = decodeVaultRecoveryRecord(record, scope);
-      const p = await call("pay_purchase", previous.request.operation);
+      const deadline = prepared.context.payment.created_at_time + lifetimeNs;
+      const p = unwrap(await access.callResult("pay_purchase", [previous.request.operation], () => current() && nowNs() < deadline));
       verifyPayment(p, scope, previous);
       const result = outcome(p);
       return result.kind === "unsubmitted" ? pending(record.id) : result;

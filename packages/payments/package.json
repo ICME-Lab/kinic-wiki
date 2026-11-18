@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./use-payment-flow": "./src/use-payment-flow.ts",
     "./types": "./src/types.ts",
     "./amounts": "./src/amounts.ts",
     "./errors": "./src/errors.ts",

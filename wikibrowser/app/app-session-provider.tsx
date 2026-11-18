@@ -5,10 +5,14 @@
 // Why: funding can move between pages without losing local wallet context.
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, getPrincipalKinicLedgerBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
+import { getConnectedWalletKinicBalance, getPrincipalKinicLedgerBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
 import type { HeaderWalletProvider } from "./home-ui";
+
+import type { WalletSessionManager, WalletSessionSnapshot } from "@kinic/payments/wallet-session";
+import { createWikiWalletSession, wikiPaymentScopes } from "@/lib/wallet-runtime";
+import { getCyclesBillingConfig } from "@/lib/vfs-client";
 
 type AppSessionContext = {
   authClient: AuthClient | null;
@@ -27,6 +31,9 @@ type AppSessionContext = {
   walletControlsLocked: boolean;
   authControlsLocked: boolean;
   walletSessionReady: boolean;
+  walletSession: WalletSessionManager;
+  walletSnapshot: WalletSessionSnapshot;
+  walletPaymentReady: boolean;
   connectWallet: (provider: HeaderWalletProvider) => Promise<void>;
   disconnectWallet: (provider: HeaderWalletProvider) => void;
   logout: () => Promise<void>;
@@ -38,7 +45,6 @@ type AppSessionContext = {
   setWalletControlsLocked: (locked: boolean) => void;
 };
 
-const WALLET_SESSION_KEY = "kinic-wiki.wallet-session";
 const AppSession = createContext<AppSessionContext | null>(null);
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
@@ -53,7 +59,20 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [identityLedgerBalance, setIdentityLedgerBalance] = useState<string | null>(null);
   const [identityLedgerBalanceError, setIdentityLedgerBalanceError] = useState<string | null>(null);
   const [identityLedgerBalanceLoading, setIdentityLedgerBalanceLoading] = useState(false);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
+  const [walletSession] = useState(createWikiWalletSession);
+  const walletSnapshot = useSyncExternalStore(walletSession.subscribe, walletSession.getSnapshot, walletSession.getSnapshot);
+  const [ledger, setLedger] = useState<string | null>(null);
+  const wallet = useMemo<ConnectedKinicWallet | null>(() => {
+    const { transport } = walletSnapshot;
+    if (!transport) return null;
+    const { owner, provider } = transport.account;
+    if (provider === "oisy") return { provider, connection: { owner, session: walletSession, transport } };
+    if (provider === "plug") return { provider, connection: { principal: owner, session: walletSession, transport } };
+    return null;
+  }, [walletSession, walletSnapshot]);
+  const walletPaymentReady = !!wallet && !!ledger && walletSession.hasScopes(wikiPaymentScopes(canisterId, ledger));
+  const connectSequence = useRef(0);
+  const authSequence = useRef(0);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -73,30 +92,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const setAuthControlsLocked = useCallback((locked: boolean) => {
     setAuthControlsLockedState(locked);
   }, []);
-
-  const clearStoredWallet = useCallback(() => {
-    safeSessionStorageRemove(WALLET_SESSION_KEY);
-  }, []);
-
-  const storeWallet = useCallback((nextWallet: ConnectedKinicWallet) => {
-    safeSessionStorageSet(
-      WALLET_SESSION_KEY,
-      JSON.stringify({
-        provider: nextWallet.provider,
-        principal: connectedWalletPrincipal(nextWallet)
-      })
-    );
-  }, []);
-
-  const clearWallet = useCallback(() => {
-    walletBalanceSeqRef.current += 1;
-    setWallet(null);
-    setWalletBalance(null);
-    setWalletBalanceLoading(false);
-    setWalletBalanceError(null);
-    setWalletBusyProvider(null);
-    clearStoredWallet();
-  }, [clearStoredWallet]);
 
   const clearIdentityLedgerBalance = useCallback(() => {
     identityLedgerBalanceSeqRef.current += 1;
@@ -138,8 +133,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const refreshWalletBalance = useCallback(
     async (nextWallet: ConnectedKinicWallet) => {
+      const token = walletSession.capture();
       const currentWallet = walletRef.current;
       if (
+        currentWallet?.connection.transport !== nextWallet.connection.transport ||
         currentWallet === null ||
         currentWallet.provider !== nextWallet.provider ||
         connectedWalletPrincipal(currentWallet) !== connectedWalletPrincipal(nextWallet)
@@ -151,7 +148,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       const isCurrentBalance = () => {
         const currentWallet = walletRef.current;
         return (
-          balanceSeq === walletBalanceSeqRef.current &&
+          walletSession.isCurrent(token) && balanceSeq === walletBalanceSeqRef.current &&
           currentWallet !== null &&
           currentWallet.provider === nextWallet.provider &&
           connectedWalletPrincipal(currentWallet) === submittedWalletPrincipal
@@ -172,47 +169,59 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         if (isCurrentBalance()) setWalletBalanceLoading(false);
       }
     },
-    [canisterId]
+    [canisterId, walletSession]
   );
 
   const connectWallet = useCallback(
     async (provider: HeaderWalletProvider) => {
       if (walletControlsLocked || walletBusyProvider) return;
+      const seq = ++connectSequence.current;
       setWalletBusyProvider(provider);
       setWalletBalanceError(null);
       try {
-        const nextWallet: ConnectedKinicWallet =
-          provider === "oisy"
-            ? { provider, connection: await connectOisyWallet() }
-            : { provider, connection: await connectPlugWallet() };
-        walletBalanceSeqRef.current += 1;
-        setWallet(nextWallet);
-        storeWallet(nextWallet);
+        let ledgerId = ledger;
+        // Open the OISY signer during the gesture, even if billing configuration
+        // is still loading. Scope expansion reuses this live channel.
+        if (!ledgerId) {
+          if (provider === "oisy") await walletSession.connect(provider, []);
+          const token = walletSession.capture();
+          ledgerId = (await getCyclesBillingConfig(canisterId)).kinicLedgerCanisterId;
+          if (!walletSession.isCurrent(token) || seq !== connectSequence.current) return;
+          setLedger(ledgerId);
+        }
+        await walletSession.connect(provider, wikiPaymentScopes(canisterId, ledgerId));
       } catch (cause) {
-        setWalletBalance(null);
-        setWalletBalanceError(errorMessage(cause));
+        if (seq === connectSequence.current) {
+          setWalletBalance(null);
+          setWalletBalanceError(errorMessage(cause));
+        }
       } finally {
-        setWalletBusyProvider(null);
+        if (seq === connectSequence.current) setWalletBusyProvider(null);
       }
     },
-    [storeWallet, walletBusyProvider, walletControlsLocked]
+    [canisterId, ledger, walletSession, walletBusyProvider, walletControlsLocked]
   );
 
   const disconnectWallet = useCallback(
     (provider: HeaderWalletProvider) => {
-      if (walletControlsLocked || walletBusyProvider || wallet?.provider !== provider) return;
-      clearWallet();
+      if (walletControlsLocked || walletSession.getSnapshot().account?.provider !== provider) return;
+      connectSequence.current++;
+      setWalletBusyProvider(null);
+      void walletSession.disconnect().catch(cause => setWalletBalanceError(errorMessage(cause)));
     },
-    [clearWallet, wallet, walletBusyProvider, walletControlsLocked]
+    [walletSession, walletControlsLocked]
   );
 
   const syncAuth = useCallback(
-    async (client: AuthClient) => {
+    async (client: AuthClient, active: () => boolean = () => true) => {
+      const seq = ++authSequence.current;
       const authenticated = await client.isAuthenticated();
-      const nextPrincipal = authenticated ? client.getIdentity().getPrincipal().toText() : null;
-      setPrincipal(nextPrincipal);
+      if (!active() || seq !== authSequence.current) return;
+      const identity = authenticated ? client.getIdentity() : undefined;
+      walletSession.setIdentity(identity);
+      setPrincipal(identity?.getPrincipal().toText() ?? null);
     },
-    []
+    [walletSession]
   );
 
   const login = useCallback(async () => {
@@ -236,32 +245,46 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     setAuthLoading(true);
     setAuthError(null);
     try {
+      authSequence.current++;
+      connectSequence.current++;
+      walletSession.setIdentity(undefined);
+      void walletSession.disconnect().catch(cause => setWalletBalanceError(errorMessage(cause)));
+      setWalletBusyProvider(null);
       await authClient.logout();
       setPrincipal(null);
       clearIdentityLedgerBalance();
-      clearWallet();
     } catch (cause) {
       setAuthError(errorMessage(cause));
+      await syncAuth(authClient);
     } finally {
       setAuthLoading(false);
     }
-  }, [authClient, clearIdentityLedgerBalance, clearWallet]);
+  }, [authClient, clearIdentityLedgerBalance, syncAuth, walletSession]);
 
   useEffect(() => {
     let cancelled = false;
 
-    queueMicrotask(() => {
-      if (cancelled) return;
-      const storedWallet = readStoredWallet();
-      if (storedWallet) setWallet(storedWallet);
-      setWalletSessionReady(true);
-    });
+    const restore = () => {
+      setWalletSessionReady(false);
+      void walletSession.restore().then(() => { if (!cancelled) setWalletSessionReady(true); });
+    };
+    restore();
+    const suspend = () => {
+      connectSequence.current++;
+      setWalletBusyProvider(null);
+      walletSession.suspend();
+    };
+    window.addEventListener("pagehide", suspend);
+    window.addEventListener("pageshow", restore);
+    if (canisterId) void getCyclesBillingConfig(canisterId).then(config => {
+      if (!cancelled) setLedger(config.kinicLedgerCanisterId);
+    }).catch(() => { /* An explicit reconnect can retry configuration discovery. */ });
 
     AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
       .then(async (client) => {
         if (cancelled) return;
         setAuthClient(client);
-        await syncAuth(client);
+        await syncAuth(client, () => !cancelled);
         if (cancelled) return;
         setAuthReady(true);
         setAuthLoading(false);
@@ -275,8 +298,11 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+      window.removeEventListener("pagehide", suspend);
+      window.removeEventListener("pageshow", restore);
+      suspend();
     };
-  }, [syncAuth]);
+  }, [canisterId, syncAuth, walletSession]);
 
   useEffect(() => {
     if (!authClient || !principal) {
@@ -294,6 +320,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, [authClient, clearIdentityLedgerBalance, principal, refreshIdentityLedgerBalanceFor]);
 
   useEffect(() => {
+    setWalletBalance(null);
+    setWalletBalanceLoading(false);
     if (!wallet) return;
     let cancelled = false;
     queueMicrotask(() => {
@@ -323,7 +351,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         walletBusyProvider,
         walletControlsLocked,
         authControlsLocked,
-        walletSessionReady,
+        walletSessionReady: walletSessionReady && walletSnapshot.state !== "connecting",
+        walletSession, walletSnapshot, walletPaymentReady,
         connectWallet,
         disconnectWallet,
         login,
@@ -348,53 +377,6 @@ export function useAppSession(): AppSessionContext {
 
 export function connectedWalletPrincipal(wallet: ConnectedKinicWallet): string {
   return wallet.provider === "oisy" ? wallet.connection.owner : wallet.connection.principal;
-}
-
-function readStoredWallet(): ConnectedKinicWallet | null {
-  const stored = safeSessionStorageGet(WALLET_SESSION_KEY);
-  if (!stored) return null;
-  try {
-    const parsed: unknown = JSON.parse(stored);
-    if (!isRecord(parsed)) return null;
-    const provider = Reflect.get(parsed, "provider");
-    const principal = Reflect.get(parsed, "principal");
-    if (!isWalletProvider(provider) || typeof principal !== "string" || !principal.trim()) return null;
-    return provider === "oisy" ? { provider, connection: { owner: principal } } : { provider, connection: { principal } };
-  } catch {
-    return null;
-  }
-}
-
-function safeSessionStorageGet(key: string): string | null {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function safeSessionStorageSet(key: string, value: string): void {
-  try {
-    sessionStorage.setItem(key, value);
-  } catch {
-    // Wallet persistence is best effort; connection state remains valid in memory.
-  }
-}
-
-function safeSessionStorageRemove(key: string): void {
-  try {
-    sessionStorage.removeItem(key);
-  } catch {
-    // Wallet persistence is best effort; disconnect state remains valid in memory.
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isWalletProvider(value: unknown): value is HeaderWalletProvider {
-  return value === "oisy" || value === "plug";
 }
 
 function errorMessage(cause: unknown): string {

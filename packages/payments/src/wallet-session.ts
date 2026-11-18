@@ -195,8 +195,13 @@ export function createWalletSessionManager({ identity: suppliedIdentity, ...opti
     if (provider === "plug" && (pendingPlug || releasingPlug)) throw new WalletFailure("connection-failed");
     const requested = copyScopes(scopes);
     const previous = active;
-    const plug = provider === "plug" ? pendingPlugConsent((options.transports?.getPlug ?? browserPlug)(),
-      restoring || previous?.account.provider === "plug") : undefined;
+    let plugWallet: PlugWallet | undefined;
+    let lookupFailed = false;
+    if (provider === "plug") {
+      try { plugWallet = (options.transports?.getPlug ?? browserPlug)(); }
+      catch { lookupFailed = true; }
+    }
+    const plug = provider === "plug" ? pendingPlugConsent(plugWallet, restoring || previous?.account.provider === "plug") : undefined;
     if (plug) pendingPlug = plug;
     advance();
     const generation = connection;
@@ -206,6 +211,7 @@ export function createWalletSessionManager({ identity: suppliedIdentity, ...opti
     if (previous?.account.provider === "oisy") void previous.disconnect();
     try {
       lifetime.assertActive();
+      if (lookupFailed) throw new WalletFailure("connection-failed");
       const raw = plug
         ? await openPlugTransport({
             host, scopes: requested, plug: plug.wallet, onGranted: plug.onGranted, lifetime,
@@ -336,7 +342,7 @@ export function createWalletSessionManager({ identity: suppliedIdentity, ...opti
     listeners.clear();
   }
   useIdentity();
-  return { connect, restore, revalidate, setIdentity, getIdentityTransport, capture, isCurrent, disconnect, suspend, destroy,
+  return { connect, restore, revalidate, hasScopes: (scopes: readonly WalletAccess[]) => !!active && includesScopes(grants, scopes), setIdentity, getIdentityTransport, capture, isCurrent, disconnect, suspend, destroy,
     getSnapshot: () => current, subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; } };
 }
 export type WalletSessionManager = ReturnType<typeof createWalletSessionManager>;

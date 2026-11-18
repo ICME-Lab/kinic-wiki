@@ -448,6 +448,9 @@ importers:
       '@kinic/jev-reranker':
         specifier: workspace:*
         version: link:../packages/jev-reranker
+      '@kinic/payments':
+        specifier: workspace:*
+        version: link:../packages/payments
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../packages/source-contracts

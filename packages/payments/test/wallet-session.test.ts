@@ -274,3 +274,11 @@ it("restores the prior verified Plug owner after a suspended scope-consent promp
   expect(plug.requestConnect).toHaveBeenCalledTimes(2);
   expect(plug.disconnect).not.toHaveBeenCalled();
 });
+
+it("normalizes extension getter failures and permits a later connect", async () => {
+  const getPlug = vi.fn().mockImplementationOnce(() => { throw new Error("getter denied"); });
+  const manager = createWalletSessionManager({ ...config, transports: { getPlug } });
+  await expect(manager.connect("plug", [])).rejects.toMatchObject({ reason: "connection-failed" });
+  expect(manager.getSnapshot()).toMatchObject({ state: "reconnect-required", reason: "connection-failed" });
+  await expect(manager.connect("plug", [])).rejects.toMatchObject({ reason: "extension-missing" });
+});

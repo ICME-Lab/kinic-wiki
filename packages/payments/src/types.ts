@@ -16,6 +16,7 @@ export type PaymentScope = {
 export type PaymentErrorCode =
   | "InsufficientFunds"
   | "ApprovalRejected"
+  | "PaymentRejected"
   | "Expired"
   | "BadFee"
   | "TermsChanged"
@@ -49,7 +50,7 @@ export type PreparedPayment<C> = Readonly<{
 export type PaymentReceipt = { reference: string; creditedCycles: bigint };
 
 export type PaymentCheck =
-  | { kind: "paid"; receipt: PaymentReceipt }
+  | { kind: "paid"; receipt: PaymentReceipt; acknowledgedContext?: unknown }
   | { kind: "unsubmitted"; expired: boolean }
   | { kind: "pending"; reference?: string; requiredAction: "check" | "review" }
   | { kind: "rejected"; code: PaymentErrorCode };

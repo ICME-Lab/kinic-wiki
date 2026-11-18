@@ -91,6 +91,7 @@ beforeEach(() => {
     walletBalanceError: null,
     walletBalanceLoading: false,
     walletBusyProvider: null,
+    walletPaymentReady: true,
     walletSessionReady: true
   };
 });
@@ -98,6 +99,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Marketplace funding source", () => {
+  it("offers scope consent for a restored Plug without purchasing on consent", async () => {
+    const connectWallet = vi.fn();
+    Object.assign(mocks.session, { wallet: { provider: "plug", connection: { principal: "payer" } }, walletPaymentReady: false,
+      walletBalance: "50200000", connectWallet });
+    render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    const consent = await screen.findByRole("button", { name: "Authorize Plug for purchase" });
+    expect(connectWallet).not.toHaveBeenCalled();
+    fireEvent.click(consent);
+    expect(connectWallet).toHaveBeenCalledWith("plug");
+    expect(mocks.purchase).not.toHaveBeenCalled();
+  });
+
   it("rechecks the price before approving an exact-boundary II purchase", async () => {
     render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
     const button = await screen.findByRole("button", { name: "Purchase with Internet Identity" }) as HTMLButtonElement;

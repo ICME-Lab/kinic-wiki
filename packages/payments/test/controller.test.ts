@@ -613,3 +613,15 @@ it("invalidation queued across the final revalidation promise prevents dispatch"
   expect(adapter.approve).not.toHaveBeenCalled();
   expect(adapter.submit).not.toHaveBeenCalled();
 });
+
+it("carries the acknowledged context and independent receipt into the paid-stage write", async () => {
+  const { adapter, storage, store, prepare, pay } = fixture();
+  const acknowledged = { exactRequest: "p1", verifiedBlock: "15" };
+  adapter.submit.mockResolvedValue({ ...paid, acknowledgedContext: acknowledged });
+  storage.removeItem.mockImplementationOnce(() => { throw new Error("temporarily read only"); });
+  await prepare();
+  await pay();
+  expect(store.list(scope)[0]).toMatchObject({ stage: "paid", context: {
+    acknowledged, receipt: { reference: "block:15", creditedCycles: "50" },
+  } });
+});

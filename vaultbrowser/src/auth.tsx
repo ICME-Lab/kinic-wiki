@@ -11,6 +11,7 @@ import {
 } from "react";
 import { loadConfig, type BrowserConfig } from "./config";
 type Session = {
+  config?: BrowserConfig;
   identity?: Identity;
   loading: boolean;
   ready: boolean;
@@ -191,6 +192,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   return (
     <Context
       value={{
+        config: preparedConfig.current,
         identity,
         loading,
         ready,

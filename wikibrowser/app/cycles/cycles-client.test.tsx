@@ -1,309 +1,240 @@
 // @vitest-environment jsdom
-
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { IDL } from "@icp-sdk/core/candid";
+import { Principal } from "@icp-sdk/core/principal";
+import type { Identity } from "@icp-sdk/core/agent";
+import type { FundingTransport, WalletCall } from "@kinic/payments/wallet-types";
+import type { WalletSessionSnapshot } from "@kinic/payments/wallet-session";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CyclesClient } from "@/app/cycles/cycles-client";
 
 const mocks = vi.hoisted(() => ({
-  identity: { getPrincipal: () => ({ toText: () => "ii-principal" }) },
-  listDatabases: vi.fn(),
-  purchase: vi.fn(),
-  refreshIdentity: vi.fn(),
-  refreshIdentityFor: vi.fn(),
-  refreshWallet: vi.fn(),
-  replace: vi.fn(),
-  session: {} as Record<string, unknown>
+  config: { kinicLedgerCanisterId: "ryjl3-tyaaa-aaaaa-aaaba-cai", cyclesPerKinic: "234500000000", minUpdateCycles: "1" },
+  listDatabases: vi.fn(), terms: vi.fn(), pending: vi.fn(), history: vi.fn(), purchase: vi.fn(), approve: vi.fn(),
+  replace: vi.fn(), session: {} as Record<string, unknown>, generation: 0,
+  facts: { decimals: 8, feeE8s: 100000n, balanceE8s: 100200000n, allowanceE8s: 0n, allowanceExpiresAtNs: null },
 }));
-
 vi.mock("@/lib/app-router", () => ({ useAppNavigate: () => ({ replace: mocks.replace }) }));
-vi.mock("@/app/app-session-provider", () => ({
-  connectedWalletPrincipal: (wallet: { connection: { principal: string } }) => wallet.connection.principal,
-  useAppSession: () => mocks.session
-}));
-vi.mock("@/lib/cycles-state", () => ({
-  databaseCyclesHref: () => "/cycles",
-  databaseCyclesView: () => ({ purchaseAvailable: true, summary: "fundable" })
-}));
+vi.mock("@/app/app-session-provider", () => ({ useAppSession: () => mocks.session }));
+vi.mock("@kinic/payments/ledger", async importOriginal => ({ ...await importOriginal<object>(), readLedgerTerms: mocks.terms }));
 vi.mock("@/lib/vfs-client", () => ({
-  getCyclesBillingConfig: vi.fn().mockResolvedValue({ cyclesPerKinic: "234500000000" }),
-  listDatabasesAuthenticated: mocks.listDatabases
+  getCyclesBillingConfig: async () => mocks.config, listDatabasesAuthenticated: mocks.listDatabases,
+  listDatabaseCyclesPendingPurchasesAuthenticated: mocks.pending, listDatabaseCycleEntries: mocks.history,
 }));
-vi.mock("@/lib/kinic-wallet", () => ({ purchaseCyclesWithFundingSource: mocks.purchase }));
-
-beforeEach(() => {
-  vi.stubEnv("VITE_KINIC_WIKI_CANISTER_ID", "aaaaa-aa");
-  mocks.listDatabases.mockReset().mockResolvedValue([{ databaseId: "db-1", status: "active", metadata: { name: "Database" } }]);
-  mocks.purchase.mockReset().mockResolvedValue({
-    provider: "ii",
-    approveBlockIndex: "1",
-    approvedAllowanceE8s: "100100000",
-    purchasedCycles: "234,500,000,000",
-    paymentAmountE8s: "100000000",
-    transferFeeE8s: "100000",
-    balanceCycles: "234,500,000,000"
-  });
-  mocks.refreshIdentity.mockReset();
-  mocks.refreshIdentityFor.mockReset();
-  mocks.refreshWallet.mockReset();
-  mocks.replace.mockReset();
-  mocks.session = {
-    authClient: { getIdentity: () => mocks.identity },
-    authError: null,
-    authLoading: false,
-    authReady: true,
-    identityLedgerBalance: "100200000",
-    identityLedgerBalanceError: null,
-    identityLedgerBalanceLoading: false,
-    login: vi.fn(),
-    principal: "ii-principal",
-    refreshIdentityLedgerBalanceFor: mocks.refreshIdentityFor,
-    refreshIdentityLedgerBalance: mocks.refreshIdentity,
-    refreshWalletBalance: mocks.refreshWallet,
-    setAuthControlsLocked: vi.fn(),
-    setWalletControlsLocked: vi.fn(),
-    wallet: null,
-    walletBalance: null,
-    walletBalanceError: null,
-    walletBalanceLoading: false,
-    walletBusyProvider: null,
-    walletSessionReady: true
+const iiOwner = "aaaaa-aa";
+const plugOwner = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+const identity = { getPrincipal: () => Principal.fromText(iiOwner) } as Identity;
+let snapshot: WalletSessionSnapshot;
+function transport(provider: "ii" | "plug", owner: string): FundingTransport {
+  return { account: { provider, owner }, silentCheck: true, revalidate: async () => {}, disconnect: async () => {},
+    approve: mocks.approve,
+    async call(request: WalletCall) {
+      if (request.isCurrent && !request.isCurrent()) throw new Error("stale session");
+      const signature = request.interfaceFactory({ IDL })._fields.find(([name]) => name === request.method)![1];
+      const args = IDL.decode(signature.argTypes, request.arg);
+      const result = request.method === "purchase_database_cycles" ? await mocks.purchase(...args) : { Ok: [] };
+      return IDL.encode(signature.retTypes, [result]);
+    }
   };
+}
+const manager = {
+  capture: () => mocks.generation,
+  isCurrent: (token: unknown) => token === mocks.generation,
+  getSnapshot: () => snapshot,
+  hasScopes: () => true,
+  getIdentityTransport: () => transport("ii", iiOwner),
+};
+function connectPlug() {
+  snapshot = { state: "connected", account: { provider: "plug", owner: plugOwner }, transport: transport("plug", plugOwner), generation: mocks.generation };
+  mocks.session.walletSnapshot = snapshot;
+  mocks.session.walletPaymentReady = true;
+}
+beforeEach(() => {
+  localStorage.clear();
+  vi.stubEnv("VITE_KINIC_WIKI_CANISTER_ID", iiOwner);
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name: string, _options: object, run: (lock: object) => Promise<void>) => run({}) } });
+  mocks.generation = 0;
+  snapshot = { state: "disconnected", account: null, transport: null, generation: 0 };
+  mocks.facts = { decimals: 8, feeE8s: 100000n, balanceE8s: 100200000n, allowanceE8s: 0n, allowanceExpiresAtNs: null };
+  mocks.terms.mockReset().mockImplementation(async () => mocks.facts);
+  mocks.listDatabases.mockReset().mockResolvedValue([{ databaseId: "db-1", status: "active", role: "owner", cyclesBalance: "234500000000", metadata: { name: "Database" } }]);
+  mocks.pending.mockReset().mockResolvedValue([]);
+  mocks.history.mockReset().mockResolvedValue({ entries: [], nextCursor: null });
+  mocks.approve.mockReset().mockImplementation(async () => { mocks.facts.balanceE8s -= 100000n; mocks.facts.allowanceE8s = 100100000n; return 1n; });
+  mocks.purchase.mockReset().mockResolvedValue({ Ok: { block_index: 7n, amount_cycles: 234500000000n, balance_cycles: 234500000000n } });
+  mocks.replace.mockReset();
+  mocks.session = { authClient: { getIdentity: () => identity }, principal: iiOwner, authReady: true, authLoading: false,
+    walletSession: manager, walletSnapshot: snapshot, walletPaymentReady: false,
+    identityLedgerBalance: "100200000", walletBalance: "100200000", login: vi.fn(), connectWallet: vi.fn(), disconnectWallet: vi.fn(),
+    setAuthControlsLocked: vi.fn(), setWalletControlsLocked: vi.fn() };
 });
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllEnvs();
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
+const page = (databaseId = "db-1") => <CyclesClient canisterId={iiOwner} databaseId={databaseId} databaseStatus="active" />;
+async function review() {
+  const button = await screen.findByRole("button", { name: "Review payment" });
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(button);
+}
+async function pay() {
+  const button = await screen.findByRole("button", { name: "Pay 1 KINIC" });
+  fireEvent.click(button);
+}
+it("reviews the exact amount plus two fees and requires a separate confirmation", async () => {
+  render(page());
+  await review();
+  expect(await screen.findByRole("button", { name: "Pay 1 KINIC" })).toBeTruthy();
+  expect(screen.getByText("1.002 KINIC")).toBeTruthy();
+  expect(mocks.approve).not.toHaveBeenCalled();
+  expect(mocks.purchase).not.toHaveBeenCalled();
+  await pay();
+  expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(mocks.approve).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ amount: 100100000n, fee: [100000n] }), expect.anything());
+  expect(mocks.purchase).toHaveBeenCalledWith({ database_id: "db-1", payment_amount_e8s: 100000000n, min_expected_cycles: 234500000000n });
+  expect(mocks.replace).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "View database" }));
+  expect(mocks.replace).toHaveBeenCalledWith(expect.stringContaining("database_id=db-1"));
 });
-
-describe("Cycles funding source", () => {
-  it("allows the exact amount plus two fees from Internet Identity", async () => {
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    expect(screen.getAllByText("1.002 KINIC")).toHaveLength(2);
-    fireEvent.click(button);
-
-    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledWith(
-      { canisterId: "aaaaa-aa", databaseId: "db-1", paymentAmountE8s: 100_000_000n },
-      { provider: "ii", identity: mocks.identity }
-    ));
-    expect(mocks.refreshIdentityFor).toHaveBeenCalledWith(mocks.identity, "ii-principal");
-    expect(mocks.refreshWallet).not.toHaveBeenCalled();
-  });
-
-  it("disables the purchase one base unit below the required balance", async () => {
-    mocks.session.identityLedgerBalance = "100199999";
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(screen.getByText("This account needs at least 1.002 KINIC.")).toBeTruthy();
-  });
-
-  it("prefers a connected wallet and refreshes only that source after success", async () => {
-    const wallet = { provider: "plug", connection: { principal: "wallet-principal" } };
-    mocks.session.wallet = wallet;
-    mocks.session.walletBalance = "100200000";
-    mocks.purchase.mockResolvedValue({
-      provider: "plug",
-      approvedAllowanceE8s: "100100000",
-      purchasedCycles: "234,500,000,000",
-      paymentAmountE8s: "100000000",
-      transferFeeE8s: "100000",
-      balanceCycles: "234,500,000,000"
-    });
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Plug" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-
-    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledWith(expect.anything(), wallet));
-    expect(mocks.refreshWallet).toHaveBeenCalledWith(wallet);
-    expect(mocks.refreshIdentityFor).not.toHaveBeenCalled();
-  });
-
-  it("allows a newly connected wallet to be selected without Internet Identity", async () => {
-    mocks.session.principal = null;
-    const wallet = { provider: "plug", connection: { principal: "wallet-principal" } };
-    mocks.session.wallet = null;
-    const rendered = render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    expect((screen.getByDisplayValue("wallet") as HTMLInputElement).disabled).toBe(true);
-
-    mocks.session.wallet = wallet;
-    mocks.session.walletBalance = "100200000";
-    rendered.rerender(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    expect((screen.getByDisplayValue("wallet") as HTMLInputElement).disabled).toBe(false);
-    fireEvent.click(screen.getByDisplayValue("wallet"));
-
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Plug" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledWith(expect.anything(), wallet));
-  });
-
-  it("refreshes the submitted wallet balance when purchase fails", async () => {
-    const wallet = { provider: "plug", connection: { principal: "wallet-principal" } };
-    mocks.session.wallet = wallet;
-    mocks.session.walletBalance = "100200000";
-    mocks.purchase.mockRejectedValue(new Error("ambiguous transfer"));
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Plug" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-
-    await waitFor(() => expect(mocks.refreshWallet).toHaveBeenCalledWith(wallet));
-    expect(await screen.findByText(/Cycles purchase did not complete/)).toBeTruthy();
-  });
-
-  it("refreshes the submitted Internet Identity balance when purchase fails", async () => {
-    mocks.purchase.mockRejectedValue(new Error("ambiguous transfer"));
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-
-    await waitFor(() => expect(mocks.refreshIdentityFor).toHaveBeenCalledWith(mocks.identity, "ii-principal"));
-    expect(await screen.findByText(/Cycles purchase did not complete/)).toBeTruthy();
-  });
-
-  it("keeps a successful purchase when balance refresh fails", async () => {
-    mocks.refreshIdentityFor.mockRejectedValue(new Error("balance refresh failed"));
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-
-    await waitFor(() => expect(mocks.replace).toHaveBeenCalled());
-    expect(await screen.findByText(/purchased cycles/)).toBeTruthy();
-  });
-
-  it("keeps the purchase failure when balance refresh fails", async () => {
-    mocks.purchase.mockRejectedValue(new Error("purchase failed"));
-    mocks.refreshIdentityFor.mockRejectedValue(new Error("balance refresh failed"));
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-
-    expect(await screen.findByText(/Cycles purchase did not complete/)).toBeTruthy();
-    expect(button.disabled).toBe(false);
-  });
-
-  it("keeps a wallet purchase successful when Internet Identity changes", async () => {
-    const wallet = { provider: "plug", connection: { principal: "wallet-principal" } };
-    const purchaseResult = deferred<Record<string, string>>();
-    mocks.session.wallet = wallet;
-    mocks.session.walletBalance = "100200000";
-    mocks.purchase.mockReturnValue(purchaseResult.promise);
-    const rendered = render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Plug" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledTimes(1));
-
-    mocks.session.principal = "new-ii-principal";
-    rendered.rerender(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    purchaseResult.resolve({
-      provider: "plug",
-      approvedAllowanceE8s: "100100000",
-      purchasedCycles: "234,500,000,000",
-      paymentAmountE8s: "100000000",
-      transferFeeE8s: "100000",
-      balanceCycles: "234,500,000,000"
-    });
-
-    await waitFor(() => expect(mocks.replace).toHaveBeenCalled());
-    expect(mocks.refreshWallet).toHaveBeenCalledWith(wallet);
-  });
-
-  it("locks Internet Identity controls while a purchase is running", async () => {
-    const purchaseResult = deferred<Record<string, string>>();
-    mocks.purchase.mockReturnValue(purchaseResult.promise);
-    const setAuthControlsLocked = mocks.session.setAuthControlsLocked as ReturnType<typeof vi.fn>;
-    render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-
-    await waitFor(() => expect(setAuthControlsLocked).toHaveBeenCalledWith(true));
-    purchaseResult.resolve({
-      provider: "ii",
-      approvedAllowanceE8s: "100100000",
-      purchasedCycles: "234,500,000,000",
-      paymentAmountE8s: "100000000",
-      transferFeeE8s: "100000",
-      balanceCycles: "234,500,000,000"
-    });
-    await waitFor(() => expect(setAuthControlsLocked).toHaveBeenCalledWith(false));
-  });
-
-  it("does not apply a completed purchase to a different signed-in principal", async () => {
-    const purchaseResult = deferred<Record<string, string>>();
-    mocks.purchase.mockReturnValue(purchaseResult.promise);
-    const rendered = render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledTimes(1));
-
-    mocks.session.principal = "different-principal";
-    rendered.rerender(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    purchaseResult.resolve({
-      provider: "ii",
-      approvedAllowanceE8s: "100100000",
-      purchasedCycles: "234,500,000,000",
-      paymentAmountE8s: "100000000",
-      transferFeeE8s: "100000",
-      balanceCycles: "234,500,000,000"
-    });
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Purchase cycles with Internet Identity" })).toBeTruthy());
-    expect(mocks.refreshIdentity).not.toHaveBeenCalled();
-    expect(mocks.refreshWallet).not.toHaveBeenCalled();
-    expect(mocks.replace).not.toHaveBeenCalled();
-  });
-
-  it("does not apply a purchase after the principal changes during balance refresh", async () => {
-    const refreshResult = deferred<void>();
-    mocks.refreshIdentityFor.mockReturnValue(refreshResult.promise);
-    const rendered = render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.refreshIdentityFor).toHaveBeenCalledTimes(1));
-
-    mocks.session.principal = "different-principal";
-    rendered.rerender(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    refreshResult.resolve();
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Purchase cycles with Internet Identity" })).toBeTruthy());
-    expect(mocks.replace).not.toHaveBeenCalled();
-    expect(screen.queryByText(/purchased cycles/)).toBeNull();
-  });
-
-  it("does not show a purchase failure for a different signed-in principal", async () => {
-    const purchaseResult = deferred<Record<string, string>>();
-    mocks.purchase.mockReturnValue(purchaseResult.promise);
-    const rendered = render(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    const button = await screen.findByRole("button", { name: "Purchase cycles with Internet Identity" }) as HTMLButtonElement;
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledTimes(1));
-
-    mocks.session.principal = "different-principal";
-    rendered.rerender(<CyclesClient canisterId="aaaaa-aa" databaseId="db-1" databaseStatus="active" />);
-    purchaseResult.reject(new Error("old session failed"));
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Purchase cycles with Internet Identity" })).toBeTruthy());
-    expect(screen.queryByText(/did not complete/)).toBeNull();
-  });
+it("refuses one base unit below the required balance before approval", async () => {
+  mocks.facts.balanceE8s = 100199999n;
+  render(page());
+  await review();
+  expect(await screen.findByText(/not enough KINIC/)).toBeTruthy();
+  expect(mocks.approve).not.toHaveBeenCalled();
+  expect(mocks.purchase).not.toHaveBeenCalled();
 });
-
+it("prefers a connected wallet and pays from its account", async () => {
+  connectPlug();
+  render(page());
+  await review();
+  await pay();
+  expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(mocks.terms).toHaveBeenCalledWith(expect.objectContaining({ owner: plugOwner }));
+});
+it("recreates confirmation after a same-provider wallet generation changes", async () => {
+  connectPlug();
+  const view = render(page());
+  await review();
+  await screen.findByRole("button", { name: "Pay 1 KINIC" });
+  mocks.generation++;
+  connectPlug();
+  view.rerender(page());
+  await waitFor(() => expect((screen.getByRole("button", { name: "Review payment" }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByRole("button", { name: "Pay 1 KINIC" })).toBeNull();
+  expect(mocks.approve).not.toHaveBeenCalled();
+  expect(mocks.purchase).not.toHaveBeenCalled();
+});
+it("allows a newly connected wallet to be selected without Internet Identity", async () => {
+  mocks.session.principal = null;
+  mocks.session.authClient = null;
+  const view = render(page());
+  connectPlug();
+  view.rerender(page());
+  fireEvent.click(screen.getByRole("radio", { name: "Plug" }));
+  await review();
+  await pay();
+  expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(mocks.purchase).toHaveBeenCalledTimes(1);
+});
+it("funds a validated unlinked URL target using a wallet while signed in", async () => {
+  connectPlug();
+  mocks.history.mockRejectedValue(new Error("principal has no access to database: other"));
+  mocks.pending.mockRejectedValue(new Error("principal cannot view pending cycle purchases: other"));
+  render(page("other"));
+  await review();
+  await pay();
+  expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(mocks.purchase).toHaveBeenCalledWith(expect.objectContaining({ database_id: "other" }));
+});
+it("blocks new payment review for a known deleted target", async () => {
+  mocks.listDatabases.mockResolvedValue([{ databaseId: "db-1", status: "deleted", metadata: { name: "Deleted" } }]);
+  render(page());
+  await waitFor(() => expect(mocks.listDatabases).toHaveBeenCalled());
+  await act(async () => {});
+  expect((screen.getByRole("button", { name: "Review payment" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(mocks.terms).not.toHaveBeenCalled();
+});
+it("retains saved payment checks after the target becomes unavailable", async () => {
+  mocks.purchase.mockRejectedValue(new Error("reply lost"));
+  const first = render(page());
+  await review();
+  await pay();
+  await screen.findByText("Payment needs a status check");
+  first.unmount();
+  mocks.listDatabases.mockResolvedValue([{ databaseId: "db-1", status: "deleted", metadata: { name: "Deleted" } }]);
+  render(page());
+  fireEvent.click(await screen.findByRole("button", { name: "Check payment status" }));
+  expect(screen.queryByRole("button", { name: "Pay 1 KINIC" })).toBeNull();
+  expect(mocks.purchase).toHaveBeenCalledTimes(1);
+});
+it("returns to editable terms before any approval", async () => {
+  render(page());
+  await review();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit payment" }));
+  await waitFor(() => expect((screen.getByRole("textbox", { name: "KINIC amount" }) as HTMLInputElement).disabled).toBe(false));
+  expect(mocks.approve).not.toHaveBeenCalled();
+});
+it("offers a status check instead of promising edits after an approval was saved", async () => {
+  mocks.approve.mockImplementation(async () => {
+    mocks.facts.balanceE8s = 0n;
+    mocks.facts.allowanceE8s = 100100000n;
+    return 1n;
+  });
+  render(page());
+  await review();
+  await pay();
+  fireEvent.click(await screen.findByRole("button", { name: "Check payment status" }));
+  await screen.findByRole("button", { name: "Pay 1 KINIC" });
+  expect(screen.queryByRole("button", { name: "Edit payment" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Check payment status" })).toBeTruthy();
+  expect(mocks.purchase).not.toHaveBeenCalled();
+});
+it("keeps a confirmed receipt when the refreshed credit balance is unavailable", async () => {
+  render(page());
+  await review();
+  mocks.listDatabases.mockRejectedValueOnce(new Error("balance offline"));
+  await pay();
+  expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(screen.getByText(/Balance unavailable/)).toBeTruthy();
+  expect(mocks.purchase).toHaveBeenCalledTimes(1);
+});
+it("keeps a lost payment reply unresolved without offering another purchase", async () => {
+  mocks.purchase.mockRejectedValue(new Error("reply lost"));
+  render(page());
+  await review();
+  await pay();
+  expect(await screen.findByText("Payment needs a status check")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Pay 1 KINIC" })).toBeNull();
+  expect(mocks.purchase).toHaveBeenCalledTimes(1);
+});
+it("locks authentication while confirming or paying", async () => {
+  const pending = deferred<{ Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } }>();
+  mocks.purchase.mockReturnValue(pending.promise);
+  render(page());
+  await review();
+  await waitFor(() => expect(mocks.session.setAuthControlsLocked).toHaveBeenLastCalledWith(true));
+  await pay();
+  await act(async () => pending.resolve({ Ok: { block_index: 7n, amount_cycles: 234500000000n, balance_cycles: 234500000000n } }));
+  await waitFor(() => expect(mocks.session.setAuthControlsLocked).toHaveBeenLastCalledWith(false));
+});
+it.each(["principal", "wallet", "route"])("discards a delayed purchase reply after the %s changes", async change => {
+  const pending = deferred<{ Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } }>();
+  mocks.purchase.mockReturnValue(pending.promise);
+  if (change === "wallet") connectPlug();
+  const view = render(page());
+  await review();
+  await pay();
+  await waitFor(() => expect(mocks.purchase).toHaveBeenCalledTimes(1));
+  mocks.generation++;
+  if (change === "principal") mocks.session.principal = plugOwner;
+  snapshot = { ...snapshot, generation: mocks.generation };
+  mocks.session.walletSnapshot = snapshot;
+  view.rerender(page(change === "route" ? "other" : "db-1"));
+  await act(async () => pending.resolve({ Ok: { block_index: 7n, amount_cycles: 234500000000n, balance_cycles: 234500000000n } }));
+  expect(screen.queryByText("Payment complete")).toBeNull();
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, reject, resolve };
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
 }
