@@ -52,13 +52,16 @@ fn next_sequence(sequence: u64) -> Result<u64> {
     }
     Ok(sequence + 1)
 }
-pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
+fn current_bytes(db: &Connection, v: &[u8]) -> Result<u64> {
     active(db, v)?;
-    let current = num(
+    num(
         db,
         "SELECT COALESCE(sum(r.plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.deleted=0 AND o.purged=0",
         v,
-    )?;
+    )
+}
+pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
+    let current = current_bytes(db, v)?;
     let reserved:i64=db.query_row("SELECT COALESCE(sum(reserved),0) FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     let reserved = reserved as u64;
     let charged = usage(db)?.saturating_sub(reserved);
@@ -66,6 +69,27 @@ pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
         current,
         charged,
         reserved,
+        limit: TOTAL_MAX,
+    })
+}
+/// Per-vault storage detail for a shared reader. Account-wide journal costs,
+/// key flights, and other vaults' charges stay private to their paying owner.
+pub fn vault_quota(db: &Connection, v: &[u8]) -> Result<Quota> {
+    let current = current_bytes(db, v)?;
+    let reserved = num(
+        db,
+        "SELECT COALESCE(sum(reserved),0) FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1",
+        v,
+    )?;
+    let charged=num(db,"SELECT 8192+cleanup_budget*512
+        +(SELECT count(*)*512 FROM vault_members WHERE owner=v.owner AND vault=v.id)
+        +(SELECT COALESCE(sum(charge),0) FROM revisions WHERE owner=v.owner AND vault=v.id)
+        +(SELECT COALESCE(sum(4096+(1-purged)*512),0) FROM objects WHERE owner=v.owner AND vault=v.id)
+        FROM vaults v WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",v)?;
+    Ok(Quota {
+        current,
+        reserved,
+        charged,
         limit: TOTAL_MAX,
     })
 }
@@ -79,6 +103,7 @@ fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
     let operation_charge = operations::AdmissionClass::charge_sql(scoped);
     for (table, expression) in [
         ("vaults", "8192+cleanup_budget*512"),
+        ("vault_members", crate::sharing::MEMBER_CHARGE_SQL),
         ("revisions", "charge"),
         ("uploads", "reserved"),
         ("upload_outcomes", "length(result)+length(digest)+4096"),
@@ -717,7 +742,7 @@ pub fn remove_ciphertext_batch(
     Ok(removed)
 }
 
-fn add_cleanup_credits(db: &Connection, vault: &[u8], amount: i64) -> Result<()> {
+pub(crate) fn add_cleanup_credits(db: &Connection, vault: &[u8], amount: i64) -> Result<()> {
     db.execute("UPDATE vaults SET cleanup_budget=cleanup_budget+?2 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![vault,amount]).map_err(db_error)?;
     Ok(())
 }

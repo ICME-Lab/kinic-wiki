@@ -229,3 +229,26 @@ pub struct GlobalCapacity {
     pub overcommitted: bool,
     pub overage: u64,
 }
+
+#[derive(CandidType, Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+pub enum AccessRole {
+    Owner,
+    Editor,
+    Viewer,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct VaultAccess {
+    pub owner: Principal,
+    pub header: Header,
+    pub role: AccessRole,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone)]
+pub struct VaultAccessPage {
+    pub entries: Vec<VaultAccess>,
+    pub next: Option<Id>,
+}
+#[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct VaultMember {
+    pub principal: Principal,
+    pub role: AccessRole,
+}

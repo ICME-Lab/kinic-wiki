@@ -206,3 +206,5 @@ mod keys;
 mod uploads;
 
 mod inline;
+
+mod sharing;

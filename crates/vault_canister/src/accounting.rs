@@ -103,6 +103,16 @@ impl State {
         })
     }
 }
+pub(crate) fn charge_read_in(
+    db: &Connection,
+    owner: &str,
+    amount: u64,
+    now: i64,
+) -> vault_types::Result<()> {
+    let available = load_balance(db, owner).map_err(|_| Error::Storage)?.max(0);
+    let charge = available.min(i64::try_from(amount).unwrap_or(i64::MAX));
+    adjust_balance(db, owner, -charge, now).map_err(|_| Error::Storage)
+}
 fn require_account_owner(owner: &str) -> Result<(), String> {
     if owner.is_empty() || owner == ANONYMOUS_PRINCIPAL {
         Err("anonymous Vault owner".into())

@@ -1,4 +1,4 @@
-//! Schema 10 fences binaries that cannot read bridge_v1 payment records.
+//! Schema 11 adds vault-scoped membership and a bounded pending-upload handle.
 //! Keep v8 exact-billing migration and v9 data intact before advancing the version.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
@@ -17,15 +17,15 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
             |r| sql::row_get(r, 0),
         )
         .map_err(|_| Error::Storage)?;
-    let statements = schema_statements();
+    let statements = schema_statements(matches!(version, 0 | 11));
     match version {
         0 if count == 0 => {
             db.execute_batch(&statements.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            db.execute_batch("PRAGMA user_version=10;")
+            db.execute_batch("PRAGMA user_version=11;")
                 .map_err(|_| Error::Storage)?;
         }
-        8..=10 if count == statements.len() as i64 => {
+        8..=11 if count == statements.len() as i64 => {
             let expected_statements = if version == 8 {
                 legacy_schema_statements(statements.clone())
             } else {
@@ -79,11 +79,16 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
         // Verify the migrated DDL before exposing the database to callers.
         return initialize_vault_schema(db);
     }
-    if version == 9 {
-        // DDL is unchanged, but schema-9 code assumes every payment is ICRC-2.
-        // Version the persisted record contract before allowing bridge writes.
-        db.execute_batch("PRAGMA user_version=10;")
-            .map_err(|_| Error::Storage)?;
+    if matches!(version, 9 | 10) {
+        let migration = format!(
+            "SAVEPOINT vault_team_upgrade; {} PRAGMA user_version=11; RELEASE vault_team_upgrade;",
+            vault_store::SHARING_SCHEMA
+        );
+        if db.execute_batch(&migration).is_err() {
+            let _ = db.execute_batch("ROLLBACK TO vault_team_upgrade; RELEASE vault_team_upgrade;");
+            return Err(Error::Storage);
+        }
+        return initialize_vault_schema(db);
     }
     // Connection-local policy is not persisted in the image. Reapply after
     // validation, without creating/repairing schema or changing stored records.
@@ -109,17 +114,30 @@ fn legacy_schema_statements(mut statements: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 pub(crate) fn initialize_legacy_v8(db: &Connection) {
-    db.execute_batch(&legacy_schema_statements(schema_statements()).join("\n"))
+    db.execute_batch(&legacy_schema_statements(schema_statements(false)).join("\n"))
         .unwrap();
     db.execute_batch("PRAGMA user_version=8;").unwrap();
 }
 
-fn schema_statements() -> Vec<String> {
+#[cfg(test)]
+pub(crate) fn initialize_legacy_v9(db: &Connection) {
+    db.execute_batch(&schema_statements(false).join("\n"))
+        .unwrap();
+    db.execute_batch("PRAGMA user_version=9;").unwrap();
+}
+
+fn schema_statements(with_members: bool) -> Vec<String> {
     // These are trusted compiled DDL scripts, not user SQL. Split ordinary DDL at
     // ';' and keep each trigger body through END;. No duplicated schema manifest.
     let script = [
         vault_store::SCHEMA,
-        vault_store::CONTENT_SCHEMA,
+        if with_members {
+            vault_store::CONTENT_SCHEMA
+        } else {
+            vault_store::CONTENT_SCHEMA
+                .strip_suffix(vault_store::SHARING_SCHEMA)
+                .expect("compiled legacy content schema")
+        },
         vault_store::EXPIRY_SCHEMA,
         include_str!("accounts.sql"),
         INDEXES,

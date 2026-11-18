@@ -1,6 +1,8 @@
 //! II-only operations. No request principal, application grant or independent unlock credential.
 pub mod runtime;
+mod sharing;
 use runtime::Environment;
+pub use sharing::{shared_derive_vault_key, shared_mutate};
 use vault_store::{
     self as store,
     kinic_sqlite_compat::{self as sql, OptionalExtension, params},
@@ -105,16 +107,35 @@ pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Head
     result
 }
 pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<KeyReply> {
+    derive(env, r, None).await
+}
+async fn derive(
+    env: &impl Environment,
+    r: DeriveKey,
+    caller: Option<candid::Principal>,
+) -> Result<KeyReply> {
     authenticate(env)?;
     id(&r.vault)?;
     id(&r.operation)?;
+    if let Some(caller) = caller {
+        env.transaction(|db| {
+            let access = store::sharing::scoped_access(db, caller, &r.vault)?;
+            if access.header.state != VaultState::Active {
+                return Err(Error::Conflict);
+            }
+            Ok(())
+        })?;
+    }
     // Reject malformed transport points before reserving paid work.
     if !ic_vetkeys::is_valid_transport_public_key_encoding(&r.transport)
         || r.transport.first() == Some(&0xc0)
     {
         return Err(Error::InvalidInput);
     }
-    let digest = ops::digest(b"derive-vault-key/v1", &r)?;
+    let digest = match caller {
+        Some(caller) => ops::digest(b"shared-derive-vault-key/v1", &(caller, &r))?,
+        None => ops::digest(b"derive-vault-key/v1", &r)?,
+    };
     if let Some(reply) = replay(env, &r.operation, &digest)? {
         return Ok(reply);
     }
@@ -170,6 +191,9 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
         env.transaction(|db| {
             ops::fence(db, &r.operation, token)?;
             store::config(db)?;
+            if let Some(caller) = caller {
+                store::sharing::scoped_access(db, caller, &r.vault)?;
+            }
             let now = store::active(db, &r.vault)?;
             if now.nonce != h.nonce || now.key_name != h.key_name || now.public_key != h.public_key
             {
@@ -185,9 +209,24 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
     result
 }
 pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
+    mutate_inner(env, r, None)
+}
+
+fn mutate_inner(
+    env: &impl Environment,
+    r: Mutation,
+    shared: Option<sharing::SharedMutation<'_>>,
+) -> Result<MutationResult> {
     authenticate(env)?;
     id(&r.operation)?;
-    let digest = ops::mutation_digest(&r)?;
+    let legacy_digest = ops::mutation_digest(&r)?;
+    let digest = match &shared {
+        Some(scope) => ops::digest(
+            b"shared-mutation/v1",
+            &(scope.caller, scope.vault, legacy_digest),
+        )?,
+        None => legacy_digest,
+    };
     if let Some(result) = replay(env, &r.operation, &digest)? {
         return Ok(result);
     }
@@ -248,7 +287,19 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
                 )?)
             }
             Action::BeginRevision(request) => {
-                MutationResult::Upload(store::content::begin(db, request, env.now())?)
+                let mut result = store::content::begin(db, request, env.now())?;
+                if let Some(scope) = shared.as_ref() {
+                    let wire = scope.wire_upload.as_deref().ok_or(Error::Storage)?;
+                    store::sharing::remember_upload(
+                        db,
+                        scope.caller,
+                        scope.vault,
+                        wire,
+                        &result.id,
+                    )?;
+                    result.id = wire.to_vec();
+                }
+                MutationResult::Upload(result)
             }
             Action::PutChunk {
                 upload,
@@ -354,7 +405,7 @@ fn delete_vault_batch(db: &sql::Connection, v: &[u8], now: u64) -> Result<bool> 
     if store::content::remove_ciphertext_batch(db, v, None, None)? > 0 {
         return Ok(false);
     }
-    for table in ["revisions", "objects"] {
+    for table in ["vault_members", "revisions", "objects"] {
         db.execute(&format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1 LIMIT 100)"),params![v]).map_err(|_|Error::Storage)?;
         let n: i64 = db
             .query_row("SELECT changes()", params![], |r| sql::row_get(r, 0))

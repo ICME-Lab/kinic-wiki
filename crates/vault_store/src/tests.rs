@@ -17,7 +17,7 @@ fn scope<T>(db: &Connection, n: u8, f: impl FnOnce(&Connection) -> Result<T>) ->
 fn seed(db: &Connection, n: u8) {
     scope(db, n, |db| {
         let h = Header {
-            id: vec![1; 16],
+            id: vec![n; 16],
             nonce: vec![n; 32],
             state: VaultState::Active,
             sequence: 0,
