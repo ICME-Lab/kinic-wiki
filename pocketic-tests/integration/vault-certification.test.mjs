@@ -34,7 +34,8 @@ try {
     shouldFetchRootKey: true,
   });
   await pic.stopLive();
-  const paths = ["/", "/config.json", "/.well-known/ii-alternative-origins"];
+  const embed = "/embed/" + "01".repeat(16) + "/" + "02".repeat(16);
+  const paths = ["/", "/config.json", "/.well-known/ii-alternative-origins", "/pick", embed];
   for (let i = 0; i < paths.length; i++) {
     const path = paths[i];
     const request = {
@@ -77,10 +78,11 @@ try {
     const headers = Object.fromEntries(
       response.headers.map(([k, v]) => [k.toLowerCase(), v]),
     );
-    assert.equal(headers["x-frame-options"], "DENY");
+    assert.equal(headers["x-frame-options"], path === embed ? undefined : "DENY");
+    assert.equal(headers["cross-origin-opener-policy"], path === "/pick" ? "unsafe-none" : "same-origin-allow-popups");
     assert.equal(headers["cache-control"], "no-store");
     assert.ok(
-      headers["content-security-policy"].includes("frame-ancestors 'none'"),
+      headers["content-security-policy"].includes(`frame-ancestors ${path === embed ? "https://wiki.kinic.xyz" : "'none'"};`),
     );
     if (path === "/.well-known/ii-alternative-origins")
       assert.deepEqual(
@@ -99,6 +101,13 @@ try {
         ]),
       }),
     );
+    assert.throws(() => verify({
+      ...response,
+      headers: response.headers.map(([k, v]) => [
+        k,
+        k.toLowerCase() === "cross-origin-opener-policy" ? "same-origin" : v,
+      ]),
+    }));
     assert.throws(() => verify({ ...response, status_code: 201 }));
     assert.throws(() =>
       verify(response, request, new Uint8Array(agent.rootKey.length)),

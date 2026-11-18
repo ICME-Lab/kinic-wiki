@@ -1,3 +1,4 @@
+import { join, normalize } from "node:path";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
@@ -13,6 +14,16 @@ export default defineConfig({
   root: fixture,
   css: { postcss: wiki },
   plugins: [
+    {
+      name: "fixture-article-write",
+      enforce: "pre",
+      resolveId(source, importer) {
+        if (importer?.endsWith("/components/markdown-edit-document.tsx") &&
+            (source === "@/lib/vfs-client" || normalize(source) === join(wiki, "lib/vfs-client"))) {
+          return fileURLToPath(new URL("./article.ts", import.meta.url));
+        }
+      }
+    },
     react(),
     {
       name: "synthetic-vault-reference",

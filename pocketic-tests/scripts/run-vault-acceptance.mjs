@@ -17,6 +17,7 @@ if (version !== "pocket-ic-server 16.1.0")
   throw Error(`Expected PocketIC16.1.0; got ${version}`);
 const cases = [
   "lifecycle",
+  "sharing",
   "state",
   "capacity",
   "isolation",

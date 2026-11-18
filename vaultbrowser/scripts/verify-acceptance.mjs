@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { action, completeLogin, editor, loginButton, settle } from "./acceptance-ui.mjs";
 import { idlFactory } from "../../packages/vault-candid/index.js";
 const require = createRequire(import.meta.url);
 const { Cbor } = require("@icp-sdk/core/agent");
@@ -40,62 +41,6 @@ const context = await browser.newContext({ acceptDownloads: true });
 contexts.push(context);
 context.setDefaultTimeout(60000);
 let ownerCredentials = [];
-async function completeLogin(popup, credentials, create = false) {
-  await popup.waitForURL(iiURL + "/**");
-  const cdp = await popup.context().newCDPSession(popup);
-  await cdp.send("WebAuthn.enable");
-  const { authenticatorId } = await cdp.send(
-    "WebAuthn.addVirtualAuthenticator",
-    {
-      options: {
-        protocol: "ctap2",
-        transport: "internal",
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    },
-  );
-  for (const credential of credentials)
-    await cdp.send("WebAuthn.addCredential", { authenticatorId, credential });
-  const choose = popup.getByRole("button", {
-    name: "Continue with passkey",
-    exact: true,
-  });
-  const proceed = popup.getByRole("button", { name: "Continue", exact: true });
-  await choose.or(proceed).first().waitFor();
-  if (await choose.isVisible()) await choose.click();
-  if (create) {
-    await popup
-      .getByRole("button", { name: "Create new identity", exact: true })
-      .click();
-    await popup.getByRole("textbox").fill("Disposable Vault acceptance");
-    await popup
-      .getByRole("button", { name: "Create identity", exact: true })
-      .click();
-  } else if (
-    await popup
-      .getByRole("button", { name: "Use existing identity", exact: true })
-      .isVisible()
-  ) {
-    await popup
-      .getByRole("button", { name: "Use existing identity", exact: true })
-      .click();
-  }
-  await proceed.waitFor();
-  const actual = (
-    await cdp.send("WebAuthn.getCredentials", { authenticatorId })
-  ).credentials;
-  assert.ok(
-    actual.length,
-    "Actual II WebAuthn credentials required; dummy auth disabled",
-  );
-  const closed = popup.waitForEvent("close");
-  await proceed.click();
-  await closed;
-  return actual;
-}
 async function signIn(
   page,
   button,
@@ -130,32 +75,6 @@ const inspect = (page, method, ...args) =>
     { method, args },
   );
 const readback = (page) => inspect(page, "readback", canister, vaultURL);
-const loginButton = (page) =>
-  page.getByRole("button", {
-    name: "Sign in with Internet Identity",
-    exact: true,
-  });
-const editor = (page) => page.locator('.cm-content[contenteditable="true"]');
-async function settle(page, errors = false) {
-  await page
-    .getByText("Processing Vault operation…", { exact: true })
-    .waitFor({ state: "hidden", timeout: 120000 });
-  if (!errors)
-    assert.deepEqual(await page.getByRole("alert").allTextContents(), []);
-}
-async function action(page, name, errors = false) {
-  const button = page.getByRole("button", {
-    name,
-    exact: true,
-    includeHidden: true,
-  });
-  for (const details of await button.locator("xpath=ancestor::details").all()) {
-    if (!(await details.evaluate((e) => e.open)))
-      await details.locator(":scope > summary").click();
-  }
-  await button.click();
-  await settle(page, errors);
-}
 async function retain(page) {
   await page.evaluate(() => {
     const content = document.querySelector(".cm-content");

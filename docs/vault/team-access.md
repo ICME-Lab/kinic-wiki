@@ -8,6 +8,13 @@ An owner adds a teammate using their Vault Internet Identity principal. The owne
 | Editor | Read content and history, save revisions, manage their own uploads and soft-delete objects |
 | Viewer | Read content and history |
 
+## Share a Vault in the workspace
+
+1. The teammate signs in to Vault and uses **Copy Vault principal**. Internet Identity derives a separate principal for Wiki.
+2. The owner opens the Vault, expands **Vault members**, enters the teammate’s Vault principal, selects Viewer or Editor, and chooses **Add member**. The grant covers every document and its retained history in this Vault.
+3. The teammate refreshes their Vault list. In the Wiki editor, **Insert private document** opens the Vault picker. Saving the article shares its opaque reference with Wiki readers. Each reader still needs a Vault membership to open the document.
+4. The owner can change the role or choose **Remove member**. The canister checks each future shared call immediately. Open private views recheck on focus, when visibility resumes and every 30 seconds while visible. A view clears once it observes denied access. Revocation leaves any previously copied plaintext, files or keys in the recipient’s possession and does not rotate the encryption key.
+
 ## Wire contract
 
 All shared calls are authenticated updates. `list_accessible_vaults(after)` returns up to 20 entries ordered by Vault ID. Pass an empty blob for the first page and the returned `next` for the following page. `get_vault_access(vault)` resolves the recorded owner, header and current role. Clients must check access on each open, including when they hold a cached key.

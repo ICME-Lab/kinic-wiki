@@ -75,3 +75,18 @@ test("only the connected picker can append to the live Wiki draft", async ({ pag
   await expect(draft.getByText("非公開資料", { exact: true })).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
 });
+
+test("saved fixture article round-trips the editor payload into the actual preview", async ({ page }) => {
+  await page.goto("/?saved");
+  const [picker] = await Promise.all([
+    page.waitForEvent("popup"), page.getByRole("button", { name: "Insert private document" }).click()
+  ]);
+  await picker.getByRole("button", { name: "Select fixture document" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Open private document" })).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByRole("textbox").locator(".cm-line").nth(2)).toHaveText(reference);
+  await expect(page.locator("iframe")).toHaveCount(0);
+  await page.getByRole("button", { name: "Open private document" }).click();
+  await expect(page.locator("iframe")).toHaveAttribute("src", embed);
+});

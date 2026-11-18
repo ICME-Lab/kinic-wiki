@@ -16,6 +16,10 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 const root = fileURLToPath(new URL("../../", import.meta.url));
+const teamEmbeds = process.argv[2] === "--team-embeds";
+assert.ok(process.argv.length === (teamEmbeds ? 3 : 2), "Expected no argument or --team-embeds");
+const canisters = teamEmbeds ? ["vault", "ledger", "ii", "ii_frontend"] : ["wiki", "vault", "ledger", "ii", "ii_frontend"];
+const verifier = teamEmbeds ? "vaultbrowser/scripts/verify-team-embeds.mjs" : "vaultbrowser/scripts/verify-acceptance.mjs";
 const freePort = () =>
   new Promise((resolve, reject) => {
     const probe = createServer();
@@ -29,7 +33,7 @@ const port = Number(process.env.VAULT_ACCEPTANCE_PORT ?? (await freePort()));
 // Wiki's certified local alternative-origins list intentionally allows only
 // these fixed dev origins. Probe before claiming one; never stop an occupant.
 let wikiPort;
-for (const candidate of [3100, 3010]) {
+for (const candidate of (teamEmbeds ? [3016] : [3100, 3010])) {
   try {
     await new Promise((resolve, reject) => {
       const probe = createServer();
@@ -42,7 +46,7 @@ for (const candidate of [3100, 3010]) {
     if (e.code !== "EADDRINUSE") throw e;
   }
 }
-assert.ok(wikiPort, "No free certified Wiki local origin (3100/3010)");
+assert.ok(wikiPort, "Wiki fixture port unavailable");
 assert.ok(Number.isInteger(port) && port > 1024 && port < 65536);
 // Never accidentally reuse a user server merely because it answers HTTP.
 for (const testPort of [port, wikiPort])
@@ -92,12 +96,12 @@ try {
   ];
   writeFileSync(
     join(project, "icp.yaml"),
-    `canisters:\n${["wiki", "vault", "ledger", "ii", "ii_frontend"].map((name) => `  - name: ${name}\n    build:\n      steps:\n        - type: script\n          commands: ["false"]`).join("\n")}\nnetworks:\n  - name: acceptance\n    mode: managed\n    ii: false\n    gateway:\n      bind: 127.0.0.1\n      port: ${port}\nenvironments:\n  - name: acceptance\n    network: acceptance\n    canisters: [wiki, vault, ledger, ii, ii_frontend]\n`,
+    `canisters:\n${canisters.map((name) => `  - name: ${name}\n    build:\n      steps:\n        - type: script\n          commands: ["false"]`).join("\n")}\nnetworks:\n  - name: acceptance\n    mode: managed\n    ii: false\n    gateway:\n      bind: 127.0.0.1\n      port: ${port}\nenvironments:\n  - name: acceptance\n    network: acceptance\n    canisters: [${canisters.join(", ")}]\n`,
   );
   const scope = ["--project-root-override", project, "-e", "acceptance"];
   const icp = (args) => run("icp", [...args, ...scope, ...idArgs]);
   const hash = (b) => createHash("sha256").update(b).digest("hex");
-  run("node", ["pocketic-tests/scripts/build-vault-browser-readback.mjs"]);
+  if (!teamEmbeds) run("node", ["pocketic-tests/scripts/build-vault-browser-readback.mjs"]);
   const artifacts = {};
   for (const [name, sha] of [
     [
@@ -110,7 +114,7 @@ try {
     ],
   ]) {
     const url = `https://github.com/dfinity/internet-identity/releases/download/release-2026-05-08/${name}.wasm.gz`;
-    const cache = join(root, "target/vault-browser-ii-cache");
+    const cache = process.env.VAULT_BROWSER_II_CACHE ?? join(root, "target/vault-browser-ii-cache");
     mkdirSync(cache, { recursive: true });
     const archive = join(cache, `${sha}.wasm.gz`);
     let compressed;
@@ -137,7 +141,7 @@ try {
   ]);
   started = true;
   const ids = {};
-  for (const name of ["wiki", "vault", "ledger", "ii", "ii_frontend"])
+  for (const name of canisters)
     ids[name] = output("icp", [
       "canister",
       "create",
@@ -186,7 +190,8 @@ try {
     ),
     "()",
   );
-  run("pnpm", [...pnpm, "--dir", "vaultbrowser", "build", "--mode", "bridge-local-test"], bridgeLocalEnv);
+  if (teamEmbeds) run("pnpm", [...pnpm, "--dir", "vaultbrowser", "build"]);
+  else run("pnpm", [...pnpm, "--dir", "vaultbrowser", "build", "--mode", "bridge-local-test"], bridgeLocalEnv);
   const build =
     process.env.VAULT_BROWSER_BUILD_CACHE ??
     join(root, "target/vault-browser-build");
@@ -195,14 +200,14 @@ try {
     VAULT_LOCAL_ORIGIN: vaultURL,
     VAULT_LOCAL_HOST: `http://localhost:${port}`,
     VAULT_LOCAL_II: iiURL,
+    ...(teamEmbeds ? { VAULT_LOCAL_WIKI_ORIGIN: wikiURL } : {}),
     KINIC_VFS_LOCAL_II_ORIGINS: "1",
   };
   const cargoArgs = [
     "build",
     "-p",
     "vault-canister",
-    "-p",
-    "vfs-canister",
+    ...(teamEmbeds ? [] : ["-p", "vfs-canister"]),
     "--target",
     "wasm32-unknown-unknown",
     "--release",
@@ -220,26 +225,28 @@ try {
     join(build, "wasm32-unknown-unknown/release/vault_canister.wasm"),
     vaultWasm,
   );
-  run("cargo", cargoArgs, localBuildEnv);
-  const defaultLocalWasm = join(project, "vault-default-local.wasm");
-  copyFileSync(
-    join(build, "wasm32-unknown-unknown/release/vault_canister.wasm"),
-    defaultLocalWasm,
-  );
-  const controller = output("icp", ["identity", "principal", ...idArgs]);
-  const wikiArgs = `(record {kinic_ledger_canister_id="${ids.ledger}";billing_authority_id="${controller}";iap_authority_id=opt "${controller}";cycles_per_kinic=1000:nat64;min_update_cycles=1000000:nat64;top_up=record{enabled=false;threshold_cycles=1000000000:nat;launcher_principal="aaaaa-aa"}})`;
-  install(
-    "wiki",
-    join(build, "wasm32-unknown-unknown/release/vfs_canister.wasm"),
-    wikiArgs,
-  );
   install("vault", vaultWasm, "()");
-  const wikiBridge = `(record {enabled=true;peer=principal "${ids.vault}";daily_limit_cycles=1000000000000:nat64;physical_reserve_cycles=1000000000000:nat64})`;
-  const vaultBridge = `(record {enabled=true;peer=principal "${ids.wiki}";daily_limit_cycles=1000000000000:nat64;physical_reserve_cycles=1000000000000:nat64})`;
-  icp(["canister", "call", "wiki", "set_vault_bridge_config", wikiBridge,
-    "--candid", join(root, "crates/vfs_canister/vfs.did")]);
-  icp(["canister", "call", "vault", "set_wiki_bridge_config", vaultBridge,
-    "--candid", join(root, "crates/vault_canister/vault.did")]);
+  const defaultLocalWasm = join(project, "vault-default-local.wasm");
+  if (!teamEmbeds) {
+    run("cargo", cargoArgs, localBuildEnv);
+    copyFileSync(
+      join(build, "wasm32-unknown-unknown/release/vault_canister.wasm"),
+      defaultLocalWasm,
+    );
+    const controller = output("icp", ["identity", "principal", ...idArgs]);
+    const wikiArgs = `(record {kinic_ledger_canister_id="${ids.ledger}";billing_authority_id="${controller}";iap_authority_id=opt "${controller}";cycles_per_kinic=1000:nat64;min_update_cycles=1000000:nat64;top_up=record{enabled=false;threshold_cycles=1000000000:nat;launcher_principal="aaaaa-aa"}})`;
+    install(
+      "wiki",
+      join(build, "wasm32-unknown-unknown/release/vfs_canister.wasm"),
+      wikiArgs,
+    );
+    const wikiBridge = `(record {enabled=true;peer=principal "${ids.vault}";daily_limit_cycles=1000000000000:nat64;physical_reserve_cycles=1000000000000:nat64})`;
+    const vaultBridge = `(record {enabled=true;peer=principal "${ids.wiki}";daily_limit_cycles=1000000000000:nat64;physical_reserve_cycles=1000000000000:nat64})`;
+    icp(["canister", "call", "wiki", "set_vault_bridge_config", wikiBridge,
+      "--candid", join(root, "crates/vfs_canister/vfs.did")]);
+    icp(["canister", "call", "vault", "set_wiki_bridge_config", vaultBridge,
+      "--candid", join(root, "crates/vault_canister/vault.did")]);
+  }
   icp([
     "canister",
     "call",
@@ -259,11 +266,11 @@ try {
     join(root, "crates/vault_canister/vault.did"),
   ]);
   writeFileSync(
-    join(root, "target/vault-browser-provenance.json"),
+    join(root, teamEmbeds ? "target/vault-team-provenance.json" : "target/vault-browser-provenance.json"),
     JSON.stringify(
       {
         funding_mode:
-          "synthetic-test-only funding, then upgrade to pinned production funding",
+          teamEmbeds ? "synthetic-test-only funding" : "synthetic-test-only funding, then upgrade to pinned production funding",
         deployable: false,
         source_commit: output("git", ["rev-parse", "HEAD"]),
         working_tree_diff_sha256: hash(
@@ -278,13 +285,20 @@ try {
         backendArgs,
         frontendArgs,
         synthetic_local_wasm_sha256: hash(readFileSync(vaultWasm)),
-        default_local_wasm_sha256: hash(readFileSync(defaultLocalWasm)),
+        default_local_wasm_sha256: teamEmbeds ? undefined : hash(readFileSync(defaultLocalWasm)),
         harness: Object.fromEntries(
           [
             "pocketic-tests/scripts/run-vault-browser-acceptance.mjs",
-            "pocketic-tests/scripts/build-vault-browser-readback.mjs",
-            "vaultbrowser/scripts/verify-acceptance.mjs",
-            "vaultbrowser/fixtures/acceptance-readback.ts",
+            verifier,
+            "vaultbrowser/scripts/acceptance-ui.mjs",
+            ...(teamEmbeds ? [
+              "wikibrowser/fixtures/vault-reference/main.tsx",
+              "wikibrowser/fixtures/vault-reference/article.ts",
+              "wikibrowser/fixtures/vault-reference/vite.config.ts",
+            ] : [
+              "pocketic-tests/scripts/build-vault-browser-readback.mjs",
+              "vaultbrowser/fixtures/acceptance-readback.ts",
+            ]),
           ].map((path) => [path, hash(readFileSync(join(root, path)))]),
         ),
       },
@@ -300,9 +314,7 @@ try {
       "wikibrowser",
       "exec",
       "vite",
-      "dev",
-      "--mode",
-      "bridge-local-test",
+      ...(teamEmbeds ? ["--config", "fixtures/vault-reference/vite.config.ts"] : ["dev", "--mode", "bridge-local-test"]),
       "--host",
       "127.0.0.1",
       "--port",
@@ -316,6 +328,7 @@ try {
       env: {
         ...process.env,
         ...bridgeLocalEnv,
+        ...(teamEmbeds ? { VITE_LOCAL_VAULT_ORIGIN: vaultURL } : {}),
         VITE_WIKI_IC_HOST: `http://127.0.0.1:${port}`,
         VITE_ENABLE_LOCAL_II_E2E: "1",
         VITE_II_PROVIDER_URL: iiURL,
@@ -332,7 +345,7 @@ try {
     if (i === 119) throw Error("Wiki server did not start");
     await new Promise((r) => setTimeout(r, 250));
   }
-  run("node", ["vaultbrowser/scripts/verify-acceptance.mjs"], {
+  run("node", [verifier], {
     VAULT_ACCEPTANCE_URL: vaultURL,
     WIKI_ACCEPTANCE_URL: wikiURL,
     II_ACCEPTANCE_URL: iiURL,
@@ -382,7 +395,7 @@ try {
     }
   }
   writeFileSync(
-    join(root, "target/vault-browser-teardown.json"),
+    join(root, teamEmbeds ? "target/vault-team-teardown.json" : "target/vault-browser-teardown.json"),
     JSON.stringify(
       {
         project,
@@ -401,5 +414,7 @@ try {
     [],
     "Owned local infrastructure must fully stop",
   );
-  // Keep only this owned project's data/mappings for diagnosis. Never reset another project.
+  // The general suite preserves its local mappings for diagnosis. Team runs
+  // need only the provenance and teardown receipts outside this owned project.
+  if (teamEmbeds) rmSync(project, { recursive: true, force: true });
 }

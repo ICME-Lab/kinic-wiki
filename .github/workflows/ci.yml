@@ -879,6 +879,8 @@ jobs:
           echo "ICP_CLI_NETWORK_LAUNCHER_PATH=$GITHUB_WORKSPACE/target/tools/network-launcher/icp-cli-network-launcher" >> "$GITHUB_ENV"
       - name: Actual same-II cross-origin browser acceptance
         run: node pocketic-tests/scripts/run-vault-browser-acceptance.mjs
+      - name: Actual two-identity Wiki picker and embed acceptance
+        run: node pocketic-tests/scripts/run-vault-browser-acceptance.mjs --team-embeds
       - name: Preserve current acceptance provenance
         if: always()
         uses: actions/upload-artifact@v7
@@ -887,6 +889,8 @@ jobs:
           path: |
             target/vault-browser-provenance.json
             target/vault-browser-teardown.json
+            target/vault-team-provenance.json
+            target/vault-team-teardown.json
             target/vault-ii-acceptance/physical-memory.json
             target/vault-ii-acceptance/production.json
             target/vault-ii-acceptance/state.json
