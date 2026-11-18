@@ -38,6 +38,17 @@ describe("Wiki Vault reference", () => {
     expect(document.querySelector("iframe")).toBeNull();
   });
 
+  it("keeps the same open frame when the article rerenders with the same reference", () => {
+    const { rerender } = render(<MarkdownPreview {...article} content={reference} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open private document" }));
+    const frame = screen.getByTitle("Private Vault document");
+
+    rerender(<MarkdownPreview {...article} content={reference} />);
+    expect(screen.getByTitle("Private Vault document")).toBe(frame);
+    rerender(<MarkdownPreview {...article} content={`${reference}\n\nAdditional paragraph.`} />);
+    expect(screen.getByTitle("Private Vault document")).toBe(frame);
+  });
+
   it("requires a fresh click when the object or article changes", () => {
     const otherUrl = `https://vault.kinic.xyz/embed/${vaultId}/${vaultId}`;
     const otherReference = `[非公開資料](${otherUrl})`;
