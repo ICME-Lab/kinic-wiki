@@ -48,6 +48,7 @@ afterEach(() => {
   pickerContext.client = undefined;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const wiki = "https://wiki.kinic.xyz";
@@ -117,22 +118,26 @@ it("connects only to the Wiki opener at the configured origin and posts exact ID
 async function privateDocument(
   kind: "note" | "credential" | "attachment",
   body: string,
+  shared = false,
 ) {
-  const identity = Ed25519KeyIdentity.generate();
-  const network = fixtureNetwork(identity.getPrincipal());
-  const client = new VaultClient({
+  const owner = Ed25519KeyIdentity.generate();
+  const identity = shared ? Ed25519KeyIdentity.generate() : owner;
+  const network = fixtureNetwork(identity.getPrincipal(), owner.getPrincipal());
+  const options = {
     actor: network.actor,
-    identity,
     canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
     local: true,
-  });
+  };
+  const writer = new VaultClient({ ...options, identity: owner });
   const header = network.headers[0];
-  await client.open(header);
-  const doc = await client.save(
+  await writer.open(header);
+  const doc = await writer.save(
     { kind, title: "Private title" },
     new TextEncoder().encode(body),
   );
-  return { ...network, client, header, doc };
+  if (shared) network.setRole(header.id, { Viewer: null });
+  const client = shared ? new VaultClient({ ...options, identity }) : writer;
+  return { ...network, client, writer, header, doc };
 }
 
 it("renders read-only Markdown and removes private content on focus after revocation", async () => {
@@ -398,3 +403,165 @@ it.each([1, 21])(
     expect(client.session.root).toBeUndefined();
   },
 );
+
+it.each(["initial", "updated"])(
+  "renders a slow %s revision after two same-head polls",
+  async (phase) => {
+    const { client, writer, header, doc, actor } = await privateDocument(
+      "note",
+      "### Original body",
+      true,
+    );
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const renderEmbed = () =>
+      render(
+        <VaultEmbedDocument
+          client={client}
+          vault={bytes(header.id)}
+          object={bytes(doc.object)}
+        />,
+      );
+    if (phase === "updated") {
+      renderEmbed();
+      await screen.findByRole("heading", { name: "Original body" });
+      await writer.save(
+        { kind: "note", title: "Updated title" },
+        new TextEncoder().encode("### Updated body"),
+        { revision: doc, metadata: { kind: "note", title: "Private title" } },
+      );
+    }
+
+    const fetchChunk = actor.shared_get_chunk;
+    const releases: Array<() => void> = [];
+    const chunk = vi
+      .spyOn(actor, "shared_get_chunk")
+      .mockImplementation(async (...args) => {
+        // Capture ciphertext at request time. Each later poll's fetch has its own delay.
+        const reply = await fetchChunk(...args);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return reply;
+      });
+    const head = vi.spyOn(actor, "shared_get_manifest");
+    try {
+      if (phase === "updated") fireEvent(window, new Event("focus"));
+      else renderEmbed();
+      await vi.waitFor(() => expect(releases).toHaveLength(1));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_001);
+      });
+      await vi.waitFor(() =>
+        expect(head.mock.calls.length).toBeGreaterThanOrEqual(3),
+      );
+      await act(async () => {
+        releases[0]();
+      });
+      await screen.findByRole("heading", {
+        name: phase === "updated" ? "Updated body" : "Original body",
+      });
+      expect(chunk).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => {
+        for (const release of releases) release();
+      });
+    }
+  },
+);
+
+it.each(["revocation", "deletion"])(
+  "clears the displayed revision when a poll sees %s during a stalled newer fetch",
+  async (action) => {
+    const { client, writer, header, doc, actor, setRole } =
+      await privateDocument("note", "### Visible private body", true);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    render(
+      <VaultEmbedDocument
+        client={client}
+        vault={bytes(header.id)}
+        object={bytes(doc.object)}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Visible private body" });
+    const next = await writer.save(
+      { kind: "note", title: "New private title" },
+      new TextEncoder().encode("### Stalled private body"),
+      { revision: doc, metadata: { kind: "note", title: "Private title" } },
+    );
+    const original = actor.shared_get_chunk;
+    let release!: () => void;
+    const pause = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chunk = vi
+      .spyOn(actor, "shared_get_chunk")
+      .mockImplementation(async (...args) => {
+        const reply = await original(...args);
+        await pause;
+        return reply;
+      });
+    try {
+      fireEvent(window, new Event("focus"));
+      await vi.waitFor(() => expect(chunk).toHaveBeenCalledOnce());
+      if (action === "revocation") setRole(header.id, null);
+      else await writer.deleteObject(next);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_001);
+      });
+      await screen.findByText("This private document is unavailable.");
+      expect(screen.queryByText("Visible private body")).toBeNull();
+      expect(client.session.root).toBeUndefined();
+    } finally {
+      await act(async () => {
+        release();
+      });
+    }
+    expect(screen.queryByText("New private title")).toBeNull();
+    expect(screen.queryByText("Stalled private body")).toBeNull();
+  },
+);
+
+it("loads a newer head while the superseded revision's body is stalled", async () => {
+  const { client, writer, header, doc, actor } = await privateDocument(
+    "note",
+    "### Superseded body",
+    true,
+  );
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  const original = actor.shared_get_chunk;
+  let release!: () => void;
+  const pause = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chunk = vi
+    .spyOn(actor, "shared_get_chunk")
+    .mockImplementation(async (...args) => {
+      const reply = await original(...args);
+      if (args[2] === doc.revision) await pause;
+      return reply;
+    });
+  try {
+    render(
+      <VaultEmbedDocument
+        client={client}
+        vault={bytes(header.id)}
+        object={bytes(doc.object)}
+      />,
+    );
+    await vi.waitFor(() => expect(chunk).toHaveBeenCalledOnce());
+    await writer.save(
+      { kind: "note", title: "Latest title" },
+      new TextEncoder().encode("### Latest body"),
+      { revision: doc, metadata: { kind: "note", title: "Private title" } },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_001);
+    });
+    await screen.findByRole("heading", { name: "Latest body" });
+    expect(chunk).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => {
+      release();
+    });
+  }
+  expect(screen.getByText("Latest title")).toBeTruthy();
+  expect(screen.queryByText("Superseded body")).toBeNull();
+});

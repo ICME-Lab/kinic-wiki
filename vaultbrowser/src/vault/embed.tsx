@@ -107,9 +107,10 @@ export function VaultEmbedDocument({
   const privateDOM = useRef<HTMLElement>(null);
   const busy = useRef(false);
   const visibleRevision = useRef<bigint | undefined>(undefined);
-  const loadSerial = useRef(0);
+  const pendingBody = useRef<{ revision: bigint } | undefined>(undefined);
   const reset = useCallback(() => {
     visibleRevision.current = undefined;
+    pendingBody.current = undefined;
     setDoc(undefined);
     setLoading(false);
     setDownloading(false);
@@ -117,32 +118,33 @@ export function VaultEmbedDocument({
   }, []);
   const loadDocument = useCallback(async () => {
     const ticket = client.session.capture();
-    const serial = ++loadSerial.current;
     const revision = await client.latest(object);
     client.session.check(ticket);
-    if (
-      serial !== loadSerial.current ||
-      visibleRevision.current === revision.revision
-    )
-      return;
-    const item = await client.readItem(revision);
-    const body =
-      item.metadata.kind === "attachment"
-        ? undefined
-        : await client.read(item.revision);
-    const wipeBody = () => body?.plaintext.fill(0);
-    const detach = body && client.session.addLockCleanup(wipeBody);
+    // Every poll checks access and the head, but an unchanged head shares the
+    // existing body fetch. A newer head can supersede that fetch.
+    const observed = pendingBody.current?.revision ?? visibleRevision.current;
+    if (observed !== undefined && revision.revision <= observed) return;
+    const pending = { revision: revision.revision };
+    pendingBody.current = pending;
+    let body: Uint8Array | undefined;
+    const wipe = () => body?.fill(0);
+    const detach = client.session.addLockCleanup(wipe);
     try {
+      const item = await client.readItem(revision);
       client.session.check(ticket);
-      if (serial !== loadSerial.current) return;
+      if (pendingBody.current !== pending) return;
+      if (item.metadata.kind !== "attachment")
+        body = (await client.read(item.revision)).plaintext;
+      client.session.check(ticket);
+      if (pendingBody.current !== pending) return;
       // The document can disappear or change while its chunks are being read.
       const head = await client.latest(object);
       client.session.check(ticket);
-      if (serial !== loadSerial.current) return;
+      if (pendingBody.current !== pending) return;
       if (head.revision !== revision.revision) throw Error("TargetChanged");
       let content: ReadOnlyContent = { kind: "attachment" };
       if (body) {
-        const text = new TextDecoder().decode(body.plaintext);
+        const text = new TextDecoder().decode(body);
         content =
           item.metadata.kind === "credential"
             ? parseCredential(text)
@@ -151,13 +153,17 @@ export function VaultEmbedDocument({
       visibleRevision.current = revision.revision;
       setDoc({ item, content });
       setLoading(false);
+    } catch (error) {
+      if (pendingBody.current === pending) throw error;
     } finally {
-      wipeBody();
-      detach?.();
+      wipe();
+      detach();
+      if (pendingBody.current === pending) pendingBody.current = undefined;
     }
   }, [client, object]);
   useIsolatedVaultSession(client, privateDOM, reset, loadDocument);
   useLayoutEffect(() => {
+    reset();
     const pending = client.openAccess(vault);
     const ticket = client.session.capture();
     setLoading(true);
@@ -172,7 +178,7 @@ export function VaultEmbedDocument({
     return () => {
       client.session.lock();
     };
-  }, [client, vault, loadDocument, attempt]);
+  }, [client, vault, loadDocument, attempt, reset]);
   const download = () => {
     if (busy.current || !doc) return;
     const ticket = client.session.capture();
