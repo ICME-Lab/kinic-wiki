@@ -31,7 +31,9 @@ pub(crate) fn security_headers() -> Vec<(String, String)> {
  ("Content-Security-Policy".into(),"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://icp0.io https://*.icp0.io; img-src 'self' blob:; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'".into()),
  ("Referrer-Policy".into(),"no-referrer".into()),("X-Content-Type-Options".into(),"nosniff".into()),("X-Frame-Options".into(),"DENY".into()),
  // Allow the explicitly opened Internet Identity popup to retain its opener handshake.
- ("Cross-Origin-Opener-Policy".into(),"same-origin-allow-popups".into()),("Cache-Control".into(),"no-store".into())];
+ ("Cross-Origin-Opener-Policy".into(),"same-origin-allow-popups".into()),("Cache-Control".into(),"no-store".into()),
+ // Vault is a private app shell: keep every path, including config and assets, out of search indexes.
+ ("X-Robots-Tag".into(),"noindex, nofollow, noarchive, nosnippet".into())];
     if let Some(host) = option_env!("VAULT_LOCAL_HOST") {
         headers[0].1 = headers[0].1.replace(
             "connect-src \'self\'",
@@ -66,6 +68,7 @@ fn entry(
                 "X-Frame-Options",
                 "Cross-Origin-Opener-Policy",
                 "Cache-Control",
+                "X-Robots-Tag",
             ],
         ))
         .build();

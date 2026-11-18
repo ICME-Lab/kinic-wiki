@@ -1,5 +1,5 @@
 import { startVaultPocketIc } from "../helpers/vault-pocketic-server.mjs";
-// Actual Wasm current schema11 capacity and payment continuity with a separate synthetic ledger.
+// Actual Wasm current schema13 capacity and payment continuity with a separate synthetic ledger.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
@@ -130,7 +130,7 @@ try {
   await upgrade(v);
   await configure(v);
   const initial = ok(await v.actor.global_capacity());
-  assert.equal(initial.accounting_reserved, 16n * 1024n * 1024n);
+  assert.equal(initial.accounting_reserved, 19n * 1024n * 1024n);
   assert.equal(initial.limit, 200n * 1024n * 1024n);
   assert.equal(initial.overcommitted, false);
   assert.equal(initial.overage, 0n);
@@ -217,7 +217,7 @@ try {
     balanceBefore + 1_000_000_000n,
   );
   console.log(
-    "PASS current schema11: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap",
+    "PASS current schema13: exact Unknown payment and balances survive upgrade, same transfer bytes settle once at the account cap",
   );
 } finally {
   try {

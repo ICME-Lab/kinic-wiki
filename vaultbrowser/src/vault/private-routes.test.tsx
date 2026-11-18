@@ -394,6 +394,7 @@ it.each([1, 21])(
         screen.getByRole("button", { name: "Shared document title" }),
       ).toBeTruthy();
     }
+    const access = vi.spyOn(network.actor, "get_vault_access");
     network.setRole(header.id, null);
     fireEvent.click(refresh);
     await vi.waitFor(() => expect(refresh.disabled).toBe(false));
@@ -401,6 +402,7 @@ it.each([1, 21])(
       screen.queryByRole("button", { name: "Shared document title" }),
     ).toBeNull();
     expect(client.session.root).toBeUndefined();
+    expect(access).toHaveBeenCalledWith(bytes(header.id));
   },
 );
 

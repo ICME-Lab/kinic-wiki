@@ -142,15 +142,8 @@ function VaultPickerDocuments({
       );
       setAfter(page.next[0] ? bytes(page.next[0]) : undefined);
       if (cursor || !client.session.root) return;
-      const activeId = client.header && encodeId(client.header.id);
-      if (
-        !page.next.length &&
-        !page.entries.some(({ header }) => encodeId(header.id) === activeId)
-      ) {
-        client.session.lock();
-        return;
-      }
-      // The open Vault may lie beyond the first page. Check that exact grant.
+      // Validate the exact grant so the client can also invalidate its saved
+      // key when access is denied. The Vault may lie beyond the first page.
       try {
         await client.refreshHeader();
       } catch (error) {

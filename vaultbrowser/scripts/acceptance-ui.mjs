@@ -75,7 +75,6 @@ export async function action(page, name, errors = false) {
   const button = page.getByRole("button", {
     name,
     exact: true,
-    includeHidden: true,
   });
   for (const details of await button.locator("xpath=ancestor::details").all()) {
     if (!(await details.evaluate((e) => e.open)))

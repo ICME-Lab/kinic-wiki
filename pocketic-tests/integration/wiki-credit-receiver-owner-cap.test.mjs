@@ -109,7 +109,7 @@ try {
   wiki.actor.setPrincipal(lastWikiOwner);
   assert.ok('Paid' in ok(await wiki.actor.get_vault_transfer(lastOperation)).phase);
   vault.actor.setPrincipal(admin);
-  assert.equal(ok(await vault.actor.global_capacity()).accounting_reserved, 16n * 1024n * 1024n);
+  assert.equal(ok(await vault.actor.global_capacity()).accounting_reserved, 19n * 1024n * 1024n);
   console.log(JSON.stringify({ receiverOwnerRows: 16, linkRows: 1, paidCreditRows: 15,
     seventeenthOwnerRowDeniedBeforeSend: true, knownUnsentRefundAtLimit: true,
     elapsedToOwnerLimitMs, receiverPhysicalCyclesDelta: String(cyclesAtOwnerLimit - cyclesBefore),

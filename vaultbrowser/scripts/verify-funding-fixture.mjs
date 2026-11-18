@@ -54,7 +54,7 @@ try {
       fullPage: true,
     });
     await resume.click();
-    await page.getByText("Paid", { exact: true }).waitFor();
+    await page.getByText("Payment complete", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.syntheticFunding.calls), 15);
     assert.equal(await page.evaluate(() => window.syntheticFunding.funded), 1);
     await page.reload();
@@ -72,7 +72,7 @@ try {
     assert.equal(await page.evaluate(() => window.syntheticFunding.calls), 1);
     assert.equal(await page.evaluate(() => window.syntheticFunding.funded), 0);
     assert.equal(
-      await page.getByText("Unknown", { exact: true }).isVisible(),
+      await page.getByText(/^Needs status check · /).isVisible(),
       true,
     );
     assert.equal(

@@ -11,6 +11,7 @@ import {
   editor,
   loginButton,
 } from "./acceptance-ui.mjs";
+import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 
 import { createRequire } from "node:module";
 const { Cbor } = createRequire(import.meta.url)("@icp-sdk/core/agent");
@@ -89,11 +90,19 @@ async function identity() {
   page.on("dialog", (dialog) => dialog.accept());
   await page.goto(vaultURL);
   const credentials = await signIn(page, page, [], true);
+  await action(page, "Account settings");
+  await page.locator("summary").filter({ hasText: "Account & storage" }).click();
   const principal = await page
     .getByText(/^Vault principal /)
     .locator("code")
     .textContent();
+  await action(page, "Back to Vault");
   return { context, page, credentials, principal };
+}
+async function manageMembers(page) {
+  await button(page, "Actions for Vault 1").click();
+  await page.getByRole("menuitem", { name: "Manage members", exact: true }).click();
+  await page.getByText("Vault members", { exact: true }).waitFor();
 }
 async function assertParentPrivate(page) {
   const parent = await page.locator("html").innerHTML();
@@ -114,14 +123,13 @@ try {
     "PASS two distinct Vault principals from separate real II registrations",
   );
 
-  await action(owner.page, "Get quote");
-  await action(owner.page, "Approve and pay this quote");
-  await expect(owner.page.getByText("Paid", { exact: true })).toBeVisible();
+  // PR190 supplies initial operating credit and first-key subsidy.
+  // Manual funding and recovery remain covered by the full browser suite.
   await action(owner.page, "Create Vault");
   await owner.page.getByLabel("Document title").fill(title);
   await editor(owner.page).fill(body);
   await action(owner.page, "Save document");
-  await owner.page.getByText("Vault members", { exact: true }).click();
+  await manageMembers(owner.page);
   await owner.page.getByLabel("Member Vault principal").fill(member.principal);
   await action(owner.page, "Add member");
   const row = owner.page
@@ -129,7 +137,7 @@ try {
     .filter({ hasText: member.principal });
   await expect(row.getByLabel("Member role")).toHaveValue("Viewer");
   await action(member.page, "Refresh Vaults");
-  await action(member.page, "Vault 1 · Active · Viewer");
+  await action(member.page, "Vault 1 · Viewer");
   await action(member.page, title);
   await expect(member.page.getByText(body, { exact: true })).toBeVisible();
   await expect(button(member.page, "Save document")).toHaveCount(0);
@@ -158,6 +166,14 @@ try {
   const selectVault = button(picker, "Vault 1 · Viewer");
   await restoreOrSignIn(picker, picker, selectVault, member.credentials);
   await selectVault.click();
+  await expect(button(picker, title)).toBeVisible();
+  const pickerKeys = await picker.evaluate(readDeviceKeyStore);
+  assertDeviceKeyStore(pickerKeys, `${new URL(vaultURL).hostname.split(".")[0]}:${member.principal}`);
+  assert.ok(pickerKeys.records.some(record => record.key), "picker must retain only a non-extractable root handle");
+  await picker.reload();
+  await restoreOrSignIn(picker, picker, selectVault, member.credentials);
+  await selectVault.click();
+  await expect(button(picker, title)).toBeVisible();
   await Promise.all([
     picker.waitForEvent("close"),
     button(picker, title).click(),
@@ -165,6 +181,7 @@ try {
   const messages = await wiki.evaluate(() => window.vaultMessages);
   const selection = messages.find((m) => m.type === "kinic-vault-selection");
   assert.deepEqual(messages, [
+    { type: "kinic-vault-picker-ready" },
     { type: "kinic-vault-picker-ready" },
     {
       type: "kinic-vault-selection",
@@ -235,6 +252,9 @@ try {
   const siblingWindow = await (
     await wiki.locator("iframe").nth(1).elementHandle()
   ).contentFrame();
+  const embeddedKeys = await siblingWindow.evaluate(readDeviceKeyStore);
+  assertDeviceKeyStore(embeddedKeys, `${new URL(vaultURL).hostname.split(".")[0]}:${member.principal}`);
+  assert.ok(embeddedKeys.records.some(record => record.key), "embedded views retain only non-extractable roots");
   let held = false,
     release,
     delivered;
@@ -265,7 +285,7 @@ try {
   await expect(row.getByLabel("Member role")).toHaveValue("Editor");
   await member.page.bringToFront();
   await action(member.page, "Refresh Vaults");
-  await action(member.page, "Vault 1 · Active · Editor");
+  await action(member.page, "Vault 1 · Editor");
   await action(member.page, title);
   await editor(member.page).fill(edited);
   await action(member.page, "Save document");
@@ -328,6 +348,15 @@ try {
   );
   await signIn(wiki, frame, member.credentials);
   await expect(frame.getByText(edited, { exact: true })).toBeVisible();
+  await owner.page.addInitScript(() => {
+    window.ownerKeyCacheReads = 0;
+    const get = IDBObjectStore.prototype.get;
+    IDBObjectStore.prototype.get = function (key) {
+      if (this.transaction.db.name === "kinic-vault-device-keys-v1" && typeof key === "string" && key.startsWith("key:"))
+        window.ownerKeyCacheReads++;
+      return get.call(this, key);
+    };
+  });
   await owner.page.reload();
   let derived = 0;
   const observeOwner = (request) => {
@@ -338,14 +367,12 @@ try {
       derived++;
   };
   owner.page.on("request", observeOwner);
-  await action(owner.page, "Manage members of Vault 1");
-  await expect(
-    owner.page.getByText("Vault closed", { exact: true }),
-  ).toBeVisible();
+  await manageMembers(owner.page);
   await expect(owner.page.getByLabel("Document title")).toHaveCount(0);
   await row.getByRole("button", { name: "Remove member" }).click();
   await expect(row).toHaveCount(0);
   assert.equal(derived, 0);
+  assert.equal(await owner.page.evaluate(() => window.ownerKeyCacheReads), 0, "member removal must not fetch even a saved root");
   owner.page.off("request", observeOwner);
   console.log(
     "PASS cold owner removed an Editor from a closed Vault without any key derivation",

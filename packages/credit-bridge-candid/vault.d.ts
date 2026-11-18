@@ -44,17 +44,17 @@ export interface LinkStatus {
 }
 export type Result_2 = { 'Ok' : LinkChallenge } |
   { 'Err' : BridgeError };
-export type Result_23 = { 'Ok' : CreditReceipt } |
+export type Result_25 = { 'Ok' : CreditReceipt } |
   { 'Err' : BridgeError };
-export type Result_26 = { 'Ok' : BridgeRevocation } |
+export type Result_28 = { 'Ok' : BridgeRevocation } |
   { 'Err' : BridgeError };
-export type Result_27 = { 'Ok' : [] | [LinkStatus] } |
+export type Result_30 = { 'Ok' : [] | [LinkStatus] } |
   { 'Err' : BridgeError };
 export interface _SERVICE {
   'begin_wiki_link' : ActorMethod<[Uint8Array | number[]], Result_2>,
-  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_23>,
-  'revoke_wiki_link' : ActorMethod<[], Result_26>,
-  'wiki_link_status' : ActorMethod<[], Result_27>,
+  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_25>,
+  'revoke_wiki_link' : ActorMethod<[], Result_28>,
+  'wiki_link_status' : ActorMethod<[], Result_30>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

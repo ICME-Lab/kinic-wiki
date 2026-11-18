@@ -1,4 +1,5 @@
 //! II-only operations. No request principal, application grant or independent unlock credential.
+mod mutation_digest;
 pub mod runtime;
 mod sharing;
 use runtime::Environment;
@@ -56,7 +57,7 @@ pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Head
         let h = Header {
             id: (token as u128).to_be_bytes().to_vec(), nonce: vec![],
             state: VaultState::Pending, sequence: 0, key_name: config.key_name,
-            public_key: vec![],
+            public_key: vec![], name: None,
         };
         let raw = serde_json::to_string(&h).map_err(|_| Error::Storage)?;
         db.execute(
@@ -219,15 +220,18 @@ fn mutate_inner(
 ) -> Result<MutationResult> {
     authenticate(env)?;
     id(&r.operation)?;
-    let legacy_digest = ops::mutation_digest(&r)?;
-    let digest = match &shared {
-        Some(scope) => ops::digest(
-            b"shared-mutation/v1",
-            &(scope.caller, scope.vault, legacy_digest),
-        )?,
-        None => legacy_digest,
-    };
-    if let Some(result) = replay(env, &r.operation, &digest)? {
+    let (digest, cached) = env.transaction(|db| {
+        let digest = match &shared {
+            Some(scope) => ops::digest(
+                b"shared-mutation/v1",
+                &(scope.caller, scope.vault, ops::mutation_digest(&r)?),
+            )?,
+            None => mutation_digest::resolve(db, &r)?,
+        };
+        let cached = ops::replay(db, &r.operation, &digest, env.now())?;
+        Ok((digest, cached))
+    })?;
+    if let Some(result) = cached {
         return Ok(result);
     }
     let cleanup = matches!(
@@ -277,6 +281,14 @@ fn mutate_inner(
         };
         let origin = shared.as_ref().and_then(|scope| scope.origin.as_ref());
         let result = match r.action {
+            Action::RenameVault {
+                vault,
+                name,
+                expected_sequence,
+            } => {
+                store::rename(db, &vault, &name, expected_sequence)?;
+                MutationResult::Done
+            }
             Action::SaveInline(request) => {
                 let h = store::active(db, &request.request.vault)?;
                 let input = key_input(env.canister(), env.owner(), &h)?;

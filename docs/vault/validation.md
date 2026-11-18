@@ -2,7 +2,7 @@
 
 ## Current implementation
 
-Vault has never been deployed. The implementation enables pinned KINIC production funding and user-triggered authoritative ledger/archive reconciliation. Default backend Wasm builds without browser assets; only distribution builds enable embedded-assets. Fresh Vault stores initialize at schema 11. The backend validates supported older formats and migrates schemas 8, 9 and 10 in place. No production deployment, DNS change, existing-canister reinstall or live-funds transfer was performed.
+Vault has never been deployed. The implementation enables pinned KINIC production funding and user-triggered authoritative ledger/archive reconciliation. Default backend Wasm builds without browser assets; only distribution builds enable embedded-assets. Fresh Vault stores initialize at schema 13. Native contract tests validate and migrate the frozen predecessor layouts: owner 8/9/10, grant-bearing 10, team 11 and subsidy 11/12, retaining shared upload provenance, terminal outcomes, grants and subsidy consumption. The two schema-11 shapes are validated by their actual DDL. Unknown or hybrid schemas fail atomically. See [operations](operations.md) for backend-first deployment and rollback constraints. No production deployment, DNS change, existing-canister reinstall or live-funds transfer was performed.
 
 ## Reproduce
 

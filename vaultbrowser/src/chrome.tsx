@@ -1,11 +1,14 @@
+import {useVaultNavigation} from "./navigation";
 import type { ReactNode } from "react";
 import { ArrowUpRight, LockKeyhole } from "lucide-react";
 
 export function VaultChrome({ actions }: { actions?: ReactNode }) {
+  const nav=useVaultNavigation();
   return (
+    <><a className="vault-skip-link" onClick={event=>{event.preventDefault();(document.getElementById((nav.view === "settings" || nav.view === "vault-settings") ? "vault-settings-title" : nav.view === "help" ? "vault-help-title" : "vault-content")??document.getElementById("vault-main"))?.focus();}} href={(nav.view === "settings" || nav.view === "vault-settings") ? "#vault-settings-title" : nav.view === "help" ? "#vault-help-title" : "#vault-main"}>Skip to content</a>
     <header className="vault-chrome chrome-material">
       <div className="vault-chrome-inner">
-        <a className="vault-brand" href="/" aria-label="Kinic Vault home">
+        <a className="vault-brand" href="/" onClick={event=>{if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&!event.altKey){event.preventDefault();nav.go("/");}}} aria-label="Kinic Vault home">
           <img src="/kinic-mark.png" width="30" height="30" alt="" />
           <span>
             Kinic <span className="text-muted font-normal">/</span> Vault
@@ -16,17 +19,20 @@ export function VaultChrome({ actions }: { actions?: ReactNode }) {
           Private space
         </span>
         <div className="vault-chrome-actions">
+          <div id="vault-chrome-slot" className="vault-chrome-slot" />
           <a
-            href="https://wiki.kinic.xyz/dashboard"
+            href={import.meta.env.VITE_WIKI_URL || "https://wiki.kinic.xyz/dashboard"}
+            aria-label="Back to Wiki"
+            title="Back to Wiki"
             rel="noreferrer noopener"
             referrerPolicy="no-referrer"
           >
-            Back to Wiki
+            <span className="vault-back-label">Back to Wiki</span>
             <ArrowUpRight size={14} aria-hidden />
           </a>
           {actions}
         </div>
       </div>
-    </header>
+    </header></>
   );
 }

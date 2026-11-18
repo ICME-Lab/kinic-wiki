@@ -35,6 +35,7 @@ run(
     "crates/vault_store",
     "crates/vault_service",
     "crates/kinic_sqlite_compat",
+    "crates/kinic_cycle_grants",
     "crates/credit_bridge_types",
   ],
   { cwd: root },
@@ -46,7 +47,7 @@ writeFileSync(
   readFileSync(cargo, "utf8")
     .replace(
       /members = \[[\s\S]*?\]/,
-      'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat","crates/credit_bridge_types"]',
+      'members = ["crates/vault_canister","crates/vault_types","crates/vault_store","crates/vault_service","crates/kinic_sqlite_compat","crates/kinic_cycle_grants","crates/credit_bridge_types"]',
     )
     .replace('ic-agent = { path = "vendor/ic-agent" }', ""),
 );

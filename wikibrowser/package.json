@@ -38,6 +38,7 @@
     "@icp-sdk/core": "^5.4.0",
     "@kinic/deepseek-client": "workspace:*",
     "@kinic/jev-reranker": "workspace:*",
+    "@kinic/payments": "workspace:*",
     "@kinic/source-contracts": "workspace:*",
     "@kinic/ui": "workspace:*",
     "@kinic/vfs-candid": "workspace:*",

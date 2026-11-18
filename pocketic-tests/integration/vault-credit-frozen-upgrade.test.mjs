@@ -73,7 +73,7 @@ try {
  let downgradeError;
  try { await pic.upgradeCanister({sender:owner,canisterId:v.canisterId,wasm:resolve(output,'vault_canister.wasm'),arg:IDL.encode([],[])}); }
  catch(error){downgradeError=String(error);}
- assert.ok(downgradeError,'Schema8 binary must reject schema10 store');
+ assert.ok(downgradeError,'Schema8 binary must reject schema12 store');
  assert.equal(ok(await v.actor.account_balance()),afterReplay);
  const last=results.at(-1); assert.equal(last.plaintext_bytes,262144);
  const committed=verifiedRevision;

@@ -511,6 +511,7 @@ mod team_billing_tests {
         let owner = Principal::from_slice(&[45]);
         let member = Principal::from_slice(&[46]);
         let h = Header {
+            name: None,
             id: vec![42; 16],
             nonce: vec![2; 32],
             state: VaultState::Active,
@@ -551,5 +552,90 @@ mod team_billing_tests {
             crate::state::State.balance(&member.to_text()).unwrap(),
             100_000_000
         );
+    }
+
+    #[test]
+    fn shared_key_settles_recorded_owner_subsidy_after_member_revocation() {
+        use crate::state::{self, State};
+        use kinic_sqlite_compat::params;
+        state::initialize().unwrap();
+        let owner = Principal::from_slice(&[45]);
+        let member = Principal::from_slice(&[46]);
+        let account = State.initialize_account(owner, 0).unwrap();
+        let h = Header {
+            id: vec![42; 16],
+            name: None,
+            nonce: vec![2; 32],
+            state: VaultState::Active,
+            sequence: 0,
+            key_name: "k".into(),
+            public_key: vec![],
+        };
+        state::transaction(|db| {
+            db.execute(
+                "INSERT INTO vaults(owner,id,operation,header) VALUES(?1,?2,?3,?4)",
+                params![
+                    owner.as_slice(),
+                    h.id,
+                    vec![3u8; 16],
+                    serde_json::to_string(&h).unwrap()
+                ],
+            )
+            .unwrap();
+            OwnerContext::authenticated(owner)?.run(db, |db| {
+                vault_store::sharing::set_member(db, owner, &h.id, member, AccessRole::Viewer)
+            })
+        })
+        .unwrap();
+        let (env, _) = Vault::scoped(member, &h.id, false).unwrap();
+        let fee = 26_153_846_153;
+        let execution = 20_000_000;
+        state::transaction(|db| {
+            env.owner
+                .run(db, |db| vault_store::keys::reserve(db, &h.id, 1, 1, fee))
+        })
+        .unwrap();
+        State
+            .vault_reserve_cycles(&env.owner().to_text(), "derive:1", fee + execution, 1000)
+            .unwrap();
+        state::transaction(|db| {
+            env.owner.run(db, |db| {
+                vault_store::keys::mark_sent(db, 1, fee)?;
+                vault_store::sharing::remove_member(db, owner, &h.id, member)
+            })
+        })
+        .unwrap();
+
+        settle_key_reservation_for_owner(env.owner, 1, 2, fee).unwrap();
+        State
+            .vault_reconcile_refunded_cycles(&env.owner().to_text(), "derive:1", fee, 2000)
+            .unwrap();
+        env.operation.set(Some(1));
+        assert_eq!(
+            env.finish_at::<()>(Err(Error::Unauthorized), 2000),
+            Err(Error::Unauthorized)
+        );
+        assert!(matches!(
+            Vault::scoped(member, &h.id, true),
+            Err(Error::Unauthorized)
+        ));
+        assert_eq!(
+            State.balance(&owner.to_text()).unwrap(),
+            account.balance - execution
+        );
+        state::transaction(|db| {
+            assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+            assert_eq!(
+                db.query_row(
+                    "SELECT count(*) FROM accounts WHERE owner=?1",
+                    [member.to_text()],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                0
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 }

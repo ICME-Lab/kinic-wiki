@@ -2,6 +2,8 @@ use candid::Principal;
 use credit_bridge_types::*;
 use vault_types::*;
 mod accounting;
+mod initial_grant;
+use initial_grant::{AccountInitialization, KeyRetrievalCost};
 mod api;
 mod bridge;
 mod capacity;
@@ -9,6 +11,7 @@ mod funding;
 #[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
 mod http;
 mod key_cost;
+mod key_subsidy;
 mod schema;
 mod state;
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
@@ -52,7 +55,10 @@ fn init() {
 fn post_upgrade() {
     initialize()
 }
-use funding::{FundingConfig, Payment, PurchaseRequest, ReconciliationProgress};
+use funding::{
+    FundingConfig, Icrc10SupportedStandard, Icrc21ConsentMessageRequest,
+    Icrc21ConsentMessageResponse, Payment, PurchaseRequest, ReconciliationProgress,
+};
 #[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
 use http::{HttpRequest, HttpResponse};
 ic_cdk::export_candid!();
@@ -70,3 +76,6 @@ fn candid_contract_matches() {
 mod capacity_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod schema_integration_tests;

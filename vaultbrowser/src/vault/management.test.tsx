@@ -10,7 +10,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { VaultClient } from "@kinic/vault-client";
 import { fixtureNetwork } from "../../fixtures/network";
-import { VaultEncryptedCleanup } from "./management";
+import { VaultSettings } from "./management";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -26,8 +26,11 @@ it("collects without a root and treats no-work NotFound as complete", async () =
   });
   const changed = vi.fn(async () => {});
   render(
-    <VaultEncryptedCleanup
+    <VaultSettings
+      scope="account"
       client={client}
+      vaultName="Vault 1"
+      onBack={() => {}}
       selected={x.headers[0]}
       disabled={false}
       run={(f) => {
@@ -36,13 +39,12 @@ it("collects without a root and treats no-work NotFound as complete", async () =
       onChanged={changed}
     />,
   );
-  fireEvent.click(screen.getByText("Encrypted storage cleanup"));
-  fireEvent.click(screen.getByText("Collect expired data"));
-  await screen.findByText("Cleanup complete");
+  fireEvent.click(screen.getByText("Free up unused storage"));
+  await screen.findByText("Storage maintenance complete");
   expect(changed).toHaveBeenCalledOnce();
   expect(client.session.root).toBeUndefined();
 });
-it("confirmation cancellation never dispatches deletion", async () => {
+it("incomplete confirmation never dispatches deletion", async () => {
   const x = fixtureNetwork();
   const client = new VaultClient({
     actor: x.actor,
@@ -50,10 +52,11 @@ it("confirmation cancellation never dispatches deletion", async () => {
     canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
     local: true,
   });
-  vi.spyOn(window, "confirm").mockReturnValue(false);
   render(
-    <VaultEncryptedCleanup
+    <VaultSettings
       client={client}
+      vaultName="Vault 1"
+      onBack={() => {}}
       selected={x.headers[0]}
       disabled={false}
       run={(f) => {
@@ -62,7 +65,8 @@ it("confirmation cancellation never dispatches deletion", async () => {
       onChanged={async () => {}}
     />,
   );
-  fireEvent.click(screen.getByText("Encrypted storage cleanup"));
-  fireEvent.click(screen.getByText("Permanently purge entire Vault"));
+  fireEvent.change(screen.getByLabelText("Type Vault 1 to confirm"), { target: { value: "wrong vault" } });
+  expect(screen.getByText("Permanently delete this Vault").closest("button")).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByText("Permanently delete this Vault"));
   await waitFor(() => expect(x.calls).toHaveLength(0));
 });

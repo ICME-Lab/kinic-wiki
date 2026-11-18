@@ -30,7 +30,8 @@ pub fn shared_mutate(
     let target = match &request.action {
         SaveInline(r) => Some(&r.request.vault),
         BeginRevision(r) => Some(&r.vault),
-        DeleteObject { vault, .. }
+        RenameVault { vault, .. }
+        | DeleteObject { vault, .. }
         | CancelUpload { vault, .. }
         | PurgeObject { vault, .. }
         | DeleteVault { vault } => Some(vault),
@@ -40,8 +41,10 @@ pub fn shared_mutate(
     };
     if target.is_some_and(|t| t != vault)
         || access.role == AccessRole::Viewer
-        || (matches!(request.action, PurgeObject { .. } | DeleteVault { .. })
-            && access.role != AccessRole::Owner)
+        || (matches!(
+            request.action,
+            RenameVault { .. } | PurgeObject { .. } | DeleteVault { .. }
+        ) && access.role != AccessRole::Owner)
     {
         return Err(Error::Unauthorized);
     }

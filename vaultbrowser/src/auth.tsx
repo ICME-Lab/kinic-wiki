@@ -1,4 +1,5 @@
 import { VaultAuthStorage } from "./auth-storage";
+import { VAULT_IDLE_TIMEOUT_MS } from "@kinic/vault-client/session";
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import {
@@ -29,6 +30,7 @@ function partitionGeneration() {
   return partitionMarker()?.replace(/^pending:/, "");
 }
 type Session = {
+  config?: BrowserConfig;
   identity?: Identity;
   loading: boolean;
   ready: boolean;
@@ -272,7 +274,7 @@ function VaultAuthSession({
       AuthClient.create({
         storage: credentials,
         idleOptions: {
-          idleTimeout: 5 * 60 * 1000,
+          idleTimeout: VAULT_IDLE_TIMEOUT_MS,
           disableDefaultIdleCallback: true,
           // The SDK creates the manager lazily on a first login. Supplying the
           // callback here also covers restored delegations and later logins.
@@ -480,6 +482,7 @@ function VaultAuthSession({
   return (
     <Context
       value={{
+        config: preparedConfig.current,
         identity,
         loading: loading || waitingForCleanup,
         ready,

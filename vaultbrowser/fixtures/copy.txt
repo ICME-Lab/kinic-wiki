@@ -1,2 +1,2 @@
-This release has no backup or independent recovery.
-Losing access to Internet Identity permanently loses access to your Vaults unless you recover Internet Identity itself.
+Kinic / Vault
+Private documents

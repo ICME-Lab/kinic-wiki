@@ -81,6 +81,10 @@ try {
     assert.equal(headers["x-frame-options"], path === embed ? undefined : "DENY");
     assert.equal(headers["cross-origin-opener-policy"], path === "/pick" ? "unsafe-none" : "same-origin-allow-popups");
     assert.equal(headers["cache-control"], "no-store");
+    assert.equal(
+      headers["x-robots-tag"],
+      "noindex, nofollow, noarchive, nosnippet",
+    );
     assert.ok(
       headers["content-security-policy"].includes(`frame-ancestors ${path === embed ? "https://wiki.kinic.xyz" : "'none'"};`),
     );

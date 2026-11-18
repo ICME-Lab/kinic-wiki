@@ -1,0 +1,52 @@
+diff --git a/lib/parse.js b/lib/parse.js
+index 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd..6da833e34755e98c2c20f83e2993f012b3181559 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -284,6 +284,36 @@ const repeatedExtglobRecursion = pattern => {
+   return depth;
+ };
+ 
++// GHSA-fc5q-39xc-vjpf: a wildcard inside an outer repetition introduces
++// another unbounded quantifier, even when there is only one branch. Keep
++// quoted/escaped stars and character classes bounded. Safe nested star
++// sequences are still simplified by the existing analysis before this guard.
++const hasUnboundedWildcard = (input, options) => {
++  let quoted = false;
++  for (let i = 0; i < input.length; i++) {
++    const ch = input[i];
++    if (ch === '\\') { i++; continue; }
++    if (ch === '"') { quoted = !quoted; continue; }
++    if (quoted) continue;
++    if (ch === '[' && options.nobracket !== true) {
++      let end = i + 1;
++      if (input[end] === '^' || (options.posix === true && input[end] === '!')) end++;
++      if (input[end] === ']') end++;
++      for (; end < input.length; end++) {
++        if (input[end] === '\\') { end++; continue; }
++        if (input[end] === '[' && input[end + 1] === ':' && options.posix !== false) {
++          const close = input.indexOf(':]', end + 2);
++          if (close !== -1 && Object.prototype.hasOwnProperty.call(POSIX_REGEX_SOURCE, input.slice(end + 2, close))) { end = close + 1; continue; }
++        }
++        if (input[end] === ']') break;
++      }
++      if (end < input.length) { i = end; continue; }
++    }
++    if (ch === '*') return true;
++  }
++  return false;
++};
++
+ const analyzeRepeatedExtglob = (body, options) => {
+   if (options.maxExtglobRecursion === false) {
+     return { risky: false };
+@@ -343,6 +373,10 @@ const analyzeRepeatedExtglob = (body, options) => {
+       : { risky: true };
+   }
+ 
++  if (branches.some(branch => hasUnboundedWildcard(branch, options))) {
++    return { risky: true };
++  }
++
+   return { risky: false };
+ };
+ 

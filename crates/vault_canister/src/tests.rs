@@ -5,6 +5,15 @@ fn p(n: u8) -> Principal {
     Principal::from_slice(&[n])
 }
 #[test]
+fn funding_discovery_and_consent_are_exported() {
+    let service = __export_service();
+    assert!(service.contains("get_funding_config : () ->"));
+    assert!(service.contains("icrc10_supported_standards : () ->"));
+    assert!(
+        service.contains("icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) ->")
+    );
+}
+#[test]
 fn prepaid_payment_is_caller_bound_idempotent_and_no_read_allocation() {
     state::initialize().unwrap();
     for n in 1..100 {
@@ -384,7 +393,7 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v11_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v13_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
@@ -398,7 +407,7 @@ fn initial_release_creates_v11_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, 13);
     assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','receipts')",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('vault_cycle_reservations') WHERE name='account_owner'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let before: i64 = db
@@ -535,7 +544,7 @@ fn current_schema_initialization_is_idempotent() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(
-        version, 11,
+        version, 13,
         "new installations must use exact storage accounting"
     );
     schema::initialize_vault_schema(&db).unwrap();
@@ -651,7 +660,7 @@ fn schema_ten_reopen_preserves_pending_upload_operation_receipt_balance_and_curs
         db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms,storage_charge_remainder) VALUES('owner',42,7,8,123456)", [])
             .unwrap();
         let scope = vault_store::OwnerContext::authenticated(p(1)).unwrap();
-        scope.run(&db,|db|{let h=vault_types::Header{id:vec![1;16],nonce:vec![2;32],state:vault_types::VaultState::Active,sequence:0,key_name:"test_key_1".into(),public_key:vec![3;96]};db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![h.id,vec![9u8;16],serde_json::to_string(&h).unwrap()]).unwrap();vault_store::content::begin(db,vault_types::BeginRevision{vault:vec![1;16],object:vec![2;16],expected_revision:0,operation:vec![3;16],plain_size:0,manifest:vec![4;64],chunk_hashes:vec![vec![5;32]]},1)?;vault_store::operations::begin(db,&[7;16],&[8;32],1)?;vault_store::keys::reserve(db, &[1; 16], 1,1,10)?;Ok(())}).unwrap();
+        scope.run(&db,|db|{let h=vault_types::Header{name:None,id:vec![1;16],nonce:vec![2;32],state:vault_types::VaultState::Active,sequence:0,key_name:"test_key_1".into(),public_key:vec![3;96]};db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,?3)",params![h.id,vec![9u8;16],serde_json::to_string(&h).unwrap()]).unwrap();vault_store::content::begin(db,vault_types::BeginRevision{vault:vec![1;16],object:vec![2;16],expected_revision:0,operation:vec![3;16],plain_size:0,manifest:vec![4;64],chunk_hashes:vec![vec![5;32]]},1)?;vault_store::operations::begin(db,&[7;16],&[8;32],1)?;vault_store::keys::reserve(db, &[1; 16], 1,1,10)?;Ok(())}).unwrap();
     }
     let db = Connection::open(&path).unwrap();
     schema::initialize_vault_schema(&db).unwrap();
@@ -1176,7 +1185,517 @@ fn storage_billing_fraction_is_discarded_when_execution_exhausts_balance() {
 }
 
 #[test]
-fn bridge_upgrade_accepts_v8_and_initializes_v11() {
+fn initial_vault_grant_is_once_per_new_principal_and_never_for_existing_accounts() {
+    state::initialize().unwrap();
+    let owner = p(240);
+    let first = state::State.initialize_account(owner, 100).unwrap();
+    assert_eq!(first.balance, 10_000_000_000);
+    assert_eq!(first.grant_cycles, 10_000_000_000);
+    let again = state::State.initialize_account(owner, 101).unwrap();
+    assert_eq!(again.balance, 10_000_000_000);
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE accounts SET balance_cycles=0 WHERE owner=?1",
+            [owner.to_text()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        state::State.initialize_account(owner, 102).unwrap().balance,
+        0
+    );
+    credit(p(241), 123);
+    state::transaction(|db| {
+        kinic_cycle_grants::record_once(
+            db,
+            kinic_cycle_grants::Scope::Vault,
+            &p(241).to_text(),
+            "vault",
+            0,
+            0,
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let existing = state::State.initialize_account(p(241), 103).unwrap();
+    assert_eq!(existing.balance, 123);
+    assert_eq!(existing.grant_cycles, 0);
+    assert!(
+        state::State
+            .initialize_account(Principal::anonymous(), 104)
+            .is_err()
+    );
+    state::transaction(|db| {
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM account_ledger WHERE owner=?1 AND kind='free_grant'",
+                [owner.to_text()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn schema_ten_excludes_legacy_accounts_vault_owners_and_payment_participants() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::legacy_v9_for_test(&db);
+    db.execute(
+        "INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,123,99)",
+        [p(1).to_text()],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO vaults(owner,id,operation,header) VALUES(?1,?2,?3,'{}')",
+        kinic_sqlite_compat::params![p(2).as_slice(), vec![1u8; 16], vec![2u8; 16]],
+    )
+    .unwrap();
+    let record = serde_json::json!({"request":{"beneficiary":p(5).to_text()}}).to_string();
+    db.execute(
+        "INSERT INTO payments VALUES(?1,?2,?3,1)",
+        kinic_sqlite_compat::params![p(3).to_text(), vec![3u8; 16], record],
+    )
+    .unwrap();
+    let flight =
+        serde_json::json!({"payment":{"request":{"beneficiary":p(7).to_text()}}}).to_string();
+    db.execute(
+        "INSERT INTO quote_fee_flights VALUES(?1,?2,1,1,999,?3)",
+        kinic_sqlite_compat::params![p(6).to_text(), vec![6u8; 16], flight],
+    )
+    .unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    for n in [1, 2, 3, 5, 6, 7] {
+        assert_eq!(
+            kinic_cycle_grants::recorded(&db, kinic_cycle_grants::Scope::Vault, &p(n).to_text())
+                .unwrap(),
+            Some(0)
+        );
+    }
+    assert_eq!(
+        db.query_row("SELECT balance_cycles FROM accounts", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        123
+    );
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM initial_cycle_grants", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+}
+#[test]
+fn failed_grant_migration_rolls_back_schema_and_version() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::legacy_v9_for_test(&db);
+    db.execute(
+        "INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES('',123,99)",
+        [],
+    )
+    .unwrap();
+    assert!(schema::initialize_vault_schema(&db).is_err());
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        9
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='initial_cycle_grants'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}
+#[test]
+fn initial_grant_preserves_new_paid_credit_and_rolls_back_on_account_capacity() {
+    state::initialize().unwrap();
+    credit(p(242), 123);
+    assert_eq!(
+        state::State.initialize_account(p(242), 1).unwrap().balance,
+        10_000_000_123
+    );
+    state::transaction(|db| {
+        for n in 1..vault_types::capacity::ACCOUNTS {
+            db.execute(
+                "INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,0,0)",
+                [format!("fixture-{n}")],
+            )
+            .unwrap();
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        state::State.initialize_account(p(243), 2).unwrap_err(),
+        vault_types::Error::QuotaExceeded
+    );
+    state::transaction(|db| {
+        assert_eq!(
+            kinic_cycle_grants::recorded(db, kinic_cycle_grants::Scope::Vault, &p(243).to_text())
+                .unwrap(),
+            None
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn initial_grant_receipt_and_balance_roll_back_on_ledger_failure() {
+    state::initialize().unwrap();
+    state::transaction(|db| {db.execute_batch("CREATE TRIGGER fail_free_grant BEFORE INSERT ON account_ledger WHEN NEW.kind='free_grant' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();Ok(())}).unwrap();
+    assert!(state::State.initialize_account(p(244), 1).is_err());
+    state::transaction(|db| {
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM initial_cycle_grants", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn initial_grant_defers_without_consuming_reserved_payment_capacity() {
+    state::initialize().unwrap();
+    let owner = p(245);
+    let credits = i64::MAX as u64 - 5_000_000_000;
+    let request = PurchaseRequest {
+        operation: vec![245; 16],
+        beneficiary: owner,
+        amount_e8s: 100_000_000,
+        min_credits: credits,
+        created_at_time: 1_000_000_000,
+    };
+    let config = FundingConfig {
+        ledger: p(246),
+        recipient: p(247),
+        cycles_per_kinic: credits,
+    };
+    record_quote(owner, request.clone(), config, 10, 1_000_000_000).unwrap();
+    let pending = begin_payment(owner, &request.operation, 1_000_000_000).unwrap();
+    let initialized = state::State.initialize_account(owner, 1_000).unwrap();
+    assert_eq!(initialized.grant_cycles, 0);
+    state::transaction(|db| {
+        assert_eq!(
+            kinic_cycle_grants::recorded(db, kinic_cycle_grants::Scope::Vault, &owner.to_text())
+                .unwrap(),
+            None
+        );
+        Ok(())
+    })
+    .unwrap();
+    complete_payment(&pending, Outcome::Paid(99)).unwrap();
+    assert_eq!(state::State.balance(&owner.to_text()).unwrap(), credits);
+    // Once credit is spent, the unconsumed grant can be claimed exactly once.
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE accounts SET balance_cycles=0 WHERE owner=?1",
+            [owner.to_text()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        state::State
+            .initialize_account(owner, 1_001)
+            .unwrap()
+            .balance,
+        10_000_000_000
+    );
+}
+
+#[test]
+fn initial_grant_defers_when_reserved_refunds_need_the_remaining_headroom() {
+    state::initialize().unwrap();
+    let owner = p(248);
+    credit(owner, i64::MAX as u64 - 5_000_000_000);
+    state::State
+        .vault_reserve_cycles(&owner.to_text(), "derive:fixture", 50_000_000_000, 0)
+        .unwrap();
+    let initialized = state::State.initialize_account(owner, 0).unwrap();
+    assert_eq!(initialized.grant_cycles, 0);
+    state::State
+        .vault_settle_cycles(&owner.to_text(), "derive:fixture", 0, 1)
+        .unwrap();
+    assert_eq!(
+        state::State.balance(&owner.to_text()).unwrap(),
+        i64::MAX as u64 - 5_000_000_000
+    );
+}
+
+#[test]
+fn initial_grant_preserves_headroom_for_unknown_third_party_payments() {
+    state::initialize().unwrap();
+    let owner = p(249);
+    let wallet = p(250);
+    let credits = i64::MAX as u64 - 5_000_000_000;
+    let request = PurchaseRequest {
+        operation: vec![249; 16],
+        beneficiary: owner,
+        amount_e8s: 100_000_000,
+        min_credits: credits,
+        created_at_time: 1_000_000_000,
+    };
+    let config = FundingConfig {
+        ledger: p(246),
+        recipient: p(247),
+        cycles_per_kinic: credits,
+    };
+    record_quote(wallet, request.clone(), config, 10, 1_000_000_000).unwrap();
+    let pending = begin_payment(wallet, &request.operation, 1_000_000_000).unwrap();
+    complete_payment(&pending, Outcome::Unknown).unwrap();
+    assert_eq!(
+        state::State
+            .initialize_account(owner, 1_000)
+            .unwrap()
+            .grant_cycles,
+        0
+    );
+    complete_payment(&pending, Outcome::Paid(100)).unwrap();
+    assert_eq!(state::State.balance(&owner.to_text()).unwrap(), credits);
+}
+
+fn reserve_first_key_fixture(owner: Principal, token: u64, fee: u64) {
+    state::transaction(|db| {
+        vault_store::OwnerContext::authenticated(owner)?.run(db, |db| {
+            vault_store::keys::reserve(db, &[1; 16], token, 1, fee)
+        })
+    })
+    .unwrap();
+    state::State
+        .vault_reserve_cycles(
+            &owner.to_text(),
+            &format!("derive:{token}"),
+            fee + 20_000_000,
+            1_000,
+        )
+        .unwrap();
+}
+#[test]
+fn first_key_fee_is_sponsored_once_without_debiting_the_ten_billion_credit() {
+    state::initialize().unwrap();
+    let owner = p(251);
+    assert_eq!(
+        state::State.initialize_account(owner, 0).unwrap().balance,
+        10_000_000_000
+    );
+    reserve_first_key_fixture(owner, 1, 26_153_846_153);
+    assert_eq!(
+        state::State.balance(&owner.to_text()).unwrap(),
+        9_980_000_000
+    );
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::State
+        .vault_settle_key_flight(scope, 1, 2, 26_153_846_153)
+        .unwrap();
+    state::State
+        .vault_reconcile_refunded_cycles(&owner.to_text(), "derive:1", 26_153_846_153, 2_000)
+        .unwrap();
+    state::State
+        .vault_finish_execution(&owner.to_text(), "derive:1", 20_000_000, 2_000)
+        .unwrap();
+    assert_eq!(
+        state::State.balance(&owner.to_text()).unwrap(),
+        9_980_000_000
+    );
+    state::transaction(|db| {
+        assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+    // The permanent receipt survives restart and resource deletion; another
+    // retrieval needs paid credit even though the first one was sponsored.
+    state::initialize().unwrap();
+    state::transaction(|db| {
+        assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        state::State
+            .vault_reserve_cycles(&owner.to_text(), "derive:2", 26_173_846_153, 3_000)
+            .is_err()
+    );
+}
+#[test]
+fn first_key_no_cost_failure_restores_eligibility_but_charged_failure_consumes_it() {
+    state::initialize().unwrap();
+    let owner = p(252);
+    state::State.initialize_account(owner, 0).unwrap();
+    reserve_first_key_fixture(owner, 1, 26_153_846_153);
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::State
+        .vault_settle_key_flight(scope, 1, 2, 0)
+        .unwrap();
+    state::transaction(|db| {
+        assert!(crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+    reserve_first_key_fixture(owner, 2, 26_153_846_153);
+    state::State
+        .vault_settle_key_flight(scope, 2, 3, 20_000_000_000)
+        .unwrap();
+    state::State
+        .vault_reconcile_refunded_cycles(&owner.to_text(), "derive:2", 20_000_000_000, 3_000)
+        .unwrap();
+    assert_eq!(
+        state::State.balance(&owner.to_text()).unwrap(),
+        10_000_000_000
+    );
+    state::transaction(|db| {
+        assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn v10_migration_preserves_fifty_billion_and_excludes_existing_users_from_new_subsidy() {
+    let owner = p(253);
+    state::transaction(|db| {
+        schema::legacy_v10_for_test(db);
+        db.execute("INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,50000000000,0)",[owner.to_text()]).unwrap();
+        kinic_cycle_grants::record_once(db,kinic_cycle_grants::Scope::Vault,&owner.to_text(),"vault",50_000_000_000,0).unwrap();
+        Ok(())
+    }).unwrap();
+    state::initialize().unwrap();
+    let old = state::State.initialize_account(owner, 1).unwrap();
+    assert_eq!(old.balance, 50_000_000_000);
+    assert_eq!(old.grant_cycles, 50_000_000_000);
+    state::transaction(|db| {
+        assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+    let new = p(254);
+    assert_eq!(
+        state::State.initialize_account(new, 1).unwrap().balance,
+        10_000_000_000
+    );
+    state::transaction(|db| {
+        assert!(crate::key_subsidy::available_in(db, &new.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn cancelled_first_key_keeps_subsidy_reserved_until_a_verified_zero_cost_reply() {
+    state::initialize().unwrap();
+    let owner = p(244);
+    state::State.initialize_account(owner, 0).unwrap();
+    reserve_first_key_fixture(owner, 1, 26_153_846_153);
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| {
+            vault_store::keys::mark_sent(db, 1, 26_153_846_153)?;
+            assert!(!crate::accounting::recover_pending_in(
+                db,
+                owner,
+                Some(&[1; 16]),
+                2
+            )?);
+            assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert!(
+        !state::State
+            .vault_settle_key_flight(scope, 1, 3, 0)
+            .unwrap()
+    );
+    state::transaction(|db| {
+        assert!(crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        state::State.balance(&owner.to_text()).unwrap(),
+        10_000_000_000
+    );
+}
+#[test]
+fn first_key_subsidy_remains_used_when_an_inflight_operation_is_recovered_after_upgrade() {
+    state::initialize().unwrap();
+    let owner = p(243);
+    state::State.initialize_account(owner, 0).unwrap();
+    reserve_first_key_fixture(owner, 1, 26_153_846_153);
+    let scope = vault_store::OwnerContext::authenticated(owner).unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| vault_store::keys::mark_sent(db, 1, 26_153_846_153))
+    })
+    .unwrap();
+    state::initialize().unwrap();
+    state::transaction(|db| {
+        scope.run(db, |db| {
+            assert!(crate::accounting::recover_pending_in(db, owner, None, 130)?);
+            assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert_eq!(
+        state::State.balance(&owner.to_text()).unwrap(),
+        10_000_000_000
+    );
+    state::initialize().unwrap();
+    state::transaction(|db| {
+        assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn insufficient_execution_credit_does_not_consume_the_first_key_subsidy() {
+    state::initialize().unwrap();
+    let owner = p(242);
+    state::State.initialize_account(owner, 0).unwrap();
+    state::transaction(|db| {
+        db.execute(
+            "UPDATE accounts SET balance_cycles=1 WHERE owner=?1",
+            [owner.to_text()],
+        )
+        .unwrap();
+        vault_store::OwnerContext::authenticated(owner)?.run(db, |db| {
+            vault_store::keys::reserve(db, &[1; 16], 1, 1, 26_153_846_153)
+        })
+    })
+    .unwrap();
+    assert!(
+        state::State
+            .vault_reserve_cycles(&owner.to_text(), "derive:1", 26_173_846_153, 1_000)
+            .is_err()
+    );
+    state::transaction(|db| {
+        assert!(crate::key_subsidy::available_in(db, &owner.to_text())?);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn bridge_upgrade_accepts_v8_and_initializes_v13() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
     schema::initialize_legacy_v8(&db);
     db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", []).unwrap();
@@ -1184,7 +1703,7 @@ fn bridge_upgrade_accepts_v8_and_initializes_v11() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, 13);
     let account: (i64, i64) = db
         .query_row(
             "SELECT balance_cycles,storage_charge_remainder FROM accounts WHERE owner='owner'",
@@ -1198,7 +1717,9 @@ fn bridge_upgrade_accepts_v8_and_initializes_v11() {
 #[test]
 fn bridge_upgrade_from_schema_nine_preserves_records_and_fences_old_readers() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
-    schema::initialize_legacy_v9(&db);
+    schema::legacy_v9_for_test(&db);
+    // Schema 9 has identical DDL but cannot interpret bridge_v1 payment rows.
+    db.execute_batch("PRAGMA user_version=9;").unwrap();
     db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms,storage_charge_remainder) VALUES('owner',42,7,8,123456)", []).unwrap();
     db.execute(
         "INSERT INTO global_settings VALUES('bridge','retained configuration')",
@@ -1220,17 +1741,109 @@ fn bridge_upgrade_from_schema_nine_preserves_records_and_fences_old_readers() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        11
+        13
     );
     assert_eq!(snapshot(), before);
     schema::initialize_vault_schema(&db).unwrap();
     assert_eq!(snapshot(), before);
 }
 
+fn bridge_grant_record(owner: Principal, amount: u64) -> String {
+    serde_json::json!({"bridge_v1": crate::bridge::Record::Credit {
+        offer: CreditOffer { operation: vec![252u8;16], wiki_owner:p(1), vault_owner:owner, amount_cycles:amount, expires_at_ns:300_000_000_000, link_generation:1 },
+        status: CreditStatus::Prepared, acknowledged:false, day:0,
+    }}).to_string()
+}
+
+#[test]
+fn main_schema_ten_bridge_rows_migrate_without_null_beneficiaries_or_lost_state() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::legacy_v9_for_test(&db);
+    db.execute_batch("PRAGMA user_version=10;").unwrap();
+    let owner = p(251);
+    let raw = bridge_grant_record(owner, 42);
+    db.execute(
+        "INSERT INTO payments VALUES(?1,?2,?3,9223372036854775807)",
+        kinic_sqlite_compat::params![owner.to_text(), vec![252u8; 16], raw],
+    )
+    .unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        13
+    );
+    assert_eq!(
+        db.query_row("SELECT record FROM payments", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        raw
+    );
+    assert_eq!(
+        kinic_cycle_grants::recorded(&db, kinic_cycle_grants::Scope::Vault, &owner.to_text())
+            .unwrap(),
+        Some(0)
+    );
+    assert!(!crate::key_subsidy::available_in(&db, &owner.to_text()).unwrap());
+    schema::initialize_vault_schema(&db).unwrap();
+}
+
+#[test]
+fn schema_eleven_upgrade_preserves_unclaimed_post_policy_grant_eligibility() {
+    let owner = p(250);
+    state::transaction(|db| {
+        schema::subsidy_v11_for_test(db);
+        db.execute(
+            "INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,123,0)",
+            [owner.to_text()],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    state::initialize().unwrap();
+    let initialized = state::State.initialize_account(owner, 1).unwrap();
+    assert_eq!(initialized.balance, 10_000_000_123);
+    assert_eq!(initialized.grant_cycles, 10_000_000_000);
+}
+
+#[test]
+fn initial_grant_preserves_prepared_bridge_credit_arithmetic_headroom() {
+    state::initialize().unwrap();
+    let owner = p(249);
+    let amount = i64::MAX as u64 - 5_000_000_000;
+    state::transaction(|db| {
+        db.execute(
+            "INSERT INTO payments VALUES(?1,?2,?3,9223372036854775807)",
+            kinic_sqlite_compat::params![
+                owner.to_text(),
+                vec![252u8; 16],
+                bridge_grant_record(owner, amount)
+            ],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let initialized = state::State.initialize_account(owner, 1).unwrap();
+    assert_eq!(initialized.grant_cycles, 0);
+    assert_eq!(initialized.balance, 0);
+    state::transaction(|db| {
+        assert_eq!(
+            kinic_cycle_grants::recorded(db, kinic_cycle_grants::Scope::Vault, &owner.to_text())
+                .unwrap(),
+            None
+        );
+        // The already-reserved bridge operation excludes its own reservation.
+        crate::capacity::admit_credit(db, owner, owner, &[252; 16], amount)?;
+        Ok(())
+    })
+    .unwrap();
+}
+
 #[test]
 fn migrated_team_vault_resolves_original_owner_after_reopen() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
-    schema::initialize_legacy_v9(&db);
+    schema::legacy_v9_for_test(&db);
     db.execute_batch("PRAGMA user_version=10;").unwrap();
     let h = Header {
         id: vec![9; 16],
@@ -1239,6 +1852,7 @@ fn migrated_team_vault_resolves_original_owner_after_reopen() {
         public_key: vec![3; 96],
         state: VaultState::Active,
         sequence: 8,
+        name: None,
     };
     db.execute(
         "INSERT INTO vaults(owner,id,operation,header) VALUES(?1,?2,?3,?4)",
@@ -1254,7 +1868,7 @@ fn migrated_team_vault_resolves_original_owner_after_reopen() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        11
+        13
     );
     let owner = vault_store::OwnerContext::authenticated(p(8)).unwrap();
     owner

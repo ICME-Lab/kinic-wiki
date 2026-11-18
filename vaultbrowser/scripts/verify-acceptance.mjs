@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
 import { action, completeLogin, editor, loginButton, settle } from "./acceptance-ui.mjs";
 import { idlFactory } from "../../packages/vault-candid/index.js";
+import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 const require = createRequire(import.meta.url);
 const { Cbor } = require("@icp-sdk/core/agent");
 const { IDL } = require("@icp-sdk/core/candid");
@@ -242,18 +243,20 @@ try {
   const disclosure = vault.getByText(
     /This release has no backup or independent recovery/,
   );
-  assert.equal(await disclosure.isVisible(), true);
+  assert.equal(await disclosure.count(), 0);
+  await vault.getByRole("button", { name: "Account settings", exact: true }).click();
   assert.equal(
     await vault
-      .getByText("Account & storage", { exact: true })
-      .evaluate((e) => e.parentElement.open),
+      .locator("summary").filter({ hasText: "Account & storage" })
+      .evaluate((e) => e.closest("details").open),
     false,
   );
+  await vault.getByRole("button", { name: "Back to Vault", exact: true }).click();
   assert.equal(
     await vault
-      .getByText("Interrupted uploads", { exact: true })
-      .evaluate((e) => e.parentElement.open),
-    false,
+      .getByRole("region", { name: "Interrupted uploads" })
+      .count(),
+    0,
   );
   assert.equal(
     await vault
@@ -264,12 +267,14 @@ try {
     0,
   );
   pass(
-    "actual II login; disclosure and collapsed management; no second Vault factor",
+    "actual II login; collapsed management; no second Vault factor",
     { principal: owner },
   );
-  await action(vault, "Get quote");
-  await action(vault, "Approve and pay this quote");
-  await vault.getByText("Paid", { exact: true }).waitFor();
+  await action(vault, "Account settings");
+  await vault.locator("summary").filter({ hasText: "Account & storage" }).click();
+  await action(vault, "Review payment");
+  await action(vault, "Pay 1 KINIC");
+  await vault.getByText("Payment complete", { exact: true }).waitFor();
   pass("explicit synthetic ledger funding through real ICRC-2 calls");
   // Actual authenticated update calls through the production UI; the ledger
   // is explicitly synthetic here. Official ledger/archive proof is separate.
@@ -281,22 +286,35 @@ try {
   );
   const fundedBeforeScan = await readback(vault);
   configureLedger(6);
-  await action(vault, "New quote");
-  await action(vault, "Get quote");
-  await action(vault, "Approve and pay this quote");
-  await vault.getByText("Unknown", { exact: true }).waitFor();
+  await action(vault, "New payment");
+  await action(vault, "Review payment");
+  await action(vault, "Pay 1 KINIC");
+  await vault.getByText("Payment needs a status check", { exact: true }).waitFor();
   const unknownBeforeScan = await readback(vault);
   assert.ok(BigInt(unknownBeforeScan.balance.Ok) <= BigInt(fundedBeforeScan.balance.Ok), "Unknown must not add credit; execution/storage charges may reduce balance");
   await action(vault, /^(?:Scan ledger for this payment|Resume ledger scan)$/);
-  await vault.getByText(/No matching payment evidence found yet/).waitFor();
+  await vault.getByText(/Ledger scan: next \d+ of \d+\./).waitFor();
+  await expect(vault.getByRole("button", { name: "Check payment status", exact: true })).toBeEnabled();
   const afterScan = await readback(vault);
   const financialRecords = (rows) => rows.Ok.map(({ wallet, request, config, fee, credits, memo, created_at_time, status }) =>
     ({ wallet, request, config, fee, credits, memo, created_at_time, status }));
   assert.deepEqual(financialRecords(afterScan.payments), financialRecords(unknownBeforeScan.payments));
   assert.ok(BigInt(afterScan.balance.Ok) <= BigInt(unknownBeforeScan.balance.Ok), "unproven scan must not add credit");
+  // The controller schedules status-only checks at 0/1/3 seconds. Let those
+  // finish while the ledger is still uncertain so the explicit status gesture
+  // below cannot race an automatic check that observes the backend probe.
+  await vault.waitForTimeout(3500);
+  await expect(vault.getByRole("button", { name: "Check payment status", exact: true })).toBeEnabled();
   configureLedger(4);
-  await action(vault, "Retry same payment");
-  await vault.getByText("Paid", { exact: true }).waitFor();
+  const unknownPayment = unknownBeforeScan.payments.Ok.find(payment => "Unknown" in payment.status);
+  assert.ok(unknownPayment, "the original uncertain operation must remain in the journal");
+  // Deliberate backend idempotency probe. The product UI permits status/scan
+  // recovery only; it must never redispatch this uncertain payment itself.
+  assert.equal(await vault.getByRole("button", { name: "Retry same payment", exact: true }).count(), 0);
+  const duplicateRetry = await inspect(vault, "retryExactPurchase", canister, vaultURL, unknownPayment.request.operation);
+  assert.ok("Ok" in duplicateRetry && "Paid" in duplicateRetry.Ok.status);
+  await action(vault, "Check payment status");
+  await vault.getByText("Payment complete", { exact: true }).waitFor();
   const recoveredScan = await readback(vault);
   assert.equal(recoveredScan.payments.Ok.length, unknownBeforeScan.payments.Ok.length);
   assert.ok(BigInt(recoveredScan.balance.Ok) > BigInt(afterScan.balance.Ok));
@@ -324,7 +342,7 @@ try {
     ],
     { stdio: "inherit" },
   );
-  await vault.reload();
+  await vault.goto(vaultURL);
   await vault
     .getByRole("button", { name: "Create Vault", exact: true })
     .waitFor();
@@ -334,11 +352,12 @@ try {
     ),
     "production",
   );
-  await vault.getByText("Account & storage", { exact: true }).click();
-  // The form stays disabled until its independent config/history requests finish.
-  await expect(
-    vault.getByRole("button", { name: "Get quote", exact: true }),
-  ).toBeEnabled({ timeout: 60_000 });
+  await vault.getByRole("button", { name: "Account settings", exact: true }).click();
+  await vault.locator("summary").filter({ hasText: "Account & storage" }).click();
+  // The production build must reject the stored synthetic ledger configuration.
+  // Historical paid receipts and credit remain readable without enabling payment.
+  await vault.getByText("Funding is unavailable. You can still check existing payments.", { exact: true }).waitFor();
+  await expect(vault.getByRole("button", { name: "Review payment", exact: true })).toBeDisabled();
   const afterUpgrade = await readback(vault);
   assert.equal(afterUpgrade.principal, owner);
   assert.deepEqual(afterUpgrade.payments, beforeUpgrade.payments);
@@ -350,6 +369,7 @@ try {
     "fresh owned canister upgraded to default-feature local Wasm; certified production funding mode, paid journal and prepaid credit retained",
   );
 
+  await vault.getByRole("button", { name: "Back to Vault", exact: true }).click();
   const createTrace = startRetryTrace("create_vault");
   dropMethod = "create_vault";
   await action(vault, "Create Vault", true);
@@ -376,7 +396,7 @@ try {
   await editor(vault).waitFor();
   const keyRetry = finishRetryTrace(keyTrace);
   const vaultId = first.headers.Ok[0].id;
-  let sourceName = "Vault 1 · Active";
+  let sourceName = "Vault 1";
   pass(
     "lost create reply + Refresh + same create retry + lost key reply retry creates exactly one Vault",
     { retries: [createRetry, keyRetry] },
@@ -406,7 +426,7 @@ try {
   await search.fill(plaintext);
   await expect(noteButton).toHaveCount(0);
   assert.equal(chunkReads, readsBeforeTyping, "typing must filter metadata without fetching note bodies");
-  await action(vault, "Search note bodies");
+  await action(vault, "Search note contents");
   await expect(noteButton).toBeVisible();
   assert.ok(chunkReads > readsBeforeTyping, "explicit search reads authenticated note contents");
   await search.fill("absent-body-query");
@@ -450,9 +470,12 @@ try {
   );
 
   await action(vault, title);
+  const cancelledUploadDiscard = vault.getByRole("dialog", { name: "Discard unsaved changes?" });
+  if (await cancelledUploadDiscard.isVisible()) await cancelledUploadDiscard.getByRole("button", { name: "Discard changes" }).click();
   await action(vault, "Show version history");
+  await action(vault, "View revision 1");
   const downloadEvent = vault.waitForEvent("download");
-  await action(vault, "Download revision 1");
+  await action(vault, "Download document");
   const download = await downloadEvent;
   assert.match(
     download.suggestedFilename(),
@@ -464,6 +487,8 @@ try {
   assert.equal(Buffer.concat(buffers).toString(), plaintext);
   await retain(vault);
   await action(vault, "Close Vault");
+  if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
+    await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
   const blobs = await vault.evaluate(() => window.blobEvents);
   assert.ok(blobs.some(([kind]) => kind === "create"));
@@ -490,6 +515,8 @@ try {
     .fill("disposable-private-password");
   await retain(vault);
   await action(vault, "Close Vault");
+  if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
+    await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
   await action(vault, sourceName);
   await vault.getByLabel("Document type").selectOption("attachment");
@@ -500,6 +527,8 @@ try {
   });
   await retain(vault);
   await action(vault, "Close Vault");
+  if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
+    await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
   await action(vault, sourceName);
   await action(vault, title);
@@ -507,7 +536,7 @@ try {
 
   await retain(vault);
   await action(vault, "Create Vault");
-  sourceName = `Vault ${(await readback(vault)).headers.Ok.findIndex((h) => h.id.join() === vaultId.join()) + 1} · Active`;
+  sourceName = `Vault ${(await readback(vault)).headers.Ok.findIndex((h) => h.id.join() === vaultId.join()) + 1}`;
   await editor(vault).waitFor();
   assert.equal(
     await editor(vault).evaluate((e) =>
@@ -520,7 +549,7 @@ try {
     "",
   );
   await vault.setViewportSize({ width: 375, height: 812 });
-  assert.equal(await disclosure.isVisible(), true);
+  assert.equal(await disclosure.count(), 0);
   const toggle = vault.getByRole("button", { name: "Toggle Vault navigation" });
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
   await toggle.click();
@@ -533,7 +562,7 @@ try {
   await action(vault, title);
   await vault.setViewportSize({ width: 1280, height: 900 });
   pass(
-    "Vault switch clears prior draft/editor; mobile disclosure/navigation/focus",
+    "Vault switch clears prior draft/editor; mobile navigation/focus",
   );
 
   await retain(vault);
@@ -744,6 +773,7 @@ try {
   await wiki.waitForURL(/\/db\/[^/]+\//);
   const wikiDatabaseId = new URL(wiki.url()).pathname.split("/")[2];
   const balanceBeforeBridge = BigInt((await readback(vault)).balance.Ok);
+  await action(vault, "Account settings");
   const linkPopupPromise = context.waitForEvent("page", { timeout: 20000 }).catch((error) => error);
   await action(vault, "Link Wiki account");
   const linkPopup = await linkPopupPromise;
@@ -911,6 +941,7 @@ try {
   );
 
   // Delay an actual private read, switch context, then deliver its real plaintext-producing reply.
+  await action(vault, "Back to Vault");
   await action(vault, "New document");
   delayMethod = "get_chunk";
   const ready = new Promise((resolve) => {
@@ -933,6 +964,13 @@ try {
   );
   pass("late real read reply after close cannot restore editor or plaintext");
 
+  // Reopening normally reuses the persistent key. Explicitly forget it so this
+  // race test still intercepts a real derivation rather than a cache hit.
+  await action(vault, "Account settings");
+  await action(vault, "Delete saved keys from this browser");
+  assertDeviceKeyStore(await vault.evaluate(readDeviceKeyStore), `${canister}:${owner}`);
+  assert.equal((await vault.evaluate(readDeviceKeyStore)).records.filter(record => record.key).length, 0);
+  await action(vault, "Back to Vault");
   delayMethod = "derive_vault_key";
   const keyReady = new Promise((resolve) => {
     delayedReady = resolve;
@@ -1041,13 +1079,14 @@ try {
   const network = new URL(vaultURL);
   const allowedDatabases = [
     "auth-client-db",
+    "kinic-vault-device-keys-v1",
     `icp-sdk-${network.host}`,
     `icp-sdk-localhost:${network.port}`,
   ];
   assert.ok(persistence.databases.some((db) => db.name === "auth-client-db"));
   assert.ok(
     persistence.databases.every((db) => allowedDatabases.includes(db.name)),
-    "Only SDK authentication and public subnet-key caches may persist",
+    "Only SDK authentication, scoped non-extractable Vault roots and public subnet-key caches may persist",
   );
   for (const db of persistence.databases)
     for (const store of db.stores) {
@@ -1063,6 +1102,9 @@ try {
           store.algorithms.every((name) => name === "ECDSA"),
           "No AES Vault root or DEK may persist",
         );
+      } else if (db.name === "kinic-vault-device-keys-v1") {
+        assert.equal(store.name, "entries");
+        assert.ok(store.algorithms.every(name => name === "AES-GCM"));
       } else {
         assert.equal(store.name, "subnetNodeKeys");
         assert.equal(
@@ -1073,8 +1115,11 @@ try {
         assert.deepEqual(store.algorithms, []);
       }
     }
+  const deviceStore = await vault.evaluate(readDeviceKeyStore);
+  assertDeviceKeyStore(deviceStore, `${canister}:${owner}`);
+  assert.ok(deviceStore.records.some(record => record.key), "reopened Vault must save its verified root");
   pass(
-    "no Vault plaintext/root/DEK persistence; only a public logout generation, SDK auth and public subnet keys; zero Vault WebAuthn calls",
+    "no Vault plaintext/raw-key/DEK persistence; only a public logout generation, scoped non-extractable roots, SDK auth and public subnet keys; zero Vault WebAuthn calls",
     { databases: persistence.databases.map((db) => db.name) },
   );
 
@@ -1156,15 +1201,15 @@ try {
     .reduce((a, b) => (a < b ? a : b));
   const idleStart = Date.now();
   assert.ok(
-    idleExpiry > BigInt(idleStart + 10 * 60 * 1000) * 1000000n,
+    idleExpiry > BigInt(idleStart + 35 * 60 * 1000) * 1000000n,
     "Fresh normal-login signed delegation must outlast the entire idle test",
   );
   console.log(
-    "WAIT actual five-minute idle; signed normal delegation expiry",
+    "WAIT actual 30-minute idle; signed normal delegation expiry",
     idleExpiry.toString(),
   );
-  await loginButton(vault).waitFor({ timeout: 330000 });
-  assert.ok(Date.now() - idleStart >= 290000);
+  await loginButton(vault).waitFor({ timeout: 1830000 });
+  assert.ok(Date.now() - idleStart >= 1790000);
   await assertCleared(vault);
   const idleEnded = Date.now();
   assert.ok(
@@ -1179,7 +1224,7 @@ try {
   );
   assert.deepEqual(stillValid.expirations, idleExpirations);
   pass(
-    "natural five-minute idle logout clears retained private UI before signed expiry; retained signer remains valid",
+    "natural 30-minute idle logout clears retained private UI before signed expiry; retained signer remains valid",
     {
       elapsedMs: idleEnded - idleStart,
       signedExpirationsBefore: idleExpirations,

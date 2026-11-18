@@ -2,7 +2,7 @@
 use candid::{CandidType, Nat, Principal};
 use serde::Deserialize;
 use std::cell::{Cell, RefCell};
-#[derive(Clone, CandidType, Deserialize)]
+#[derive(Clone, PartialEq, Eq, CandidType, Deserialize)]
 struct Account { owner: Principal, subaccount: Option<Vec<u8>> }
 #[derive(Clone, CandidType, Deserialize)]
 struct Transfer { spender_subaccount: Option<Vec<u8>>, from: Account, to: Account, amount: Nat, fee: Option<Nat>, memo: Option<Vec<u8>>, created_at_time: Option<u64> }
@@ -11,6 +11,7 @@ enum TransferError { BadFee { expected_fee: Nat }, InsufficientFunds { balance: 
 thread_local! {static FEE_DELAY:Cell<bool>=const{Cell::new(false)};static FEE_INVALID:Cell<bool>=const{Cell::new(false)};static FEE_CALLS:Cell<u64>=const{Cell::new(0)};static MODE: Cell<u8> = const {Cell::new(0)}; static FEE:Cell<u64>=const{Cell::new(10)};static CALLS:RefCell<Vec<Transfer>>=const{RefCell::new(Vec::new())};}
 #[ic_cdk::update]
 fn configure(mode:u8,fee:u64){assert!(ic_cdk::api::is_controller(&ic_cdk::api::msg_caller()));MODE.set(mode);FEE.set(fee);}
+#[cfg(not(feature = "browser-preflight"))]
 #[ic_cdk::update]
 async fn icrc1_fee()->Nat{
  let number=FEE_CALLS.get()+1;FEE_CALLS.set(number);
@@ -18,6 +19,22 @@ async fn icrc1_fee()->Nat{
   ic_cdk::call::Call::unbounded_wait(Principal::management_canister(),"http_request").with_arg(HttpArgs{url:format!("https://vault-fee.invalid/{number}"),max_response_bytes:Some(1000),method:HttpMethod::get,headers:vec![],body:None}).with_cycles(30_000_000_000).await.expect("test must release fee lookup");
  }
  if FEE_INVALID.get(){Nat::from(u128::MAX)}else{FEE.get().into()}
+}
+// Browser preflight uses query calls; retain the update endpoint above for
+// canister-side delayed/invalid fee fault injection.
+#[cfg(feature = "browser-preflight")]
+#[ic_cdk::query(name = "icrc1_fee")]
+fn fee_query()->Nat{if FEE_INVALID.get(){Nat::from(u128::MAX)}else{FEE.get().into()}}
+#[ic_cdk::query]
+fn icrc1_decimals()->u8{8}
+#[derive(CandidType, Deserialize)]
+struct AllowanceArgs { account:Account, spender:Account }
+#[derive(CandidType)]
+struct Allowance { allowance:Nat, expires_at:Option<u64> }
+thread_local! {static ALLOWANCES:RefCell<Vec<(Account,Account,Nat,Option<u64>)>>=const{RefCell::new(Vec::new())};}
+#[ic_cdk::query]
+fn icrc2_allowance(arg:AllowanceArgs)->Allowance{
+ ALLOWANCES.with(|rows|rows.borrow().iter().find(|(account,spender,_,_)|account==&arg.account && spender==&arg.spender).map_or(Allowance{allowance:0u64.into(),expires_at:None},|(_,_,amount,expiry)|Allowance{allowance:if expiry.is_some_and(|t|t<=ic_cdk::api::time()){0u64.into()}else{amount.clone()},expires_at:*expiry}))
 }
 #[ic_cdk::update]
 fn fee_behavior(delay:bool,invalid:bool){assert!(ic_cdk::api::is_controller(&ic_cdk::api::msg_caller()));FEE_DELAY.set(delay);FEE_INVALID.set(invalid);}
@@ -30,9 +47,17 @@ struct HttpArgs{url:String,max_response_bytes:Option<u64>,method:HttpMethod,head
 enum HttpMethod{get}
 #[derive(CandidType)]
 struct Header{name:String,value:String}
+fn num_fee(fee:&Option<Nat>)->Nat{fee.clone().unwrap_or_else(||FEE.get().into())}
 #[ic_cdk::update]
 async fn icrc2_transfer_from(arg:Transfer)->Result<Nat,TransferError>{
  let mode=MODE.get();
+ if matches!(mode,0|6|8){
+  let spender=Account{owner:ic_cdk::api::msg_caller(),subaccount:arg.spender_subaccount.clone()};
+  ALLOWANCES.with(|rows|{if let Some((_,_,amount,_))=rows.borrow_mut().iter_mut().find(|(account,s,_,_)|account==&arg.from && s==&spender){
+   let debit=&arg.amount.0+num_fee(&arg.fee).0;
+   *amount=if amount.0>=debit{Nat(&amount.0-debit)}else{0u64.into()};
+  }});
+ }
  CALLS.with(|calls|{let mut calls=calls.borrow_mut();assert!(calls.len()<64);calls.push(arg);});
  if mode==8 {
    let number=CALLS.with(|calls|calls.borrow().len());
@@ -61,6 +86,8 @@ thread_local! {static APPROVALS:RefCell<Vec<(Principal,Approval)>>=const{RefCell
 #[ic_cdk::update]
 fn icrc2_approve(arg:Approval)->Result<Nat,TransferError>{
  let caller=ic_cdk::api::msg_caller();assert_ne!(caller,Principal::anonymous());
+ let account=Account{owner:caller,subaccount:arg.from_subaccount.clone()};
+ ALLOWANCES.with(|rows|{let mut rows=rows.borrow_mut();if let Some(row)=rows.iter_mut().find(|(a,s,_,_)|a==&account && s==&arg.spender){row.2=arg.amount.clone();row.3=arg.expires_at;}else{assert!(rows.len()<64);rows.push((account,arg.spender.clone(),arg.amount.clone(),arg.expires_at));}});
  APPROVALS.with(|rows|{let mut rows=rows.borrow_mut();assert!(rows.len()<64);rows.push((caller,arg));Ok(Nat::from(rows.len() as u64))})
 }
 #[ic_cdk::query]

@@ -88,8 +88,9 @@ export function useIsolatedVaultSession(
       revalidate();
     };
     const hide = () => client.session.lock();
-    window.addEventListener("pointerdown", activity);
-    window.addEventListener("keydown", activity);
+    const activityEvents = ["pointerdown", "pointermove", "keydown", "scroll"];
+    for (const event of activityEvents)
+      window.addEventListener(event, activity, { capture: true, passive: true });
     window.addEventListener("pagehide", hide);
     window.addEventListener("focus", revalidate);
     document.addEventListener("visibilitychange", visible);
@@ -101,8 +102,8 @@ export function useIsolatedVaultSession(
       client.session.lock();
       window.clearInterval(expiry);
       window.clearInterval(access);
-      window.removeEventListener("pointerdown", activity);
-      window.removeEventListener("keydown", activity);
+      for (const event of activityEvents)
+        window.removeEventListener(event, activity, true);
       window.removeEventListener("pagehide", hide);
       window.removeEventListener("focus", revalidate);
       document.removeEventListener("visibilitychange", visible);

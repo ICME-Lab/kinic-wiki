@@ -107,6 +107,65 @@ pub(super) fn prepare_dispatch(sent: &Payment, spender: Principal, start: u64) -
         Ok(p)
     })
 }
+pub(super) enum ScanAdmission {
+    AlreadyPaid,
+    RecoverQuote,
+    History {
+        lease: u64,
+        lease_until: u64,
+        lease_generation: i64,
+    },
+}
+
+pub(super) fn scan_admission(
+    db: &kinic_sqlite_compat::Connection,
+    payment: &Payment,
+    now: u64,
+) -> Result<ScanAdmission> {
+    if matches!(payment.status, Status::Paid(_)) {
+        return Ok(ScanAdmission::AlreadyPaid);
+    }
+    if !matches!(payment.status, Status::InFlight | Status::Unknown) {
+        return Err(Error::Conflict);
+    }
+    let current = generation(db)?;
+    // The live transfer callback owns its outcome through the full wait window.
+    if payment.status == Status::InFlight
+        && payment.generation == current
+        && now.saturating_sub(payment.sent_at) <= 120_000_000_000
+    {
+        return Err(Error::Busy);
+    }
+    if payment.preparing {
+        return Ok(ScanAdmission::RecoverQuote);
+    }
+    let mut active = 0;
+    for other in all_payments(db)? {
+        let other = other?;
+        if other
+            .reconciliation
+            .as_ref()
+            .is_some_and(|s| s.lease_generation == current && s.lease_until > now)
+        {
+            if other.wallet == payment.wallet {
+                return Err(Error::Busy);
+            }
+            active += 1;
+        }
+    }
+    if active >= 8 {
+        return Err(Error::Busy);
+    }
+    let scan = payment.reconciliation.as_ref().ok_or(Error::Storage)?;
+    Ok(ScanAdmission::History {
+        lease: scan.lease.checked_add(1).ok_or(Error::QuotaExceeded)?,
+        lease_until: now
+            .checked_add(180_000_000_000)
+            .ok_or(Error::InvalidInput)?,
+        lease_generation: current,
+    })
+}
+
 fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
     auth(wallet)?;
     if id.len() != 16 {
@@ -114,54 +173,27 @@ fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
     }
     transaction(|db| {
         let mut p = load(db, wallet, id)?.ok_or(Error::NotFound)?;
-        if matches!(p.status, Status::Paid(_)) {
-            return Ok(p);
-        }
-        if !matches!(p.status, Status::InFlight | Status::Unknown) {
-            return Err(Error::Conflict);
-        }
-        let current = generation(db)?;
-        // A live transfer still owns its outcome: starting a scan must not turn
-        // a definitive rejection into durable uncertainty before its callback.
-        if matches!(p.status, Status::InFlight)
-            && p.generation == current
-            && now.saturating_sub(p.sent_at) <= 120_000_000_000
-        {
-            return Err(Error::Busy);
-        }
-        if p.preparing {
-            // An interrupted preparation never issued transfer_from. Recover its cancellable quote.
-            p.preparing = false;
-            p.status = Status::Quoted;
-            p.uncertain = false;
-            save(db, &p)?;
-            return Ok(p);
-        }
-        let mut active = 0;
-        for other in all_payments(db)? {
-            let other = other?;
-            if other
-                .reconciliation
-                .as_ref()
-                .is_some_and(|s| s.lease_generation == current && s.lease_until > now)
-            {
-                if other.wallet == wallet {
-                    return Err(Error::Busy);
-                }
-                active += 1;
+        match scan_admission(db, &p, now)? {
+            ScanAdmission::AlreadyPaid => return Ok(p),
+            ScanAdmission::RecoverQuote => {
+                // Interrupted preparation never dispatched a transfer.
+                p.preparing = false;
+                p.status = Status::Quoted;
+                p.uncertain = false;
+            }
+            ScanAdmission::History {
+                lease,
+                lease_until,
+                lease_generation,
+            } => {
+                let scan = p.reconciliation.as_mut().ok_or(Error::Storage)?;
+                scan.lease = lease;
+                scan.lease_until = lease_until;
+                scan.lease_generation = lease_generation;
+                p.status = Status::Unknown;
+                p.uncertain = true;
             }
         }
-        if active >= 8 {
-            return Err(Error::Busy);
-        }
-        p.status = Status::Unknown;
-        p.uncertain = true;
-        let scan = p.reconciliation.as_mut().ok_or(Error::Storage)?;
-        scan.lease = scan.lease.checked_add(1).ok_or(Error::QuotaExceeded)?;
-        scan.lease_until = now
-            .checked_add(180_000_000_000)
-            .ok_or(Error::InvalidInput)?;
-        scan.lease_generation = current;
         save(db, &p)?;
         Ok(p)
     })

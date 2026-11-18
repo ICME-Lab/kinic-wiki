@@ -163,6 +163,48 @@ pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Res
     Ok(())
 }
 
+/// Receipts are permanent and independently bounded; old DDL remains immutable
+/// so a v9 image is validated before migrating it.
+pub(crate) fn grant_schema_statements() -> Vec<String> {
+    let mut statements = vec![crate::initial_grant::SCHEMA.to_owned()];
+    guard(
+        &mut statements,
+        "initial_cycle_grants",
+        &["principal", "database_id"],
+        2,
+        128,
+        "OR length(CAST(NEW.principal AS BLOB))>63 OR length(CAST(NEW.database_id AS BLOB))>5",
+    );
+    count_guard(
+        &mut statements,
+        "initial_cycle_grants",
+        "principal=NEW.principal",
+        vault_types::capacity::GRANT_RECEIPTS,
+        "",
+    );
+    statements
+}
+
+pub(crate) fn subsidy_schema_statements() -> Vec<String> {
+    let mut statements = vec![crate::key_subsidy::SCHEMA.to_owned()];
+    guard(
+        &mut statements,
+        "key_subsidies",
+        &["owner", "token"],
+        3,
+        vault_types::capacity::SUBSIDY_ROW,
+        "OR length(CAST(NEW.owner AS BLOB))>63 OR length(CAST(NEW.token AS BLOB))>128",
+    );
+    count_guard(
+        &mut statements,
+        "key_subsidies",
+        "owner=NEW.owner",
+        vault_types::capacity::SUBSIDIES,
+        "",
+    );
+    statements
+}
+
 /// Reserve both bridge and ICRC credits and execution refunds before any external debit.
 pub(crate) fn admit_credit(
     db: &Connection,
@@ -171,38 +213,10 @@ pub(crate) fn admit_credit(
     operation: &[u8],
     credits: u64,
 ) -> Result<()> {
-    use sql::OptionalExtension;
-    let balance: i64 = db
-        .query_row(
-            "SELECT balance_cycles FROM accounts WHERE owner=?1",
-            params![owner.to_text()],
-            |r| sql::row_get(r, 0),
-        )
-        .optional()
-        .map_err(|_| Error::Storage)?
-        .unwrap_or(0);
-    let refunds:i64=db.query_row("SELECT coalesce(sum(CASE WHEN actual IS NULL THEN reserved WHEN in_flight=1 THEN actual ELSE 0 END),0) FROM vault_cycle_reservations WHERE owner=?1",params![owner.to_text()],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
-    let mut total = u128::from(balance as u64) + u128::from(refunds as u64) + u128::from(credits);
-    for p in crate::funding::all_payments(db)? {
-        let p = p?;
-        if p.request.beneficiary == owner
-            && !(p.wallet == wallet && p.request.operation == operation)
-            && matches!(
-                p.status,
-                crate::funding::Status::InFlight | crate::funding::Status::Unknown
-            )
-        {
-            total += u128::from(p.credits);
-        }
-    }
-    for (beneficiary, id, amount) in crate::bridge::reservations(db)? {
-        if beneficiary == owner && !(beneficiary == wallet && id == operation) {
-            total += u128::from(amount);
-        }
-    }
-    if total > i64::MAX as u128 {
-        Err(Error::QuotaExceeded)
-    } else {
-        Ok(())
-    }
+    crate::accounting::admit_credit(
+        db,
+        &owner.to_text(),
+        credits,
+        Some((&wallet.to_text(), operation)),
+    )
 }

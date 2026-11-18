@@ -702,3 +702,85 @@ fn shared_wrapper_permits_editor_soft_delete_and_reserves_vault_deletion_for_own
         Ok(MutationResult::Progress(_))
     ));
 }
+
+#[test]
+fn integration_shared_rename_requires_owner_and_matches_explicit_vault() {
+    let e = Env::new();
+    let h = e.create();
+    let other = block_on(create_vault(
+        &e,
+        CreateVault {
+            operation: vec![61; 16],
+        },
+    ))
+    .unwrap();
+    let member = Principal::from_slice(&[31]);
+    let rename = |caller, target: &Id| {
+        shared_mutate(
+            &e,
+            caller,
+            &h.id,
+            Mutation {
+                operation: vec![60; 16],
+                action: Action::RenameVault {
+                    vault: target.clone(),
+                    name: "Team".into(),
+                    expected_sequence: 0,
+                },
+            },
+        )
+    };
+    for role in [AccessRole::Viewer, AccessRole::Editor] {
+        grant(&e, &h.id, member, role).unwrap();
+        assert!(matches!(rename(member, &h.id), Err(Error::Unauthorized)));
+    }
+    assert!(matches!(
+        rename(e.owner(), &other.id),
+        Err(Error::Unauthorized)
+    ));
+    rename(e.owner(), &h.id).unwrap();
+    assert_eq!(
+        e.transaction(|db| store::header(db, &h.id))
+            .unwrap()
+            .name
+            .as_deref(),
+        Some("Team")
+    );
+}
+
+#[test]
+fn integration_pre_rename_shared_receipt_replays_only_for_current_editor_and_exact_payload() {
+    let e = Env::new();
+    let h = e.create();
+    let caller = Principal::from_slice(&[31]);
+    grant(&e, &h.id, caller, AccessRole::Editor).unwrap();
+    // Captured with dec6eac2's scoped ID and nested Candid digest, before RenameVault.
+    let operation = hex::decode("db9fadbb171746a2a5d5baeca64c7841").unwrap();
+    let digest =
+        hex::decode("9b7ca5f1a465b585829aac55f9062441569a8b7fda70799d67299108e0cf9759").unwrap();
+    e.transaction(|db| {
+        let token = ops::begin(db, &operation, &digest, e.now())?;
+        ops::complete(db, &operation, token, &MutationResult::Done, e.now())
+    })
+    .unwrap();
+    let retry = |revision| {
+        shared_mutate(
+            &e,
+            caller,
+            &h.id,
+            Mutation {
+                operation: vec![44; 16],
+                action: Action::DeleteObject {
+                    vault: h.id.clone(),
+                    object: vec![3; 16],
+                    expected_revision: revision,
+                },
+            },
+        )
+    };
+    e.funded.set(false);
+    assert!(matches!(retry(7), Ok(MutationResult::Done)));
+    assert!(matches!(retry(8), Err(Error::Conflict)));
+    grant(&e, &h.id, caller, AccessRole::Viewer).unwrap();
+    assert!(matches!(retry(7), Err(Error::Unauthorized)));
+}

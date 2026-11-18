@@ -1,4 +1,5 @@
 type AccessRole = variant { Viewer; Editor; Owner };
+type AccountInitialization = record { balance : nat64; grant_cycles : nat64 };
 type Action = variant {
   CancelUpload : record { job : blob; vault : blob; upload : blob };
   PutChunk : record { upload : blob; bytes : blob; index : nat32 };
@@ -8,6 +9,7 @@ type Action = variant {
     vault : blob;
     expected_revision : nat64;
   };
+  RenameVault : record { vault : blob; name : text; expected_sequence : nat64 };
   DeleteVault : record { vault : blob };
   Collect;
   PurgeObject : record {
@@ -92,6 +94,8 @@ type GlobalCapacity = record {
 type Header = record {
   id : blob;
   public_key : blob;
+  // Owner-visible display metadata, deliberately separate from the key context.
+  name : opt text;
   state : VaultState;
   nonce : blob;
   key_name : text;
@@ -110,10 +114,47 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
+type Icrc10SupportedStandard = record { url : text; name : text };
+type Icrc21ConsentInfo = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  consent_message : Icrc21ConsentMessage;
+};
+type Icrc21ConsentMessage = variant { GenericDisplayMessage : text };
+type Icrc21ConsentMessageMetadata = record {
+  utc_offset_minutes : opt int16;
+  language : text;
+};
+type Icrc21ConsentMessageRequest = record {
+  arg : blob;
+  method : text;
+  user_preferences : Icrc21ConsentMessageSpec;
+};
+type Icrc21ConsentMessageResponse = variant {
+  Ok : Icrc21ConsentInfo;
+  Err : Icrc21Error;
+};
+type Icrc21ConsentMessageSpec = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  device_spec : opt Icrc21DeviceSpec;
+};
+type Icrc21DeviceSpec = variant { GenericDisplay; FieldsDisplay };
+type Icrc21Error = variant {
+  GenericError : Icrc21GenericError;
+  InsufficientPayment : Icrc21ErrorInfo;
+  UnsupportedCanisterCall : Icrc21ErrorInfo;
+  ConsentMessageUnavailable : Icrc21ErrorInfo;
+};
+type Icrc21ErrorInfo = record { description : text };
+type Icrc21GenericError = record { description : text; error_code : nat };
 type KeyReply = record {
   encrypted_key : blob;
   public_key : blob;
   input : blob;
+};
+type KeyRetrievalCost = record {
+  fee : nat64;
+  owner_fee : nat64;
+  first_key_free : bool;
 };
 type LinkChallenge = record {
   challenge : blob;
@@ -202,32 +243,35 @@ type ReconciliationState = record {
 };
 type Result = variant { Ok : nat64; Err : Error };
 type Result_1 = variant { Ok; Err : BridgeError };
-type Result_10 = variant { Ok : Quota; Err : Error };
-type Result_11 = variant { Ok : UploadStatus; Err : Error };
-type Result_12 = variant { Ok : VaultAccess; Err : Error };
-type Result_13 = variant { Ok : GlobalCapacity; Err : Error };
-type Result_14 = variant { Ok : VaultAccessPage; Err : Error };
-type Result_15 = variant { Ok : RevisionPage; Err : Error };
-type Result_16 = variant { Ok : ObjectPage; Err : Error };
-type Result_17 = variant { Ok : vec Payment; Err : Error };
-type Result_18 = variant { Ok : PendingUploads; Err : Error };
-type Result_19 = variant { Ok : vec VaultMember; Err : Error };
+type Result_10 = variant { Ok : Revision; Err : Error };
+type Result_11 = variant { Ok : Quota; Err : Error };
+type Result_12 = variant { Ok : UploadStatus; Err : Error };
+type Result_13 = variant { Ok : VaultAccess; Err : Error };
+type Result_14 = variant { Ok : GlobalCapacity; Err : Error };
+type Result_15 = variant { Ok : AccountInitialization; Err : Error };
+type Result_16 = variant { Ok : VaultAccessPage; Err : Error };
+type Result_17 = variant { Ok : RevisionPage; Err : Error };
+type Result_18 = variant { Ok : ObjectPage; Err : Error };
+type Result_19 = variant { Ok : vec Payment; Err : Error };
 type Result_2 = variant { Ok : LinkChallenge; Err : BridgeError };
-type Result_20 = variant { Ok : vec Header; Err : Error };
-type Result_21 = variant { Ok : MutationResult; Err : Error };
-type Result_22 = variant { Ok : opt Payment; Err : Error };
-type Result_23 = variant { Ok : CreditReceipt; Err : BridgeError };
-type Result_24 = variant { Ok : ReconciliationProgress; Err : Error };
-type Result_25 = variant { Ok; Err : Error };
-type Result_26 = variant { Ok : BridgeRevocation; Err : BridgeError };
-type Result_27 = variant { Ok : opt LinkStatus; Err : BridgeError };
+type Result_20 = variant { Ok : PendingUploads; Err : Error };
+type Result_21 = variant { Ok : vec VaultMember; Err : Error };
+type Result_22 = variant { Ok : vec Header; Err : Error };
+type Result_23 = variant { Ok : MutationResult; Err : Error };
+type Result_24 = variant { Ok : opt Payment; Err : Error };
+type Result_25 = variant { Ok : CreditReceipt; Err : BridgeError };
+type Result_26 = variant { Ok : ReconciliationProgress; Err : Error };
+type Result_27 = variant { Ok; Err : Error };
+type Result_28 = variant { Ok : BridgeRevocation; Err : BridgeError };
+type Result_29 = variant { Ok : KeyRetrievalCost; Err : Error };
 type Result_3 = variant { Ok : Payment; Err : Error };
+type Result_30 = variant { Ok : opt LinkStatus; Err : BridgeError };
 type Result_4 = variant { Ok : LinkProof; Err : BridgeError };
 type Result_5 = variant { Ok : Header; Err : Error };
 type Result_6 = variant { Ok : KeyReply; Err : Error };
 type Result_7 = variant { Ok : blob; Err : Error };
 type Result_8 = variant { Ok : opt VaultConfig; Err : Error };
-type Result_9 = variant { Ok : Revision; Err : Error };
+type Result_9 = variant { Ok : opt FundingConfig; Err : Error };
 type Revision = record {
   deleted : bool;
   object : blob;
@@ -284,44 +328,51 @@ service : () -> {
   derive_vault_key : (DeriveKey) -> (Result_6);
   get_chunk : (blob, blob, nat64, nat32) -> (Result_7);
   get_config : () -> (Result_8);
-  get_manifest : (blob, blob, nat64) -> (Result_9);
-  get_quota : (blob) -> (Result_10);
-  get_upload_status : (blob) -> (Result_11);
-  get_vault_access : (blob) -> (Result_12);
+  get_funding_config : () -> (Result_9) query;
+  get_manifest : (blob, blob, nat64) -> (Result_10);
+  get_quota : (blob) -> (Result_11);
+  get_upload_status : (blob) -> (Result_12);
+  get_vault_access : (blob) -> (Result_13);
   get_vault_header : (blob) -> (Result_5);
-  global_capacity : () -> (Result_13) query;
+  global_capacity : () -> (Result_14) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
+  icrc10_supported_standards : () -> (vec Icrc10SupportedStandard) query;
+  icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
+      Icrc21ConsentMessageResponse,
+    );
+  initialize_vault_account : () -> (Result_15);
   inspect_wiki_link : (blob) -> (Result_2);
-  list_accessible_vaults : (blob) -> (Result_14);
-  list_history : (blob, blob, nat64) -> (Result_15);
-  list_objects : (blob, blob) -> (Result_16);
-  list_payments : () -> (Result_17) query;
-  list_pending_uploads : (blob) -> (Result_18);
-  list_vault_members : (blob) -> (Result_19);
-  list_vaults : () -> (Result_20);
-  mutate : (Mutation) -> (Result_21);
+  list_accessible_vaults : (blob) -> (Result_16);
+  list_history : (blob, blob, nat64) -> (Result_17);
+  list_objects : (blob, blob) -> (Result_18);
+  list_payments : () -> (Result_19) query;
+  list_pending_uploads : (blob) -> (Result_20);
+  list_vault_members : (blob) -> (Result_21);
+  list_vaults : () -> (Result_22);
+  mutate : (Mutation) -> (Result_23);
   pay_purchase : (blob) -> (Result_3);
-  payment_status : (blob) -> (Result_22) query;
-  prepare_wiki_credit : (blob) -> (Result_23);
+  payment_status : (blob) -> (Result_24) query;
+  prepare_wiki_credit : (blob) -> (Result_25);
   quote_purchase : (PurchaseRequest) -> (Result_3);
-  receive_wiki_credit : (CreditOffer) -> (Result_23);
-  reconcile_purchase : (blob) -> (Result_24);
-  remove_vault_member : (blob, principal) -> (Result_25);
-  revoke_wiki_link : () -> (Result_26);
-  set_config : (opt VaultConfig) -> (Result_25);
-  set_funding_config : (opt FundingConfig) -> (Result_25);
-  set_vault_member : (blob, principal, AccessRole) -> (Result_25);
+  receive_wiki_credit : (CreditOffer) -> (Result_25);
+  reconcile_purchase : (blob) -> (Result_26);
+  remove_vault_member : (blob, principal) -> (Result_27);
+  revoke_wiki_link : () -> (Result_28);
+  set_config : (opt VaultConfig) -> (Result_27);
+  set_funding_config : (opt FundingConfig) -> (Result_27);
+  set_vault_member : (blob, principal, AccessRole) -> (Result_27);
   set_wiki_bridge_config : (BridgeConfig) -> (Result_1);
   shared_derive_vault_key : (DeriveKey) -> (Result_6);
   shared_get_chunk : (blob, blob, nat64, nat32) -> (Result_7);
-  shared_get_manifest : (blob, blob, nat64) -> (Result_9);
-  shared_get_quota : (blob) -> (Result_10);
-  shared_get_upload_status : (blob, blob) -> (Result_11);
-  shared_list_history : (blob, blob, nat64) -> (Result_15);
-  shared_list_objects : (blob, blob) -> (Result_16);
-  shared_list_pending_uploads : (blob, blob) -> (Result_18);
-  shared_mutate : (blob, Mutation) -> (Result_21);
+  shared_get_manifest : (blob, blob, nat64) -> (Result_10);
+  shared_get_quota : (blob) -> (Result_11);
+  shared_get_upload_status : (blob, blob) -> (Result_12);
+  shared_list_history : (blob, blob, nat64) -> (Result_17);
+  shared_list_objects : (blob, blob) -> (Result_18);
+  shared_list_pending_uploads : (blob, blob) -> (Result_20);
+  shared_mutate : (blob, Mutation) -> (Result_23);
+  vault_key_cost : (opt text) -> (Result_29) query;
   wiki_bridge_config : () -> (opt BridgeConfig) query;
-  wiki_credit_status : (CreditOffer) -> (Result_23);
-  wiki_link_status : () -> (Result_27);
+  wiki_credit_status : (CreditOffer) -> (Result_25);
+  wiki_link_status : () -> (Result_30);
 }

@@ -12,6 +12,7 @@
     "lint:skill-registry-web": "npm --prefix skill-registry-web run lint",
     "lint:web": "npm run lint:wikibrowser && npm run lint:skill-registry-web",
     "test:cf-config": "node --test scripts/cloudflare/*.test.mjs",
+    "test:dependency-patches": "node --test scripts/picomatch-patch.test.mjs",
     "test:mcp-latency": "node --test scripts/bench/wiki-mcp-latency.test.mjs"
   },
   "packageManager": "pnpm@11.0.8",

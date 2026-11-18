@@ -29,8 +29,9 @@ assert.doesNotMatch(listingDetail, /String\(cause\)/);
 assertNoAppBalanceSurface(listingDetail);
 assert.doesNotMatch(listingDetail, /marketPurchaseAccess|refreshKinicBalance|KINIC balance updated|buyerBalanceE8s/);
 
-assert.match(wallet, /runOisyAllowanceCall[\s\S]*wallet\.approve\(/);
-assert.match(wallet, /runPlugAllowanceCall[\s\S]*icrc2_approve/);
+assert.match(wallet, /purchaseExternalMarketAccess\(request, \{ provider: "oisy"/);
+assert.match(wallet, /purchaseExternalMarketAccess\(request, \{ provider: "plug"/);
+assert.match(wallet, /runExternalAllowanceCall[\s\S]*transport\.approve\(/);
 assert.match(wallet, /market_purchase_access/);
 assert.match(wallet, /purchaseMarketAccessWithFundingSource/);
 assert.match(wallet, /purchaseMarketAccessWithIdentity/);

@@ -24,6 +24,7 @@ const header = (): Header => ({
   state: { Active: null },
   key_name: "test_key_1",
   sequence: 0n,
+  name: [],
 });
 function setup(loseResponse = true) {
   let h = header();
@@ -33,7 +34,7 @@ function setup(loseResponse = true) {
   const calls: any[] = [];
   const actor = {
     list_vaults: vi.fn(async () => ({ Ok: [h] })),
-    create_vault: vi.fn(async (req: any) => ({ Ok: h })),
+    create_vault: vi.fn(async (_req: any) => ({ Ok: h })),
     get_vault_header: vi.fn(async () => ({ Ok: h })),
     derive_vault_key: vi.fn(async () => ({
       Ok: { input: [], public_key: [], encrypted_key: [] },
@@ -243,7 +244,10 @@ it("clears an idle root and fences its existing ticket", async () => {
   const { client } = setup();
   await client.open(header());
   const ticket = client.session.capture();
-  client.session.expire(client.session.lastActivity + 300000);
+  client.session.expire(client.session.lastActivity + 30 * 60 * 1000 - 1);
+  client.session.check(ticket);
+  expect(client.session.root).toBeDefined();
+  client.session.expire(client.session.lastActivity + 30 * 60 * 1000);
   expect(client.session.root).toBeUndefined();
   expect(() => client.session.check(ticket)).toThrow("Locked");
 });
@@ -302,7 +306,7 @@ it("clears a failed rootless key attempt when creating and opening another vault
   const { client, actor, change } = setup();
   vi.mocked(actor.derive_vault_key).mockRejectedValueOnce(Error("key lost"));
   await expect(client.open(header())).rejects.toThrow("key lost");
-  vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (_request) => {
     const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
@@ -322,7 +326,7 @@ it("fences an outstanding open when creation selects a different vault", async (
   );
   const old = client.open(header());
   await vi.waitFor(() => expect(resolve).toBeDefined());
-  vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (_request) => {
     const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
@@ -368,7 +372,7 @@ it("retries the same creation after switching away from its unresolved attempt",
   });
   await expect(client.create()).rejects.toThrow("lost");
   await client.open(header());
-  vi.mocked(actor.create_vault).mockImplementationOnce(async (r) => {
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (_r) => {
     const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
@@ -464,6 +468,7 @@ describe("open authoritative invalidation", () => {
         }),
     );
     const old = client.open(header());
+    await vi.waitFor(() => expect(reply).toBeTypeOf("function"));
     const other = { ...header(), id: new Uint8Array(16).fill(7) };
     vi.mocked(actor.get_vault_header).mockResolvedValue({ Ok: other });
     await client.open(other);
@@ -1567,6 +1572,49 @@ describe("shared Vault access", () => {
     role(undefined);
     await expect(member.openAccess(id)).rejects.toThrow("Unauthorized");
     expect(member.session.root).toBeUndefined();
+  });
+
+  it("reports only confirmed current Vault denial and isolates denial observers", async () => {
+    const { actor, member, role } = shared();
+    await member.openAccess(id);
+    const first = vi.fn((target: Uint8Array) => {
+      target.fill(0);
+      throw Error("Observer failure");
+    });
+    const roots: (CryptoKey | undefined)[] = [];
+    const second = vi.fn(() => roots.push(member.session.root));
+    member.subscribeVaultDenial(first);
+    member.subscribeVaultDenial(second);
+
+    vi.mocked(actor.get_vault_access).mockRejectedValueOnce(Error("Unauthorized"));
+    await expect(member.refreshHeader()).rejects.toThrow("Unauthorized");
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
+    expect(member.session.root).toBeTruthy();
+
+    role(undefined);
+    await expect(member.refreshHeader()).rejects.toThrow("Unauthorized");
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledExactlyOnceWith(id);
+    expect(roots).toEqual([undefined]);
+    expect(member.session.root).toBeUndefined();
+  });
+
+  it("does not report Vault denial when shared key retrieval is paused and the grant is valid", async () => {
+    const { actor, member } = shared();
+    const denied = vi.fn();
+    member.subscribeVaultDenial(denied);
+    vi.mocked(actor.shared_derive_vault_key).mockResolvedValueOnce({ Err: { Unauthorized: null } });
+
+    await expect(member.openAccess(id)).rejects.toThrow("Unauthorized");
+    expect(actor.get_vault_access).toHaveBeenCalledWith(id);
+    expect(actor.shared_derive_vault_key).toHaveBeenCalledOnce();
+    expect(member.session.root).toBeUndefined();
+    expect(denied).not.toHaveBeenCalled();
+
+    await member.openAccess(id);
+    expect(member.session.root).toBeTruthy();
+    expect(denied).not.toHaveBeenCalled();
   });
 
   it("discards a delayed shared key reply when access changes during derivation", async () => {

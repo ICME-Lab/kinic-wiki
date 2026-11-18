@@ -180,6 +180,12 @@ test('shared UI JavaScript cannot require a network service with a static templa
  'packages/ui/src/button.cjs': 'const Auth = require(`@icp-sdk/auth`)',
 }, root => assert.throws(() => checkTypescript(root, ts), /Forbidden ui/)));
 
+for (const target of ['vfs-candid', 'vault-candid']) test(`payments cannot depend on ${target} even before app migration`, () => fixture({
+ 'packages/payments/src/wallet-session.ts': 'export * from "../../neutral/index"',
+ 'packages/neutral/index.ts': `export * from "@kinic/${target}"`,
+ [`packages/${target}/package.json`]: JSON.stringify({name:`@kinic/${target}`,exports:'./index.ts'}),
+ [`packages/${target}/index.ts`]: 'export const factory = 0',
+}, root => assert.throws(() => checkTypescript(root, ts), /Forbidden payments/)));
 test('neutral bridge wire crate permits candid and serde without app dependencies',()=>checkCargo({packages:['vfs-runtime','vault-canister','credit-bridge-types','candid','serde'].map(name=>({id:name,name})),resolve:{nodes:[{id:'vfs-runtime',deps:[{pkg:'credit-bridge-types'}]},{id:'vault-canister',deps:[{pkg:'credit-bridge-types'}]},{id:'credit-bridge-types',deps:[{pkg:'candid'},{pkg:'serde'}]},{id:'candid',deps:[]},{id:'serde',deps:[]}]}}));
 for(const app of ['vfs-runtime','vault-service'])test(`neutral wire crate cannot hide ${app} behind a helper`,()=>assert.throws(()=>checkCargo({packages:['credit-bridge-types','helper',app].map(name=>({id:name,name})),resolve:{nodes:[{id:'credit-bridge-types',deps:[{pkg:'helper'}]},{id:'helper',deps:[{pkg:app}]},{id:app,deps:[]}]}}),/Forbidden bridge/));
 test('both browsers may import neutral factories with Wiki and Vault peer API names',()=>fixture({

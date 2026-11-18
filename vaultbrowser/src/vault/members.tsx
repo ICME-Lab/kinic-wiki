@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Principal } from "@icp-sdk/core/principal";
-import type { MemberRole, VaultClient } from "@kinic/vault-client";
-import type { VaultMember } from "@kinic/vault-client/contracts";
+import { bytes, type MemberRole, type VaultClient } from "@kinic/vault-client";
+import type { Header, VaultMember } from "@kinic/vault-client/contracts";
+import { ChevronRight, Users } from "lucide-react";
 import { VaultButton, VaultField } from "./ui";
 import type { VaultWork } from "./workspace";
 
@@ -34,11 +35,13 @@ function RoleSelect({
 
 export function VaultMembers({
   client,
+  vault,
   disabled,
   initiallyOpen,
   run,
 }: {
   client: VaultClient;
+  vault: Header["id"];
   initiallyOpen: boolean;
   disabled: boolean;
   run: VaultWork;
@@ -46,16 +49,33 @@ export function VaultMembers({
   const [principal, setPrincipal] = useState("");
   const [role, setRole] = useState<MemberRole>("Viewer");
   const [members, setMembers] = useState<VaultMember[]>();
-  const refresh = async () => setMembers(await client.listMembers());
+  const [open, setOpen] = useState(initiallyOpen);
+  const live = useRef(false);
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => { live.current = false; };
+  }, []);
+  const refresh = async () => {
+    const ticket = client.session.capture();
+    const result = await client.listMembers(bytes(vault));
+    client.session.check(ticket);
+    if (live.current) setMembers(result);
+  };
   return (
     <details
-      className="vault-disclosure [&:not([open])>div]:hidden"
-      open={initiallyOpen || undefined}
+      className="vault-disclosure"
+      data-vault-sensitive="true"
+      open={open}
       onToggle={(e) => {
+        setOpen(e.currentTarget.open);
         if (e.currentTarget.open && !members) run(refresh);
       }}
     >
-      <summary>Vault members</summary>
+      <summary>
+        <span className="vault-disclosure-icon" aria-hidden><Users size={17} /></span>
+        <span className="vault-disclosure-label">Vault members</span>
+        <ChevronRight size={16} aria-hidden />
+      </summary>
       <div className="vault-disclosure-body">
         <form
           className="grid gap-2"
@@ -73,7 +93,10 @@ export function VaultMembers({
                 member.toText() === client.identity.getPrincipal().toText()
               )
                 throw Error("InvalidMemberPrincipal");
-              await client.setMember(member, role);
+              const ticket = client.session.capture();
+              await client.setMember(member, role, bytes(vault));
+              client.session.check(ticket);
+              if (!live.current) return;
               setPrincipal("");
               await refresh();
             });
@@ -114,8 +137,10 @@ export function VaultMembers({
                     disabled={disabled}
                     onChange={(next) =>
                       run(async () => {
-                        await client.setMember(member, next);
-                        await refresh();
+                        const ticket = client.session.capture();
+                        await client.setMember(member, next, bytes(vault));
+                        client.session.check(ticket);
+                        if (live.current) await refresh();
                       })
                     }
                   />
@@ -123,8 +148,10 @@ export function VaultMembers({
                     disabled={disabled}
                     onClick={() =>
                       run(async () => {
-                        await client.removeMember(member);
-                        await refresh();
+                        const ticket = client.session.capture();
+                        await client.removeMember(member, bytes(vault));
+                        client.session.check(ticket);
+                        if (live.current) await refresh();
                       })
                     }
                   >
