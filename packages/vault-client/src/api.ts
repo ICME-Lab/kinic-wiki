@@ -76,6 +76,7 @@ export class VaultClient {
   private live = true;
   header?: Header;
   private sharedVault?: Uint8Array;
+  private selectedOwnerVault?: Uint8Array;
   private access?: VaultAccess;
   private accessCheck?: { ticket: number; pending: Promise<Header> };
   private accessListeners = new Set<() => void>();
@@ -102,6 +103,7 @@ export class VaultClient {
     this.canister = options.canister;
     this.local = options.local;
     this.session.addLockCleanup(() => {
+      this.selectedOwnerVault = undefined;
       this.keyAttempt = undefined;
       this.pinnedPublicKey = undefined;
       this.clearWriteState();
@@ -181,10 +183,12 @@ export class VaultClient {
     fn: (vault: Uint8Array) => Promise<{ Ok: T } | { Err: unknown }>,
   ): Promise<T> {
     const t = this.session.capture();
-    const context = await this.checkedContext();
+    this.checkLive();
     this.session.check(t);
-    if (this.accessRole !== "Owner") throw Error("Unauthorized");
-    const result = await fn(context.vault);
+    const target = this.sharedVault ?? this.selectedOwnerVault;
+    if (this.accessRole !== "Owner" || !target) throw Error("Unauthorized");
+    // Each owner endpoint authenticates the exact Vault without a decryption key.
+    const result = await fn(bytes(target));
     this.session.check(t);
     return ok(result);
   }
@@ -292,7 +296,7 @@ export class VaultClient {
     this.creating = undefined;
     return structuredClone(h);
   }
-  async open(header: Header) {
+  selectOwnedVault(header: Header) {
     this.checkLive();
     if (
       this.sharedVault ||
@@ -303,6 +307,10 @@ export class VaultClient {
       this.sharedVault = undefined;
       this.header = structuredClone(header);
     }
+    this.selectedOwnerVault = bytes(header.id);
+  }
+  async open(header: Header) {
+    this.selectOwnedVault(header);
     const t = this.session.capture();
     const readHeader = async () => {
       const reply = await this.actor.get_vault_header(header.id);

@@ -1,5 +1,6 @@
 "use client";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -41,6 +42,7 @@ type WorkspaceState = {
   creation: "idle" | "unresolved";
 };
 export function VaultWorkspace({ client }: { client: VaultClient }) {
+  const [showMembers, setShowMembers] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [vaults, setVaults] = useState<VaultAccess[]>([]);
   const [vaultAfter, setVaultAfter] = useState<Uint8Array>();
@@ -89,8 +91,9 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
   const selectedGrant = selected
     ? vaults.find(({ header }) => id(header) === id(selected))
     : undefined;
-  const selectedOwner =
-    role === "Owner" || (!!selectedGrant && "Owner" in selectedGrant.role);
+  const selectedOwner = selectedGrant
+    ? "Owner" in selectedGrant.role
+    : role === "Owner";
   const canEdit = role === "Owner" || role === "Editor";
   const principal = client.identity.getPrincipal().toText();
   const [copied, setCopied] = useState(false);
@@ -116,6 +119,7 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
       setBusy(false);
       select(undefined);
       setItems([]);
+      setShowMembers(false);
       setQuota(undefined);
       setGeneration(client.session.capture());
       setError("");
@@ -292,10 +296,24 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
     // Capture after the synchronous switch; keep the header selectable on key failure.
     const ticket = client.session.capture();
     select(header);
-    await pending;
-    client.session.check(ticket);
-    if (!alive.current) return;
-    await refresh();
+    try {
+      await pending;
+      client.session.check(ticket);
+      if (!alive.current) return;
+      await refresh();
+    } catch (cause) {
+      if (
+        alive.current &&
+        ticket === client.session.capture() &&
+        client.session.root
+      ) {
+        client.session.lock();
+        if (!member) client.selectOwnedVault(header);
+        select(header, "selected");
+        setError(vaultError(cause));
+      }
+      throw cause;
+    }
   };
   // The canister reserve is not owner credit. The server checks exact paid admission.
   const eligible = !!config && balance > 0n;
@@ -414,27 +432,47 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
               Refresh Vaults
             </VaultButton>
             {vaults.map(({ header: h, role: grant }, index) => (
-              <VaultButton
-                key={id(h)}
-                className="vault-switcher"
-                disabled={busy}
-                aria-pressed={selected ? id(selected) === id(h) : false}
-                onClick={() => {
-                  setNavigationOpen(false);
-                  if (navigationOpen)
-                    document.getElementById("vault-navigation-toggle")?.focus();
-                  run(() => open(h, !("Owner" in grant)));
-                }}
-              >
-                <FolderLock size={17} aria-hidden />
-                <span>
-                  Vault {index + 1} · {Object.keys(h.state)[0]}
-                  {"Owner" in grant
-                    ? ""
-                    : ` · ${selected && id(h) === id(selected) && role ? role : Object.keys(grant)[0]}`}
-                </span>
-                <ChevronRight size={15} aria-hidden />
-              </VaultButton>
+              <Fragment key={id(h)}>
+                <VaultButton
+                  className="vault-switcher"
+                  disabled={busy}
+                  aria-pressed={selected ? id(selected) === id(h) : false}
+                  onClick={() => {
+                    setNavigationOpen(false);
+                    if (navigationOpen)
+                      document
+                        .getElementById("vault-navigation-toggle")
+                        ?.focus();
+                    run(() => open(h, !("Owner" in grant)));
+                  }}
+                >
+                  <FolderLock size={17} aria-hidden />
+                  <span>
+                    Vault {index + 1} · {Object.keys(h.state)[0]}
+                    {"Owner" in grant
+                      ? ""
+                      : ` · ${selected && id(h) === id(selected) && role ? role : Object.keys(grant)[0]}`}
+                  </span>
+                  <ChevronRight size={15} aria-hidden />
+                </VaultButton>
+                {"Owner" in grant &&
+                "Active" in h.state &&
+                (!opened || !selected || id(selected) !== id(h)) ? (
+                  <VaultButton
+                    disabled={busy}
+                    aria-label={`Manage members of Vault ${index + 1}`}
+                    onClick={() => {
+                      client.session.lock();
+                      client.selectOwnedVault(h);
+                      select(h, "selected");
+                      setShowMembers(true);
+                      setNavigationOpen(false);
+                    }}
+                  >
+                    Manage members
+                  </VaultButton>
+                ) : null}
+              </Fragment>
             ))}
             {vaultAfter ? (
               <VaultButton
@@ -527,14 +565,6 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                       Retry interrupted change
                     </VaultButton>
                   ) : null}
-                  {role === "Owner" ? (
-                    <VaultMembers
-                      client={client}
-                      disabled={busy}
-                      run={run}
-                      key={`members-${generation}`}
-                    />
-                  ) : null}
                   {role === "Editor" ? (
                     <VaultSharedUploads
                       client={client}
@@ -544,6 +574,15 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
                   ) : null}
                 </>
               )}
+              {selectedOwner && "Active" in selected.state ? (
+                <VaultMembers
+                  key={`members-${generation}-${id(selected)}`}
+                  client={client}
+                  initiallyOpen={showMembers}
+                  disabled={busy}
+                  run={run}
+                />
+              ) : null}
               {selectedOwner ? (
                 <VaultEncryptedCleanup
                   key={`cleanup-${generation}`}

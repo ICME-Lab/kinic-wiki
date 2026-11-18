@@ -5,6 +5,7 @@ import {
   fireEvent,
   act,
   waitFor,
+  within,
   cleanup,
 } from "@testing-library/react";
 import { afterEach, beforeEach, it, expect, vi } from "vitest";
@@ -37,6 +38,7 @@ function Child() {
   );
 }
 beforeEach(() => {
+  localStorage.clear();
   mock.load.mockResolvedValue({ identityProvider: "https://id.ai", derivationOrigin: "https://vault.example" });
 });
 afterEach(() => {
@@ -530,4 +532,235 @@ it("does not open a delayed sign-in when config finishes after provider unmount"
   view.unmount();
   await act(async () => resolve({ identityProvider: "https://id.ai", derivationOrigin: "https://vault.example" }));
   expect(login).not.toHaveBeenCalled();
+});
+
+function restoredSDK() {
+  const identity = { getPrincipal: () => ({ toText: () => "same-principal" }) };
+  return {
+    getIdentity: () => identity,
+    isAuthenticated: vi.fn(async () => true),
+    login: vi.fn(async (options: { onSuccess: () => void }) =>
+      options.onSuccess(),
+    ),
+    logout: vi.fn(async () => {}),
+  };
+}
+function privateView() {
+  const mounted = render(
+    <VaultAuthProvider>
+      <Child />
+    </VaultAuthProvider>,
+  );
+  return within(mounted.container);
+}
+
+it("explicit sign-out clears a sibling and prevents an unfinished restore from publishing", async () => {
+  const slow = restoredSDK();
+  let finish!: (valid: boolean) => void;
+  slow.isAuthenticated.mockImplementation(
+    () =>
+      new Promise((r) => {
+        finish = r;
+      }),
+  );
+  mock.create
+    .mockResolvedValueOnce(restoredSDK())
+    .mockResolvedValueOnce(restoredSDK())
+    .mockResolvedValueOnce(slow);
+  const a = privateView(),
+    b = privateView(),
+    starting = privateView();
+  await a.findByText("signed");
+  await b.findByText("signed");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  fireEvent.click(a.getByRole("button", { name: "logout" }));
+  await b.findByText("unsigned");
+  await act(async () => finish(true));
+  await starting.findByText("ready");
+  expect(starting.getByText("unsigned")).toBeTruthy();
+});
+
+it("keeps a sibling active on local idle", async () => {
+  const aSDK = restoredSDK(),
+    bSDK = restoredSDK();
+  mock.create.mockResolvedValueOnce(aSDK).mockResolvedValueOnce(bSDK);
+  const a = privateView(),
+    b = privateView();
+  await a.findByText("signed");
+  await b.findByText("signed");
+  await act(async () => mock.create.mock.calls[1][0].idleOptions.onIdle());
+  expect(b.getByText("unsigned")).toBeTruthy();
+  expect(a.getByText("signed")).toBeTruthy();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(a.getByText("signed")).toBeTruthy();
+});
+
+it("keeps a newly mounted frame anonymous during asynchronous removal of the stored delegation", async () => {
+  const sender = restoredSDK();
+  let finish!: () => void;
+  sender.logout.mockImplementation(
+    () =>
+      new Promise((r) => {
+        finish = r;
+      }),
+  );
+  mock.create
+    .mockResolvedValueOnce(sender)
+    .mockResolvedValueOnce(restoredSDK());
+  const a = privateView();
+  await a.findByText("signed");
+  fireEvent.click(a.getByRole("button", { name: "logout" }));
+  const starting = privateView();
+  expect(starting.getByText("unsigned")).toBeTruthy();
+  await act(async () => finish());
+  await starting.findByText("ready");
+  expect(starting.getByText("unsigned")).toBeTruthy();
+});
+
+it("retains the anonymous view with a recovery message when the browser denies partition storage", async () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new DOMException("Access denied", "SecurityError");
+  });
+  try {
+    const view = privateView();
+    await view.findByText(/storage is unavailable/i);
+    expect(view.getByText("unsigned")).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "login" }));
+    expect(mock.create).not.toHaveBeenCalled();
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+
+it("delivers a queued sign-out to the old sibling while preserving a third view's fresh login", async () => {
+  const notify = BroadcastChannel.prototype.postMessage;
+  let deliver!: () => void;
+  const transport = vi
+    .spyOn(BroadcastChannel.prototype, "postMessage")
+    .mockImplementation(function (this: BroadcastChannel, value) {
+      deliver = () => notify.call(this, value);
+    });
+  try {
+    const fresh = restoredSDK();
+    fresh.isAuthenticated.mockResolvedValue(false);
+    mock.create
+      .mockResolvedValueOnce(restoredSDK())
+      .mockResolvedValueOnce(restoredSDK())
+      .mockResolvedValueOnce(fresh);
+    const sender = privateView(),
+      older = privateView(),
+      newer = privateView();
+    await sender.findByText("signed");
+    await older.findByText("signed");
+    await newer.findByText("ready");
+    fireEvent.click(sender.getByRole("button", { name: "logout" }));
+    await sender.findByText("ready");
+    expect(older.getByText("signed")).toBeTruthy();
+    fireEvent.click(newer.getByRole("button", { name: "login" }));
+    await newer.findByText("signed");
+    await act(async () => deliver());
+    await older.findByText("unsigned");
+    expect(newer.getByText("signed")).toBeTruthy();
+  } finally {
+    transport.mockRestore();
+  }
+});
+
+it("keeps the persisted sign-in for another active Vault view when its sibling expires locally", async () => {
+  const { locks } = await import("node:worker_threads");
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: locks,
+  });
+  let stored = true;
+  const instance = () => ({
+    ...restoredSDK(),
+    isAuthenticated: async () => stored,
+    logout: async () => {
+      stored = false;
+    },
+  });
+  mock.create.mockImplementation(async () => instance());
+  try {
+    const active = privateView(),
+      idle = privateView();
+    await active.findByText("signed");
+    await idle.findByText("signed");
+    await act(async () => mock.create.mock.calls[1][0].idleOptions.onIdle());
+    await idle.findByText("ready");
+    expect(idle.getByText("unsigned")).toBeTruthy();
+    expect(active.getByText("signed")).toBeTruthy();
+    const restored = privateView();
+    await restored.findByText("signed");
+  } finally {
+    cleanup();
+    Reflect.deleteProperty(navigator, "locks");
+  }
+});
+
+it("waits for another frame's pending SDK deletion before starting a fresh same-principal login", async () => {
+  const { locks } = await import("node:worker_threads");
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: locks,
+  });
+  const sender = restoredSDK(),
+    fresh = restoredSDK();
+  let finish!: () => void;
+  let stored = "old";
+  sender.logout.mockImplementation(async () => {
+    await new Promise<void>((r) => {
+      finish = r;
+    });
+    stored = "";
+  });
+  fresh.login.mockImplementation(async (o) => {
+    stored = "fresh";
+    o.onSuccess();
+  });
+  mock.create.mockResolvedValueOnce(sender).mockResolvedValueOnce(fresh);
+  try {
+    const a = privateView();
+    await a.findByText("signed");
+    fireEvent.click(a.getByRole("button", { name: "logout" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const c = privateView();
+    await waitFor(() => expect(fresh.isAuthenticated).toHaveBeenCalled());
+    fireEvent.click(c.getByRole("button", { name: "login" }));
+    expect(fresh.login).not.toHaveBeenCalled();
+    await act(async () => finish());
+    await c.findByText("ready");
+    fireEvent.click(c.getByRole("button", { name: "login" }));
+    await c.findByText("signed");
+    expect(stored).toBe("fresh");
+  } finally {
+    cleanup();
+    Reflect.deleteProperty(navigator, "locks");
+  }
+});
+
+it("deletes the persisted delegation after the only authenticated view goes idle", async () => {
+  const { locks } = await import("node:worker_threads");
+  Object.defineProperty(navigator, "locks", { configurable: true, value: locks });
+  let stored = true;
+  mock.create.mockImplementation(async () => ({
+    ...restoredSDK(),
+    isAuthenticated: async () => stored,
+    logout: async () => { stored = false; },
+  }));
+  try {
+    const sole = privateView();
+    await sole.findByText("signed");
+    await act(async () => mock.create.mock.calls[0][0].idleOptions.onIdle());
+    await sole.findByText("ready");
+    cleanup();
+    const reloaded = privateView();
+    await reloaded.findByText("ready");
+    expect(reloaded.getByText("unsigned")).toBeTruthy();
+  } finally {
+    cleanup();
+    Reflect.deleteProperty(navigator, "locks");
+  }
 });

@@ -11,6 +11,12 @@ import {
   loginButton,
 } from "./acceptance-ui.mjs";
 
+import { createRequire } from "node:module";
+const { Cbor } = createRequire(import.meta.url)("@icp-sdk/core/agent");
+const methodName = (request) => {
+  const data = request.postDataBuffer();
+  return data && Cbor.decode(data).content?.method_name;
+};
 const expect = playwrightExpect.configure({ timeout: 45000 });
 const vaultURL = process.env.VAULT_ACCEPTANCE_URL;
 const wikiURL = process.env.WIKI_ACCEPTANCE_URL;
@@ -40,7 +46,9 @@ async function signIn(page, surface = page, credentials = [], create = false) {
 // The anonymous sign-in button is mounted disabled during SDK startup. Wait
 // for a resolved state before deciding whether the stored delegation is usable.
 async function restoreOrSignIn(page, surface, signedIn, credentials) {
-  const readyLogin = loginButton(surface).and(surface.locator("button:enabled"));
+  const readyLogin = loginButton(surface).and(
+    surface.locator("button:enabled"),
+  );
   await expect(signedIn.or(readyLogin)).toBeVisible();
   if (await readyLogin.isVisible()) {
     await signIn(page, surface, credentials);
@@ -62,9 +70,12 @@ async function identity() {
 async function assertParentPrivate(page) {
   const parent = await page.locator("html").innerHTML();
   for (const value of [title, body, edited]) assert.ok(!parent.includes(value));
-  assert.equal(
-    await page.locator("iframe").evaluate((frame) => frame.contentDocument),
-    null,
+  assert.ok(
+    await page
+      .locator("iframe")
+      .evaluateAll((frames) =>
+        frames.every((frame) => frame.contentDocument === null),
+      ),
   );
 }
 try {
@@ -136,9 +147,30 @@ try {
   for (const id of [selection.vault, selection.object])
     assert.match(id, /^[a-f0-9]{32}$/);
   const url = vaultURL + "/embed/" + selection.vault + "/" + selection.object;
-  const markdown = "Original draft.\n\n[非公開資料](" + url + ")\n";
+  const reference = "[非公開資料](" + url + ")";
+  const draft = wiki.getByRole("textbox");
+  await expect(draft.locator(".cm-line").nth(2)).toHaveText(reference);
+  const [secondPicker] = await Promise.all([
+    wiki.waitForEvent("popup"),
+    button(wiki, "Insert private document").click(),
+  ]);
+  const secondVault = button(secondPicker, "Vault 1 · Viewer");
+  await restoreOrSignIn(
+    secondPicker,
+    secondPicker,
+    secondVault,
+    member.credentials,
+  );
+  await secondVault.click();
+  await Promise.all([
+    secondPicker.waitForEvent("close"),
+    button(secondPicker, title).click(),
+  ]);
+  await expect(draft.locator(".cm-line").nth(4)).toHaveText(reference);
+  const markdown =
+    "Original draft.\n\n" + reference + "\n\n" + reference + "\n";
   await action(wiki, "Save");
-  await expect(button(wiki, "Open private document")).toBeVisible();
+  await expect(button(wiki, "Open private document")).toHaveCount(2);
   await wiki.reload();
   assert.equal(
     await wiki.evaluate(
@@ -148,9 +180,9 @@ try {
   );
   await expect(wiki.locator("iframe")).toHaveCount(0);
   assert.deepEqual(requests, []);
-  await button(wiki, "Open private document").click();
+  await button(wiki, "Open private document").first().click();
   await expect(wiki.locator("iframe")).toHaveAttribute("src", url);
-  const frame = wiki.frameLocator("iframe");
+  const frame = wiki.frameLocator("iframe").first();
   const content = frame.getByText(body, { exact: true });
   await restoreOrSignIn(wiki, frame, content, member.credentials);
   await expect(content).toBeVisible();
@@ -160,6 +192,44 @@ try {
     "PASS actual picker, reference-only Wiki save/reload, click-triggered cross-origin decryption",
   );
 
+  await button(wiki, "Open private document").click();
+  const sibling = wiki.frameLocator("iframe").nth(1);
+  await restoreOrSignIn(
+    wiki,
+    sibling,
+    sibling.getByText(body, { exact: true }),
+    member.credentials,
+  );
+  await expect(sibling.getByText(body, { exact: true })).toBeVisible();
+  const siblingWindow = await (
+    await wiki.locator("iframe").nth(1).elementHandle()
+  ).contentFrame();
+  let held = false,
+    release,
+    delivered;
+  const resumed = new Promise((resolve) => {
+    release = resolve;
+  });
+  const complete = new Promise((resolve) => {
+    delivered = resolve;
+  });
+  let delayed = false;
+  const holdRead = async (route) => {
+    if (
+      !delayed &&
+      route.request().frame() === siblingWindow &&
+      methodName(route.request()) === "shared_get_chunk"
+    ) {
+      delayed = true;
+      const response = await route.fetch();
+      assert.ok(response.ok());
+      held = true;
+      await resumed;
+      await route.fulfill({ response });
+      delivered();
+    } else await route.continue();
+  };
+  await wiki.route("**/api/v*/canister/**/call", holdRead);
   await row.getByLabel("Member role").selectOption("Editor");
   await expect(row.getByLabel("Member role")).toHaveValue("Editor");
   await member.page.bringToFront();
@@ -174,8 +244,61 @@ try {
   await wiki.bringToFront();
   await expect(frame.getByText(edited, { exact: true })).toBeVisible();
   await assertParentPrivate(wiki);
+  await expect.poll(() => held).toBe(true);
+  await expect(sibling.getByText(body, { exact: true })).toBeVisible();
+  await button(frame, "Sign out").click();
+  await expect(loginButton(frame)).toBeEnabled();
+  await expect(loginButton(sibling)).toBeEnabled();
+  const afterLogout = [];
+  const observePrivateReads = (request) => {
+    if (/\/api\/v\d+\/canister\/.*\/call$/.test(request.url())) {
+      const method = methodName(request);
+      if (method?.startsWith("shared_") || method === "get_vault_access")
+        afterLogout.push(method);
+    }
+  };
+  wiki.on("request", observePrivateReads);
+  release();
+  await complete;
+  await wiki.unroute("**/api/v*/canister/**/call", holdRead);
+  for (const privateFrame of [frame, sibling]) {
+    await expect(privateFrame.getByText(title, { exact: true })).toHaveCount(0);
+    await expect(privateFrame.getByText(body, { exact: true })).toHaveCount(0);
+    await expect(privateFrame.getByText(edited, { exact: true })).toHaveCount(
+      0,
+    );
+  }
+  await siblingWindow.evaluate(() => window.dispatchEvent(new Event("focus")));
+  assert.deepEqual(afterLogout, []);
+  wiki.off("request", observePrivateReads);
+  await assertParentPrivate(wiki);
+  console.log(
+    "PASS explicit logout clears both sibling Vault iframes through delivery of a held real chunk reply",
+  );
+  await signIn(wiki, frame, member.credentials);
+  await expect(frame.getByText(edited, { exact: true })).toBeVisible();
+  await owner.page.reload();
+  let derived = 0;
+  const observeOwner = (request) => {
+    if (
+      /\/api\/v\d+\/canister\/.*\/call$/.test(request.url()) &&
+      methodName(request) === "derive_vault_key"
+    )
+      derived++;
+  };
+  owner.page.on("request", observeOwner);
+  await action(owner.page, "Manage members of Vault 1");
+  await expect(
+    owner.page.getByText("Vault closed", { exact: true }),
+  ).toBeVisible();
+  await expect(owner.page.getByLabel("Document title")).toHaveCount(0);
   await row.getByRole("button", { name: "Remove member" }).click();
   await expect(row).toHaveCount(0);
+  assert.equal(derived, 0);
+  owner.page.off("request", observeOwner);
+  console.log(
+    "PASS cold owner removed an Editor from a closed Vault without any key derivation",
+  );
   await wiki.bringToFront();
   await expect(
     frame.getByText("This private document is unavailable.", { exact: true }),

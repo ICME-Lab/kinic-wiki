@@ -1085,3 +1085,85 @@ it("loads subsequent accessible Vault pages and fences a revoked cached context"
   await screen.findByText("Choose or create a Vault");
   expect(x.client.session.root).toBeUndefined();
 });
+
+it("lets a cold owner remove a member after key service failure without another key request", async () => {
+  const x = await mounted();
+  const guest = Ed25519KeyIdentity.generate().getPrincipal();
+  await x.actor.set_vault_member(x.headers[0].id, guest, { Viewer: null });
+  x.failKey(true);
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  fireEvent.click(screen.getByText("Vault 1 · Active"));
+  await screen.findByText(/key service is unavailable/);
+  expect(screen.queryByLabelText("Document title")).toBeNull();
+  fireEvent.click(screen.getByText("Vault members"));
+  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
+  await screen.findByText("No additional members.");
+  expect(await x.actor.list_vault_members(x.headers[0].id)).toEqual({ Ok: [] });
+  expect(derive).toHaveBeenCalledTimes(1);
+  expect(x.client.session.root).toBeUndefined();
+});
+
+it("discards a late member list when the owner selects a different Vault without opening either root", async () => {
+  const x = await mounted();
+  const [a, b] = [
+    Ed25519KeyIdentity.generate().getPrincipal(),
+    Ed25519KeyIdentity.generate().getPrincipal(),
+  ];
+  await x.actor.set_vault_member(x.headers[0].id, a, { Viewer: null });
+  await x.actor.set_vault_member(x.headers[1].id, b, { Editor: null });
+  const list = x.actor.list_vault_members;
+  let release!: () => void;
+  vi.spyOn(x.actor, "list_vault_members").mockImplementationOnce(async (id) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return list(id);
+  });
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Manage members of Vault 1" }),
+  );
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  fireEvent.click(screen.getByText("Close Vault"));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Manage members of Vault 2" }),
+  );
+  await screen.findByText(b.toText());
+  await act(async () => release());
+  expect(screen.queryByText(a.toText())).toBeNull();
+  expect(screen.getByText(b.toText())).toBeTruthy();
+  expect(derive).not.toHaveBeenCalled();
+});
+
+it("refuses member administration for a shared Vault while its key service is unavailable", async () => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Viewer: null });
+  x.failKey(true);
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  fireEvent.click(await screen.findByText("Vault 2 · Active · Viewer"));
+  await screen.findByText(/key service is unavailable/);
+  expect(
+    screen.queryByRole("button", { name: "Manage members of Vault 2" }),
+  ).toBeNull();
+  expect(screen.queryByText("Vault members")).toBeNull();
+  const guest = Ed25519KeyIdentity.generate().getPrincipal();
+  await expect(x.client.listMembers()).rejects.toThrow("Unauthorized");
+  await expect(x.client.removeMember(guest)).rejects.toThrow("Unauthorized");
+});
+
+it("closes the previous private view when reopening its selected owner header fails", async () => {
+  const x = await mounted();
+  await x.open();
+  const input = screen.getByLabelText("Document title") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "unsaved private title" } });
+  vi.spyOn(x.actor, "get_vault_header").mockRejectedValueOnce(
+    Error("NetworkUnavailable"),
+  );
+  fireEvent.click(screen.getByText("Vault 1 · Active"));
+  await screen.findByText("Retry opening Vault");
+  expect(input.value).toBe("");
+  expect(screen.queryByLabelText("Document title")).toBeNull();
+  expect(x.client.session.root).toBeUndefined();
+  expect(screen.getByText("Vault members")).toBeTruthy();
+});

@@ -35,9 +35,11 @@ function RoleSelect({
 export function VaultMembers({
   client,
   disabled,
+  initiallyOpen,
   run,
 }: {
   client: VaultClient;
+  initiallyOpen: boolean;
   disabled: boolean;
   run: VaultWork;
 }) {
@@ -48,6 +50,7 @@ export function VaultMembers({
   return (
     <details
       className="vault-disclosure [&:not([open])>div]:hidden"
+      open={initiallyOpen || undefined}
       onToggle={(e) => {
         if (e.currentTarget.open && !members) run(refresh);
       }}

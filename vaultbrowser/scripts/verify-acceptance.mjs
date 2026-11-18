@@ -1020,7 +1020,7 @@ try {
       }
       return {
         databases,
-        localKeys: Object.keys(localStorage),
+        localEntries: Object.entries(localStorage),
         sessionKeys: Object.keys(sessionStorage),
         cacheNames: await caches.keys(),
         serviceWorkers: (await navigator.serviceWorker.getRegistrations())
@@ -1030,7 +1030,10 @@ try {
     },
     [plaintext, title, "cancelled-private-payload"],
   );
-  assert.deepEqual(persistence.localKeys, []);
+  assert.equal(persistence.localEntries.length, 1);
+  const [[markerName, markerValue]] = persistence.localEntries;
+  assert.equal(markerName, "kinic-vault-logout");
+  assert.match(markerValue, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.deepEqual(persistence.sessionKeys, []);
   assert.deepEqual(persistence.cacheNames, []);
   assert.equal(persistence.serviceWorkers, 0);
@@ -1071,7 +1074,7 @@ try {
       }
     }
   pass(
-    "no Vault plaintext/root/DEK persistence; only SDK auth and public subnet keys; zero Vault WebAuthn calls",
+    "no Vault plaintext/root/DEK persistence; only a public logout generation, SDK auth and public subnet keys; zero Vault WebAuthn calls",
     { databases: persistence.databases.map((db) => db.name) },
   );
 
