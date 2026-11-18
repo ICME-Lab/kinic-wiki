@@ -31,6 +31,8 @@ class UIFixtureClient extends VaultClient {
     network.setFirstKeyFree(false);
     this.session.check(ticket);
     this.header = structuredClone(h);
+    // Synthetic derivation only: mirror the pin installed by production open().
+    Object.assign(this, { pinnedPublicKey: bytes(h.public_key) });
     this.session.bindRoot(root, {
       canister: this.canister,
       owner: this.identity.getPrincipal().toText(),

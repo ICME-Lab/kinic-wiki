@@ -10,7 +10,7 @@ export function assertSeparated(graph, classify, classifyStart = classify) {
       if (seen.has(node)) return;
       seen.add(node);
       const target = classify(node);
-      if ((side === 'wiki' && target === 'vault') || (side === 'vault' && target === 'wiki') || (side === 'payments' && ['wiki', 'vault'].includes(target)) || (side === 'ui' && target && target !== 'ui'))
+      if ((side === 'wiki' && target === 'vault') || (side === 'vault' && target === 'wiki') || (side === 'payments' && ['wiki', 'vault'].includes(target)) || (side === 'ui' && target && target !== 'ui') || (side === 'bridge' && target && !['bridge','transport'].includes(target)))
         throw new Error(`Forbidden ${side} dependency: ${[...path, node].join(' -> ')}`);
       for (const next of graph.get(node) ?? []) visit(next, [...path, node], seen);
     };
@@ -20,7 +20,7 @@ export function assertSeparated(graph, classify, classifyStart = classify) {
 export function checkCargo(metadata) {
   const names = new Map(metadata.packages.map(p => [p.id, p.name]));
   const graph = new Map(metadata.resolve.nodes.map(n => [n.id, n.deps.map(d => d.pkg)]));
-  assertSeparated(graph, id => /^vault[-_]/.test(names.get(id)) ? 'vault' : /^(?:kinic[-_])?(?:vfs|wiki)[-_]/.test(names.get(id)) ? 'wiki' : null);
+  assertSeparated(graph, id => names.get(id) === 'credit-bridge-types' ? 'bridge' : /^vault[-_]/.test(names.get(id)) ? 'vault' : /^(?:kinic[-_])?(?:vfs|wiki)[-_]/.test(names.get(id)) ? 'wiki' : null);
 }
 export function imports(ts, text, file = 'module.ts') {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -70,6 +70,8 @@ export function checkTypescript(root, ts = loadParser(root)) {
     if (/^(vaultbrowser|packages\/vault-)/.test(name)) return 'vault';
     if (/^(wikibrowser|packages\/vfs-)/.test(name)) return 'wiki';
     if (/^packages\/ui\//.test(name)) return 'ui';
+    if (/^packages\/credit-bridge-candid\//.test(name)) return 'bridge';
+    if (/^external:@icp-sdk\/core\/(?:agent|candid|principal)$/.test(p)) return 'transport';
     if (serviceFiles.has(p)) return 'service';
     if (/^external:(?:node:(?:fs|http|https|net|tls|sqlite)(?:\/|$)|(?:axios|ky|idb|localforage|dexie|better-sqlite3)(?:\/|$)|@icp-sdk\/(?:auth|core)(?:\/|$)|@dfinity\/|(?:.*[\/@-])?(?:auth|actor|agent|network|storage|persistence|sqlite)(?:[\/@-]|$))/i.test(p)) return 'service';
     return null;
@@ -79,7 +81,7 @@ export function checkTypescript(root, ts = loadParser(root)) {
   const graph = new Map();
   for (const file of files) {
     const text = sources.get(file);
-    if (classify(file) === 'ui' && serviceFiles.has(file)) throw new Error(`Shared UI persistence/networking: ${file}`);
+    if (['ui','bridge'].includes(classify(file)) && serviceFiles.has(file)) throw new Error(`Shared ${classify(file)} persistence/networking: ${file}`);
     graph.set(file, imports(ts, text, file).map(spec => {
       if (spec.startsWith('.')) return resolveFile(resolve(dirname(file), spec)) ?? resolve(dirname(file), spec);
       if (spec.startsWith('@/')) return resolveFile(resolve(root, relative(root, file).split('/')[0], spec.slice(2))) ?? spec;

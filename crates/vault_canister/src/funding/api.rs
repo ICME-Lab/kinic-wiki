@@ -153,9 +153,14 @@ pub(super) fn list_payments_for(caller: Principal, now: u64) -> vault_types::Res
         })
         .map_err(|_| Error::Storage)?;
         rows.into_iter()
-            .map(|r| {
-                let payment: Payment = serde_json::from_str(&r).map_err(|_| Error::Storage)?;
-                Ok(payment.with_effective_status(now))
+            .filter_map(|r| match crate::bridge::decode(&r) {
+                Ok(Some(_)) => None,
+                Err(error) => Some(Err(error)),
+                Ok(None) => Some(
+                    serde_json::from_str::<Payment>(&r)
+                        .map(|payment| payment.with_effective_status(now))
+                        .map_err(|_| Error::Storage),
+                ),
             })
             .collect()
     })

@@ -154,6 +154,9 @@ pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Res
             owners.insert(p.request.beneficiary.to_text());
         }
     }
+    for (owner, _, _) in crate::bridge::reservations(db)? {
+        owners.insert(owner.to_text());
+    }
     if !owners.contains(&beneficiary.to_text()) && owners.len() >= ACCOUNTS {
         return Err(Error::QuotaExceeded);
     }
@@ -200,4 +203,20 @@ pub(crate) fn subsidy_schema_statements() -> Vec<String> {
         "",
     );
     statements
+}
+
+/// Reserve both bridge and ICRC credits and execution refunds before any external debit.
+pub(crate) fn admit_credit(
+    db: &Connection,
+    owner: candid::Principal,
+    wallet: candid::Principal,
+    operation: &[u8],
+    credits: u64,
+) -> Result<()> {
+    crate::accounting::admit_credit(
+        db,
+        &owner.to_text(),
+        credits,
+        Some((&wallet.to_text(), operation)),
+    )
 }

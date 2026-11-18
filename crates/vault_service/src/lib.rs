@@ -1,6 +1,6 @@
 //! II-only operations. No request principal, application grant or independent unlock credential.
-pub mod runtime;
 mod mutation_digest;
+pub mod runtime;
 use runtime::Environment;
 use vault_store::{
     self as store,
@@ -188,8 +188,12 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
 pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
     authenticate(env)?;
     id(&r.operation)?;
-    let digest = env.transaction(|db| mutation_digest::resolve(db, &r))?;
-    if let Some(result) = replay(env, &r.operation, &digest)? {
+    let (digest, cached) = env.transaction(|db| {
+        let digest = mutation_digest::resolve(db, &r)?;
+        let cached = ops::replay(db, &r.operation, &digest, env.now())?;
+        Ok((digest, cached))
+    })?;
+    if let Some(result) = cached {
         return Ok(result);
     }
     let cleanup = matches!(
@@ -238,9 +242,23 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
             }
         };
         let result = match r.action {
-            Action::RenameVault { vault, name, expected_sequence } => {
+            Action::RenameVault {
+                vault,
+                name,
+                expected_sequence,
+            } => {
                 store::rename(db, &vault, &name, expected_sequence)?;
                 MutationResult::Done
+            }
+            Action::SaveInline(request) => {
+                let h = store::active(db, &request.request.vault)?;
+                let input = key_input(env.canister(), env.owner(), &h)?;
+                MutationResult::Revision(store::content::save_inline(
+                    db,
+                    request,
+                    &input,
+                    env.now(),
+                )?)
             }
             Action::BeginRevision(request) => {
                 MutationResult::Upload(store::content::begin(db, request, env.now())?)

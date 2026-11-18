@@ -8,6 +8,7 @@ import type {
   PendingUploadSummary,
   VaultActor,
 } from "@kinic/vault-client/contracts";
+import { hash } from "@kinic/vault-crypto/documents";
 export const fixtureHeader = (value = 1): Header => ({
   id: new Uint8Array(16).fill(value),
   nonce: new Uint8Array(32).fill(value),
@@ -135,6 +136,17 @@ export function fixtureNetwork() {
         next: [],
       },
     }),
+    get_manifest: async (vault, object, revision) => {
+      const found = revisions.find(
+        (r) =>
+          key(r.vault) === key(vault) &&
+          key(r.object) === key(object) &&
+          r.revision === revision,
+      );
+      return found
+        ? { Ok: structuredClone(found) }
+        : { Err: { NotFound: null } };
+    },
     get_chunk: async (
       vault: Uint8Array | number[],
       object: Uint8Array | number[],
@@ -157,6 +169,43 @@ export function fixtureNetwork() {
         if (!request.name.trim() || Array.from(request.name.trim()).length > 64) return { Err: { InvalidInput: null } };
         header.name = [request.name.trim()];
         header.sequence++;
+      }
+      if ("SaveInline" in a) {
+        const { request: r, bytes: ciphertext, context_hash } = a.SaveInline;
+        const h = headers.find((h) => key(h.id) === key(r.vault));
+        if (!h || !("Active" in h.state)) return { Err: { NotFound: null } };
+        if (
+          r.plain_size > 262144n ||
+          r.plain_size < 0n ||
+          ciphertext.length !== Number(r.plain_size) + 16 ||
+          r.chunk_hashes.length !== 1 ||
+          context_hash.length !== 32 ||
+          key(await hash(new Uint8Array(ciphertext))) !== key(r.chunk_hashes[0])
+        )
+          return { Err: { InvalidInput: null } };
+        const latest = revisions
+          .filter(
+            (x) =>
+              key(x.vault) === key(r.vault) && key(x.object) === key(r.object),
+          )
+          .at(-1);
+        if ((latest?.revision ?? 0n) !== r.expected_revision)
+          return { Err: { Conflict: null } };
+        const revision: Revision = {
+          vault: r.vault,
+          object: r.object,
+          revision: r.expected_revision + 1n,
+          sequence: ++h.sequence,
+          plain_size: r.plain_size,
+          manifest: r.manifest,
+          chunk_hashes: r.chunk_hashes,
+          deleted: false,
+        };
+        revisions.push(structuredClone(revision));
+        chunks.set(`${key(r.vault)}:${key(r.object)}:${revision.revision}`, [
+          new Uint8Array(ciphertext),
+        ]);
+        value = { Revision: revision };
       }
       if ("BeginRevision" in a) {
         const r = a.BeginRevision;

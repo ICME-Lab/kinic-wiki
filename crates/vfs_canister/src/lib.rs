@@ -1,3 +1,7 @@
+use credit_bridge_types::{
+    BridgeConfig, BridgeResult, BridgeRevocation, CreditOffer, LinkChallenge, LinkStatus,
+};
+use vfs_runtime::credit_bridge::{TransferAmount, TransferApproval, VaultTransfer};
 use vfs_types::ScopeRevisionRequest;
 use vfs_types::{BekkoRefillConfig, BekkoRefillResolution, BekkoRefillState};
 use vfs_types::{
@@ -81,6 +85,7 @@ use vfs_types::{
 mod api_doc;
 mod bekko_refill;
 mod candid_normalization;
+mod credit_bridge;
 mod public_http;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -332,6 +337,7 @@ fn post_upgrade_hook() {
     let config =
         post_upgrade_cycles_billing_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
     initialize_upgrade_or_trap(config);
+    with_service(|s| s.fence_vault_bridge_upgrade()).unwrap_or_else(|e| ic_cdk::trap(e));
     public_http::reset();
     schedule_storage_billing_timer();
 }

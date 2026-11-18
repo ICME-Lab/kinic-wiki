@@ -44,6 +44,14 @@ pub(crate) fn admit_credit(
             capacity += u128::from(payment.credits);
         }
     }
+    for (beneficiary, operation, credits) in crate::bridge::reservations(db)? {
+        let excluded = exclude_payment.is_some_and(|(wallet, excluded_operation)| {
+            beneficiary.to_text() == wallet && operation.as_slice() == excluded_operation
+        });
+        if beneficiary.to_text() == owner && !excluded {
+            capacity += u128::from(credits);
+        }
+    }
     if capacity > i64::MAX as u128 {
         return Err(Error::QuotaExceeded);
     }

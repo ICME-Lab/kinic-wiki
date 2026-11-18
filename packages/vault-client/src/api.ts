@@ -13,6 +13,7 @@ import {
   decryptDocumentV3,
   readManifestV3,
   b64,
+  hash,
   type Metadata,
 } from "@kinic/vault-crypto/documents";
 import type {
@@ -52,6 +53,8 @@ type Save = {
   operation: Uint8Array;
   ticket: number;
   revision?: Revision;
+  contextHash?: Uint8Array;
+  uncertain?: boolean;
 };
 type RequestState =
   { kind: "idle" } | { kind: "sending" | "ambiguous"; mutation: Mutation };
@@ -75,6 +78,7 @@ export class VaultClient {
   private readonly deviceKeys: DeviceKeys;
   private unsubscribeDevice: () => void;
   deviceKeyStatus: "saved" | "memory" | "none" = "none";
+  private searchReads = new Set<Promise<void>>();
   private live = true;
   header?: Header;
   private pinnedPublicKey?: Uint8Array;
@@ -377,6 +381,27 @@ export class VaultClient {
     this.header = structuredClone(h);
     return structuredClone(h);
   }
+  private cachedContext() {
+    this.checkLive();
+    this.session.check(this.session.capture());
+    if (!this.header) throw Error("Locked");
+    if (
+      !("Active" in this.header.state) ||
+      !this.pinnedPublicKey ||
+      !equal(this.pinnedPublicKey, bytes(this.header.public_key))
+    ) {
+      this.session.lock();
+      throw Error("TargetChanged");
+    }
+    let context: VaultContext;
+    try {
+      context = this.context(this.header);
+    } catch {
+      this.session.lock();
+      throw Error("TargetChanged");
+    }
+    return this.session.requireContext(context);
+  }
   private async checkedContext() {
     const t = this.session.capture();
     const h = await this.refreshHeader();
@@ -445,7 +470,8 @@ export class VaultClient {
     const detach = this.session.addLockCleanup(() => plaintext.fill(0));
     try {
       const t = this.session.capture();
-      const context = await this.checkedContext();
+      const inline = plaintext.length <= 256 * 1024;
+      const context = inline ? this.cachedContext() : await this.checkedContext();
       this.session.check(t);
       const object = item ? bytes(item.revision.object) : randomBytes(16),
         expected = item?.revision.revision ?? 0n;
@@ -467,12 +493,15 @@ export class VaultClient {
         manifest: doc.manifest,
         chunk_hashes: doc.hashes,
       };
+      const contextHash = inline ? await hash(contextInput(context)) : undefined;
+      this.session.check(t);
       this.saveState = {
         kind: "ready",
         job: {
           request,
           chunks: doc.chunks,
-          phase: -1,
+          phase: inline ? doc.chunks.length : -1,
+          contextHash,
           operation: randomBytes(16),
           ticket: t,
         },
@@ -490,22 +519,64 @@ export class VaultClient {
     const sending: SaveState = { kind: "sending", job: j };
     this.saveState = sending;
     try {
-      await this.checkedContext();
+      if (j.contextHash) this.cachedContext();
+      else await this.checkedContext();
       this.session.check(j.ticket);
       while (j.phase <= j.chunks.length) {
         const action: Action =
-          j.phase === -1
-            ? { BeginRevision: j.request }
-            : j.phase < j.chunks.length
-              ? {
-                  PutChunk: {
-                    upload: j.request.operation,
-                    index: j.phase,
-                    bytes: j.chunks[j.phase],
-                  },
-                }
-              : { CommitRevision: { upload: j.request.operation } };
-        const r = await this.mutate(action, j.operation);
+          j.contextHash
+            ? {
+                SaveInline: {
+                  request: j.request,
+                  bytes: j.chunks[0],
+                  context_hash: j.contextHash,
+                },
+              }
+            : j.phase === -1
+              ? { BeginRevision: j.request }
+              : j.phase < j.chunks.length
+                ? {
+                    PutChunk: {
+                      upload: j.request.operation,
+                      index: j.phase,
+                      bytes: j.chunks[j.phase],
+                    },
+                  }
+                : { CommitRevision: { upload: j.request.operation } };
+        const wasAmbiguous = j.uncertain || this.request.kind === "ambiguous";
+        let r: MutationResult;
+        try {
+          r = await this.mutate(action, j.operation);
+        } catch (error) {
+          // A retry's rejection cannot establish the historical outcome of a
+          // request whose earlier response was lost, even after receipt GC.
+          const unresolvedReceipt = !!wasAmbiguous;
+          j.uncertain ||=
+            this.request.kind === "ambiguous" || unresolvedReceipt;
+          if (j.contextHash && unresolvedReceipt) {
+            try {
+              const ownedRequest = this.ownedInlineRequest(j);
+              const revision = await this.reconciledInline(j);
+              this.session.check(j.ticket);
+              if (this.request === ownedRequest) this.request = { kind: "idle" };
+              this.saveState = { kind: "idle" };
+              progress(100);
+              return revision;
+            } catch {
+              this.session.check(j.ticket);
+            }
+          }
+          if (
+            j.contextHash &&
+            this.request.kind === "idle" &&
+            this.saveState === sending &&
+            !unresolvedReceipt
+          ) {
+            j.chunks.forEach((chunk) => chunk.fill(0));
+            this.saveState = { kind: "idle" };
+          }
+          throw error;
+        }
         this.session.check(j.ticket);
         if (
           (j.phase === -1 && !("Upload" in r)) ||
@@ -545,6 +616,48 @@ export class VaultClient {
       if (this.saveState === sending)
         this.saveState = { kind: "ready", job: j };
     }
+  }
+  private ownedInlineRequest(j: Save): RequestState | undefined {
+    const request = this.request;
+    if (request.kind === "sending") return undefined;
+    if (request.kind === "idle") return request;
+    const expected = {
+      action: {
+        SaveInline: {
+          request: j.request,
+          bytes: j.chunks[0],
+          context_hash: j.contextHash,
+        },
+      },
+      operation: j.operation,
+    };
+    return stable(request.mutation) === stable(expected) ? request : undefined;
+  }
+  // Authenticated immutable revision lookup remains usable after both kinds
+  // of receipt are collected. Match the full encrypted payload, not just IDs.
+  private async reconciledInline(j: Save): Promise<Revision> {
+    const response = await this.actor.get_manifest(
+      j.request.vault,
+      j.request.object,
+      j.request.expected_revision + 1n,
+    );
+    this.session.check(j.ticket);
+    const r = ok(response);
+    if (
+      r.deleted ||
+      r.sequence <= 0n ||
+      !equal(bytes(r.vault), bytes(j.request.vault)) ||
+      !equal(bytes(r.object), bytes(j.request.object)) ||
+      r.revision !== j.request.expected_revision + 1n ||
+      r.plain_size !== j.request.plain_size ||
+      !equal(bytes(r.manifest), bytes(j.request.manifest)) ||
+      r.chunk_hashes.length !== j.request.chunk_hashes.length ||
+      r.chunk_hashes.some(
+        (h, i) => !equal(bytes(h), bytes(j.request.chunk_hashes[i])),
+      )
+    )
+      throw Error("InvalidReceipt");
+    return r;
   }
   async items() {
     const t = this.session.capture();
@@ -593,32 +706,91 @@ export class VaultClient {
     } while (after.length);
     return items;
   }
-  async searchNotes(items: Item[], query: string): Promise<Uint8Array[]> {
-    this.checkLive();
-    const t = this.session.capture();
-    const c = await this.checkedContext();
-    this.session.check(t);
-    const root = this.session.root!;
-    const matches: Uint8Array[] = [];
-    const needle = query.toLowerCase();
-    if (!needle) return matches;
-    for (const item of items) {
-      this.checkReadContext(c, root, t);
-      if (item.revision.deleted || item.metadata.kind !== "note") continue;
-      const doc = await this.readWithContext(item.revision, c, root, t);
-      try {
-        this.checkReadContext(c, root, t);
-        if (
-          doc.metadata.kind === "note" &&
-          new TextDecoder().decode(doc.plaintext).toLowerCase().includes(needle)
-        )
-          matches.push(bytes(item.revision.object));
-      } finally {
-        doc.plaintext.fill(0);
+  // Explicit note-only search. Results contain metadata/revisions, never body text.
+  // Shared slots also bound requests left in flight by a cancelled search.
+  async searchNotes(
+    items: readonly Item[],
+    query: string,
+    options: {
+      signal?: AbortSignal;
+      onProgress?: (progress: { completed: number; total: number }) => void;
+    } = {},
+  ): Promise<Item[]> {
+    const ticket = this.session.capture();
+    this.cachedContext();
+    const controller = new AbortController();
+    const sessionSignal = this.session.signal;
+    const stop = () => controller.abort();
+    options.signal?.addEventListener("abort", stop, { once: true });
+    sessionSignal.addEventListener("abort", stop, { once: true });
+    if (options.signal?.aborted || sessionSignal.aborted) stop();
+    const check = () => {
+      this.session.check(ticket);
+      if (controller.signal.aborted) throw Error("SearchCancelled");
+    };
+    let rejectAbort!: (cause: Error) => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () => {
+      rejectAbort(
+        Error(this.session.capture() !== ticket ? "Locked" : "SearchCancelled"),
+      );
+    };
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    const notes = items.filter(
+      (item) => item.metadata.kind === "note" && !item.revision.deleted,
+    );
+    const needle = query.trim().toLocaleLowerCase();
+    const matches = new Set<Item>();
+    let next = 0,
+      completed = 0;
+    const worker = async () => {
+      while (next < notes.length && needle) {
+        check();
+        while (this.searchReads.size >= 2) {
+          await Promise.race([...this.searchReads, aborted]);
+          check();
+        }
+        const item = notes[next++];
+        if (!item) return;
+        const pending = this.read(item.revision, { signal: controller.signal });
+        const slot = pending.then(
+          () => {},
+          () => {},
+        );
+        this.searchReads.add(slot);
+        void slot.then(() => this.searchReads.delete(slot));
+        const doc = await pending;
+        try {
+          check();
+          if (
+            new TextDecoder()
+              .decode(doc.plaintext)
+              .toLocaleLowerCase()
+              .includes(needle)
+          )
+            matches.add(item);
+        } finally {
+          doc.plaintext.fill(0);
+        }
+        check();
+        options.onProgress?.({ completed: ++completed, total: notes.length });
       }
+    };
+    try {
+      check();
+      options.onProgress?.({ completed: 0, total: needle ? notes.length : 0 });
+      await Promise.race([Promise.all([worker(), worker()]), aborted]);
+      check();
+      return notes.filter((item) => matches.has(item));
+    } finally {
+      options.signal?.removeEventListener("abort", stop);
+      sessionSignal.removeEventListener("abort", stop);
+      controller.signal.removeEventListener("abort", onAbort);
+      controller.abort();
+      matches.clear();
     }
-    this.checkReadContext(c, root, t);
-    return matches;
   }
   private checkReadContext(c: VaultContext, root: CryptoKey, t: number) {
     this.session.check(t);
@@ -626,18 +798,16 @@ export class VaultClient {
     this.session.requireContext(c);
     if (this.session.root !== root) throw Error("TargetChanged");
   }
-  async read(r: Revision) {
+  async read(r: Revision, options: { signal?: AbortSignal } = {}) {
     const t = this.session.capture();
+    const check = () => {
+      this.session.check(t);
+      if (options.signal?.aborted) throw Error("SearchCancelled");
+    };
+    check();
     const c = await this.checkedContext();
-    this.session.check(t);
-    return this.readWithContext(r, c, this.session.root!, t);
-  }
-  private async readWithContext(
-    r: Revision,
-    c: VaultContext,
-    root: CryptoKey,
-    t: number,
-  ) {
+    const root = this.session.root!;
+    check();
     this.checkReadContext(c, root, t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
     const chunks: Uint8Array[] = [];
@@ -651,6 +821,7 @@ export class VaultClient {
       );
       this.checkReadContext(c, root, t);
       chunks.push(bytes(ok(reply)));
+      check();
     }
     this.checkReadContext(c, root, t);
     const doc = await decryptDocumentV3(
@@ -664,6 +835,7 @@ export class VaultClient {
     );
     try {
       this.checkReadContext(c, root, t);
+      check();
       return doc;
     } catch (e) {
       doc.plaintext.fill(0);
@@ -738,6 +910,22 @@ export class VaultClient {
     const cleanup = this.cleanupState;
     try {
       const t = this.session.capture();
+      if (j.contextHash && (j.uncertain || this.request.kind === "ambiguous")) {
+        const ownedRequest = this.ownedInlineRequest(j);
+        const revision = await this.reconciledInline(j);
+        this.session.check(t);
+        if (this.request === ownedRequest) this.request = { kind: "idle" };
+        j.chunks.forEach((chunk) => chunk.fill(0));
+        this.saveState = { kind: "idle" };
+        return {
+          Committed: {
+            vault: revision.vault,
+            object: revision.object,
+            revision: revision.revision,
+            sequence: revision.sequence,
+          },
+        };
+      }
       if (this.request.kind !== "idle") {
         await this.retryMutation();
         this.session.check(t);

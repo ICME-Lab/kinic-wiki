@@ -47,6 +47,9 @@ importers:
       '@cloudflare/config':
         specifier: 0.20.0
         version: 0.20.0
+      '@mizchi/vlmkit':
+        specifier: 0.23.0
+        version: 0.23.0(@playwright/test@1.61.1)(playwright@1.61.1)
       jsonc-parser:
         specifier: 3.3.1
         version: 3.3.1
@@ -199,6 +202,12 @@ importers:
         specifier: 3.4.18
         version: 3.4.18
 
+  packages/credit-bridge-candid:
+    dependencies:
+      '@icp-sdk/core':
+        specifier: 5.4.0
+        version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+
   packages/vault-candid:
     dependencies:
       '@icp-sdk/core':
@@ -331,6 +340,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@kinic/credit-bridge-candid':
+        specifier: workspace:*
+        version: link:../packages/credit-bridge-candid
       '@kinic/payments':
         specifier: workspace:*
         version: link:../packages/payments
@@ -425,6 +437,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0(patch_hash=f49347fc8adfb073d70e70e8ceab53b01915ac269bcc4efdf988f0febe9cf2b2)
+      '@kinic/credit-bridge-candid':
+        specifier: workspace:*
+        version: link:../packages/credit-bridge-candid
       '@kinic/deepseek-client':
         specifier: workspace:*
         version: link:../packages/deepseek-client

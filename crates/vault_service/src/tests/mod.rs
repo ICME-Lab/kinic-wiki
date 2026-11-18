@@ -203,6 +203,8 @@ fn committed_document(e: &Env) -> BeginRevision {
 mod cleanup;
 mod creation;
 mod keys;
-mod uploads;
-mod rename;
 mod mutation_compat;
+mod rename;
+mod uploads;
+
+mod inline;

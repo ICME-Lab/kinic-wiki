@@ -114,10 +114,10 @@ fn icrc21_canister_call_consent_message(
 }
 
 fn decode_consent_request(bytes: Vec<u8>) -> Icrc21ConsentMessageRequest {
-    if bytes.len() <= MAX_ENVELOPE_BYTES {
-        if let Ok((request,)) = decode_exact(&bytes) {
-            return request;
-        }
+    if bytes.len() <= MAX_ENVELOPE_BYTES
+        && let Ok((request,)) = decode_exact(&bytes)
+    {
+        return request;
     }
     ic_cdk::trap("Invalid Vault consent request")
 }

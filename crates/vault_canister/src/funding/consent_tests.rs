@@ -611,3 +611,31 @@ fn quote_consent_reports_disabled_config_and_rejects_invalid_or_expired_terms() 
         Icrc21ConsentMessageResponse::Ok(_)
     ));
 }
+
+#[test]
+fn mixed_bridge_payment_lists_keep_icrc_effective_expiry_without_writes() {
+    crate::state::initialize().unwrap();
+    let wallet = principal(1);
+    let quoted = record_quote(wallet, purchase(11), config(), 10_000, CREATED).unwrap();
+    let bridge=serde_json::json!({"bridge_v1": crate::bridge::Record::Credit {
+        offer: credit_bridge_types::CreditOffer { operation:vec![19u8;16], wiki_owner:principal(2), vault_owner:wallet, amount_cycles:42, expires_at_ns:DEADLINE, link_generation:1 },
+        status:credit_bridge_types::CreditStatus::Prepared, acknowledged:false, day:0,
+    }}).to_string();
+    transaction(|db| {
+        db.execute(
+            "INSERT INTO payments VALUES(?1,?2,?3,9223372036854775807)",
+            params![wallet.to_text(), vec![19u8; 16], bridge],
+        )
+        .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let before = financial_writes();
+    let mut expired = quoted;
+    expired.status = Status::Expired;
+    assert_eq!(
+        api::list_payments_for(wallet, DEADLINE + 1),
+        Ok(vec![expired])
+    );
+    assert_eq!(financial_writes(), before);
+}

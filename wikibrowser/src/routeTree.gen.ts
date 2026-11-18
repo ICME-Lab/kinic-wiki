@@ -24,6 +24,7 @@ import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SupportRouteImport } from './routes/support'
+import { Route as VaultCreditRouteImport } from './routes/vault-credit'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known.apple-app-site-association'
 import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
@@ -124,6 +125,11 @@ const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
 const SupportRoute = SupportRouteImport.update({
   id: '/support',
   path: '/support',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VaultCreditRoute = VaultCreditRouteImport.update({
+  id: '/vault-credit',
+  path: '/vault-credit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DotwellKnownAppleAppSiteAssociationRoute =
@@ -279,6 +285,7 @@ export interface FileRoutesByFullPath {
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
+  '/vault-credit': typeof VaultCreditRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
@@ -319,6 +326,7 @@ export interface FileRoutesByTo {
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
+  '/vault-credit': typeof VaultCreditRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/docs/canister-api': typeof DocsCanisterApiRoute
@@ -361,6 +369,7 @@ export interface FileRoutesById {
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
+  '/vault-credit': typeof VaultCreditRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
@@ -406,6 +415,7 @@ export interface FileRouteTypes {
     | '/robots.txt'
     | '/sitemap.xml'
     | '/support'
+    | '/vault-credit'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
     | '/db/$databaseId'
@@ -446,6 +456,7 @@ export interface FileRouteTypes {
     | '/robots.txt'
     | '/sitemap.xml'
     | '/support'
+    | '/vault-credit'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
     | '/docs/canister-api'
@@ -487,6 +498,7 @@ export interface FileRouteTypes {
     | '/robots.txt'
     | '/sitemap.xml'
     | '/support'
+    | '/vault-credit'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/ii-auth-callbacks'
     | '/db/$databaseId'
@@ -531,6 +543,7 @@ export interface RootRouteChildren {
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SupportRoute: typeof SupportRoute
+  VaultCreditRoute: typeof VaultCreditRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
   DotwellKnownIiAuthCallbacksRoute: typeof DotwellKnownIiAuthCallbacksRoute
   DbDatabaseIdRoute: typeof DbDatabaseIdRouteWithChildren
@@ -647,6 +660,13 @@ declare module '@tanstack/react-router' {
       path: '/support'
       fullPath: '/support'
       preLoaderRoute: typeof SupportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vault-credit': {
+      id: '/vault-credit'
+      path: '/vault-credit'
+      fullPath: '/vault-credit'
+      preLoaderRoute: typeof VaultCreditRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/.well-known/apple-app-site-association': {
@@ -932,6 +952,7 @@ const rootRouteChildren: RootRouteChildren = {
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   SupportRoute: SupportRoute,
+  VaultCreditRoute: VaultCreditRoute,
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
   DotwellKnownIiAuthCallbacksRoute: DotwellKnownIiAuthCallbacksRoute,

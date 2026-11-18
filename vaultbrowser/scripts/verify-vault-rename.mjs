@@ -41,7 +41,8 @@ try {
     await expect(dialog.getByRole("button", { name: "Save name", exact: true })).toBeDisabled();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(trigger).toBeFocused();
-    await page.getByRole("button", { name: "Account settings", exact: true }).click();
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "Vault settings", exact: true }).click();
     await expect(page.getByLabel("Type 個人メモ to confirm", { exact: true })).toBeVisible();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
     assert.deepEqual(errors, []);

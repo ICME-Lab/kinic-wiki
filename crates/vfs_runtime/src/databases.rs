@@ -623,6 +623,7 @@ impl VfsService {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         self.require_maintenance_open(database_id)?;
         self.require_no_pending_cycles_operations(database_id)?;
+        self.read_index(|c| credit_bridge::guard_delete(c, database_id, false))?;
         let status = self.read_index(|conn| load_database_status(conn, database_id))?;
         if !matches!(status, DatabaseStatus::Pending | DatabaseStatus::Active) {
             return Err(format!(

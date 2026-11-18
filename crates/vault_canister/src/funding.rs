@@ -93,8 +93,13 @@ fn load(db: &sql::Connection, w: Principal, id: &[u8]) -> Result<Option<Payment>
         )
         .optional()
         .map_err(|_| Error::Storage)?;
-    raw.map(|v| serde_json::from_str(&v).map_err(|_| Error::Storage))
-        .transpose()
+    raw.map(|v| {
+        if crate::bridge::decode(&v)?.is_some() {
+            return Err(Error::Conflict);
+        }
+        serde_json::from_str(&v).map_err(|_| Error::Storage)
+    })
+    .transpose()
 }
 /// Shared bounded payment scan for admission checks. Decode lazily so callers can
 /// stop at the first capacity/lease conflict without interpreting unrelated rows.
@@ -106,7 +111,11 @@ pub(crate) fn all_payments(db: &sql::Connection) -> Result<impl Iterator<Item = 
         .map_err(|_| Error::Storage)?;
     Ok(records
         .into_iter()
-        .map(|raw| serde_json::from_str(&raw).map_err(|_| Error::Storage)))
+        .filter_map(|raw| match crate::bridge::decode(&raw) {
+            Ok(Some(_)) => None,
+            Err(e) => Some(Err(e)),
+            Ok(None) => Some(serde_json::from_str(&raw).map_err(|_| Error::Storage)),
+        }))
 }
 fn payment_size(p: &Payment) -> Result<usize> {
     let raw = serde_json::to_string(p).map_err(|_| Error::Storage)?;
@@ -371,6 +380,22 @@ pub fn finish_quote(sent: &FeeFlight, fee: Result<u64>, now: u64) -> Result<Paym
             Ok(fee) => fee,
             Err(error) => return Ok(Err(error)),
         };
+        // A fee callback only creates a quote. It never replaces any existing
+        // receipt, including a bridge record left by a conflicting older writer.
+        // Return an inner error so removal of this exact fee lease still commits.
+        let occupied: i64 = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM payments WHERE wallet=?1 AND operation=?2)",
+                params![
+                    current.payment.wallet.to_text(),
+                    current.payment.request.operation
+                ],
+                |r| sql::row_get(r, 0),
+            )
+            .map_err(|_| Error::Storage)?;
+        if occupied != 0 {
+            return Ok(Err(Error::Conflict));
+        }
         let mut payment = current.payment;
         payment.fee = fee;
         save(db, &payment)?;
@@ -431,13 +456,12 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         let orphan = payment_eligibility(&p, current, now)?;
         crate::capacity::admit_beneficiary(db, p.request.beneficiary)?;
         validate_receipts(&p)?;
-        // Reserve arithmetic capacity before the ledger can debit. Other in-flight credits and
-        // possible reservation refunds count even while an account has no persisted balance row.
-        crate::accounting::admit_credit(
+        crate::capacity::admit_credit(
             db,
-            &p.request.beneficiary.to_text(),
+            p.request.beneficiary,
+            p.wallet,
+            &p.request.operation,
             p.credits,
-            Some((&p.wallet.to_text(), &p.request.operation)),
         )?;
         p.uncertain |= (orphan && !p.preparing) || matches!(p.status, Status::Unknown);
         p.status = Status::InFlight;

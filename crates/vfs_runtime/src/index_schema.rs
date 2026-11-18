@@ -73,6 +73,8 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     apply_voice_migration(&tx)?;
     apply_maintenance_migration(&tx)?;
+    apply_bridge_migration(&tx)?;
+    apply_bridge_fence_expiry_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -115,6 +117,8 @@ fn run_index_migrations_in_tx(
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     apply_voice_migration(conn)?;
     apply_maintenance_migration(conn)?;
+    apply_bridge_migration(conn)?;
+    apply_bridge_fence_expiry_migration(conn)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -186,18 +190,47 @@ fn apply_pending_index_migrations(
     if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS {
         return Ok(());
     }
-    if versions
-        .iter()
-        .any(|v| v == INDEX_SCHEMA_VERSION_MAINTENANCE)
-    {
-        return Err(format!(
-            "unsupported index schema version: {}",
-            versions.join(", ")
-        ));
+    let refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+    if refs == INDEX_SCHEMA_VERSIONS[..7] {
+        return apply_bridge_fence_expiry_migration(conn);
+    }
+    if refs == INDEX_SCHEMA_VERSIONS[..6] {
+        apply_bridge_migration(conn)?;
+        return apply_bridge_fence_expiry_migration(conn);
+    }
+    if versions.iter().any(|v| {
+        v == INDEX_SCHEMA_VERSION_MAINTENANCE
+            || v == INDEX_SCHEMA_VERSION_BRIDGE
+            || v == INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY
+    }) {
+        return Err("unsupported index schema version".into());
     }
     apply_index_migrations_through_voice(conn, config)?;
-    apply_maintenance_migration(conn)
+    apply_maintenance_migration(conn)?;
+    apply_bridge_migration(conn)?;
+    apply_bridge_fence_expiry_migration(conn)
 }
+fn apply_bridge_fence_expiry_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!(
+        "../migrations/index_db/008_credit_bridge_fence_expiry.sql"
+    ))
+    .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
+    Ok(())
+}
+fn apply_bridge_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!("../migrations/index_db/007_credit_bridge.sql"))
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE)?;
+    Ok(())
+}
+
 fn apply_maintenance_migration(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(include_str!(
         "../migrations/index_db/006_database_maintenance.sql"
@@ -331,6 +364,11 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
 
 fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in [
+        "credit_bridge_settings",
+        "credit_bridge_links",
+        "credit_bridge_fences",
+        "credit_bridge_owners",
+        "credit_bridge_transfers",
         "schema_migrations",
         "voice_rates",
         "voice_policies",
@@ -363,6 +401,30 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     }
     for (table, columns) in [
         ("schema_migrations", &["version", "applied_at"][..]),
+        ("credit_bridge_settings", &["id", "record"][..]),
+        (
+            "credit_bridge_links",
+            &["wiki_owner", "vault_owner", "record"][..],
+        ),
+        (
+            "credit_bridge_fences",
+            &["vault_owner", "generation", "expires_at_ns"][..],
+        ),
+        (
+            "credit_bridge_owners",
+            &["wiki_owner", "epoch", "expires_at_ns"][..],
+        ),
+        (
+            "credit_bridge_transfers",
+            &[
+                "operation",
+                "database_id",
+                "payer",
+                "unresolved",
+                "refund_reserve",
+                "record",
+            ][..],
+        ),
         (
             "database_maintenance",
             &[
@@ -619,6 +681,8 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         }
     }
     for index in [
+        "credit_bridge_pending_database",
+        "credit_bridge_pending_payer",
         "databases_active_mount_id_idx",
         "database_maintenance_current",
         "source_capture_trigger_sessions_expiry_idx",

@@ -23,7 +23,8 @@
     "@tanstack/react-router": "1.170.41",
     "lucide-react": "0.555.0",
     "react": "19.2.5",
-    "react-dom": "19.2.5"
+    "react-dom": "19.2.5",
+    "@kinic/credit-bridge-candid": "workspace:*"
   },
   "devDependencies": {
     "@dfinity/response-verification": "3.2.0",

@@ -21,6 +21,8 @@ import {
   Wallet,
 } from "lucide-react";
 import { createPortal } from "react-dom";
+import { WikiCreditFunding } from "../wiki-credit";
+import { parseLaunch } from "@kinic/credit-bridge-candid/browser";
 import { Funding } from "../funding";
 import {VaultNavigationScope,useVaultNavigation} from "../navigation";
 import {VaultHelp,VaultNotFound} from "../help";
@@ -69,6 +71,14 @@ function Workspace({ client }: { client: VaultClient }) {
   const settingsOpen=nav.view === "settings" || nav.view === "vault-settings";
   const [settingsVaultId, setSettingsVaultId] = useState<string>();
   const accountDetails = useRef<HTMLDetailsElement>(null);
+  const [wikiCreditLaunch] = useState(() => !!parseLaunch(window.location.hash));
+  const launchHandled = useRef(false);
+  useEffect(() => {
+    if (wikiCreditLaunch && !launchHandled.current) {
+      launchHandled.current = true;
+      nav.go("/settings");
+    }
+  }, [nav, wikiCreditLaunch]);
   // The page chrome owns a slot for session controls; tests render without it.
   const [chromeSlot, setChromeSlot] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -142,6 +152,7 @@ function Workspace({ client }: { client: VaultClient }) {
     }
     return { balance: value, firstKeyFree: firstFree };
   }, [client]);
+  const refreshId = useRef(0);
   useLayoutEffect(() => {
     alive.current = true;
     client.session.onLock = () => {
@@ -266,6 +277,7 @@ function Workspace({ client }: { client: VaultClient }) {
     } else if (listed) select(listed);
   }, [client, select]);
   const refresh = async () => {
+    const request = ++refreshId.current;
     const ticket = client.session.capture();
     const [list, header] = await Promise.all([
       client.items(),
@@ -273,6 +285,7 @@ function Workspace({ client }: { client: VaultClient }) {
     ]);
     client.session.check(ticket);
     if (!alive.current) return;
+    if (refreshId.current !== request) return;
     setItems(list);
     select(header, "open");
     await refreshLists();
@@ -698,6 +711,7 @@ function Workspace({ client }: { client: VaultClient }) {
       ) : null}
 
       </div>
+      <div hidden={nav.view !== "settings"}><WikiCreditFunding client={client} onFunded={refreshConfiguration} /></div>
       <VaultSettings
           key={`settings-${generation}-${settingsVaultId ?? ""}`}
           scope={nav.view === "vault-settings" ? "vault" : "account"}

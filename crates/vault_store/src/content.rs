@@ -166,6 +166,27 @@ fn check_receipt_capacity_for(db: &Connection, now: u64, additional: i64) -> Res
     }
     Ok(())
 }
+/// Caller wraps admission, upload, commit, and receipt in one transaction.
+pub fn save_inline(db: &Connection, r: SaveInline, input: &[u8], now: u64) -> Result<Revision> {
+    if r.context_hash != Sha256::digest(input).as_slice()
+        || r.request.plain_size > NOTE_MAX
+        || r.bytes.len() as u64 != r.request.plain_size + 16
+        || r.request.chunk_hashes.len() != 1
+    {
+        return Err(Error::InvalidInput);
+    }
+    // A fresh mutation cannot adopt a chunked or previously committed upload.
+    let exists: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1) OR EXISTS(SELECT 1 FROM upload_outcomes WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND upload=?1)",
+        params![r.request.operation], |row| sql::row_get(row, 0),
+    ).map_err(db_error)?;
+    if exists != 0 {
+        return Err(Error::Conflict);
+    }
+    let upload = begin(db, r.request, now)?;
+    put(db, &upload.id, 0, &r.bytes, now)?;
+    commit(db, &upload.id, now)
+}
 pub fn begin(db: &Connection, r: BeginRevision, now: u64) -> Result<Upload> {
     active(db, &r.vault)?;
     id(&r.object)?;

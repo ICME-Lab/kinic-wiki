@@ -151,6 +151,11 @@ try {
   const vaultURL = `http://${ids.vault}.localhost:${port}`,
     iiURL = `http://${ids.ii_frontend}.localhost:${port}`;
   const wikiURL = `http://127.0.0.1:${wikiPort}`;
+  const bridgeLocalEnv = {
+    VITE_CREDIT_BRIDGE_LOCAL_TEST: "1",
+    VITE_CREDIT_BRIDGE_WIKI_ORIGIN: wikiURL,
+    VITE_CREDIT_BRIDGE_VAULT_ORIGIN: vaultURL,
+  };
   const install = (name, wasm, args, mode = "install") =>
     icp([
       "canister",
@@ -181,7 +186,7 @@ try {
     ),
     "()",
   );
-  run("pnpm", [...pnpm, "--dir", "vaultbrowser", "build"]);
+  run("pnpm", [...pnpm, "--dir", "vaultbrowser", "build", "--mode", "bridge-local-test"], bridgeLocalEnv);
   const build =
     process.env.VAULT_BROWSER_BUILD_CACHE ??
     join(root, "target/vault-browser-build");
@@ -222,13 +227,19 @@ try {
     defaultLocalWasm,
   );
   const controller = output("icp", ["identity", "principal", ...idArgs]);
-  const wikiArgs = `(record {kinic_ledger_canister_id="${ids.ledger}";billing_authority_id="${controller}";iap_authority_id=null;cycles_per_kinic=1000:nat64;min_update_cycles=1000000:nat64;top_up=record{enabled=false;threshold_cycles=1000000000:nat;launcher_principal="aaaaa-aa"}})`;
+  const wikiArgs = `(record {kinic_ledger_canister_id="${ids.ledger}";billing_authority_id="${controller}";iap_authority_id=opt "${controller}";cycles_per_kinic=1000:nat64;min_update_cycles=1000000:nat64;top_up=record{enabled=false;threshold_cycles=1000000000:nat;launcher_principal="aaaaa-aa"}})`;
   install(
     "wiki",
     join(build, "wasm32-unknown-unknown/release/vfs_canister.wasm"),
     wikiArgs,
   );
   install("vault", vaultWasm, "()");
+  const wikiBridge = `(record {enabled=true;peer=principal "${ids.vault}";daily_limit_cycles=1000000000000:nat64;physical_reserve_cycles=1000000000000:nat64})`;
+  const vaultBridge = `(record {enabled=true;peer=principal "${ids.wiki}";daily_limit_cycles=1000000000000:nat64;physical_reserve_cycles=1000000000000:nat64})`;
+  icp(["canister", "call", "wiki", "set_vault_bridge_config", wikiBridge,
+    "--candid", join(root, "crates/vfs_canister/vfs.did")]);
+  icp(["canister", "call", "vault", "set_wiki_bridge_config", vaultBridge,
+    "--candid", join(root, "crates/vault_canister/vault.did")]);
   icp([
     "canister",
     "call",
@@ -290,6 +301,8 @@ try {
       "exec",
       "vite",
       "dev",
+      "--mode",
+      "bridge-local-test",
       "--host",
       "127.0.0.1",
       "--port",
@@ -302,6 +315,7 @@ try {
       detached: process.platform !== "win32",
       env: {
         ...process.env,
+        ...bridgeLocalEnv,
         VITE_WIKI_IC_HOST: `http://127.0.0.1:${port}`,
         VITE_ENABLE_LOCAL_II_E2E: "1",
         VITE_II_PROVIDER_URL: iiURL,

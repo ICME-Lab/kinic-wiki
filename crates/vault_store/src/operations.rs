@@ -1,5 +1,6 @@
 //! Durable owner-scoped request journal. Pending async work and completed receipts are prepaid.
 use super::*;
+pub use crate::mutation_digest::mutation_digest;
 use candid::{CandidType, decode_one, encode_one};
 use sha2::{Digest, Sha256};
 pub const CHARGE: u64 = 131072;
