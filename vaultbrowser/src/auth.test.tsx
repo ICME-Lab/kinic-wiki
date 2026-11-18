@@ -12,8 +12,16 @@ import { afterEach, beforeEach, it, expect, vi } from "vitest";
 const mock = vi.hoisted(() => ({
   create: vi.fn(),
   load: vi.fn(),
+  disk: new Map<string, string>(),
 }));
 vi.mock("@icp-sdk/auth/client", () => ({
+  IdbStorage: class {
+    async get(key: string) { return mock.disk.get(key) ?? null; }
+    async set(key: string, value: string) { mock.disk.set(key, value); }
+    async remove(key: string) { mock.disk.delete(key); }
+  },
+  KEY_STORAGE_KEY: "identity",
+  KEY_STORAGE_DELEGATION: "delegation",
   AuthClient: {
     create: mock.create,
   },
@@ -39,6 +47,7 @@ function Child() {
 }
 beforeEach(() => {
   localStorage.clear();
+  mock.disk.clear();
   mock.load.mockResolvedValue({ identityProvider: "https://id.ai", derivationOrigin: "https://vault.example" });
 });
 afterEach(() => {
@@ -763,4 +772,160 @@ it("deletes the persisted delegation after the only authenticated view goes idle
     cleanup();
     Reflect.deleteProperty(navigator, "locks");
   }
+});
+
+type TestStorage = {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<void>;
+  remove(key: string): Promise<void>;
+};
+// The real SDK restores at create(), writes both credential records before
+// onSuccess, and removes them asynchronously at logout().
+function persistentSDK() {
+  const saves: Array<(credential: string) => Promise<void>> = [];
+  let pauseRemoval: (() => Promise<void>) | undefined;
+  const disk: TestStorage = {
+    get: async (k) => mock.disk.get(k) ?? null,
+    set: async (k, v) => {
+      mock.disk.set(k, v);
+    },
+    remove: async (k) => {
+      mock.disk.delete(k);
+    },
+  };
+  mock.create.mockImplementation(
+    async ({ storage = disk }: { storage?: TestStorage }) => {
+      let credential = await storage.get("delegation");
+      const key = await storage.get("identity");
+      if (key !== credential) credential = null;
+      return {
+        isAuthenticated: async () => !!credential,
+        getIdentity: () => ({
+          getPrincipal: () => ({ toText: () => "same-principal" }),
+        }),
+        login: (o: { onSuccess: () => void }) => {
+          saves.push(async (value) => {
+            credential = value;
+            await storage.set("delegation", value);
+            await storage.set("identity", value);
+            await o.onSuccess();
+          });
+        },
+        logout: async () => {
+          await pauseRemoval?.();
+          await storage.remove("identity");
+          await storage.remove("delegation");
+          credential = null;
+        },
+      };
+    },
+  );
+  return {
+    saves,
+    pause: (f: () => Promise<void>) => {
+      pauseRemoval = f;
+    },
+  };
+}
+
+it.each(["no new login", "fresh sibling", "same view signs in again"] as const)(
+  "fences writes before the obsolete II success callback with %s",
+  async (scenario) => {
+    const { locks } = await import("node:worker_threads");
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: locks,
+    });
+    const sdk = persistentSDK();
+    try {
+      const pending = privateView();
+      await pending.findByText("ready");
+      fireEvent.click(pending.getByText("login"));
+      await waitFor(() => expect(sdk.saves).toHaveLength(1));
+      // Another frame restores an already signed-in delegation.
+      mock.disk.set("identity", "existing");
+      mock.disk.set("delegation", "existing");
+      const owner = privateView();
+      await owner.findByText("signed");
+      fireEvent.click(owner.getByText("logout"));
+      await owner.findByText("ready");
+      await pending.findByText("ready");
+      if (scenario !== "no new login") {
+        const next = scenario === "fresh sibling" ? privateView() : pending;
+        await next.findByText("ready");
+        fireEvent.click(next.getByText("login"));
+        await waitFor(() => expect(sdk.saves).toHaveLength(2));
+        await act(async () => sdk.saves[1]("fresh"));
+        await next.findByText("signed");
+      }
+      await act(async () => sdk.saves[0]("obsolete"));
+      const restored = privateView();
+      await restored.findByText("ready");
+      if (scenario === "no new login") {
+        expect(restored.getByText("unsigned")).toBeTruthy();
+        expect(mock.disk.has("delegation")).toBe(false);
+      } else {
+        expect(restored.getByText("signed")).toBeTruthy();
+        expect(mock.disk.get("delegation")).toBe("fresh");
+        expect(mock.disk.get("identity")).toBe("fresh");
+      }
+    } finally {
+      cleanup();
+      Reflect.deleteProperty(navigator, "locks");
+    }
+  },
+);
+
+it("restores only after a sole idle view finishes deleting persisted credentials", async () => {
+  const { locks } = await import("node:worker_threads");
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: locks,
+  });
+  const sdk = persistentSDK();
+  mock.disk.set("identity", "existing");
+  mock.disk.set("delegation", "existing");
+  let finish!: () => void;
+  sdk.pause(
+    () =>
+      new Promise<void>((r) => {
+        finish = r;
+      }),
+  );
+  try {
+    const last = privateView();
+    await last.findByText("signed");
+    await act(async () => mock.create.mock.calls[0][0].idleOptions.onIdle());
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const mounting = privateView();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(mounting.getByText("unsigned")).toBeTruthy();
+    await act(async () => finish());
+    await mounting.findByText("ready");
+    expect(mounting.getByText("unsigned")).toBeTruthy();
+  } finally {
+    finish?.();
+    cleanup();
+    Reflect.deleteProperty(navigator, "locks");
+  }
+});
+
+it("keeps an explicit login in memory when the browser cannot coordinate persistent credentials", async () => {
+  const sdk = persistentSDK();
+  mock.disk.set("identity", "prior");
+  mock.disk.set("delegation", "prior");
+  const view = privateView();
+  await view.findByText("ready");
+  expect(view.getByText("unsigned")).toBeTruthy();
+  fireEvent.click(view.getByText("login"));
+  await waitFor(() => expect(sdk.saves).toHaveLength(1));
+  await act(async () => sdk.saves[0]("fresh"));
+  await view.findByText("signed");
+  expect(mock.disk.get("delegation")).toBe("prior");
+  fireEvent.click(view.getByText("logout"));
+  await view.findByText("ready");
+  expect(mock.disk.has("identity")).toBe(false);
+  expect(mock.disk.has("delegation")).toBe(false);
 });

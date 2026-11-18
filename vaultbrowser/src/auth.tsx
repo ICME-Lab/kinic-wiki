@@ -1,3 +1,4 @@
+import { VaultAuthStorage } from "./auth-storage";
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import {
@@ -44,6 +45,30 @@ const Context = createContext<Session>({
 });
 export const useVaultAuth = () => useContext(Context);
 export function VaultAuthProvider({ children }: { children: ReactNode }) {
+  const [instance, setInstance] = useState(0);
+  // A cancelled II popup can still complete inside its original SDK object.
+  // Prepare a separate anonymous client before accepting another login.
+  return (
+    <VaultAuthSession
+      key={instance}
+      restore={instance === 0}
+      replace={() => setInstance((id) => id + 1)}
+    >
+      {children}
+    </VaultAuthSession>
+  );
+}
+function VaultAuthSession({
+  children,
+  restore,
+  replace,
+}: {
+  children: ReactNode;
+  restore: boolean;
+  replace: () => void;
+}) {
+  const storage = useRef<VaultAuthStorage | undefined>(undefined);
+  const loginInFlight = useRef(false);
   const [identity, setIdentity] = useState<Identity>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,6 +103,10 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   const releaseView = useRef<(() => Promise<void>) | undefined>(undefined);
   const holdView = () => {
     if (!navigator.locks || releaseView.current) return;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
     let release!: () => void;
     const active = new Promise<void>((resolve) => {
       release = resolve;
@@ -85,13 +114,17 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     const held = navigator.locks.request(
       activeViewLock,
       { mode: "shared" },
-      () => active,
+      () => {
+        acquired();
+        return active;
+      },
     );
     releaseView.current = () => {
       releaseView.current = undefined;
       release();
       return held;
     };
+    return ready;
   };
   const logoutPending = useRef<
     { client: AuthClient; token: number } | undefined
@@ -99,6 +132,9 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
   const endSession = (explicit: boolean) => {
     if (!live.current || logoutPending.current) return;
     const c = client.current;
+    const credentials = storage.current;
+    const replaceAfterCleanup = loginInFlight.current;
+    loginInFlight.current = false;
     const stale = partitionGeneration() !== generation.current;
     const released = releaseView.current?.();
     const token = ++serial.current;
@@ -112,7 +148,8 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     setError("");
     setLoading(true);
     if (!c || stale) {
-      setLoading(false);
+      if (replaceAfterCleanup) replace();
+      else setLoading(false);
       return;
     }
     const transition = { client: c, token };
@@ -125,6 +162,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     // available while another view holds an active login in this partition.
     const removeStored = async () => {
       await c.logout();
+      await credentials?.clearShared();
       if (pending && partitionMarker() === pending) {
         localStorage.setItem(logoutKey, pending.slice("pending:".length));
         notifications.current?.postMessage("sign-out");
@@ -144,18 +182,20 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
         notifications.current?.postMessage("storage-unavailable");
       }
     } else if (released) {
-      cleanup = released.then(() =>
-        navigator.locks.request(
+      // Queue cleanup before a later restore can claim a new active lease.
+      cleanup = navigator.locks.request(logoutKey, async () => {
+        await released;
+        await navigator.locks.request(
           activeViewLock,
           { ifAvailable: true },
           async (lock) => {
             if (lock && generation.current === partitionGeneration())
-              await c.logout();
+              await removeStored();
           },
-        ),
-      );
+        );
+      });
     } else {
-      cleanup = c.logout();
+      cleanup = removeStored();
     }
     void cleanup
       .catch(() => {
@@ -164,7 +204,10 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         if (logoutPending.current !== transition) return;
         logoutPending.current = undefined;
-        if (live.current && client.current === c) setLoading(false);
+        if (live.current && client.current === c) {
+          if (replaceAfterCleanup) replace();
+          else setLoading(false);
+        }
       });
   };
   useEffect(() => {
@@ -179,8 +222,9 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     }
     const restoring = marker.replace(/^pending:/, "");
     generation.current = restoring;
-    const mayRestore = !marker.startsWith("pending:");
-    if (!mayRestore) waitForCleanup(marker);
+    const pendingCleanup = marker.startsWith("pending:");
+    const mayRestore = restore && !pendingCleanup;
+    if (pendingCleanup) waitForCleanup(marker);
     const initializing = serial.current;
     // Read the current generation, even on delayed or duplicate delivery.
     // An explicit fresh login may already belong to this new generation.
@@ -195,6 +239,11 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
       void releaseView.current?.();
       flushSync(() => {
         setIdentity(undefined);
+        if (loginInFlight.current) {
+          loginInFlight.current = false;
+          replace();
+          return;
+        }
         if (latest === undefined || storageUnavailable) setError(storageError);
         else setError("");
         setLoading(!!logoutPending.current);
@@ -215,39 +264,69 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     const configuration = loadConfig().then((config) => {
       if (!disposed) preparedConfig.current = config;
     });
-    const authentication = AuthClient.create({
-      idleOptions: {
-        idleTimeout: 5 * 60 * 1000,
-        disableDefaultIdleCallback: true,
-        // The SDK creates the manager lazily on a first login. Supplying the
-        // callback here also covers restored delegations and later logins.
-        onIdle: () => {
-          if (
-            disposed ||
-            !live.current ||
-            !ownedClient ||
-            client.current !== ownedClient ||
-            !hasLocalSession.current
-          )
-            return;
-          endSession(false);
+    // With no cross-view locks, use memory-only login instead of racing shared
+    // credential reads/writes. Explicit sign-out still clears prior SDK records.
+    const credentials = new VaultAuthStorage(mayRestore && !!navigator.locks);
+    storage.current = credentials;
+    const createClient = () =>
+      AuthClient.create({
+        storage: credentials,
+        idleOptions: {
+          idleTimeout: 5 * 60 * 1000,
+          disableDefaultIdleCallback: true,
+          // The SDK creates the manager lazily on a first login. Supplying the
+          // callback here also covers restored delegations and later logins.
+          onIdle: () => {
+            if (
+              disposed ||
+              !live.current ||
+              !ownedClient ||
+              client.current !== ownedClient ||
+              !hasLocalSession.current
+            )
+              return;
+            endSession(false);
+          },
         },
-      },
-    }).then(async (c) => {
-      if (disposed) return;
-      ownedClient = c;
-      client.current = c;
-      const authenticated = await c.isAuthenticated();
-      if (
-        !disposed &&
-        serial.current === initializing &&
-        restoring === partitionGeneration()
-      ) {
-        hasLocalSession.current = mayRestore && authenticated;
-        if (hasLocalSession.current) holdView();
-        setIdentity(hasLocalSession.current ? c.getIdentity() : undefined);
-      }
-    });
+      });
+    // Acquire the active-view lease before the SDK touches persisted data.
+    // A sole idle view holds its exclusive counterpart through deletion.
+    const authentication = (
+      mayRestore && navigator.locks
+        ? navigator.locks.request(logoutKey, async () => {
+            if (disposed) return;
+            await holdView();
+            if (disposed) return;
+            const c = await createClient();
+            if (
+              !disposed &&
+              serial.current === initializing &&
+              restoring === partitionGeneration()
+            )
+              await credentials.publish();
+            return c;
+          })
+        : createClient()
+    )
+      .then(async (c) => {
+        if (!c || disposed) return;
+        ownedClient = c;
+        client.current = c;
+        const authenticated = await c.isAuthenticated();
+        if (
+          !disposed &&
+          serial.current === initializing &&
+          restoring === partitionGeneration()
+        ) {
+          hasLocalSession.current = mayRestore && authenticated;
+          if (!hasLocalSession.current) void releaseView.current?.();
+          setIdentity(hasLocalSession.current ? c.getIdentity() : undefined);
+        }
+      })
+      .catch((error) => {
+        void releaseView.current?.();
+        throw error;
+      });
     void Promise.all([authentication, configuration])
       .then(() => {
         if (!disposed) {
@@ -315,6 +394,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
       !config ||
       !ready ||
       loading ||
+      loginInFlight.current ||
       logoutPending.current
     )
       return;
@@ -334,6 +414,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     generation.current = signingIn;
     const token = ++serial.current;
     hasLocalSession.current = true;
+    loginInFlight.current = true;
     holdView();
     setIdentity(undefined);
     setError("");
@@ -343,6 +424,7 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
     const failed = () => {
       if (current()) {
         hasLocalSession.current = false;
+        loginInFlight.current = false;
         void releaseView.current?.();
         setError("Sign-in did not complete. Try again.");
         setLoading(false);
@@ -355,8 +437,21 @@ export function VaultAuthProvider({ children }: { children: ReactNode }) {
           identityProvider: config.identityProvider,
           derivationOrigin: config.derivationOrigin,
           maxTimeToLive: 8n * 3600n * 1_000_000_000n,
-          onSuccess: () => {
-            if (current() && signingIn === partitionGeneration()) {
+          onSuccess: async () => {
+            const accepted = () =>
+              current() && signingIn === partitionGeneration();
+            if (!accepted()) return;
+            try {
+              if (navigator.locks)
+                await navigator.locks.request(logoutKey, async () => {
+                  if (accepted()) await storage.current?.publish();
+                });
+            } catch {
+              failed();
+              return;
+            }
+            if (accepted()) {
+              loginInFlight.current = false;
               if (partitionMarker() === "pending:" + signingIn) {
                 try {
                   localStorage.setItem(logoutKey, signingIn);

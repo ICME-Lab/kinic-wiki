@@ -1,5 +1,6 @@
 // Real local II and certified Vault. Only the ledger and Wiki article store are fixtures.
 import assert from "node:assert/strict";
+import { build } from "vite";
 import {
   chromium,
   expect as playwrightExpect,
@@ -33,6 +34,33 @@ const title = "Disposable private team document";
 const body = "Original team-only content from the owner.";
 const edited = "Updated team-only content from the editor.";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+// Independent SDK client with its stock IdbStorage, bundled only in this test
+// process. Its reads verify the browser's ordinary persisted login contract.
+const [sdk] = await build({
+  configFile: false,
+  logLevel: "error",
+  build: {
+    write: false,
+    lib: {
+      entry: createRequire(import.meta.url).resolve("@icp-sdk/auth/client"),
+      formats: ["es"],
+    },
+    rollupOptions: { output: { codeSplitting: false } },
+  },
+});
+assert.ok(sdk.output[0].exports.includes("AuthClient"));
+const sdkURL = vaultURL + "/__team-sdk-check.mjs";
+async function stockPrincipal(frame) {
+  return frame.evaluate(async (url) => {
+    const { AuthClient } = await import(url);
+    const client = await AuthClient.create({
+      idleOptions: { disableIdle: true },
+    });
+    return (await client.isAuthenticated())
+      ? client.getIdentity().getPrincipal().toText()
+      : null;
+  }, sdkURL);
+}
 const browser = await chromium.launch({
   args: ["--host-resolver-rules=MAP *.localhost 127.0.0.1"],
 });
@@ -201,6 +229,9 @@ try {
     member.credentials,
   );
   await expect(sibling.getByText(body, { exact: true })).toBeVisible();
+  await wiki.route(sdkURL, (route) =>
+    route.fulfill({ contentType: "text/javascript", body: sdk.output[0].code }),
+  );
   const siblingWindow = await (
     await wiki.locator("iframe").nth(1).elementHandle()
   ).contentFrame();
@@ -274,6 +305,26 @@ try {
   await assertParentPrivate(wiki);
   console.log(
     "PASS explicit logout clears both sibling Vault iframes through delivery of a held real chunk reply",
+  );
+  await signIn(wiki, frame, member.credentials);
+  await expect(frame.getByText(edited, { exact: true })).toBeVisible();
+  assert.equal(await stockPrincipal(siblingWindow), member.principal);
+  const [pendingPopup] = await Promise.all([
+    wiki.context().waitForEvent("page"),
+    loginButton(sibling).click(),
+  ]);
+  await pendingPopup.waitForURL(process.env.II_ACCEPTANCE_URL + "/**");
+  await button(frame, "Sign out").click();
+  await expect(loginButton(sibling)).toBeEnabled();
+  await completeLogin(pendingPopup, member.credentials);
+  await expect(loginButton(sibling)).toBeEnabled();
+  assert.equal(await stockPrincipal(siblingWindow), null);
+  // A newly mounted provider also reads the post-logout storage.
+  await siblingWindow.goto(url);
+  await expect(loginButton(sibling)).toBeEnabled();
+  await expect(sibling.getByText(edited, { exact: true })).toHaveCount(0);
+  console.log(
+    "PASS a pre-logout II popup completion leaves both the stock SDK and a fresh Vault iframe anonymous",
   );
   await signIn(wiki, frame, member.credentials);
   await expect(frame.getByText(edited, { exact: true })).toBeVisible();
