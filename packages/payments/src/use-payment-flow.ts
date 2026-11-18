@@ -58,10 +58,10 @@ export function usePaymentFlow<C, A extends PaymentAdapter<C>>(
     }
     return () => { live = false; };
   }, [factory, manager, store]);
-  async function check() {
+  async function check(expectedId?: string) {
     const binding = active.current;
     setChecked(false);
-    await binding?.controller.check();
+    await binding?.controller.check(expectedId);
     if (binding?.isCurrent()) setChecked(true);
   }
   return {active, state, checked, check, store, approvalPaid};
@@ -90,6 +90,7 @@ export function paymentPresentation(state: PaymentControllerState, approvalPaid:
     message = `Credited ${creditLabel(state.receipt.creditedCycles)}. Reference ${state.receipt.reference}.`;
     if (state.balance !== undefined) message += ` Current balance: ${creditLabel(state.balance)}.`;
     if (state.error && state.error.stage !== "refreshing") message += " " + formatPaymentFailure(state.error);
+    if (state.cleanupPending && state.error?.stage !== "complete") message += " Local payment record cleanup is pending.";
   } else if (checked && state.phase === "ready") message = "Status checked. This payment is still unpaid.";
   else if (state.requiredAction === "review") message = (message ? message + " " : "") + "Review the original payment before continuing.";
   else if (state.phase === "unresolved" && !message) message = "Check the original payment to see whether it completed.";

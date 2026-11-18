@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { formatKinicExact, parseKinic } from "@kinic/payments/amounts";
 import { fundingSources, paymentPresentation, useFundingProvider, usePaymentFlow, type FlowBinding } from "@kinic/payments/use-payment-flow";
 import { PaymentForm } from "@kinic/ui/payment-form";
@@ -56,9 +56,15 @@ export function CyclesClient({canisterId, databaseId, databaseStatus}: Props) {
   const flow = usePaymentFlow(create, walletSession);
   const {state, active} = flow;
   const {summary, status} = paymentPresentation(state, flow.approvalPaid, flow.checked, creditLabel);
+  if (state.phase === "unresolved" && state.requiredAction === "review") {
+    const reference = state.reference && /^\d+$/.test(state.reference) ? ` (operation ${state.reference})` : "";
+    const authority = currentData?.config.billingAuthorityId;
+    status.message = [flow.checked ? "Status checked." : "", state.error && state.error.code !== "Unknown" ? status.message : "",
+      `Contact the Wiki billing authority${authority ? " " + authority : ""} to review the original payment${reference}.`].filter(Boolean).join(" ");
+  }
   const busy = ["preparing","approving","paying","checking","refreshing"].includes(state.phase);
   const locked = busy || state.phase === "ready";
-  useEffect(() => {
+  useLayoutEffect(() => {
     setAuthControlsLocked(locked);
     setWalletControlsLocked(locked);
     return () => { setAuthControlsLocked(false); setWalletControlsLocked(false); };
@@ -72,7 +78,8 @@ export function CyclesClient({canisterId, databaseId, databaseStatus}: Props) {
   let amountE8s: bigint | undefined;
   try { amountE8s = parseKinic(amount); } catch { /* Display the input correction below. */ }
   const recoveryActions = [];
-  if (state.phase === "unresolved" || state.phase === "failed" || state.phase === "ready")
+  if (state.phase === "unresolved" || state.phase === "failed" || state.phase === "ready"
+    || (state.phase === "complete" && state.cleanupPending))
     recoveryActions.push({label: state.phase === "ready" && !flow.approvalPaid ? "Edit payment" : "Check payment status", run:() => { void flow.check(); }});
   if (state.balanceUnavailable) recoveryActions.push({label:"Refresh credit balance",run:() => { void active.current?.controller.refreshBalance(); }});
   if (state.phase === "complete") recoveryActions.push({label:"View database",run:() => {
@@ -84,7 +91,7 @@ export function CyclesClient({canisterId, databaseId, databaseStatus}: Props) {
   return <AdminContent><div className="mx-auto grid w-full max-w-2xl gap-5 text-ink">
     <header><h1 className="text-2xl font-semibold">Top up cycles</h1>
       <p className="mt-1 text-sm text-muted">Pay with KINIC to keep a database writable.</p></header>
-    {!principal ? <button data-tid="cycles-login-button" disabled={!session.authReady || session.authLoading} type="button" onClick={session.login}>Sign in with Internet Identity</button> : null}
+    {!principal ? <button data-tid="cycles-login-button" disabled={locked || !session.authReady || session.authLoading} type="button" onClick={session.login}>Sign in with Internet Identity</button> : null}
     {session.authError && <AdminNotice tone="error" message={session.authError}/>}
     <AdminPanel className="grid gap-4 bg-white" padding="md">
       <label className="grid gap-2 text-sm">Database<select className="min-h-10 rounded-lg border border-line px-3"

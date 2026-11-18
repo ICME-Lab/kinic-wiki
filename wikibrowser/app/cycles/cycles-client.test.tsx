@@ -238,3 +238,43 @@ function deferred<T>() {
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
 }
+
+it("locks the wallet-only sign-in action while confirming and while approval is held", async () => {
+  mocks.session.principal = null; mocks.session.authClient = null; connectPlug();
+  const approval = deferred<bigint>(); mocks.approve.mockReturnValueOnce(approval.promise);
+  render(page()); await review(); await screen.findByRole("button",{name:"Pay 1 KINIC"});
+  const login = screen.getByRole("button",{name:"Sign in with Internet Identity"});
+  expect(login).toHaveProperty("disabled",true);fireEvent.click(login);
+  await pay();await screen.findByText("Approving");
+  expect(login).toHaveProperty("disabled",true);fireEvent.click(login);
+  expect(mocks.session.login).not.toHaveBeenCalled();
+  await act(async()=>approval.resolve(1n));
+});
+it("shows the billing authority, known operation and completion of an unchanged pending check",async()=>{
+  mocks.purchase.mockResolvedValue({Err:"icrc2_transfer_from result ambiguous for operation_id 47; check status"});
+  render(page());await review();await pay();await screen.findByText(/billing authority.*47/i);
+  fireEvent.click(screen.getByRole("button",{name:"Check payment status"}));
+  expect(await screen.findByText(/Status checked.*billing authority.*47/i)).toBeTruthy();
+  expect(mocks.purchase).toHaveBeenCalledOnce();expect(mocks.approve).toHaveBeenCalledOnce();
+});
+it("retries only local cleanup on a confirmed Wiki receipt",async()=>{
+  const remove=Storage.prototype.removeItem;
+  const spy=vi.spyOn(Storage.prototype,"removeItem").mockImplementationOnce(()=>{throw Error("read only");});
+  try {
+    render(page());await review();
+    mocks.listDatabases.mockRejectedValueOnce(new Error("balance offline"));
+    await pay();await screen.findByText("Payment complete");
+    expect(screen.getByText(/Balance unavailable/)).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Check payment status"})).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Refresh credit balance"}));
+    await waitFor(()=>expect(screen.queryByText(/Balance unavailable/)).toBeNull());
+    const updates = mocks.terms.mock.calls.length;
+    const historyReads = mocks.history.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button",{name:"Check payment status"}));
+    await waitFor(()=>expect(screen.queryByRole("button",{name:"Check payment status"})).toBeNull());
+    expect(mocks.terms.mock.calls).toHaveLength(updates);expect(mocks.history.mock.calls).toHaveLength(historyReads);
+    expect(Object.keys(localStorage).filter(key=>key.startsWith("kinic.payments.v1:"))).toHaveLength(0);
+    expect(mocks.purchase).toHaveBeenCalledOnce();expect(mocks.approve).toHaveBeenCalledOnce();
+  } finally {spy.mockImplementation(remove);spy.mockRestore();}
+});

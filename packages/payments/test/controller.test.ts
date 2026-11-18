@@ -625,3 +625,43 @@ it("carries the acknowledged context and independent receipt into the paid-stage
     acknowledged, receipt: { reference: "block:15", creditedCycles: "50" },
   } });
 });
+
+it("checks only the displayed operation after acquiring the status lock", async () => {
+  const {store, adapter, make} = fixture();
+  store.put(record);
+  const controller = make({request: async (_key, _options, run) => {
+    store.remove(scope, record.id);
+    store.put({...record,id:"another"});
+    await run({});
+  }});
+  await controller.check(record.id);
+  expect(adapter.check).not.toHaveBeenCalled();
+  expect(store.list(scope)[0].id).toBe("another");
+  controller.destroy();
+});
+
+it.each(["cleanup","balance"] as const)("recovers combined receipt cleanup and balance failures with %s first",async first=>{
+  const {adapter,storage,store,prepare,pay,controller}=fixture();
+  storage.removeItem.mockImplementationOnce(()=>{throw Error("read only");});
+  adapter.refreshCredit.mockRejectedValueOnce(Error("balance offline"));
+  await prepare();await pay();
+  expect(controller.getState()).toMatchObject({phase:"complete",receipt:paid.receipt,balanceUnavailable:true,cleanupPending:true});
+  if(first==="cleanup"){
+    await controller.check();
+    expect(controller.getState().cleanupPending).toBeUndefined();
+    expect(controller.getState().balanceUnavailable).toBe(true);
+    await controller.refreshBalance();
+  }else{
+    await controller.refreshBalance();
+    expect(controller.getState().balanceUnavailable).toBeUndefined();
+    expect(controller.getState().cleanupPending).toBe(true);
+    await controller.check();
+  }
+  expect(controller.getState()).toMatchObject({phase:"complete",receipt:paid.receipt,balance:90n});
+  expect(controller.getState().error).toBeUndefined();
+  expect(controller.getState().cleanupPending).toBeUndefined();
+  expect(store.list(scope)).toHaveLength(0);
+  expect(adapter.submit).toHaveBeenCalledOnce();
+  expect(adapter.check).not.toHaveBeenCalled();
+  controller.destroy();
+});

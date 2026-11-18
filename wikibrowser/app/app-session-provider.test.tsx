@@ -264,3 +264,11 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+it("guards a previously captured login callback immediately when payment locks auth",async()=>{
+  render(<AppSessionProvider><SessionProbe/></AppSessionProvider>);
+  await waitFor(()=>expect(observed.authReady).toBe(true));
+  const login=observed.login;
+  await act(async()=>{observed.setAuthControlsLocked(true);await login();});
+  expect(mocks.authClient.login).not.toHaveBeenCalled();
+});

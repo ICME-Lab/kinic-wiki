@@ -2,6 +2,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { createPaymentController, type PaymentLocks } from "@kinic/payments/controller";
 import { createRecoveryStore } from "@kinic/payments/recovery-store";
 import { createWalletSessionManager } from "@kinic/payments/wallet-session";
+import type { RawDatabaseCyclesPendingPurchase } from "../vfs-client/raw-types";
 import type { DatabaseCycleEntryPage } from "../types";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createWikiCyclesPaymentAdapter, wikiPaymentScopes } from "./cycles-adapter";
@@ -22,7 +23,7 @@ async function setup() {
     pending: vi.fn(async (): Promise<unknown[]> => []), history: vi.fn(async (): Promise<DatabaseCycleEntryPage> => ({ entries: [], nextCursor: null })),
     credit: vi.fn(async () => 1n) };
   const purchase = vi.fn(async (): Promise<{ Err: string } | { Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } }> => ({ Ok: { block_index: 7n, amount_cycles: 2000001n, balance_cycles: 2000001n } }));
-  const status = vi.fn(async (): Promise<{ Ok: never[] } | { Err: string }> => ({ Ok: [] }));
+  const status = vi.fn(async (): Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }> => ({ Ok: [] }));
   const approve = vi.fn(async () => { facts.balanceE8s -= facts.feeE8s; facts.allowanceE8s = 1100000n; return { Ok: 3n }; });
   const plug = { requestConnect: vi.fn(async () => true), isConnected: vi.fn(async () => true), agent: { getPrincipal: async () => owner },
     createActor: vi.fn(async () => ({ icrc2_approve: approve, purchase_database_cycles: purchase, list_database_cycles_pending_purchases: status })) };
@@ -133,17 +134,18 @@ it("requires the block correlated by the payer reply and the authorized database
   const { adapter, options, facts, purchase, approve, billingClient, store, status } = await setup();
   facts.allowanceE8s = 1100000n;
   const p = await adapter.prepare(1000000n);
+  status.mockClear();
   store.put({ version: 1, stage: "purchase-dispatched", scope: p.scope, id: p.id, context: adapter.encode(p) });
   purchase.mockResolvedValueOnce({ Err: "cycles purchase payment completed at ledger block 17 but local cycles application failed; pending operation 9 remains completed for billing authority review: failure" });
-  expect(await adapter.submit(p)).toEqual({ kind: "pending", requiredAction: "review" });
+  expect(await adapter.submit(p)).toEqual({ kind: "pending", requiredAction: "review", reference:"9" });
   const [record] = store.list(p.scope);
   const entry = { entryId: "12", databaseId: "db", kind: "cycles_purchase", method: "purchase_database_cycles",
     caller: owner.toText(), ledgerBlockIndex: "19", amountCycles: "2000001", paymentAmountE8s: "1000000",
     balanceAfterCycles: "3000000", cyclesPerKinic: null, cyclesDelta: null, createdAtMs: String(Date.now()) };
   billingClient.history.mockResolvedValueOnce({ entries: [entry], nextCursor: null });
-  expect(await adapter.check(record)).toEqual({ kind: "pending", requiredAction: "review" });
+  expect(await adapter.check(record)).toEqual({ kind: "pending", requiredAction: "review", reference:"9" });
   billingClient.history.mockRejectedValueOnce(new Error("principal lacks required database role"));
-  expect(await adapter.check(record)).toEqual({ kind: "pending", requiredAction: "review" });
+  expect(await adapter.check(record)).toEqual({ kind: "pending", requiredAction: "review", reference:"9" });
   billingClient.history.mockResolvedValueOnce({ entries: [{ ...entry, ledgerBlockIndex: "17" }], nextCursor: null });
   const receipt = { reference: "17", creditedCycles: 2000001n };
   const original = createPaymentController({ adapter, store, guard: options.walletSession, locks });
@@ -188,6 +190,7 @@ const locks: PaymentLocks = { request: async (_name, _options, run) => run({}) }
 it("keeps inconsistent approved recovery in review with no payable confirmation", async () => {
   const { options, adapter, purchase, store, status } = await setup();
   const p = await adapter.prepare(1000000n);
+  status.mockClear();
   store.put({ version: 1, stage: "approved", scope: p.scope, id: p.id,
     context: { ...adapter.encode(p) as object, dispatchedAtNs: String(Date.now() * 1000000), block: "76", operation: "8" } });
   const recreated = createWikiCyclesPaymentAdapter(options);
@@ -239,6 +242,7 @@ it("retains paid local metadata for review after reload without a second money c
     receipt: { reference: "99", creditedCycles: "9000000" } } };
   expect(await createWikiCyclesPaymentAdapter(options).check(jointlyModified)).toEqual({ kind: "pending", requiredAction: "review" });
   initial.destroy();
+  status.mockClear();
   const reload = make();
   try {
     await reload.check();
@@ -249,4 +253,52 @@ it("retains paid local metadata for review after reload without a second money c
     expect(store.list(originalScope)[0].stage).toBe("paid");
   } finally { reload.destroy(); }
 
+});
+
+it.each([true,false])("checks pending rows as the external payer with management II=%s", async management => {
+  const { options, status, approve, purchase, billingClient, store } = await setup();
+  const adapter = createWikiCyclesPaymentAdapter({...options,authIdentity:management ? authIdentity : undefined});
+  const row: RawDatabaseCyclesPendingPurchase = {operation_id:7n,database_id:"db",status:"pending",
+    amount_cycles:2000000n,payment_amount_e8s:1000000n,ledger_block_index:[],created_at_ms:0n,required_action:"review"};
+  status.mockResolvedValueOnce({Ok:[row]});
+  await expect(adapter.prepare(1000000n)).rejects.toMatchObject({code:"Unavailable"});
+  status.mockResolvedValueOnce({Err:"unavailable"});
+  await expect(adapter.prepare(1000000n)).rejects.toThrow();
+  expect(approve).not.toHaveBeenCalled();
+  expect(purchase).not.toHaveBeenCalled();
+  if (!management) expect(billingClient.pending).not.toHaveBeenCalled();
+  status.mockResolvedValue({Err:"principal cannot view pending cycle purchases: db"});
+  const p = await adapter.prepare(1000000n);
+  store.put({version:1,id:p.id,scope:p.scope,stage:"approved",context:adapter.encode(p)});
+  const r = store.list(p.scope)[0];
+  expect(await adapter.check(r)).toMatchObject({kind:"unsubmitted"});
+  expect(await adapter.check({...r,stage:"purchase-dispatched"})).toEqual({kind:"pending",requiredAction:"review"});
+  status.mockResolvedValueOnce({Err:"denied by service"});
+  expect(await adapter.check(r)).toEqual({kind:"pending",requiredAction:"review"});
+});
+
+it("does not confirm a forged persisted paid marker after reload", async () => {
+  const { options, facts, store, purchase, approve } = await setup();
+  facts.allowanceE8s = 1100000n;
+  const initial = createPaymentController({adapter:createWikiCyclesPaymentAdapter(options),store,guard:options.walletSession,locks});
+  await initial.prepare(1000000n);
+  vi.spyOn(store,"remove").mockImplementationOnce(() => {throw Error("storage unavailable");});
+  await initial.pay(initial.getState().summary!.termsKey);
+  const [marker] = store.list(initial.getState().summary!.scope);
+  const context = marker.context as {acknowledged:{block:string;creditedCycles:string}};
+  const forged = {...marker,context:{...marker.context as object,
+    acknowledged:{...context.acknowledged,block:"99",creditedCycles:"9000000"},
+    receipt:{reference:"99",creditedCycles:"9000000"}}};
+  store.remove(marker.scope,marker.id);
+  store.put(forged);
+  initial.destroy();
+  const reload = createPaymentController({adapter:createWikiCyclesPaymentAdapter(options),store,guard:options.walletSession,locks});
+  try {
+    await reload.check();
+    expect(reload.getState()).toMatchObject({phase:"unresolved",requiredAction:"review"});
+    expect(reload.getState().receipt).toBeUndefined();
+    expect(store.list(marker.scope)).toHaveLength(1);
+    expect(purchase).toHaveBeenCalledOnce();
+    expect(approve).not.toHaveBeenCalled();
+  } finally {reload.destroy();}
 });

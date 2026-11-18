@@ -10,6 +10,7 @@ export type PaymentControllerState = PaymentViewState & {
   requiredAction?: "check" | "review";
   reference?: string;
   canCancelUnsubmitted?: true;
+  cleanupPending?: true;
 };
 
 export type PaymentLocks = {
@@ -159,12 +160,13 @@ export function createPaymentController<C>({
     // without consulting another signer or weakening the receipt.
     try {
       if (saved) clear(saved);
-      if (state.error?.stage === "complete" || state.error?.stage === "checking") {
-        const { error: _cleanupError, ...complete } = state;
-        publish(complete);
+      const cleanupError = state.error?.stage === "complete" || state.error?.stage === "checking";
+      if (state.cleanupPending || cleanupError) {
+        const { cleanupPending: _pending, error, ...complete } = state;
+        publish(cleanupError || !error ? complete : { ...complete, error });
       }
     } catch (error) {
-      publish({ ...state, error: classifyPaymentFailure("complete", error) });
+      publish({ ...state, cleanupPending: true, error: classifyPaymentFailure("complete", error) });
     }
     return true;
   }
@@ -229,7 +231,8 @@ export function createPaymentController<C>({
   }
 
   async function refresh(receipt: PaymentReceipt, visible?: PaymentSummary) {
-    const complete = { phase: "complete", summary: visible, receipt } as const;
+    const complete = { phase: "complete", summary: visible, receipt,
+      ...(state.cleanupPending ? { cleanupPending: true as const } : {}) } as const;
     publish({ ...complete, phase: "refreshing" });
     if (!current()) return;
     try {
@@ -263,8 +266,8 @@ export function createPaymentController<C>({
         if (silentOnly && !adapter.capabilities.silentCheck)
           publish({ phase: "complete", receipt: result.receipt, summary: visible, balanceUnavailable: true });
         else await refresh(result.receipt, visible);
-        if (cleanupError && current() && !state.error)
-          publish({ ...state, error: classifyPaymentFailure("complete", cleanupError) });
+        if (cleanupError && current())
+          publish({ ...state, cleanupPending: true, error: state.error ?? classifyPaymentFailure("complete", cleanupError) });
         return;
       }
       case "rejected":
@@ -362,10 +365,12 @@ export function createPaymentController<C>({
     });
   }
 
-  async function checkPayment(silentOnly: boolean) {
+  async function checkPayment(silentOnly: boolean, expectedId?: string) {
     await run("checking", false, async () => {
       if (silentOnly && !adapter.capabilities.silentCheck) return;
       const saved = journal();
+      if (expectedId !== undefined && saved && saved.id !== expectedId)
+        throw new PaymentFailure("AccountChanged");
       if (cleanConfirmedReceipt(saved)) return;
       if (!saved) {
         prepared = null;
@@ -428,7 +433,7 @@ export function createPaymentController<C>({
   } catch (error) { fail("checking", error); }
 
   return {
-    prepare, pay, check: () => checkPayment(false), refreshBalance, cancelUnsubmitted, getState: () => state,
+    prepare, pay, check: (expectedId?: string) => checkPayment(false, expectedId), refreshBalance, cancelUnsubmitted, getState: () => state,
     destroy() { destroyed = true; stopChecks(); },
   };
 }

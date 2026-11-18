@@ -1,9 +1,9 @@
 import { PaymentFailure } from "@kinic/payments/errors";
 import { recoveryTargetKey, type RecoveryStore } from "@kinic/payments/recovery-store";
-import type { FundingAccount, PaymentScope } from "@kinic/payments/types";
+import type { FundingAccount, PaymentCheck, PaymentScope } from "@kinic/payments/types";
 import type { Payment } from "@kinic/vault-candid";
 import type { BrowserConfig } from "../config";
-import { decodeVaultRecoveryRecord, type VaultPaymentAdapter } from "./adapter";
+import { decodeVaultRecoveryRecord, type VaultHistoryStatus, type VaultPaymentAdapter } from "./adapter";
 
 export function savedVaultLedger(config: BrowserConfig, payer: FundingAccount, beneficiary: string, store: RecoveryStore) {
   try {
@@ -25,15 +25,19 @@ export function savedVaultLedger(config: BrowserConfig, payer: FundingAccount, b
   return undefined;
 }
 
+export function readOnlyStatusLabel(result: PaymentCheck | VaultHistoryStatus) {
+  if (result.kind === "paid") return "Payment complete. Credited " + result.receipt.creditedCycles + " cycles.";
+  if (result.kind === "quoted") return "Status checked. The service reports a quote. Review the original payment to verify the debit.";
+  if (result.kind === "unsubmitted") return "Status checked. This payment is still unpaid.";
+  if (result.kind === "rejected") return "Status checked. This payment was rejected.";
+  return "Status checked. Review the original payment.";
+}
+
 // Adopt only authenticated history, preserving a stronger local dispatch marker.
 export async function inspectVaultHistory(adapter: VaultPaymentAdapter, store: RecoveryStore, payment: Payment, isCurrent: () => boolean) {
   const original = adapter.recordFor(payment);
   const locks = navigator.locks;
-  if (!locks) {
-    const result = await adapter.check(original);
-    if (result.kind === "paid") return "Payment complete. Credited " + result.receipt.creditedCycles + " cycles.";
-    return result.kind === "unsubmitted" ? "Status checked. This payment is still unpaid." : "Status checked. Review the original payment.";
-  }
+  if (!locks) return readOnlyStatusLabel(await adapter.check(original));
   await locks.request(recoveryTargetKey(adapter.scope), {ifAvailable:true}, lock => {
     if (!lock || !isCurrent()) throw new PaymentFailure("Unavailable");
     const previous = store.list(adapter.scope)[0];

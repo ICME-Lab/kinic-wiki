@@ -78,6 +78,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
   const [walletBusyProvider, setWalletBusyProvider] = useState<HeaderWalletProvider | null>(null);
   const [walletControlsLocked, setWalletControlsLockedState] = useState(false);
+  const authLock = useRef(false);
   const [authControlsLocked, setAuthControlsLockedState] = useState(false);
   const [walletSessionReady, setWalletSessionReady] = useState(false);
   const principalRef = useRef(principal);
@@ -90,6 +91,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setAuthControlsLocked = useCallback((locked: boolean) => {
+    authLock.current = locked;
     setAuthControlsLockedState(locked);
   }, []);
 
@@ -225,7 +227,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   );
 
   const login = useCallback(async () => {
-    if (!authClient) return;
+    if (!authClient || authLock.current) return;
     setAuthLoading(true);
     setAuthError(null);
     await authClient.login({

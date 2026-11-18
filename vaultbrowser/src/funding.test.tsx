@@ -124,6 +124,10 @@ it("shows confirmation even if refreshing prepaid credit fails",async()=>{
   mount(); await review(); await click("Pay 1 KINIC");
   expect(await screen.findByText(/Balance unavailable. Your payment was confirmed/)).toBeTruthy();
   expect(screen.getByText("Payment complete")).toBeTruthy();
+  expect(screen.queryByRole("button",{name:"New payment"})).toBeNull();
+  actor.account_balance.mockResolvedValue({Ok:100n});
+  await click("Refresh credit balance");await button("New payment");
+  expect(actor.pay_purchase).toHaveBeenCalledOnce();
 });
 it("never replaces an uncertain approval after a status check",async()=>{
   actor.icrc2_approve.mockRejectedValue(Error("lost"));mount();await review();await click("Pay 1 KINIC");
@@ -148,9 +152,18 @@ it("shows the actionable failure when Web Locks is missing",async()=>{
 it("preserves corrupt local recovery and blocks a new quote",async()=>{
   const target={kind:"vault",beneficiary:owner.toText()};
   const key="kinic.payments.v1:"+JSON.stringify([location.origin,config.host,ledger.toText(),config.canister,target]);
+  saved=[payment];
+  actor.payment_status.mockResolvedValue({Ok:[{...payment,status:{Quoted:null},uncertain:false}]});
   localStorage.setItem(key,"{");mount();
   expect(await screen.findByText(/payment record could not be saved or read/)).toBeTruthy();
-  expect((await button("Review payment")).disabled).toBe(true);expect(localStorage.getItem(key)).toBe("{");
+  expect((await button("Review payment")).disabled).toBe(true);
+  await click("Check payment status");
+  await screen.findByText(/Status checked.*quote.*original payment/i);
+  expect(screen.queryByText(/still unpaid/i)).toBeNull();
+  expect(actor.payment_status).toHaveBeenCalledExactlyOnceWith(payment.request.operation);
+  expect(localStorage.getItem(key)).toBe("{");
+  for(const call of [actor.quote_purchase,actor.icrc2_approve,actor.pay_purchase,actor.reconcile_purchase,actor.cancel_quote])
+    expect(call).not.toHaveBeenCalled();
 });
 it("resumes the original ledger cursor without an extra payment",async()=>{
   saved=[{...payment}]; let cursor=0n;
@@ -349,4 +362,46 @@ it("requires a restored Plug to grant scopes, keeps it connected through an II p
   expect(plug.disconnect).not.toHaveBeenCalled();
   view.rerender(<VaultFundingProvider config={config} manager={wallet}><p>Signed out</p></VaultFundingProvider>);
   await waitFor(()=>expect(plug.disconnect).toHaveBeenCalledOnce());
+});
+
+it("displays and scans the journaled operation when another is first in history",async()=>{
+  const other=quoted({...payment.request,operation:new Uint8Array(16).fill(5),amount_e8s:120_000_000n});
+  other.status={Unknown:null};other.uncertain=true;
+  const p={...payment,reconciliation:[{start:0n,next:3n,end:10n,spender:Principal.fromText(config.canister),
+    lease:0n,lease_until:0n,lease_generation:0n}]} as Payment;
+  saved=[other,p];
+  const scope={origin:location.origin,host:config.host,spender:config.canister,ledger:ledger.toText(),payer:{provider:"ii" as const,
+    owner:owner.toText()},target:{kind:"vault" as const,beneficiary:owner.toText()}};
+  createRecoveryStore(localStorage).put({version:1,scope,id:"04".repeat(16),stage:"purchase-dispatched",context:encodeVaultRecoveryContext(p.request,p)});
+  actor.reconcile_purchase.mockResolvedValue({Ok:{payment:p,next:4n,end:10n,scanned:1n,can_continue:false}});
+  mount();const select=await screen.findByRole("combobox",{name:"Saved payment"});
+  expect(select).toHaveProperty("value","04".repeat(16));
+  expect(select).toHaveProperty("disabled",true);
+  expect(screen.getByText("Ledger scan: next 3 of 10.")).toBeTruthy();
+  await click("Check payment status");await click("Resume ledger scan");
+  await screen.findByText("Ledger scan: next 4 of 10.");
+  expect(actor.payment_status.mock.calls.every(([id])=>String(id)===String(p.request.operation))).toBe(true);
+  expect(actor.reconcile_purchase).toHaveBeenCalledExactlyOnceWith(p.request.operation);
+  expect(actor.pay_purchase).not.toHaveBeenCalled();
+});
+
+it("never checks a replacement journal while the original payment is displayed",async()=>{
+  const c=client(), funded=async()=>{};
+  const view=renderReact(<VaultFundingProvider config={config} identity={identity} manager={wallet}><Funding client={c} onFunded={funded}/><span>Initial</span></VaultFundingProvider>);
+  await review();
+  const original=saved[0];
+  const scope={origin:location.origin,host:config.host,spender:config.canister,ledger:ledger.toText(),
+    payer:{provider:"ii" as const,owner:owner.toText()},target:{kind:"vault" as const,beneficiary:owner.toText()}};
+  const store=createRecoveryStore(localStorage), [record]=store.list(scope);
+  const other={...quoted({...original.request,operation:new Uint8Array(16).fill(5)}),status:{Unknown:null},uncertain:true};
+  store.remove(scope,record.id);
+  store.put({version:1,scope,id:"05".repeat(16),stage:"purchase-dispatched",context:encodeVaultRecoveryContext(other.request,other)});
+  saved=[other];
+  view.rerender(<VaultFundingProvider config={config} identity={identity} manager={wallet}><Funding client={c} onFunded={funded}/><span>Updated</span></VaultFundingProvider>);
+  await click("Check payment status");
+  await waitFor(()=>expect(screen.getByText(/account changed/i)).toBeTruthy());
+  expect(actor.payment_status).not.toHaveBeenCalled();
+  expect(actor.pay_purchase).not.toHaveBeenCalled();
+  expect(actor.reconcile_purchase).not.toHaveBeenCalled();
+  expect(store.list(scope)[0].id).toBe("05".repeat(16));
 });

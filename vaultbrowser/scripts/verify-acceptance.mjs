@@ -148,7 +148,6 @@ async function action(page, name, errors = false) {
   const button = page.getByRole("button", {
     name,
     exact: true,
-    includeHidden: true,
   });
   for (const details of await button.locator("xpath=ancestor::details").all()) {
     if (!(await details.evaluate((e) => e.open)))
@@ -854,6 +853,7 @@ try {
   await wiki.waitForURL(/\/db\/[^/]+\//);
   const wikiDatabaseId = new URL(wiki.url()).pathname.split("/")[2];
   const balanceBeforeBridge = BigInt((await readback(vault)).balance.Ok);
+  await action(vault, "Account settings");
   const linkPopupPromise = context.waitForEvent("page", { timeout: 20000 }).catch((error) => error);
   await action(vault, "Link Wiki account");
   const linkPopup = await linkPopupPromise;
@@ -1021,6 +1021,7 @@ try {
   );
 
   // Delay an actual private read, switch context, then deliver its real plaintext-producing reply.
+  await action(vault, "Back to Vault");
   await action(vault, "New document");
   delayMethod = "get_chunk";
   const ready = new Promise((resolve) => {

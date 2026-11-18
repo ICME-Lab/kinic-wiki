@@ -237,6 +237,23 @@ export async function listVaultFundingHistory(options: VaultHistoryOptions): Pro
   return history(config, payerAccess(options, config));
 }
 
+export type VaultHistoryStatus = Exclude<PaymentCheck, {kind:"unsubmitted"}> | {kind:"quoted"};
+
+/** A status-only lookup for an authenticated history row, independent of local storage. */
+export async function readVaultHistoryStatus(options: VaultHistoryOptions, original: Payment): Promise<VaultHistoryStatus> {
+  const config = trustedConfig(options.config);
+  const access = payerAccess(options, config);
+  const scope = makeScope(config, access.account, access.beneficiary, original.config.ledger.toText());
+  verifyPayment(original, scope);
+  await access.validate();
+  const found = (await access.call("payment_status", original.request.operation))[0];
+  if (!found) return pending(paymentId(original));
+  verifyPayment(found, scope, {request:original.request, quote:encodeQuote(original)});
+  const result = outcome(found);
+  // Without a readable local dispatch marker, Quoted cannot rule out an earlier debit.
+  return result.kind === "unsubmitted" ? {kind:"quoted"} : result;
+}
+
 export interface VaultFundingContext {
   readonly payment: Payment;
   readonly operation: Uint8Array | number[];
@@ -261,7 +278,7 @@ export interface VaultPaymentAdapter extends PaymentAdapter<VaultFundingContext>
   scan(record: RecoveryRecord): Promise<ReconciliationProgress>;
 }
 
-function pending(id: string): PaymentCheck { return {kind: "pending", reference: id, requiredAction: "check"}; }
+function pending(id: string): Extract<PaymentCheck, {kind:"pending"}> { return {kind: "pending", reference: id, requiredAction: "check"}; }
 function outcome(p: Payment): PaymentCheck {
   const status = p.status;
   if ("Paid" in status) return {kind: "paid", receipt: {reference: status.Paid.toString(), creditedCycles: p.credits}};

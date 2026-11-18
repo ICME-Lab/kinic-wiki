@@ -88,21 +88,26 @@ export function createWikiCyclesPaymentAdapter({
   const current = () => !destroyed && walletSession.isCurrent(token) && (!isCurrent || isCurrent())
     && (!external || walletSession.hasScopes(scopes)) && (!authIdentity || authIdentity.getPrincipal().toText() === managerPrincipal);
   const assertCurrent = () => { if (!current()) throw new PaymentFailure("AccountChanged"); };
-  const pendingReview = (): PaymentCheck => ({ kind: "pending", requiredAction: "review" });
+  const pendingReview = (reference?: string): PaymentCheck =>
+    ({ kind: "pending", requiredAction: "review", ...(reference ? {reference} : {}) });
+  const emptyPayer = `principal cannot view pending cycle purchases: ${databaseId}`;
+  const readPayerPending = () => callWikiWithPayer(transport!, canisterId, "list_database_cycles_pending_purchases", [databaseId], current);
 
   async function facts() {
     assertCurrent();
     await transport!.revalidate();
     assertCurrent();
-    const [config, pending] = await Promise.all([billingClient.getConfig(canisterId),
+    const [config, pending, payerPending] = await Promise.all([billingClient.getConfig(canisterId),
       authIdentity ? billingClient.pending(canisterId, authIdentity, databaseId).catch(error => {
         // Non-owners get this response when they have no visible pending rows.
         // The purchase endpoint still enforces its per-payer pending guard.
-        if (error instanceof Error && error.message === `principal cannot view pending cycle purchases: ${databaseId}`) return [];
+        if (error instanceof Error && error.message === emptyPayer) return [];
         throw error;
-      }) : Promise.resolve([])]);
+      }) : Promise.resolve([]),
+      external ? readPayerPending() : null]);
     assertCurrent();
-    if (pending.length) throw new PaymentFailure("Unavailable");
+    if (pending.length || (payerPending && ("Err" in payerPending ? payerPending.Err !== emptyPayer : payerPending.Ok.length > 0)))
+      throw new PaymentFailure("Unavailable");
     if (config.kinicLedgerCanisterId !== ledger) throw new PaymentFailure("TermsChanged");
     const terms = await billingClient.ledgerTerms({ host: scope.host, ledger, owner: scope.payer.owner, spender: canisterId });
     assertCurrent();
@@ -264,22 +269,22 @@ export function createWikiCyclesPaymentAdapter({
           block: applied?.[1] ?? null, operation: applied?.[2] ?? ambiguous![1] };
         store.put({ ...record, context: { ...saved, block: sagaReply.block, operation: sagaReply.operation } });
       }
-      return pendingReview();
+      return pendingReview(sagaReply?.id === p.id ? sagaReply.operation : undefined);
     },
     async check(record) {
       assertCurrent();
       if (record.stage === "paid") return recoverAcknowledgement(record);
       const { saved, payment } = decode(record);
+      const evidence = sagaReply && saved.id === sagaReply.id && payment.termsKey === sagaReply.termsKey
+        && saved.dispatchedAtNs === sagaReply.dispatchedAtNs && saved.operation === sagaReply.operation
+        && saved.block === sagaReply.block ? sagaReply : null;
       try {
-        const result = await callWikiWithPayer(transport, canisterId, "list_database_cycles_pending_purchases", [databaseId], current);
+        const result = await readPayerPending();
         assertCurrent();
-        if ("Err" in result) return pendingReview();
-        if (record.stage === "approved" && !result.Ok.length)
+        const empty = "Err" in result ? result.Err === emptyPayer : result.Ok.length === 0;
+        if (record.stage === "approved" && empty)
           return { kind: "unsubmitted", expired: payment.expiresAtNs !== null && payment.expiresAtNs <= nowNs() };
-        const evidence = sagaReply;
-        if (!evidence || saved.id !== evidence.id || payment.termsKey !== evidence.termsKey
-          || saved.dispatchedAtNs !== evidence.dispatchedAtNs || saved.operation !== evidence.operation
-          || saved.block !== evidence.block) return pendingReview();
+        if ("Err" in result || !evidence) return pendingReview(evidence?.operation);
         const known = result.Ok.find(row => row.operation_id.toString() === saved.operation && row.database_id === databaseId
           && row.payment_amount_e8s === payment.amountE8s && row.amount_cycles >= payment.credits);
         if (known) {
@@ -290,12 +295,12 @@ export function createWikiCyclesPaymentAdapter({
           }
           return { kind: "pending", requiredAction: "review", reference: evidence.operation };
         }
-        if (!saved.block) return pendingReview();
+        if (!saved.block) return pendingReview(evidence.operation);
         const { entry } = await history(saved.baseline, e => e.kind === "cycles_purchase" && e.method === "purchase_database_cycles"
           && e.databaseId === databaseId && e.caller === scope.payer.owner && e.ledgerBlockIndex === saved.block
           && e.paymentAmountE8s === saved.amount && BigInt(e.amountCycles) >= payment.credits);
-        return entry ? acknowledge(payment, evidence.dispatchedAtNs, saved.block, BigInt(entry.amountCycles)) : pendingReview();
-      } catch { return pendingReview(); }
+        return entry ? acknowledge(payment, evidence.dispatchedAtNs, saved.block, BigInt(entry.amountCycles)) : pendingReview(evidence.operation);
+      } catch { return pendingReview(evidence?.operation); }
     },
     async restore(record) {
       assertCurrent();
