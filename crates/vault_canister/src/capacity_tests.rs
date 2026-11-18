@@ -46,7 +46,7 @@ fn capacity_pool_is_global_only() {
         context.run(db, |db| {
             assert_eq!(
                 vault_store::content::global_usage(db)? - vault_store::content::usage(db)?,
-                16 * 1024 * 1024
+                19 * 1024 * 1024
             );
             Ok(())
         })

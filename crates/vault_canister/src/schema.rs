@@ -1,4 +1,4 @@
-//! Initial release: create v9 once; validate existing v9 without repairing it.
+//! Validate old images before atomic v9/v10 -> v11 migration; never repair unknown schemas.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
@@ -6,6 +6,44 @@ use vault_types::{Error, Result};
 const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
 
 pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
+    db.execute_batch("SAVEPOINT vault_schema_upgrade")
+        .map_err(|_| Error::Storage)?;
+    let result = initialize_inner(db);
+    if result.is_ok() {
+        db.execute_batch("RELEASE vault_schema_upgrade")
+            .map_err(|_| Error::Storage)?;
+    } else {
+        db.execute_batch("ROLLBACK TO vault_schema_upgrade; RELEASE vault_schema_upgrade;")
+            .map_err(|_| Error::Storage)?;
+    }
+    result
+}
+fn validate(db: &Connection, statements: &[String]) -> Result<()> {
+    let expected: BTreeMap<_, _> = statements
+        .iter()
+        .map(|s| contract(s))
+        .collect::<Result<_>>()?;
+    let mut query = db
+        .prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'")
+        .map_err(|_| Error::Storage)?;
+    let rows: Vec<(String, String, String)> = sql::query_map(&mut query, params![], |r| {
+        Ok((
+            sql::row_get(r, 0)?,
+            sql::row_get(r, 1)?,
+            sql::row_get(r, 2)?,
+        ))
+    })
+    .map_err(|_| Error::Storage)?;
+    let actual: BTreeMap<_, _> = rows
+        .into_iter()
+        .map(|(kind, name, ddl)| ((kind, name), normalize(&ddl)))
+        .collect();
+    if actual != expected {
+        return Err(Error::Storage);
+    }
+    Ok(())
+}
+fn initialize_inner(db: &Connection) -> Result<()> {
     let version: i64 = db
         .query_row("PRAGMA user_version", params![], |r| sql::row_get(r, 0))
         .map_err(|_| Error::Storage)?;
@@ -16,44 +54,77 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
             |r| sql::row_get(r, 0),
         )
         .map_err(|_| Error::Storage)?;
-    let statements = schema_statements();
+    let old = schema_statements();
+    let additions = crate::capacity::grant_schema_statements();
+    let mut latest = old.clone();
+    latest.extend(additions.clone());
+    let v10 = latest.clone();
+    let subsidy = crate::capacity::subsidy_schema_statements();
+    latest.extend(subsidy.clone());
     match version {
         0 if count == 0 => {
-            db.execute_batch(&statements.join("\n"))
+            db.execute_batch(&latest.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            db.execute_batch("PRAGMA user_version=9;")
+            db.execute_batch("PRAGMA user_version=11;")
                 .map_err(|_| Error::Storage)?;
         }
-        9 if count == statements.len() as i64 => {
-            let expected: BTreeMap<_, _> = statements
-                .iter()
-                .map(|s| contract(s))
-                .collect::<Result<_>>()?;
-            let mut query = db
-                .prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'")
+        9 => {
+            validate(db, &old)?;
+            db.execute_batch(&additions.join("\n"))
                 .map_err(|_| Error::Storage)?;
-            let rows: Vec<(String, String, String)> = sql::query_map(&mut query, params![], |r| {
-                Ok((
-                    sql::row_get(r, 0)?,
-                    sql::row_get(r, 1)?,
-                    sql::row_get(r, 2)?,
-                ))
-            })
-            .map_err(|_| Error::Storage)?;
-            let actual: BTreeMap<_, _> = rows
-                .into_iter()
-                .map(|(kind, name, ddl)| ((kind, name), normalize(&ddl)))
-                .collect();
-            if actual != expected {
-                return Err(Error::Storage);
-            }
+            db.execute_batch(&subsidy.join("\n"))
+                .map_err(|_| Error::Storage)?;
+            exclude_existing(db)?;
+            db.execute_batch("PRAGMA user_version=11;")
+                .map_err(|_| Error::Storage)?;
         }
+        10 => {
+            validate(db, &v10)?;
+            db.execute_batch(&subsidy.join("\n"))
+                .map_err(|_| Error::Storage)?;
+            // Seal every participant at the policy boundary without changing
+            // existing credits or granting an extra free retrieval.
+            exclude_existing(db)?;
+            db.execute_batch("PRAGMA user_version=11;")
+                .map_err(|_| Error::Storage)?;
+        }
+        11 => validate(db, &latest)?,
         _ => return Err(Error::Storage),
     }
-    // Connection-local policy is not persisted in the image. Reapply after
-    // validation, without creating/repairing schema or changing stored records.
     db.execute_batch("PRAGMA max_page_count=262144;")
         .map_err(|_| Error::Storage)
+}
+
+fn exclude_existing(db: &Connection) -> Result<()> {
+    let mut principals = std::collections::BTreeSet::new();
+    let mut stmt=db.prepare("SELECT owner FROM accounts UNION SELECT wallet FROM payments UNION SELECT json_extract(record,'$.request.beneficiary') FROM payments UNION SELECT wallet FROM quote_fee_flights UNION SELECT json_extract(record,'$.payment.request.beneficiary') FROM quote_fee_flights").map_err(|_|Error::Storage)?;
+    let owners: Vec<String> =
+        sql::query_map(&mut stmt, params![], |r| sql::row_get(r, 0)).map_err(|_| Error::Storage)?;
+    principals.extend(owners);
+    let mut stmt = db
+        .prepare("SELECT DISTINCT owner FROM vaults")
+        .map_err(|_| Error::Storage)?;
+    let owners: Vec<Vec<u8>> =
+        sql::query_map(&mut stmt, params![], |r| sql::row_get(r, 0)).map_err(|_| Error::Storage)?;
+    for owner in owners {
+        principals.insert(
+            candid::Principal::try_from_slice(&owner)
+                .map_err(|_| Error::Storage)?
+                .to_text(),
+        );
+    }
+    for owner in principals {
+        kinic_cycle_grants::record_once(
+            db,
+            kinic_cycle_grants::Scope::Vault,
+            &owner,
+            "vault",
+            0,
+            0,
+        )
+        .map_err(|_| Error::Storage)?;
+    }
+    Ok(())
 }
 
 fn schema_statements() -> Vec<String> {
@@ -136,4 +207,18 @@ fn normalize(ddl: &str) -> String {
         }
     }
     normalized
+}
+
+#[cfg(test)]
+pub(crate) fn legacy_v9_for_test(db: &Connection) {
+    db.execute_batch(&schema_statements().join("\n")).unwrap();
+    db.execute_batch("PRAGMA user_version=9;").unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn legacy_v10_for_test(db: &Connection) {
+    legacy_v9_for_test(db);
+    db.execute_batch(&crate::capacity::grant_schema_statements().join("\n"))
+        .unwrap();
+    db.execute_batch("PRAGMA user_version=10;").unwrap();
 }

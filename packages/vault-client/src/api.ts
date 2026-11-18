@@ -1,8 +1,11 @@
+import { BrowserDeviceKeys, type DeviceKeys } from "./device-keys.ts";
 import type { Identity } from "@icp-sdk/core/agent";
 import { TransportSecretKey, randomBytes } from "@kinic/vault-crypto";
 import {
   copyVaultContext,
+  contextInput,
   verifiedRoot,
+  validateRootHeader,
   type VaultContext,
 } from "@kinic/vault-crypto/context";
 import {
@@ -23,6 +26,13 @@ import type {
 } from "./contracts.ts";
 import { Session, equal } from "./session.ts";
 export const bytes = (x: Uint8Array | number[]) => new Uint8Array(x);
+export function isValidVaultName(value: string) {
+  const characters = Array.from(value.trim());
+  return characters.length > 0 && characters.length <= 64 && !characters.some(character => {
+    const code = character.codePointAt(0)!;
+    return code < 32 || (code >= 127 && code <= 159);
+  });
+}
 export function ok<T>(r: { Ok: T } | { Err: unknown }): T {
   if ("Ok" in r) return r.Ok;
   throw Error(
@@ -62,6 +72,9 @@ export class VaultClient {
   readonly identity: Identity;
   readonly canister: string;
   private local: boolean;
+  private readonly deviceKeys: DeviceKeys;
+  private unsubscribeDevice: () => void;
+  deviceKeyStatus: "saved" | "memory" | "none" = "none";
   private live = true;
   header?: Header;
   private pinnedPublicKey?: Uint8Array;
@@ -79,6 +92,7 @@ export class VaultClient {
     identity: Identity;
     canister: string;
     local: boolean;
+    deviceKeys?: DeviceKeys;
   }) {
     if (options.identity.getPrincipal().isAnonymous())
       throw Error("Unauthorized");
@@ -86,6 +100,11 @@ export class VaultClient {
     this.identity = options.identity;
     this.canister = options.canister;
     this.local = options.local;
+    this.deviceKeys = options.deviceKeys ?? new BrowserDeviceKeys(`${this.canister}:${this.identity.getPrincipal().toText()}`);
+    this.unsubscribeDevice = this.deviceKeys.subscribe(() => {
+      this.deviceKeyStatus = "none";
+      this.session.lock();
+    });
     this.session.addLockCleanup(() => {
       this.keyAttempt = undefined;
       this.pinnedPublicKey = undefined;
@@ -98,12 +117,26 @@ export class VaultClient {
   destroy() {
     if (!this.live) return;
     this.live = false;
+    this.unsubscribeDevice();
     this.session.lock();
     this.header = undefined;
     this.creating = undefined;
   }
+  async forgetDeviceKeys() {
+    this.checkLive();
+    this.session.lock();
+    await this.deviceKeys.forget();
+    this.deviceKeyStatus = "none";
+  }
   private checkLive() {
     if (!this.live) throw Error("NotSignedIn");
+  }
+  private deviceBinding(h: Header) {
+    return JSON.stringify([Array.from(contextInput(this.context(h))), Array.from(bytes(h.public_key)), "root/v3"]);
+  }
+  private async discardDeviceKey(h: Header) {
+    try { await this.deviceKeys.remove(this.deviceBinding(h)); }
+    catch { /* Unavailable or malformed entries cannot be reused. */ }
   }
   private context(h: Header): VaultContext {
     return copyVaultContext({
@@ -158,13 +191,15 @@ export class VaultClient {
     this.creating = undefined;
     return structuredClone(h);
   }
-  async open(header: Header) {
+  async open(header: Header, options: { allowDerive?: boolean; beforeDerive?: (header: Header) => Promise<void> } = {}) {
     this.checkLive();
     if (!this.header || !equal(bytes(this.header.id), bytes(header.id))) {
       this.session.lock();
       this.header = structuredClone(header);
     }
     const t = this.session.capture();
+    const epoch = await this.deviceKeys.epoch().catch(() => undefined);
+    this.session.check(t);
     const readHeader = async () => {
       const reply = await this.actor.get_vault_header(header.id);
       // An old response must never invalidate a newer selected context.
@@ -173,6 +208,8 @@ export class VaultClient {
         "Err" in reply &&
         ("NotFound" in reply.Err || "Conflict" in reply.Err)
       ) {
+        await this.discardDeviceKey(header);
+        this.session.check(t);
         this.session.lock();
         throw Error("TargetChanged");
       }
@@ -181,6 +218,8 @@ export class VaultClient {
     const h = await readHeader();
     this.session.check(t);
     if (!equal(bytes(h.id), bytes(header.id)) || !("Active" in h.state)) {
+      await this.discardDeviceKey(header);
+      this.session.check(t);
       this.session.lock();
       throw Error("TargetChanged");
     }
@@ -188,47 +227,86 @@ export class VaultClient {
     try {
       context = this.context(h);
     } catch {
+      await this.discardDeviceKey(header);
+      this.session.check(t);
       this.session.lock();
       throw Error("TargetChanged");
     }
+    if (epoch !== undefined && await this.deviceKeys.epoch().catch(() => epoch) !== epoch) {
+      this.session.lock();
+      throw Error("Locked");
+    }
+    this.session.check(t);
     if (this.session.root) {
       this.session.requireContext(context);
       if (
         !this.pinnedPublicKey ||
         !equal(this.pinnedPublicKey, bytes(h.public_key))
       ) {
+        await this.discardDeviceKey(header);
+        this.session.check(t);
         this.session.lock();
         throw Error("TargetChanged");
       }
       this.header = h;
       return;
     }
-    const attempt = (this.keyAttempt ??= {
-      vault: bytes(h.id),
-      operation: randomBytes(16),
-      transport: TransportSecretKey.random(),
-    });
-    if (!equal(attempt.vault, bytes(h.id))) throw Error("TargetChanged");
-    const reply = ok(
-      await this.actor.derive_vault_key({
-        vault: attempt.vault,
-        operation: attempt.operation,
-        transport: attempt.transport.publicKeyBytes(),
-      }),
-    );
+    this.deviceKeyStatus = "none";
+    const binding = this.deviceBinding(h);
+    let root: CryptoKey | undefined;
+    try {
+      if (epoch !== undefined) root = await this.deviceKeys.get(binding, epoch);
+    } catch { /* IndexedDB can be unavailable in private/restricted browsers. */ }
     this.session.check(t);
-    const root = await verifiedRoot(
-      context,
-      bytes(h.public_key),
-      {
-        input: bytes(reply.input),
-        public_key: bytes(reply.public_key),
-        encrypted_key: bytes(reply.encrypted_key),
-      },
-      attempt.transport,
-      this.local,
-    );
+    if (epoch !== undefined && await this.deviceKeys.epoch().catch(() => epoch) !== epoch) {
+      this.session.lock();
+      throw Error("Locked");
+    }
     this.session.check(t);
+    if (root) {
+      try { validateRootHeader(context, bytes(h.public_key), this.local); }
+      catch (cause) {
+        await this.discardDeviceKey(header);
+        this.session.check(t);
+        this.session.lock();
+        throw cause;
+      }
+      this.deviceKeyStatus = "saved";
+    } else {
+      // Authorize only a new request. Lost replies retain their exact operation
+      // and original authorization so a paid replay is not blocked by its debit.
+      if (!this.keyAttempt) {
+        if (options.allowDerive === false) throw Error("KeyFundingRequired");
+        await options.beforeDerive?.(structuredClone(h));
+        this.session.check(t);
+      }
+      const attempt = (this.keyAttempt ??= {
+        vault: bytes(h.id),
+        operation: randomBytes(16),
+        transport: TransportSecretKey.random(),
+      });
+      if (!equal(attempt.vault, bytes(h.id))) throw Error("TargetChanged");
+      const reply = ok(
+        await this.actor.derive_vault_key({
+          vault: attempt.vault,
+          operation: attempt.operation,
+          transport: attempt.transport.publicKeyBytes(),
+        }),
+      );
+      this.session.check(t);
+      root = await verifiedRoot(
+        context,
+        bytes(h.public_key),
+        {
+          input: bytes(reply.input),
+          public_key: bytes(reply.public_key),
+          encrypted_key: bytes(reply.encrypted_key),
+        },
+        attempt.transport,
+        this.local,
+      );
+      this.session.check(t);
+    }
     const current = await readHeader();
     this.session.check(t);
     try {
@@ -239,10 +317,26 @@ export class VaultClient {
       )
         throw Error("TargetChanged");
     } catch {
+      await this.discardDeviceKey(header);
+      this.session.check(t);
       this.session.lock();
       throw Error("TargetChanged");
     }
-    this.session.bindRoot(root, context);
+    if (this.deviceKeyStatus !== "saved") {
+      let saved = false;
+      if (epoch !== undefined) {
+        try { saved = await this.deviceKeys.put(binding, root!, epoch); }
+        catch { /* Keep the verified key in memory when persistence fails. */ }
+      }
+      this.session.check(t);
+      this.deviceKeyStatus = saved ? "saved" : "memory";
+    }
+    if (epoch !== undefined && await this.deviceKeys.epoch().catch(() => epoch) !== epoch) {
+      this.session.lock();
+      throw Error("Locked");
+    }
+    this.session.check(t);
+    this.session.bindRoot(root!, context);
     this.pinnedPublicKey = bytes(h.public_key);
     this.header = structuredClone(current);
     this.keyAttempt = undefined;
@@ -328,6 +422,15 @@ export class VaultClient {
   }
   get hasPendingSave() {
     return !!this.pendingSave;
+  }
+  get hasPendingMutation() {
+    return this.request.kind !== "idle";
+  }
+  async renameVault(header: Header, name: string) {
+    if (this.hasPendingSave) throw Error("SavePending");
+    const trimmed = name.trim();
+    if (!isValidVaultName(trimmed)) throw Error("InvalidInput");
+    return this.mutate({ RenameVault: { vault: header.id, name: trimmed, expected_sequence: header.sequence } });
   }
   async save(
     metadata: Metadata,
@@ -717,6 +820,8 @@ export class VaultClient {
     }
     this.session.check(t);
     if (this.header && equal(bytes(this.header.id), vault)) {
+      await this.discardDeviceKey(this.header);
+      this.session.check(t);
       this.session.lock();
       this.header = undefined;
     }

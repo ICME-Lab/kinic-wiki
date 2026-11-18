@@ -10,7 +10,12 @@
     "./input": "./src/input.tsx",
     "./utils": "./src/utils.ts",
     "./styles.css": "./src/styles.css",
-    "./tailwind-preset": "./tailwind-preset.ts"
+    "./tailwind-preset": "./tailwind-preset.ts",
+    "./status-pill": "./src/status-pill.tsx",
+    "./empty-state": "./src/empty-state.tsx",
+    "./cycle-balance": "./src/cycle-balance.tsx",
+    "./cycles": "./src/cycles.ts",
+    "./use-modal-dialog": "./src/use-modal-dialog.ts"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "6.5.0",

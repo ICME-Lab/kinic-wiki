@@ -1,3 +1,4 @@
+type AccountInitialization = record { balance : nat64; grant_cycles : nat64 };
 type Action = variant {
   CancelUpload : record { job : blob; vault : blob; upload : blob };
   PutChunk : record { upload : blob; bytes : blob; index : nat32 };
@@ -7,6 +8,7 @@ type Action = variant {
     vault : blob;
     expected_revision : nat64;
   };
+  RenameVault : record { vault : blob; name : text; expected_sequence : nat64 };
   DeleteVault : record { vault : blob };
   Collect;
   PurgeObject : record {
@@ -59,6 +61,8 @@ type GlobalCapacity = record {
 type Header = record {
   id : blob;
   public_key : blob;
+  // Owner-visible display metadata, deliberately separate from the key context.
+  name : opt text;
   state : VaultState;
   nonce : blob;
   key_name : text;
@@ -77,10 +81,47 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
+type Icrc10SupportedStandard = record { url : text; name : text };
+type Icrc21ConsentInfo = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  consent_message : Icrc21ConsentMessage;
+};
+type Icrc21ConsentMessage = variant { GenericDisplayMessage : text };
+type Icrc21ConsentMessageMetadata = record {
+  utc_offset_minutes : opt int16;
+  language : text;
+};
+type Icrc21ConsentMessageRequest = record {
+  arg : blob;
+  method : text;
+  user_preferences : Icrc21ConsentMessageSpec;
+};
+type Icrc21ConsentMessageResponse = variant {
+  Ok : Icrc21ConsentInfo;
+  Err : Icrc21Error;
+};
+type Icrc21ConsentMessageSpec = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  device_spec : opt Icrc21DeviceSpec;
+};
+type Icrc21DeviceSpec = variant { GenericDisplay; FieldsDisplay };
+type Icrc21Error = variant {
+  GenericError : Icrc21GenericError;
+  InsufficientPayment : Icrc21ErrorInfo;
+  UnsupportedCanisterCall : Icrc21ErrorInfo;
+  ConsentMessageUnavailable : Icrc21ErrorInfo;
+};
+type Icrc21ErrorInfo = record { description : text };
+type Icrc21GenericError = record { description : text; error_code : nat };
 type KeyReply = record {
   encrypted_key : blob;
   public_key : blob;
   input : blob;
+};
+type KeyRetrievalCost = record {
+  fee : nat64;
+  owner_fee : nat64;
+  first_key_free : bool;
 };
 type Mutation = record { action : Action; operation : blob };
 type MutationResult = variant {
@@ -156,23 +197,26 @@ type ReconciliationState = record {
 };
 type Result = variant { Ok : nat64; Err : Error };
 type Result_1 = variant { Ok : Payment; Err : Error };
-type Result_10 = variant { Ok : RevisionPage; Err : Error };
-type Result_11 = variant { Ok : ObjectPage; Err : Error };
-type Result_12 = variant { Ok : vec Payment; Err : Error };
-type Result_13 = variant { Ok : PendingUploads; Err : Error };
-type Result_14 = variant { Ok : vec Header; Err : Error };
-type Result_15 = variant { Ok : MutationResult; Err : Error };
-type Result_16 = variant { Ok : opt Payment; Err : Error };
-type Result_17 = variant { Ok : ReconciliationProgress; Err : Error };
-type Result_18 = variant { Ok; Err : Error };
+type Result_10 = variant { Ok : GlobalCapacity; Err : Error };
+type Result_11 = variant { Ok : AccountInitialization; Err : Error };
+type Result_12 = variant { Ok : RevisionPage; Err : Error };
+type Result_13 = variant { Ok : ObjectPage; Err : Error };
+type Result_14 = variant { Ok : vec Payment; Err : Error };
+type Result_15 = variant { Ok : PendingUploads; Err : Error };
+type Result_16 = variant { Ok : vec Header; Err : Error };
+type Result_17 = variant { Ok : MutationResult; Err : Error };
+type Result_18 = variant { Ok : opt Payment; Err : Error };
+type Result_19 = variant { Ok : ReconciliationProgress; Err : Error };
 type Result_2 = variant { Ok : Header; Err : Error };
+type Result_20 = variant { Ok; Err : Error };
+type Result_21 = variant { Ok : KeyRetrievalCost; Err : Error };
 type Result_3 = variant { Ok : KeyReply; Err : Error };
 type Result_4 = variant { Ok : blob; Err : Error };
 type Result_5 = variant { Ok : opt VaultConfig; Err : Error };
-type Result_6 = variant { Ok : Revision; Err : Error };
-type Result_7 = variant { Ok : Quota; Err : Error };
-type Result_8 = variant { Ok : UploadStatus; Err : Error };
-type Result_9 = variant { Ok : GlobalCapacity; Err : Error };
+type Result_6 = variant { Ok : opt FundingConfig; Err : Error };
+type Result_7 = variant { Ok : Revision; Err : Error };
+type Result_8 = variant { Ok : Quota; Err : Error };
+type Result_9 = variant { Ok : UploadStatus; Err : Error };
 type Revision = record {
   deleted : bool;
   object : blob;
@@ -212,22 +256,29 @@ service : () -> {
   derive_vault_key : (DeriveKey) -> (Result_3);
   get_chunk : (blob, blob, nat64, nat32) -> (Result_4);
   get_config : () -> (Result_5);
-  get_manifest : (blob, blob, nat64) -> (Result_6);
-  get_quota : (blob) -> (Result_7);
-  get_upload_status : (blob) -> (Result_8);
+  get_funding_config : () -> (Result_6) query;
+  get_manifest : (blob, blob, nat64) -> (Result_7);
+  get_quota : (blob) -> (Result_8);
+  get_upload_status : (blob) -> (Result_9);
   get_vault_header : (blob) -> (Result_2);
-  global_capacity : () -> (Result_9) query;
+  global_capacity : () -> (Result_10) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
-  list_history : (blob, blob, nat64) -> (Result_10);
-  list_objects : (blob, blob) -> (Result_11);
-  list_payments : () -> (Result_12) query;
-  list_pending_uploads : (blob) -> (Result_13);
-  list_vaults : () -> (Result_14);
-  mutate : (Mutation) -> (Result_15);
+  icrc10_supported_standards : () -> (vec Icrc10SupportedStandard) query;
+  icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
+      Icrc21ConsentMessageResponse,
+    );
+  initialize_vault_account : () -> (Result_11);
+  list_history : (blob, blob, nat64) -> (Result_12);
+  list_objects : (blob, blob) -> (Result_13);
+  list_payments : () -> (Result_14) query;
+  list_pending_uploads : (blob) -> (Result_15);
+  list_vaults : () -> (Result_16);
+  mutate : (Mutation) -> (Result_17);
   pay_purchase : (blob) -> (Result_1);
-  payment_status : (blob) -> (Result_16) query;
+  payment_status : (blob) -> (Result_18) query;
   quote_purchase : (PurchaseRequest) -> (Result_1);
-  reconcile_purchase : (blob) -> (Result_17);
-  set_config : (opt VaultConfig) -> (Result_18);
-  set_funding_config : (opt FundingConfig) -> (Result_18);
+  reconcile_purchase : (blob) -> (Result_19);
+  set_config : (opt VaultConfig) -> (Result_20);
+  set_funding_config : (opt FundingConfig) -> (Result_20);
+  vault_key_cost : (opt text) -> (Result_21) query;
 }

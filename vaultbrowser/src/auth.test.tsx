@@ -184,7 +184,7 @@ it("logs out after idle on the first login when the SDK creates its manager lazi
   await waitFor(() => expect(c.login).toHaveBeenCalled());
   await act(async () => loginOptions.onSuccess());
   expect(screen.getByText("signed")).toBeTruthy();
-  expect(options.idleOptions.idleTimeout).toBe(300000);
+  expect(options.idleOptions.idleTimeout).toBe(1800000);
   expect(options.idleOptions.onIdle).toBeTypeOf("function");
   await act(async () => options.idleOptions.onIdle());
   expect(screen.getByText("unsigned")).toBeTruthy();

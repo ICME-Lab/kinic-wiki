@@ -1,6 +1,9 @@
 // Synthetic UI gate entry only: this is not II/vetKD acceptance.
+import {VaultRouter} from "../src/navigation";
+import {DraftGuardProvider} from "../src/draft-guard";
 import { useEffect } from "react";
 import { VaultChrome } from "../src/chrome";
+import { VaultButton } from "../src/vault/ui";
 import { createRoot } from "react-dom/client";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { VaultClient, ok, bytes } from "@kinic/vault-client";
@@ -9,16 +12,23 @@ import { Funding } from "../src/funding";
 import type { Payment, VaultActor } from "@kinic/vault-client/contracts";
 import type { Header } from "@kinic/vault-client/contracts";
 import { VaultWorkspace } from "../src/vault/workspace";
+import { VaultWelcome } from "../src/vault/page";
 import { fixtureNetwork } from "./network";
 import { EditorView } from "../../packages/ui/node_modules/@codemirror/view";
 import "../src/style.css";
 const network = fixtureNetwork();
+if (new URLSearchParams(location.search).get("state") === "setup") {
+  network.setBalance(0n);
+}
 class UIFixtureClient extends VaultClient {
-  override async open(h: Header) {
+  override async open(h: Header, options: Parameters<VaultClient["open"]>[1] = {}) {
     if (!this.header || String(this.header.id) !== String(h.id))
       this.session.lock();
     const ticket = this.session.capture();
+    await options.beforeDerive?.(h);
+    this.session.check(ticket);
     const root = await importKey(new Uint8Array(32).fill(8));
+    network.setFirstKeyFree(false);
     this.session.check(ticket);
     this.header = structuredClone(h);
     this.session.bindRoot(root, {
@@ -51,8 +61,8 @@ const client = new UIFixtureClient({
 });
 await client.open(network.headers[0]);
 await client.save(
-  { kind: "note", title: "Synthetic private note" },
-  new TextEncoder().encode("Private fixture text"),
+  { kind: "note", title: "Welcome note" },
+  new TextEncoder().encode("Your private notes belong here."),
 );
 client.session.lock();
 Object.assign(window, {
@@ -145,11 +155,6 @@ function FundingFixture() {
     <>
       <VaultChrome />
       <main className="vault-page">
-        <h1 className="text-xl font-semibold">Synthetic funding fixture</h1>
-        <p className="my-4 text-sm">
-          Simulated ledger responses only. No real ledger, funds, or
-          authoritative payment evidence.
-        </p>
         <Funding
           client={fundingClient}
           onFunded={async () => {
@@ -162,13 +167,22 @@ function FundingFixture() {
 }
 function Fixture() {
   useEffect(() => {
-    if (new URLSearchParams(location.search).get("state") !== "opened") return;
+    const state = new URLSearchParams(location.search).get("state");
+    if (state !== "opened" && state !== "key-funding-preview" && state !== "settings") return;
     const timer = window.setInterval(() => {
+      if (state === "settings") {
+        const title = document.querySelector<HTMLInputElement>('input[placeholder="Untitled"]');
+        if (title && !title.disabled) {
+          if(location.pathname!=="/settings") document.getElementById("vault-settings-toggle")?.click();
+          window.clearInterval(timer);
+          return;
+        }
+      }
       const button = Array.from(document.querySelectorAll("button")).find(
-        (b) => b.textContent?.trim() === "Vault 1 · Active",
+        (b) => b.textContent?.trim() === "Vault 1",
       );
       if (button && !button.disabled) {
-        window.clearInterval(timer);
+        if (state !== "settings") window.clearInterval(timer);
         button.click();
       }
     }, 50);
@@ -176,20 +190,35 @@ function Fixture() {
   }, []);
   return (
     <>
-      <VaultChrome />
+      <VaultChrome actions={<VaultButton>Sign out</VaultButton>} />
       <main className="vault-page">
         <VaultWorkspace client={client} />
-        <p className="mt-4 text-xs text-muted">
-          Synthetic data fixture — no private data or remote canister.
-        </p>
       </main>
     </>
   );
 }
+const fixtureState = new URLSearchParams(location.search).get("state");
+if (fixtureState === "key-funding" || fixtureState === "key-funding-preview") network.setBalance(23_000_000_000n);
+if (fixtureState === "fresh") {
+  network.headers.length = 0;
+  network.setFirstKeyFree(true);
+  network.setBalance(10_000_000_000n);
+  Object.assign(network.actor, {
+    initialize_vault_account: async () => ({ Ok: { balance: 10_000_000_000n, grant_cycles: 10_000_000_000n } }),
+  });
+}
 createRoot(document.getElementById("root")!).render(
-  new URLSearchParams(location.search).get("state") === "funding" ? (
+  <VaultRouter><DraftGuardProvider>{
+  fixtureState === "welcome" ? (
+    <>
+      <VaultChrome />
+      <main className="vault-page">
+        <VaultWelcome onSignIn={() => {}} />
+      </main>
+    </>
+  ) : fixtureState === "funding" ? (
     <FundingFixture />
   ) : (
     <Fixture />
-  ),
+  )}</DraftGuardProvider></VaultRouter>,
 );

@@ -4,8 +4,9 @@
 // What: one cycles indicator that follows the same billing state as the rest of the dashboard.
 // Why: a fixed threshold made the battery red while the billing config still reported "Active".
 
-import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
-import { cycleTone, formatCycles, formatRawCycles } from "@/lib/cycles";
+import { CycleBalance } from "@kinic/ui/cycle-balance";
+import type { StatusTone } from "@kinic/ui/status-pill";
+import { cycleTone, formatRawCycles } from "@/lib/cycles";
 import { databaseCyclesView, type DatabaseCycleState } from "@/lib/cycles-state";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 
@@ -21,13 +22,10 @@ export function CycleBattery({
   const view = database ? databaseCyclesView(database, config) : null;
   const cycles = view ? view.balanceCycles : parseCyclesBalance(cyclesBalance);
   const tone = view ? toneForState(view.state) : cycleToneFallback(cycleTone(cycles));
-  const label = cycles === null ? "--" : formatCycles(cycles);
   const title = titleFor({ cycles, reason: view?.reason ?? null, state: view?.state ?? null });
   return (
-    <StatusPill
-      className="h-[38px] px-3"
-      dot
-      label={<span className="font-mono text-xs">{label}</span>}
+    <CycleBalance
+      cycles={cycles}
       title={title}
       tone={tone}
     />

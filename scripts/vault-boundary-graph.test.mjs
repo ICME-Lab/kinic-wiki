@@ -161,3 +161,10 @@ for (const statement of [
 test('shared UI JavaScript cannot require a network service with a static template', () => fixture({
  'packages/ui/src/button.cjs': 'const Auth = require(`@icp-sdk/auth`)',
 }, root => assert.throws(() => checkTypescript(root, ts), /Forbidden ui/)));
+
+for (const target of ['vfs-candid', 'vault-candid']) test(`payments cannot depend on ${target} even before app migration`, () => fixture({
+ 'packages/payments/src/wallet-session.ts': 'export * from "../../neutral/index"',
+ 'packages/neutral/index.ts': `export * from "@kinic/${target}"`,
+ [`packages/${target}/package.json`]: JSON.stringify({name:`@kinic/${target}`,exports:'./index.ts'}),
+ [`packages/${target}/index.ts`]: 'export const factory = 0',
+}, root => assert.throws(() => checkTypescript(root, ts), /Forbidden payments/)));

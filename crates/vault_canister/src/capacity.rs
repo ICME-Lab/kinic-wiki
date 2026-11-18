@@ -159,3 +159,45 @@ pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Res
     }
     Ok(())
 }
+
+/// Receipts are permanent and independently bounded; old DDL remains immutable
+/// so a v9 image is validated before migrating it.
+pub(crate) fn grant_schema_statements() -> Vec<String> {
+    let mut statements = vec![crate::initial_grant::SCHEMA.to_owned()];
+    guard(
+        &mut statements,
+        "initial_cycle_grants",
+        &["principal", "database_id"],
+        2,
+        128,
+        "OR length(CAST(NEW.principal AS BLOB))>63 OR length(CAST(NEW.database_id AS BLOB))>5",
+    );
+    count_guard(
+        &mut statements,
+        "initial_cycle_grants",
+        "principal=NEW.principal",
+        vault_types::capacity::GRANT_RECEIPTS,
+        "",
+    );
+    statements
+}
+
+pub(crate) fn subsidy_schema_statements() -> Vec<String> {
+    let mut statements = vec![crate::key_subsidy::SCHEMA.to_owned()];
+    guard(
+        &mut statements,
+        "key_subsidies",
+        &["owner", "token"],
+        3,
+        vault_types::capacity::SUBSIDY_ROW,
+        "OR length(CAST(NEW.owner AS BLOB))>63 OR length(CAST(NEW.token AS BLOB))>128",
+    );
+    count_guard(
+        &mut statements,
+        "key_subsidies",
+        "owner=NEW.owner",
+        vault_types::capacity::SUBSIDIES,
+        "",
+    );
+    statements
+}

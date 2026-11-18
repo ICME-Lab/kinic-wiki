@@ -10,6 +10,7 @@ embedded-assets = []
 # Never deploy: exercises synthetic ledger behavior only. Production has no funding switch.
 synthetic-funding-test-only = []
 [dependencies]
+kinic-cycle-grants = { path = "../kinic_cycle_grants" }
 vault-service = { path = "../vault_service" }
 vault-store = { path = "../vault_store" }
 vault-types = { path = "../vault_types" }

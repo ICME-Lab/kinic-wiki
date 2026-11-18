@@ -861,7 +861,9 @@ async function importTs(relativePath) {
   const shareLinksSource = readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8");
   const folderIndexSource = readFileSync(new URL("../lib/folder-index.ts", import.meta.url), "utf8");
   const pathsSource = readFileSync(new URL("../lib/paths.ts", import.meta.url), "utf8").replace('import { databaseRouteBase } from "./share-links";', "");
-  const source = relativePath === "../lib/paths.ts"
+  const source = relativePath === "../lib/cycles.ts"
+    ? rawSource.replace('"@kinic/ui/cycles"', JSON.stringify(new URL("../../packages/ui/src/cycles.ts", import.meta.url).href))
+    : relativePath === "../lib/paths.ts"
     ? `${shareLinksSource}\n${pathsSource}`
     : relativePath === "../lib/wiki-helpers.ts"
       ? `${folderIndexSource}\n${rawSource.replace('import { visibleChildren } from "@/lib/folder-index";', "")}`

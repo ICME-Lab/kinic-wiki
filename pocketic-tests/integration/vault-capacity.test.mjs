@@ -130,7 +130,7 @@ try {
   await upgrade(v);
   await configure(v);
   const initial = ok(await v.actor.global_capacity());
-  assert.equal(initial.accounting_reserved, 16n * 1024n * 1024n);
+  assert.equal(initial.accounting_reserved, 19n * 1024n * 1024n);
   assert.equal(initial.limit, 200n * 1024n * 1024n);
   assert.equal(initial.overcommitted, false);
   assert.equal(initial.overage, 0n);

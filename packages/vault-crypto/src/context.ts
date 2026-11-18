@@ -78,6 +78,14 @@ export function documentAAD(
 }
 const equal = (a: Uint8Array, b: Uint8Array) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
+/** Independently validate a header even when no new vetKD reply is needed. */
+export function validateRootHeader(context: VaultContext, publicKey: Uint8Array, local: boolean) {
+  const c = copyVaultContext(context);
+  const pk = anchoredMaster(c.key_name, local)
+    .deriveCanisterKey(Principal.fromText(c.canister).toUint8Array())
+    .deriveSubKey(utf8.encode("kinic-vault/ii-only/v1"));
+  if (!equal(pk.publicKeyBytes(), publicKey)) throw Error("InvalidKeyContext");
+}
 /** Verify both the certified header and reply against the independently anchored key. */
 export async function verifiedRoot(
   context: VaultContext,

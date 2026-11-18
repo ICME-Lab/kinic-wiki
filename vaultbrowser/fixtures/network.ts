@@ -15,6 +15,7 @@ export const fixtureHeader = (value = 1): Header => ({
   state: { Active: null },
   key_name: "test_key_1",
   sequence: 0n,
+  name: [],
 });
 const key = (value: Uint8Array | number[]) => Array.from(value).join(",");
 type NetworkMethods = {
@@ -33,6 +34,7 @@ export function fixtureNetwork() {
   const created = new Map<string, Header>();
   let serial = 2n;
   let balance = 50_000_000_000n;
+  let firstKeyFree = false;
   let lostPhase = "";
   let keyFailure = false;
   let createFailure = false;
@@ -42,11 +44,13 @@ export function fixtureNetwork() {
       Ok: [{ minimum_cycles: 100_000_000_000n, key_name: "test_key_1" }],
     }),
     account_balance: async () => ({ Ok: balance }),
+    initialize_vault_account: async () => ({ Ok: { balance, grant_cycles: 0n } }),
+    vault_key_cost: async () => ({ Ok: { fee: 26_153_846_153n, owner_fee: firstKeyFree ? 0n : 26_153_846_153n, first_key_free: firstKeyFree } }),
     global_capacity: async () => ({
       Ok: {
-        used: 16777216n,
+        used: 19922944n,
         limit: 209715200n,
-        accounting_reserved: 16777216n,
+        accounting_reserved: 19922944n,
         overcommitted: false,
         overage: 0n,
       },
@@ -77,6 +81,7 @@ export function fixtureNetwork() {
     },
     derive_vault_key: async () => {
       if (keyFailure) throw Error("KeyService");
+      firstKeyFree = false;
       return { Ok: { input: [], public_key: [], encrypted_key: [] } };
     },
     get_quota: async () => ({
@@ -144,6 +149,15 @@ export function fixtureNetwork() {
       if (receipt) return result(receipt);
       const a = m.action;
       let value: MutationResult = { Done: null };
+      if ("RenameVault" in a) {
+        const request = a.RenameVault;
+        const header = headers.find(h => key(h.id) === key(request.vault));
+        if (!header) return { Err: { NotFound: null } };
+        if (header.sequence !== request.expected_sequence) return { Err: { Conflict: null } };
+        if (!request.name.trim() || Array.from(request.name.trim()).length > 64) return { Err: { InvalidInput: null } };
+        header.name = [request.name.trim()];
+        header.sequence++;
+      }
       if ("BeginRevision" in a) {
         const r = a.BeginRevision;
         const latest = revisions
@@ -240,6 +254,7 @@ export function fixtureNetwork() {
     calls,
     creation,
     uploads,
+    setFirstKeyFree: (value: boolean) => { firstKeyFree = value; },
     setBalance: (n: bigint) => {
       balance = n;
     },

@@ -25,6 +25,23 @@ pub fn initialize() -> Result<()> {
     })?;
     State.vault_start_generation()
 }
+
+pub fn read<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        DB.with(|db| f(&db.borrow()))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        DB.with(|db| {
+            db.get()
+                .ok_or(Error::Storage)?
+                .query(|db| Ok(f(db)))
+                .map_err(|_| Error::Storage)?
+        })
+    }
+}
+
 pub fn transaction<T>(f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     #[cfg(not(target_arch = "wasm32"))]
     {

@@ -1,35 +1,13 @@
 import { createRoot } from "react-dom/client";
-import { VaultAuthProvider, useVaultAuth } from "./auth";
-import VaultPage from "./vault/page";
-import { VaultChrome } from "./chrome";
-import { VaultButton } from "./vault/ui";
+import { VaultAuthProvider } from "./auth";
 import "./style.css";
-function App() {
-  const { identity, loading, ready, error, login, logout } = useVaultAuth();
-  return (
-    <>
-      <VaultChrome
-        actions={
-          <VaultButton
-            tone={identity ? "default" : "primary"}
-            disabled={loading || (!identity && !ready)}
-            onClick={identity ? logout : login}
-          >
-            {identity ? "Sign out" : "Sign in with Internet Identity"}
-          </VaultButton>
-        }
-      />
-      {error ? (
-        <p role="alert" className="vault-auth-error">
-          {error}
-        </p>
-      ) : null}
-      <VaultPage />
-    </>
-  );
-}
-createRoot(document.getElementById("root")!).render(
-  <VaultAuthProvider>
+import {App} from "./app";
+import {VaultErrorBoundary} from "./error-boundary";
+import {VaultRouter} from "./navigation";
+import {DraftGuardProvider} from "./draft-guard";
+createRoot(document.getElementById("root")!,{onCaughtError:()=>{}}).render(
+  <VaultErrorBoundary>
+  <VaultRouter><DraftGuardProvider><VaultAuthProvider>
     <App />
-  </VaultAuthProvider>,
+  </VaultAuthProvider></DraftGuardProvider></VaultRouter></VaultErrorBoundary>,
 );

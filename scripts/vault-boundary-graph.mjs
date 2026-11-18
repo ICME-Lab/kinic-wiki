@@ -2,15 +2,15 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, relative } from 'node:path';
 import { createRequire } from 'node:module';
 
-export function assertSeparated(graph, classify) {
+export function assertSeparated(graph, classify, classifyStart = classify) {
   for (const start of graph.keys()) {
-    const side = classify(start);
+    const side = classifyStart(start);
     if (!side) continue;
     const visit = (node, path, seen) => {
       if (seen.has(node)) return;
       seen.add(node);
       const target = classify(node);
-      if ((side === 'wiki' && target === 'vault') || (side === 'vault' && target === 'wiki') || (side === 'ui' && target && target !== 'ui'))
+      if ((side === 'wiki' && target === 'vault') || (side === 'vault' && target === 'wiki') || (side === 'payments' && ['wiki', 'vault'].includes(target)) || (side === 'ui' && target && target !== 'ui'))
         throw new Error(`Forbidden ${side} dependency: ${[...path, node].join(' -> ')}`);
       for (const next of graph.get(node) ?? []) visit(next, [...path, node], seen);
     };
@@ -93,5 +93,5 @@ export function checkTypescript(root, ts = loadParser(root)) {
       return resolveFile(resolve(pkg.dir, entry)) ?? resolve(pkg.dir, entry);
     }));
   }
-  assertSeparated(graph, classify);
+  assertSeparated(graph, classify, file => relative(root, file).startsWith('packages/payments/') ? 'payments' : classify(file));
 }

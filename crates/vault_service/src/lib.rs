@@ -1,5 +1,6 @@
 //! II-only operations. No request principal, application grant or independent unlock credential.
 pub mod runtime;
+mod mutation_digest;
 use runtime::Environment;
 use vault_store::{
     self as store,
@@ -54,7 +55,7 @@ pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Head
         let h = Header {
             id: (token as u128).to_be_bytes().to_vec(), nonce: vec![],
             state: VaultState::Pending, sequence: 0, key_name: config.key_name,
-            public_key: vec![],
+            public_key: vec![], name: None,
         };
         let raw = serde_json::to_string(&h).map_err(|_| Error::Storage)?;
         db.execute(
@@ -187,7 +188,7 @@ pub async fn derive_vault_key(env: &impl Environment, r: DeriveKey) -> Result<Ke
 pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
     authenticate(env)?;
     id(&r.operation)?;
-    let digest = ops::digest(b"mutation/v1", &r)?;
+    let digest = env.transaction(|db| mutation_digest::resolve(db, &r))?;
     if let Some(result) = replay(env, &r.operation, &digest)? {
         return Ok(result);
     }
@@ -237,6 +238,10 @@ pub fn mutate(env: &impl Environment, r: Mutation) -> Result<MutationResult> {
             }
         };
         let result = match r.action {
+            Action::RenameVault { vault, name, expected_sequence } => {
+                store::rename(db, &vault, &name, expected_sequence)?;
+                MutationResult::Done
+            }
             Action::BeginRevision(request) => {
                 MutationResult::Upload(store::content::begin(db, request, env.now())?)
             }

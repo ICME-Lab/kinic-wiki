@@ -323,18 +323,20 @@ try {
   const disclosure = vault.getByText(
     /This release has no backup or independent recovery/,
   );
-  assert.equal(await disclosure.isVisible(), true);
+  assert.equal(await disclosure.count(), 0);
+  await vault.getByRole("button", { name: "Account settings", exact: true }).click();
   assert.equal(
     await vault
-      .getByText("Account & storage", { exact: true })
-      .evaluate((e) => e.parentElement.open),
+      .locator("summary").filter({ hasText: "Account & storage" })
+      .evaluate((e) => e.open),
     false,
   );
+  await vault.getByRole("button", { name: "Back to Vault", exact: true }).click();
   assert.equal(
     await vault
-      .getByText("Interrupted uploads", { exact: true })
-      .evaluate((e) => e.parentElement.open),
-    false,
+      .getByRole("region", { name: "Interrupted uploads" })
+      .count(),
+    0,
   );
   assert.equal(
     await vault
@@ -345,7 +347,7 @@ try {
     0,
   );
   pass(
-    "actual II login; disclosure and collapsed management; no second Vault factor",
+    "actual II login; collapsed management; no second Vault factor",
     { principal: owner },
   );
   await action(vault, "Get quote");
@@ -415,7 +417,8 @@ try {
     ),
     "production",
   );
-  await vault.getByText("Account & storage", { exact: true }).click();
+  await vault.getByRole("button", { name: "Account settings", exact: true }).click();
+  await vault.locator("summary").filter({ hasText: "Account & storage" }).click();
   // The form stays disabled until its independent config/history requests finish.
   await expect(
     vault.getByRole("button", { name: "Get quote", exact: true }),
@@ -431,6 +434,7 @@ try {
     "fresh owned canister upgraded to default-feature local Wasm; certified production funding mode, paid journal and prepaid credit retained",
   );
 
+  await vault.getByRole("button", { name: "Back to Vault", exact: true }).click();
   const createTrace = startRetryTrace("create_vault");
   dropMethod = "create_vault";
   await action(vault, "Create Vault", true);
@@ -457,7 +461,7 @@ try {
   await editor(vault).waitFor();
   const keyRetry = finishRetryTrace(keyTrace);
   const vaultId = first.headers.Ok[0].id;
-  let sourceName = "Vault 1 · Active";
+  let sourceName = "Vault 1";
   pass(
     "lost create reply + Refresh + same create retry + lost key reply retry creates exactly one Vault",
     { retries: [createRetry, keyRetry] },
@@ -524,9 +528,12 @@ try {
   );
 
   await action(vault, title);
+  const cancelledUploadDiscard = vault.getByRole("dialog", { name: "Discard unsaved changes?" });
+  if (await cancelledUploadDiscard.isVisible()) await cancelledUploadDiscard.getByRole("button", { name: "Discard changes" }).click();
   await action(vault, "Show version history");
+  await action(vault, "View revision 1");
   const downloadEvent = vault.waitForEvent("download");
-  await action(vault, "Download revision 1");
+  await action(vault, "Download document");
   const download = await downloadEvent;
   assert.match(
     download.suggestedFilename(),
@@ -538,6 +545,8 @@ try {
   assert.equal(Buffer.concat(buffers).toString(), plaintext);
   await retain(vault);
   await action(vault, "Close Vault");
+  if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
+    await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
   const blobs = await vault.evaluate(() => window.blobEvents);
   assert.ok(blobs.some(([kind]) => kind === "create"));
@@ -564,6 +573,8 @@ try {
     .fill("disposable-private-password");
   await retain(vault);
   await action(vault, "Close Vault");
+  if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
+    await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
   await action(vault, sourceName);
   await vault.getByLabel("Document type").selectOption("attachment");
@@ -574,6 +585,8 @@ try {
   });
   await retain(vault);
   await action(vault, "Close Vault");
+  if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
+    await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
   await action(vault, sourceName);
   await action(vault, title);
@@ -581,7 +594,7 @@ try {
 
   await retain(vault);
   await action(vault, "Create Vault");
-  sourceName = `Vault ${(await readback(vault)).headers.Ok.findIndex((h) => h.id.join() === vaultId.join()) + 1} · Active`;
+  sourceName = `Vault ${(await readback(vault)).headers.Ok.findIndex((h) => h.id.join() === vaultId.join()) + 1}`;
   await editor(vault).waitFor();
   assert.equal(
     await editor(vault).evaluate((e) =>
@@ -594,7 +607,7 @@ try {
     "",
   );
   await vault.setViewportSize({ width: 375, height: 812 });
-  assert.equal(await disclosure.isVisible(), true);
+  assert.equal(await disclosure.count(), 0);
   const toggle = vault.getByRole("button", { name: "Toggle Vault navigation" });
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
   await toggle.click();
@@ -607,7 +620,7 @@ try {
   await action(vault, title);
   await vault.setViewportSize({ width: 1280, height: 900 });
   pass(
-    "Vault switch clears prior draft/editor; mobile disclosure/navigation/focus",
+    "Vault switch clears prior draft/editor; mobile navigation/focus",
   );
 
   await retain(vault);
@@ -1059,15 +1072,15 @@ try {
     .reduce((a, b) => (a < b ? a : b));
   const idleStart = Date.now();
   assert.ok(
-    idleExpiry > BigInt(idleStart + 10 * 60 * 1000) * 1000000n,
+    idleExpiry > BigInt(idleStart + 35 * 60 * 1000) * 1000000n,
     "Fresh normal-login signed delegation must outlast the entire idle test",
   );
   console.log(
-    "WAIT actual five-minute idle; signed normal delegation expiry",
+    "WAIT actual 30-minute idle; signed normal delegation expiry",
     idleExpiry.toString(),
   );
-  await loginButton(vault).waitFor({ timeout: 330000 });
-  assert.ok(Date.now() - idleStart >= 290000);
+  await loginButton(vault).waitFor({ timeout: 1830000 });
+  assert.ok(Date.now() - idleStart >= 1790000);
   await assertCleared(vault);
   const idleEnded = Date.now();
   assert.ok(
@@ -1082,7 +1095,7 @@ try {
   );
   assert.deepEqual(stillValid.expirations, idleExpirations);
   pass(
-    "natural five-minute idle logout clears retained private UI before signed expiry; retained signer remains valid",
+    "natural 30-minute idle logout clears retained private UI before signed expiry; retained signer remains valid",
     {
       elapsedMs: idleEnded - idleStart,
       signedExpirationsBefore: idleExpirations,
