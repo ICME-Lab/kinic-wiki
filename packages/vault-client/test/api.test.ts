@@ -1610,3 +1610,136 @@ describe("shared Vault access", () => {
     expect(actor.get_upload_status).not.toHaveBeenCalled();
   });
 });
+
+describe("encrypted upload reconciliation targets", () => {
+  it.each(["vault", "object", "revision"] as const)(
+    "retains the encrypted save after a committed status with a different %s",
+    async (field) => {
+      const { client, actor, calls } = setup();
+      await client.open(header());
+      await expect(
+        client.save(
+          { kind: "attachment", title: "Pending" },
+          new Uint8Array(262145),
+        ),
+      ).rejects.toThrow("network");
+      const begin = calls[0].action.BeginRevision;
+      const committed = {
+        vault: begin.vault,
+        object: begin.object,
+        revision: 1n,
+        sequence: 1n,
+      };
+      const mismatched = {
+        ...committed,
+        [field]: field === "revision" ? 2n : new Uint8Array(16).fill(99),
+      };
+      vi.mocked(actor.get_upload_status)
+        .mockResolvedValueOnce({ Ok: { Committed: mismatched } })
+        .mockResolvedValueOnce({ Ok: { Committed: committed } });
+      await expect(client.cancelSave()).rejects.toThrow("InvalidReceipt");
+      expect(client.hasPendingSave).toBe(true);
+      await expect(client.cancelSave()).resolves.toEqual({
+        Committed: committed,
+      });
+      expect(client.hasPendingSave).toBe(false);
+    },
+  );
+
+  it.each(["object", "operation", "expected_revision", "manifest"] as const)(
+    "does not cancel a pending upload with a different %s",
+    async (field) => {
+      const { client, actor, calls } = setup();
+      await client.open(header());
+      await expect(
+        client.save(
+          { kind: "attachment", title: "Pending" },
+          new Uint8Array(262145),
+        ),
+      ).rejects.toThrow("network");
+      const request = calls[0].action.BeginRevision;
+      const mismatch = field === "expected_revision" ? 9n : [99];
+      const decodedRequest = {
+        ...request,
+        vault: Array.from(request.vault),
+        object: Array.from(request.object),
+        operation: Array.from(request.operation),
+        manifest: Array.from(request.manifest),
+        chunk_hashes: request.chunk_hashes.map((hash: Uint8Array) =>
+          Array.from(hash),
+        ),
+      };
+      vi.mocked(actor.get_upload_status).mockResolvedValueOnce({
+        Ok: {
+          Pending: {
+            request: { ...request, [field]: mismatch },
+            received: [],
+            expires: 0n,
+            cancel_job: [],
+          },
+        },
+      });
+      await expect(client.cancelSave()).rejects.toThrow("InvalidReceipt");
+      expect(client.hasPendingSave).toBe(true);
+      expect(calls.some((m) => "CancelUpload" in m.action)).toBe(false);
+      vi.mocked(actor.get_upload_status).mockResolvedValueOnce({
+        Ok: {
+          Pending: {
+            request: decodedRequest,
+            received: [],
+            expires: 0n,
+            cancel_job: [],
+          },
+        },
+      });
+      await expect(client.cancelSave()).resolves.toHaveProperty("Pending");
+      expect(client.hasPendingSave).toBe(false);
+    },
+  );
+});
+
+describe("history response targets", () => {
+  it.each(["vault", "object", "revision", "cursor"] as const)(
+    "rejects a history page with a mismatched %s",
+    async (field) => {
+      const { client, actor } = setup(false);
+      await client.open(header());
+      const revision = await client.save(
+        { kind: "note", title: "Original" },
+        new Uint8Array([1]),
+      );
+      const entry = { ...revision };
+      if (field === "vault" || field === "object")
+        entry[field] = new Uint8Array(16).fill(99);
+      if (field === "revision") entry.revision = 2n;
+      vi.mocked(actor.list_history).mockResolvedValueOnce({
+        Ok: { entries: [entry], next: field === "cursor" ? [2n] : [] },
+      });
+      await expect(client.history(revision, 2n)).rejects.toThrow(
+        "InvalidReceipt",
+      );
+    },
+  );
+
+  it("does not use another document's decrypted metadata as a deleted document title", async () => {
+    const x = setup(false);
+    await x.client.open(header());
+    const privateRevision = await x.client.save(
+      { kind: "note", title: "Other private title" },
+      new Uint8Array([1]),
+    );
+    const deleted = {
+      ...privateRevision,
+      object: new Uint8Array(16).fill(99),
+      deleted: true,
+      revision: 2n,
+    };
+    vi.mocked(x.actor.list_objects).mockResolvedValueOnce({
+      Ok: { entries: [deleted], next: [] },
+    });
+    vi.mocked(x.actor.list_history).mockResolvedValueOnce({
+      Ok: { entries: [privateRevision], next: [] },
+    });
+    await expect(x.client.items()).rejects.toThrow("InvalidReceipt");
+  });
+});

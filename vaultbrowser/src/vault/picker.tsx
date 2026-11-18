@@ -141,6 +141,22 @@ function VaultPickerDocuments({
           : page.entries,
       );
       setAfter(page.next[0] ? bytes(page.next[0]) : undefined);
+      if (cursor || !client.session.root) return;
+      const activeId = client.header && encodeId(client.header.id);
+      if (
+        !page.next.length &&
+        !page.entries.some(({ header }) => encodeId(header.id) === activeId)
+      ) {
+        client.session.lock();
+        return;
+      }
+      // The open Vault may lie beyond the first page. Check that exact grant.
+      try {
+        await client.refreshHeader();
+      } catch (error) {
+        if (ticket === client.session.capture()) client.session.lock();
+        throw error;
+      }
     },
     [client],
   );

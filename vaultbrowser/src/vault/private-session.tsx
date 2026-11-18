@@ -60,6 +60,7 @@ export function useIsolatedVaultSession(
   client: VaultClient,
   content: RefObject<HTMLElement | null>,
   onLock: () => void,
+  checkResource?: () => Promise<unknown>,
 ) {
   useLayoutEffect(() => {
     const detach = client.session.addLockCleanup(() => {
@@ -76,9 +77,11 @@ export function useIsolatedVaultSession(
     const revalidate = () => {
       if (document.hidden || !client.session.root) return;
       const ticket = client.session.capture();
-      void client.refreshHeader().catch(() => {
-        if (ticket === client.session.capture()) client.session.lock();
-      });
+      void (checkResource ? checkResource() : client.refreshHeader()).catch(
+        () => {
+          if (ticket === client.session.capture()) client.session.lock();
+        },
+      );
     };
     const visible = () => {
       client.session.visible(document.hidden);
@@ -104,5 +107,5 @@ export function useIsolatedVaultSession(
       window.removeEventListener("focus", revalidate);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [client, content, onLock]);
+  }, [client, content, onLock, checkResource]);
 }

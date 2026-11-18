@@ -29,8 +29,8 @@ type NetworkMethods = {
 };
 export function fixtureNetwork(
   owner = Principal.selfAuthenticating(new Uint8Array([1])),
+  sharedOwner = Principal.selfAuthenticating(new Uint8Array([2])),
 ) {
-  const sharedOwner = Principal.selfAuthenticating(new Uint8Array([2]));
   const roles = new Map<string, AccessRole | null>();
   const membership = new Map<string, VaultMember[]>();
   const headers = [fixtureHeader(), fixtureHeader(2)];

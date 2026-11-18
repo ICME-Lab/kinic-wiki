@@ -743,8 +743,7 @@ export class VaultClient {
     if (
       r.deleted ||
       r.sequence <= 0n ||
-      !equal(bytes(r.vault), bytes(j.request.vault)) ||
-      !equal(bytes(r.object), bytes(j.request.object)) ||
+      !sameObject(r, j.request) ||
       r.revision !== j.request.expected_revision + 1n ||
       r.plain_size !== j.request.plain_size ||
       !equal(bytes(r.manifest), bytes(j.request.manifest)) ||
@@ -772,20 +771,16 @@ export class VaultClient {
     const c = await this.checkedContext();
     this.session.check(t);
     const revision = await this.manifest(c.vault, object, 0n, t);
-    if (
-      revision.deleted ||
-      !equal(c.vault, bytes(revision.vault)) ||
-      !equal(object, bytes(revision.object))
-    )
+    if (revision.deleted || !sameObject(revision, { vault: c.vault, object }))
       throw Error("NotFound");
     return revision;
   }
-  async latestItem(object: Uint8Array): Promise<Item> {
+  async readItem(revision: Revision): Promise<Item> {
     const t = this.session.capture();
-    const revision = await this.latest(object);
-    this.session.check(t);
     const context = this.cachedContext();
     const root = this.session.root!;
+    if (revision.deleted || !equal(context.vault, bytes(revision.vault)))
+      throw Error("TargetChanged");
     const { metadata } = await readManifestV3(
       root,
       context,
@@ -793,8 +788,11 @@ export class VaultClient {
       revision.revision,
       bytes(revision.manifest),
     );
-    if (this.sharedVault) await this.refreshHeader();
     this.checkReadContext(context, root, t);
+    if (this.sharedVault) {
+      await this.refreshHeader();
+      this.checkReadContext(context, root, t);
+    }
     return { revision, metadata };
   }
   private async historyPage(
@@ -806,7 +804,20 @@ export class VaultClient {
     const reply = this.sharedVault
       ? await this.actor.shared_list_history(vault, object, before)
       : await this.actor.list_history(vault, object, before);
-    return this.checkedResult(ticket, reply);
+    const page = this.checkedResult(ticket, reply);
+    let boundary = before;
+    for (const entry of page.entries) {
+      if (
+        !sameObject(entry, { vault, object }) ||
+        entry.revision <= 0n ||
+        entry.revision >= boundary
+      )
+        throw Error("InvalidReceipt");
+      boundary = entry.revision;
+    }
+    if (page.next.length && (!page.entries.length || page.next[0] !== boundary))
+      throw Error("InvalidReceipt");
+    return page;
   }
   async items({ includeDeleted = true } = {}) {
     const t = this.session.capture();
@@ -1105,9 +1116,16 @@ export class VaultClient {
       }
       const status = await this.uploadStatus(bytes(j.request.operation));
       check();
+      if (
+        "Committed" in status &&
+        (!sameObject(status.Committed, j.request) ||
+          status.Committed.revision !== j.request.expected_revision + 1n ||
+          status.Committed.sequence <= 0n)
+      )
+        throw Error("InvalidReceipt");
       if ("Pending" in status) {
-        if (!equal(bytes(status.Pending.request.vault), bytes(j.request.vault)))
-          throw Error("TargetChanged");
+        if (!sameBeginRequest(status.Pending.request, j.request))
+          throw Error("InvalidReceipt");
         await this.cancelUpload(
           bytes(j.request.vault),
           bytes(j.request.operation),
@@ -1247,6 +1265,26 @@ export class VaultClient {
 function roleName(role: VaultAccess["role"]): VaultRole {
   if ("Owner" in role) return "Owner";
   return "Editor" in role ? "Editor" : "Viewer";
+}
+type ObjectTarget = Pick<Revision, "vault" | "object">;
+function sameObject(a: ObjectTarget, b: ObjectTarget) {
+  return (
+    equal(bytes(a.vault), bytes(b.vault)) &&
+    equal(bytes(a.object), bytes(b.object))
+  );
+}
+function sameBeginRequest(a: BeginRevision, b: BeginRevision) {
+  return (
+    sameObject(a, b) &&
+    equal(bytes(a.operation), bytes(b.operation)) &&
+    a.expected_revision === b.expected_revision &&
+    a.plain_size === b.plain_size &&
+    equal(bytes(a.manifest), bytes(b.manifest)) &&
+    a.chunk_hashes.length === b.chunk_hashes.length &&
+    a.chunk_hashes.every((hash, index) =>
+      equal(bytes(hash), bytes(b.chunk_hashes[index])),
+    )
+  );
 }
 function equalContext(a: VaultContext, b: VaultContext) {
   return (

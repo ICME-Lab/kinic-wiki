@@ -106,38 +106,65 @@ export function VaultEmbedDocument({
   const [attempt, setAttempt] = useState(0);
   const privateDOM = useRef<HTMLElement>(null);
   const busy = useRef(false);
+  const visibleRevision = useRef<bigint | undefined>(undefined);
+  const loadSerial = useRef(0);
   const reset = useCallback(() => {
+    visibleRevision.current = undefined;
     setDoc(undefined);
     setLoading(false);
     setDownloading(false);
     busy.current = false;
   }, []);
-  useIsolatedVaultSession(client, privateDOM, reset);
+  const loadDocument = useCallback(async () => {
+    const ticket = client.session.capture();
+    const serial = ++loadSerial.current;
+    const revision = await client.latest(object);
+    client.session.check(ticket);
+    if (
+      serial !== loadSerial.current ||
+      visibleRevision.current === revision.revision
+    )
+      return;
+    const item = await client.readItem(revision);
+    const body =
+      item.metadata.kind === "attachment"
+        ? undefined
+        : await client.read(item.revision);
+    const wipeBody = () => body?.plaintext.fill(0);
+    const detach = body && client.session.addLockCleanup(wipeBody);
+    try {
+      client.session.check(ticket);
+      if (serial !== loadSerial.current) return;
+      // The document can disappear or change while its chunks are being read.
+      const head = await client.latest(object);
+      client.session.check(ticket);
+      if (serial !== loadSerial.current) return;
+      if (head.revision !== revision.revision) throw Error("TargetChanged");
+      let content: ReadOnlyContent = { kind: "attachment" };
+      if (body) {
+        const text = new TextDecoder().decode(body.plaintext);
+        content =
+          item.metadata.kind === "credential"
+            ? parseCredential(text)
+            : { kind: "note", body: text };
+      }
+      visibleRevision.current = revision.revision;
+      setDoc({ item, content });
+      setLoading(false);
+    } finally {
+      wipeBody();
+      detach?.();
+    }
+  }, [client, object]);
+  useIsolatedVaultSession(client, privateDOM, reset, loadDocument);
   useLayoutEffect(() => {
     const pending = client.openAccess(vault);
     const ticket = client.session.capture();
     setLoading(true);
     void pending
-      .then(async () => {
+      .then(() => {
         client.session.check(ticket);
-        const item = await client.latestItem(object);
-        let content: ReadOnlyContent = { kind: "attachment" };
-        if (item.metadata.kind !== "attachment") {
-          const result = await client.read(item.revision);
-          try {
-            client.session.check(ticket);
-            const text = new TextDecoder().decode(result.plaintext);
-            content =
-              item.metadata.kind === "credential"
-                ? parseCredential(text)
-                : { kind: "note", body: text };
-          } finally {
-            result.plaintext.fill(0);
-          }
-        }
-        client.session.check(ticket);
-        setDoc({ item, content });
-        setLoading(false);
+        return loadDocument();
       })
       .catch(() => {
         if (ticket === client.session.capture()) client.session.lock();
@@ -145,7 +172,7 @@ export function VaultEmbedDocument({
     return () => {
       client.session.lock();
     };
-  }, [client, vault, object, attempt]);
+  }, [client, vault, loadDocument, attempt]);
   const download = () => {
     if (busy.current || !doc) return;
     const ticket = client.session.capture();
@@ -157,15 +184,21 @@ export function VaultEmbedDocument({
       if (latest.revision !== doc.item.revision.revision)
         throw Error("TargetChanged");
       const result = await client.read(latest);
+      const wipe = () => result.plaintext.fill(0);
+      const detach = client.session.addLockCleanup(wipe);
       try {
         client.session.check(ticket);
+        const head = await client.latest(object);
+        client.session.check(ticket);
+        if (head.revision !== latest.revision) throw Error("TargetChanged");
         const file = `document-${encodeId(bytes(object))}`;
         client.session.download(
           result.plaintext,
           result.metadata.filename || file,
         );
       } finally {
-        result.plaintext.fill(0);
+        wipe();
+        detach();
       }
     })()
       .catch(() => {
@@ -195,7 +228,10 @@ export function VaultEmbedDocument({
       <h2 className="break-words text-xl font-semibold">
         {doc.item.metadata.title || "Untitled"}
       </h2>
-      <VaultReadOnly content={doc.content} />
+      <VaultReadOnly
+        key={doc.item.revision.revision.toString()}
+        content={doc.content}
+      />
       {doc.content.kind === "attachment" ? (
         <VaultButton
           className="justify-self-start"
