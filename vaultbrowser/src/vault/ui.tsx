@@ -74,7 +74,8 @@ const errors: Record<string, string> = {
     "Retry the pending request before starting another change.",
   NoPendingMutation: "There is no request waiting for a retry.",
   Unauthorized:
-    "This action requires the Vault owner. Check your Internet Identity sign-in.",
+    "Your Internet Identity does not have access to this Vault or action.",
+  InvalidMemberPrincipal: "Enter the Vault principal of the person you want to add.",
   Conflict:
     "Another update changed this document or operation. Refresh and open the current version before retrying.",
   NotFound:

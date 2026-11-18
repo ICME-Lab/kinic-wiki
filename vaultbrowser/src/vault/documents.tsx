@@ -16,6 +16,7 @@ import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
 import { VaultPreview } from "./preview";
+import { parseCredential, VaultReadOnly } from "./read-only";
 import { VaultButton, VaultField, VaultPanel, vaultError } from "./ui";
 import type { VaultWork } from "./workspace";
 export function VaultDocuments({
@@ -23,6 +24,8 @@ export function VaultDocuments({
   items,
   disabled,
   writesDisabled,
+  canEdit = true,
+  canPurge = true,
   run,
   refresh,
 }: {
@@ -30,6 +33,8 @@ export function VaultDocuments({
   items: Item[];
   disabled: boolean;
   writesDisabled: boolean;
+  canEdit?: boolean;
+  canPurge?: boolean;
   run: VaultWork;
   refresh: () => Promise<void>;
 }) {
@@ -78,7 +83,8 @@ export function VaultDocuments({
         const current = items[index];
         return (
           current &&
-          b64(bytes(previous.revision.object)) === b64(bytes(current.revision.object)) &&
+          b64(bytes(previous.revision.object)) ===
+            b64(bytes(current.revision.object)) &&
           previous.revision.revision === current.revision.revision &&
           previous.revision.deleted === current.revision.deleted
         );
@@ -171,11 +177,11 @@ export function VaultDocuments({
       setKind(doc.metadata.kind);
       const text = new TextDecoder().decode(doc.plaintext);
       if (doc.metadata.kind === "credential") {
-        const value: Record<string, unknown> = JSON.parse(text);
-        setUsername(typeof value.username === "string" ? value.username : "");
-        setPassword(typeof value.password === "string" ? value.password : "");
-        setUrl(typeof value.URL === "string" ? value.URL : "");
-        setBody(typeof value.notes === "string" ? value.notes : "");
+        const value = parseCredential(text);
+        setUsername(value.username);
+        setPassword(value.password);
+        setUrl(value.url);
+        setBody(value.notes);
       } else if (doc.metadata.kind === "note") {
         setBody(text);
         setSavedBody(text);
@@ -318,7 +324,7 @@ export function VaultDocuments({
         ) : null}
       </div>
       {saveStatus ? <output aria-live="polite">{saveStatus}</output> : null}
-      {pendingSave ? (
+      {canEdit && pendingSave ? (
         <div className="grid gap-2 rounded-lg border border-line p-3">
           <output>
             {disabled
@@ -364,10 +370,12 @@ export function VaultDocuments({
       ) : null}
       <div className="vault-document-grid">
         <div className="vault-document-list grid min-w-0 content-start gap-2">
-          <VaultButton disabled={disabled || pendingSave} onClick={reset}>
-            <Plus size={16} aria-hidden />
-            New document
-          </VaultButton>
+          {canEdit ? (
+            <VaultButton disabled={disabled || pendingSave} onClick={reset}>
+              <Plus size={16} aria-hidden />
+              New document
+            </VaultButton>
+          ) : null}
           {items
             .filter(
               (item) =>
@@ -407,39 +415,65 @@ export function VaultDocuments({
             ))}
           {!items.length ? (
             <p className="text-sm text-muted">
-              No documents yet. Create a note, credential or attachment.
+              {canEdit
+                ? "No documents yet. Create a note, credential or attachment."
+                : "No documents yet."}
             </p>
           ) : null}
         </div>
         <div className="vault-document-editor grid min-w-0 content-start gap-3">
-          <VaultField
-            label="Document title"
-            labelHidden
-            value={title}
-            maxLength={512}
-            disabled={readOnly}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              changed();
-            }}
-          />
-          <label className="grid gap-1 text-sm font-medium">
-            <span className="sr-only">Document type</span>
-            <select
-              className="min-h-10 rounded-lg border border-line bg-white px-3 text-ink"
-              value={kind}
-              disabled={readOnly || !!current}
-              onChange={(e) => {
-                setKind(e.target.value as Metadata["kind"]);
-                changed();
-              }}
-            >
-              <option value="note">Note</option>
-              <option value="credential">Credential</option>
-              <option value="attachment">Attachment</option>
-            </select>
-          </label>
-          {!current?.revision.deleted ? (
+          {canEdit ? (
+            <>
+              <VaultField
+                label="Document title"
+                labelHidden
+                value={title}
+                maxLength={512}
+                disabled={readOnly}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  changed();
+                }}
+              />
+              <label className="grid gap-1 text-sm font-medium">
+                <span className="sr-only">Document type</span>
+                <select
+                  className="min-h-10 rounded-lg border border-line bg-white px-3 text-ink"
+                  value={kind}
+                  disabled={readOnly || !!current}
+                  onChange={(e) => {
+                    setKind(e.target.value as Metadata["kind"]);
+                    changed();
+                  }}
+                >
+                  <option value="note">Note</option>
+                  <option value="credential">Credential</option>
+                  <option value="attachment">Attachment</option>
+                </select>
+              </label>
+            </>
+          ) : current ? (
+            <h3 className="font-medium break-words">{title || "Untitled"}</h3>
+          ) : null}
+          {current?.revision.deleted ? (
+            <p className="text-sm text-muted">
+              This document is deleted. Historical versions remain available
+              until permanent deletion.
+            </p>
+          ) : !canEdit ? (
+            current ? (
+              <VaultReadOnly
+                key={editorKey}
+                content={
+                  kind === "note"
+                    ? { kind, body }
+                    : kind === "credential"
+                      ? { kind, username, password, url, notes: body }
+                      : { kind }
+                }
+              />
+            ) : null
+          ) : (
             <>
               {kind === "note" ? (
                 <>
@@ -570,11 +604,6 @@ export function VaultDocuments({
                 <output className="text-sm">Upload {progress}%</output>
               ) : null}
             </>
-          ) : (
-            <p className="text-sm text-muted">
-              This document is deleted. Historical versions remain available
-              until permanent deletion.
-            </p>
           )}
           {current ? (
             <div className="grid gap-3 border-t border-line pt-3">
@@ -603,43 +632,47 @@ export function VaultDocuments({
                       <Download size={15} aria-hidden />
                       Download document
                     </VaultButton>
-                    <VaultButton
-                      disabled={disabled || writesDisabled || pendingSave}
-                      onClick={() =>
-                        run(async () => {
-                          const g = client.session.capture();
-                          await client.deleteObject(current.revision);
-                          client.session.check(g);
-                          reset();
-                          await refresh();
-                        })
-                      }
-                    >
-                      <Trash2 size={15} aria-hidden />
-                      Delete document
-                    </VaultButton>
+                    {canEdit ? (
+                      <VaultButton
+                        disabled={disabled || writesDisabled || pendingSave}
+                        onClick={() =>
+                          run(async () => {
+                            const g = client.session.capture();
+                            await client.deleteObject(current.revision);
+                            client.session.check(g);
+                            reset();
+                            await refresh();
+                          })
+                        }
+                      >
+                        <Trash2 size={15} aria-hidden />
+                        Delete document
+                      </VaultButton>
+                    ) : null}
                   </>
                 ) : null}
-                <VaultButton
-                  disabled={disabled || pendingSave}
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "Permanently delete this document and its history? This cannot be undone.",
+                {canPurge ? (
+                  <VaultButton
+                    disabled={disabled || pendingSave}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          "Permanently delete this document and its history? This cannot be undone.",
+                        )
                       )
-                    )
-                      return;
-                    run(async () => {
-                      const g = client.session.capture();
-                      await client.purgeObject(current.revision);
-                      client.session.check(g);
-                      reset();
-                      await refresh();
-                    });
-                  }}
-                >
-                  Permanently delete document and history
-                </VaultButton>
+                        return;
+                      run(async () => {
+                        const g = client.session.capture();
+                        await client.purgeObject(current.revision);
+                        client.session.check(g);
+                        reset();
+                        await refresh();
+                      });
+                    }}
+                  >
+                    Permanently delete document and history
+                  </VaultButton>
+                ) : null}
               </div>
               {history.length ? (
                 <div className="grid gap-2">

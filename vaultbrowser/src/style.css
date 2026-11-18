@@ -697,3 +697,17 @@
 .vault-document-editor > .h-80 {
   height: max(360px, calc(100dvh - 240px));
 }
+
+.vault-isolated {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 52rem);
+  min-width: 0;
+  margin-inline: auto;
+  padding: clamp(0.875rem, 4vw, 1.5rem);
+  overflow-wrap: anywhere;
+}
+
+.vault-isolated--picker {
+  width: min(100%, 40rem);
+}

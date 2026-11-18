@@ -1,4 +1,5 @@
 import type { Identity } from "@icp-sdk/core/agent";
+import type { Principal } from "@icp-sdk/core/principal";
 import { TransportSecretKey, randomBytes } from "@kinic/vault-crypto";
 import {
   copyVaultContext,
@@ -22,6 +23,7 @@ import type {
   MutationResult,
   Revision,
   VaultActor,
+  VaultAccess,
 } from "./contracts.ts";
 import { Session, equal } from "./session.ts";
 export const bytes = (x: Uint8Array | number[]) => new Uint8Array(x);
@@ -37,6 +39,8 @@ export type Item = {
   revision: Revision;
   metadata: Metadata;
 };
+export type VaultRole = "Owner" | "Editor" | "Viewer";
+export type MemberRole = Exclude<VaultRole, "Owner">;
 type Save = {
   request: BeginRevision;
   chunks: Uint8Array[];
@@ -48,7 +52,8 @@ type Save = {
   uncertain?: boolean;
 };
 type RequestState =
-  { kind: "idle" } | { kind: "sending" | "ambiguous"; mutation: Mutation };
+  | { kind: "idle" }
+  | { kind: "sending" | "ambiguous"; mutation: Mutation; shared: boolean };
 type SaveState =
   | { kind: "idle" }
   | { kind: "preparing" }
@@ -57,7 +62,8 @@ type CleanupJob = {
   vault: Uint8Array;
   operation: Uint8Array;
 } & (
-  { kind: "cancel"; upload: Uint8Array; job: Uint8Array } | { kind: "delete" }
+  | { kind: "cancel"; upload: Uint8Array; job: Uint8Array; shared: boolean }
+  | { kind: "delete" }
 );
 
 export class VaultClient {
@@ -69,6 +75,10 @@ export class VaultClient {
   private searchReads = new Set<Promise<void>>();
   private live = true;
   header?: Header;
+  private sharedVault?: Uint8Array;
+  private access?: VaultAccess;
+  private accessCheck?: { ticket: number; pending: Promise<Header> };
+  private accessListeners = new Set<() => void>();
   private pinnedPublicKey?: Uint8Array;
   private creating?: { operation: Uint8Array };
   private keyAttempt?: {
@@ -94,10 +104,9 @@ export class VaultClient {
     this.session.addLockCleanup(() => {
       this.keyAttempt = undefined;
       this.pinnedPublicKey = undefined;
-      this.request = { kind: "idle" };
-      this.cleanupState = { kind: "idle" };
-      this.pendingSave?.chunks.forEach((x) => x.fill(0));
-      this.saveState = { kind: "idle" };
+      this.clearWriteState();
+      this.accessCheck = undefined;
+      this.updateAccess(undefined);
     });
   }
   destroy() {
@@ -106,6 +115,7 @@ export class VaultClient {
     this.session.lock();
     this.header = undefined;
     this.creating = undefined;
+    this.accessListeners.clear();
   }
   private checkLive() {
     if (!this.live) throw Error("NotSignedIn");
@@ -113,11 +123,129 @@ export class VaultClient {
   private context(h: Header): VaultContext {
     return copyVaultContext({
       canister: this.canister,
-      owner: this.identity.getPrincipal().toText(),
+      owner: (this.access?.owner ?? this.identity.getPrincipal()).toText(),
       vault: bytes(h.id),
       nonce: bytes(h.nonce),
       key_name: h.key_name,
     });
+  }
+  get accessRole(): VaultRole | undefined {
+    if (this.sharedVault)
+      return this.access ? roleName(this.access.role) : undefined;
+    return this.header ? "Owner" : undefined;
+  }
+  subscribeAccess(listener: () => void) {
+    this.accessListeners.add(listener);
+    return () => {
+      this.accessListeners.delete(listener);
+    };
+  }
+  private clearWriteState() {
+    this.request = { kind: "idle" };
+    this.cleanupState = { kind: "idle" };
+    this.pendingSave?.chunks.forEach((x) => x.fill(0));
+    this.saveState = { kind: "idle" };
+  }
+  private updateAccess(next?: VaultAccess) {
+    const before = this.accessRole;
+    this.access = next;
+    const after = this.accessRole;
+    if (before === after) return;
+    if (after === "Viewer") {
+      if (this.request.kind !== "idle" && this.request.shared)
+        this.request = { kind: "idle" };
+      if (this.cleanupState.kind === "cancel" && this.cleanupState.shared)
+        this.cleanupState = { kind: "idle" };
+      this.pendingSave?.chunks.forEach((chunk) => chunk.fill(0));
+      this.saveState = { kind: "idle" };
+    }
+    for (const listener of this.accessListeners) listener();
+  }
+  private checkWriter(ownerOnly = false) {
+    if (!this.sharedVault) return;
+    const role = this.accessRole;
+    if (role !== "Owner" && (ownerOnly || role !== "Editor"))
+      throw Error("Unauthorized");
+  }
+  private get memberProtocol() {
+    return !!this.sharedVault && this.accessRole !== "Owner";
+  }
+  async listAccessibleVaults(after: Uint8Array = new Uint8Array()) {
+    this.checkLive();
+    const t = this.session.capture();
+    const page = await this.actor.list_accessible_vaults(after);
+    this.session.check(t);
+    return ok(page);
+  }
+  private async withMemberManagement<T>(
+    fn: (vault: Uint8Array) => Promise<{ Ok: T } | { Err: unknown }>,
+  ): Promise<T> {
+    const t = this.session.capture();
+    const context = await this.checkedContext();
+    this.session.check(t);
+    if (this.accessRole !== "Owner") throw Error("Unauthorized");
+    const result = await fn(context.vault);
+    this.session.check(t);
+    return ok(result);
+  }
+  listMembers() {
+    return this.withMemberManagement((vault) =>
+      this.actor.list_vault_members(vault),
+    );
+  }
+  setMember(principal: Principal, role: MemberRole) {
+    const grant = role === "Editor" ? { Editor: null } : { Viewer: null };
+    return this.withMemberManagement((vault) =>
+      this.actor.set_vault_member(vault, principal, grant),
+    );
+  }
+  removeMember(principal: Principal) {
+    return this.withMemberManagement((vault) =>
+      this.actor.remove_vault_member(vault, principal),
+    );
+  }
+  private checkedResult<T>(
+    ticket: number,
+    result: { Ok: T } | { Err: unknown },
+  ) {
+    this.session.check(ticket);
+    if (
+      this.sharedVault &&
+      "Err" in result &&
+      result.Err &&
+      typeof result.Err === "object" &&
+      "Unauthorized" in result.Err
+    ) {
+      this.session.lock();
+    }
+    return ok(result);
+  }
+  private readAccess(vault: Uint8Array, ticket: number): Promise<Header> {
+    if (this.accessCheck?.ticket === ticket) return this.accessCheck.pending;
+    const pending = this.actor
+      .get_vault_access(vault)
+      .then((reply) => {
+        const access = this.checkedResult(ticket, reply);
+        const role = roleName(access.role);
+        const isCaller =
+          access.owner.toText() === this.identity.getPrincipal().toText();
+        if (
+          !equal(vault, bytes(access.header.id)) ||
+          !("Active" in access.header.state) ||
+          access.owner.isAnonymous() ||
+          (role === "Owner") !== isCaller
+        ) {
+          this.session.lock();
+          throw Error("TargetChanged");
+        }
+        this.updateAccess(access);
+        return structuredClone(access.header);
+      })
+      .finally(() => {
+        if (this.accessCheck?.pending === pending) this.accessCheck = undefined;
+      });
+    this.accessCheck = { ticket, pending };
+    return pending;
   }
   async reconcilePurchase(operation: Uint8Array) {
     this.checkLive();
@@ -146,9 +274,10 @@ export class VaultClient {
   }
   async create() {
     this.checkLive();
-    if (!this.creating || this.header) {
+    if (!this.creating || this.header || this.sharedVault) {
       this.session.lock();
       this.header = undefined;
+      this.sharedVault = undefined;
     }
     const t = this.session.capture();
     const attempt = (this.creating ??= {
@@ -165,8 +294,13 @@ export class VaultClient {
   }
   async open(header: Header) {
     this.checkLive();
-    if (!this.header || !equal(bytes(this.header.id), bytes(header.id))) {
+    if (
+      this.sharedVault ||
+      !this.header ||
+      !equal(bytes(this.header.id), bytes(header.id))
+    ) {
       this.session.lock();
+      this.sharedVault = undefined;
       this.header = structuredClone(header);
     }
     const t = this.session.capture();
@@ -183,9 +317,28 @@ export class VaultClient {
       }
       return structuredClone(ok(reply));
     };
+    return this.openTarget(bytes(header.id), readHeader, t);
+  }
+  async openAccess(vault: Uint8Array) {
+    this.checkLive();
+    if (vault.length !== 16) throw Error("InvalidVault");
+    if (!this.sharedVault || !equal(this.sharedVault, vault)) {
+      this.session.lock();
+      this.header = undefined;
+      this.sharedVault = bytes(vault);
+    }
+    const t = this.session.capture();
+    const target = bytes(vault);
+    return this.openTarget(target, () => this.readAccess(target, t), t);
+  }
+  private async openTarget(
+    target: Uint8Array,
+    readHeader: () => Promise<Header>,
+    t: number,
+  ) {
     const h = await readHeader();
     this.session.check(t);
-    if (!equal(bytes(h.id), bytes(header.id)) || !("Active" in h.state)) {
+    if (!equal(bytes(h.id), target) || !("Active" in h.state)) {
       this.session.lock();
       throw Error("TargetChanged");
     }
@@ -214,14 +367,15 @@ export class VaultClient {
       transport: TransportSecretKey.random(),
     });
     if (!equal(attempt.vault, bytes(h.id))) throw Error("TargetChanged");
-    const reply = ok(
-      await this.actor.derive_vault_key({
-        vault: attempt.vault,
-        operation: attempt.operation,
-        transport: attempt.transport.publicKeyBytes(),
-      }),
-    );
-    this.session.check(t);
+    const request = {
+      vault: attempt.vault,
+      operation: attempt.operation,
+      transport: attempt.transport.publicKeyBytes(),
+    };
+    const result = this.memberProtocol
+      ? await this.actor.shared_derive_vault_key(request)
+      : await this.actor.derive_vault_key(request);
+    const reply = this.checkedResult(t, result);
     const root = await verifiedRoot(
       context,
       bytes(h.public_key),
@@ -256,16 +410,20 @@ export class VaultClient {
     this.checkLive();
     const t = this.session.capture();
     if (!this.header) throw Error("Locked");
-    const response = await this.actor.get_vault_header(this.header.id);
+    const h = this.sharedVault
+      ? await this.readAccess(this.sharedVault, t)
+      : await this.actor.get_vault_header(this.header.id).then((response) => {
+          this.session.check(t);
+          if (
+            "Err" in response &&
+            ("NotFound" in response.Err || "Conflict" in response.Err)
+          ) {
+            this.session.lock();
+            throw Error("TargetChanged");
+          }
+          return ok(response);
+        });
     this.session.check(t);
-    if (
-      "Err" in response &&
-      ("NotFound" in response.Err || "Conflict" in response.Err)
-    ) {
-      this.session.lock();
-      throw Error("TargetChanged");
-    }
-    const h = ok(response);
     if (!("Active" in h.state)) {
       this.session.lock();
       throw Error("TargetChanged");
@@ -319,35 +477,63 @@ export class VaultClient {
     action: Action,
     operation: Uint8Array = randomBytes(16),
   ): Promise<MutationResult> {
+    const scoped = !("Collect" in action || "DeleteVault" in action);
+    if (
+      "PurgeObject" in action ||
+      ("DeleteVault" in action &&
+        this.sharedVault &&
+        equal(this.sharedVault, bytes(action.DeleteVault.vault)))
+    ) {
+      this.checkWriter(true);
+    }
+    return this.sendMutation(action, operation, scoped && this.memberProtocol);
+  }
+  private async sendMutation(
+    action: Action,
+    operation: Uint8Array,
+    shared: boolean,
+  ): Promise<MutationResult> {
     this.checkLive();
+    if (shared) this.checkWriter();
     const proposed = structuredClone({ action, operation });
     const previous = this.request;
     if (
       previous.kind !== "idle" &&
-      stable(previous.mutation) !== stable(proposed)
+      (previous.shared !== shared ||
+        stable(previous.mutation) !== stable(proposed))
     )
       throw Error("ResolvePendingMutation");
     if (previous.kind === "sending") throw Error("MutationInProgress");
     const mutation = previous.kind === "idle" ? proposed : previous.mutation;
     const t = this.session.capture();
-    const sending: RequestState = { kind: "sending", mutation };
+    const sending: RequestState = { kind: "sending", mutation, shared };
     this.request = sending;
     try {
-      const result = await this.actor.mutate(mutation);
+      const result = shared
+        ? await this.actor.shared_mutate(this.sharedVault!, mutation)
+        : await this.actor.mutate(mutation);
       this.session.check(t);
+      if (this.request !== sending) throw Error("Unauthorized");
       this.request = { kind: "idle" };
+      if (shared && "Err" in result && "Unauthorized" in result.Err)
+        await this.refreshHeader();
+      this.session.check(t);
       return ok(result);
     } finally {
       // A transport failure preserves the exact request; a delivered Err clears it.
       // An older callback must never replace a newer session's request.
       if (this.request === sending)
-        this.request = { kind: "ambiguous", mutation };
+        this.request = { kind: "ambiguous", mutation, shared };
     }
   }
   async retryMutation() {
     if (this.request.kind === "idle") throw Error("NoPendingMutation");
     const { mutation } = this.request;
-    return this.mutate(mutation.action, bytes(mutation.operation));
+    return this.sendMutation(
+      mutation.action,
+      bytes(mutation.operation),
+      this.request.shared,
+    );
   }
   private get pendingSave() {
     return "job" in this.saveState ? this.saveState.job : undefined;
@@ -369,8 +555,15 @@ export class VaultClient {
     try {
       const t = this.session.capture();
       const inline = plaintext.length <= 256 * 1024;
-      const context = inline ? this.cachedContext() : await this.checkedContext();
+      const context =
+        inline && !this.sharedVault
+          ? this.cachedContext()
+          : await this.checkedContext();
       this.session.check(t);
+      if (this.saveState !== preparing) throw Error("Unauthorized");
+      this.checkWriter();
+      if (item && !equal(context.vault, bytes(item.revision.vault)))
+        throw Error("TargetChanged");
       const object = item ? bytes(item.revision.object) : randomBytes(16),
         expected = item?.revision.revision ?? 0n;
       const doc = await encryptDocumentV3(
@@ -391,8 +584,12 @@ export class VaultClient {
         manifest: doc.manifest,
         chunk_hashes: doc.hashes,
       };
-      const contextHash = inline ? await hash(contextInput(context)) : undefined;
+      const contextHash = inline
+        ? await hash(contextInput(context))
+        : undefined;
       this.session.check(t);
+      if (this.saveState !== preparing) throw Error("Unauthorized");
+      this.checkWriter();
       this.saveState = {
         kind: "ready",
         job: {
@@ -417,30 +614,31 @@ export class VaultClient {
     const sending: SaveState = { kind: "sending", job: j };
     this.saveState = sending;
     try {
-      if (j.contextHash) this.cachedContext();
+      if (j.contextHash && !this.sharedVault) this.cachedContext();
       else await this.checkedContext();
       this.session.check(j.ticket);
+      if (this.saveState !== sending) throw Error("Unauthorized");
+      this.checkWriter();
       while (j.phase <= j.chunks.length) {
-        const action: Action =
-          j.contextHash
-            ? {
-                SaveInline: {
-                  request: j.request,
-                  bytes: j.chunks[0],
-                  context_hash: j.contextHash,
-                },
-              }
-            : j.phase === -1
-              ? { BeginRevision: j.request }
-              : j.phase < j.chunks.length
-                ? {
-                    PutChunk: {
-                      upload: j.request.operation,
-                      index: j.phase,
-                      bytes: j.chunks[j.phase],
-                    },
-                  }
-                : { CommitRevision: { upload: j.request.operation } };
+        const action: Action = j.contextHash
+          ? {
+              SaveInline: {
+                request: j.request,
+                bytes: j.chunks[0],
+                context_hash: j.contextHash,
+              },
+            }
+          : j.phase === -1
+            ? { BeginRevision: j.request }
+            : j.phase < j.chunks.length
+              ? {
+                  PutChunk: {
+                    upload: j.request.operation,
+                    index: j.phase,
+                    bytes: j.chunks[j.phase],
+                  },
+                }
+              : { CommitRevision: { upload: j.request.operation } };
         const wasAmbiguous = j.uncertain || this.request.kind === "ambiguous";
         let r: MutationResult;
         try {
@@ -456,7 +654,9 @@ export class VaultClient {
               const ownedRequest = this.ownedInlineRequest(j);
               const revision = await this.reconciledInline(j);
               this.session.check(j.ticket);
-              if (this.request === ownedRequest) this.request = { kind: "idle" };
+              if (this.saveState !== sending) throw Error("Unauthorized");
+              if (this.request === ownedRequest)
+                this.request = { kind: "idle" };
               this.saveState = { kind: "idle" };
               progress(100);
               return revision;
@@ -534,13 +734,12 @@ export class VaultClient {
   // Authenticated immutable revision lookup remains usable after both kinds
   // of receipt are collected. Match the full encrypted payload, not just IDs.
   private async reconciledInline(j: Save): Promise<Revision> {
-    const response = await this.actor.get_manifest(
+    const r = await this.manifest(
       j.request.vault,
       j.request.object,
       j.request.expected_revision + 1n,
+      j.ticket,
     );
-    this.session.check(j.ticket);
-    const r = ok(response);
     if (
       r.deleted ||
       r.sequence <= 0n ||
@@ -557,7 +756,59 @@ export class VaultClient {
       throw Error("InvalidReceipt");
     return r;
   }
-  async items() {
+  private async manifest(
+    vault: Header["id"],
+    object: Revision["object"],
+    revision: bigint,
+    ticket: number,
+  ) {
+    const reply = this.sharedVault
+      ? await this.actor.shared_get_manifest(vault, object, revision)
+      : await this.actor.get_manifest(vault, object, revision);
+    return this.checkedResult(ticket, reply);
+  }
+  async latest(object: Uint8Array) {
+    const t = this.session.capture();
+    const c = await this.checkedContext();
+    this.session.check(t);
+    const revision = await this.manifest(c.vault, object, 0n, t);
+    if (
+      revision.deleted ||
+      !equal(c.vault, bytes(revision.vault)) ||
+      !equal(object, bytes(revision.object))
+    )
+      throw Error("NotFound");
+    return revision;
+  }
+  async latestItem(object: Uint8Array): Promise<Item> {
+    const t = this.session.capture();
+    const revision = await this.latest(object);
+    this.session.check(t);
+    const context = this.cachedContext();
+    const root = this.session.root!;
+    const { metadata } = await readManifestV3(
+      root,
+      context,
+      bytes(revision.object),
+      revision.revision,
+      bytes(revision.manifest),
+    );
+    if (this.sharedVault) await this.refreshHeader();
+    this.checkReadContext(context, root, t);
+    return { revision, metadata };
+  }
+  private async historyPage(
+    vault: Header["id"],
+    object: Revision["object"],
+    before: bigint,
+    ticket: number,
+  ) {
+    const reply = this.sharedVault
+      ? await this.actor.shared_list_history(vault, object, before)
+      : await this.actor.list_history(vault, object, before);
+    return this.checkedResult(ticket, reply);
+  }
+  async items({ includeDeleted = true } = {}) {
     const t = this.session.capture();
     const c = await this.checkedContext();
     this.session.check(t);
@@ -566,17 +817,20 @@ export class VaultClient {
     let after = new Uint8Array();
     do {
       this.checkReadContext(c, root, t);
-      const page = ok(await this.actor.list_objects(c.vault, after));
-      this.session.check(t);
+      const reply = this.sharedVault
+        ? await this.actor.shared_list_objects(c.vault, after)
+        : await this.actor.list_objects(c.vault, after);
+      const page = this.checkedResult(t, reply);
       for (const r of page.entries) {
+        if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
         let source = r;
         if (r.deleted) {
-          const history = ok(
-            await this.actor.list_history(
-              r.vault,
-              r.object,
-              18446744073709551615n,
-            ),
+          if (!includeDeleted) continue;
+          const history = await this.historyPage(
+            r.vault,
+            r.object,
+            18446744073709551615n,
+            t,
           );
           this.session.check(t);
           const previous = history.entries.find((x) => !x.deleted);
@@ -602,6 +856,8 @@ export class VaultClient {
       }
       after = page.next[0] ? bytes(page.next[0]) : new Uint8Array();
     } while (after.length);
+    if (this.sharedVault) await this.refreshHeader();
+    this.checkReadContext(c, root, t);
     return items;
   }
   // Explicit note-only search. Results contain metadata/revisions, never body text.
@@ -711,14 +967,11 @@ export class VaultClient {
     const chunks: Uint8Array[] = [];
     for (let i = 0; i < r.chunk_hashes.length; i++) {
       this.checkReadContext(c, root, t);
-      const reply = await this.actor.get_chunk(
-        r.vault,
-        r.object,
-        r.revision,
-        i,
-      );
+      const reply = this.sharedVault
+        ? await this.actor.shared_get_chunk(r.vault, r.object, r.revision, i)
+        : await this.actor.get_chunk(r.vault, r.object, r.revision, i);
       this.checkReadContext(c, root, t);
-      chunks.push(bytes(ok(reply)));
+      chunks.push(bytes(this.checkedResult(t, reply)));
       check();
     }
     this.checkReadContext(c, root, t);
@@ -731,13 +984,21 @@ export class VaultClient {
       chunks,
       r.chunk_hashes.map(bytes),
     );
+    const detach = this.session.addLockCleanup(() => doc.plaintext.fill(0));
     try {
       this.checkReadContext(c, root, t);
       check();
+      if (this.sharedVault) {
+        await this.refreshHeader();
+        this.checkReadContext(c, root, t);
+        check();
+      }
       return doc;
     } catch (e) {
       doc.plaintext.fill(0);
       throw e;
+    } finally {
+      detach();
     }
   }
   async deleteObject(r: Revision) {
@@ -773,19 +1034,28 @@ export class VaultClient {
     const c = await this.checkedContext();
     this.session.check(t);
     if (!equal(c.vault, bytes(r.vault))) throw Error("TargetChanged");
-    const page = ok(await this.actor.list_history(r.vault, r.object, before));
-    this.session.check(t);
-    return page;
+    return this.historyPage(r.vault, r.object, before, t);
   }
   async quota() {
     const t = this.session.capture();
     const c = await this.checkedContext();
     this.session.check(t);
-    const result = ok(await this.actor.get_quota(c.vault));
-    this.session.check(t);
-    return result;
+    const reply = this.sharedVault
+      ? await this.actor.shared_get_quota(c.vault)
+      : await this.actor.get_quota(c.vault);
+    return this.checkedResult(t, reply);
   }
   async pendingUploads(after = new Uint8Array()) {
+    this.checkLive();
+    if (!this.memberProtocol) return this.ownerPendingUploads(after);
+    const t = this.session.capture();
+    const reply = await this.actor.shared_list_pending_uploads(
+      this.sharedVault!,
+      after,
+    );
+    return this.checkedResult(t, reply);
+  }
+  async ownerPendingUploads(after = new Uint8Array()) {
     this.checkLive();
     const t = this.session.capture();
     const result = ok(await this.actor.list_pending_uploads(after));
@@ -795,9 +1065,10 @@ export class VaultClient {
   async uploadStatus(upload: Uint8Array) {
     this.checkLive();
     const t = this.session.capture();
-    const result = ok(await this.actor.get_upload_status(upload));
-    this.session.check(t);
-    return result;
+    const reply = this.memberProtocol
+      ? await this.actor.shared_get_upload_status(this.sharedVault!, upload)
+      : await this.actor.get_upload_status(upload);
+    return this.checkedResult(t, reply);
   }
   async cancelSave() {
     const j = this.pendingSave;
@@ -808,10 +1079,14 @@ export class VaultClient {
     const cleanup = this.cleanupState;
     try {
       const t = this.session.capture();
+      const check = () => {
+        this.session.check(t);
+        if (this.saveState !== cancelling) throw Error("Unauthorized");
+      };
       if (j.contextHash && (j.uncertain || this.request.kind === "ambiguous")) {
         const ownedRequest = this.ownedInlineRequest(j);
         const revision = await this.reconciledInline(j);
-        this.session.check(t);
+        check();
         if (this.request === ownedRequest) this.request = { kind: "idle" };
         j.chunks.forEach((chunk) => chunk.fill(0));
         this.saveState = { kind: "idle" };
@@ -826,10 +1101,10 @@ export class VaultClient {
       }
       if (this.request.kind !== "idle") {
         await this.retryMutation();
-        this.session.check(t);
+        check();
       }
       const status = await this.uploadStatus(bytes(j.request.operation));
-      this.session.check(t);
+      check();
       if ("Pending" in status) {
         if (!equal(bytes(status.Pending.request.vault), bytes(j.request.vault)))
           throw Error("TargetChanged");
@@ -841,7 +1116,7 @@ export class VaultClient {
             : undefined,
         );
       }
-      this.session.check(t);
+      check();
       j.chunks.forEach((x) => x.fill(0));
       if (this.saveState === cancelling) this.saveState = { kind: "idle" };
       // Replaying a lost final CancelUpload can report a terminal status without
@@ -860,10 +1135,30 @@ export class VaultClient {
     }
   }
   async cancelUpload(vault: Uint8Array, upload: Uint8Array, job?: Uint8Array) {
+    const shared = this.memberProtocol;
+    if (shared && !equal(this.sharedVault!, vault))
+      throw Error("TargetChanged");
+    return this.cancelUploadWith(vault, upload, job, shared);
+  }
+  async cancelOwnedUpload(
+    vault: Uint8Array,
+    upload: Uint8Array,
+    job?: Uint8Array,
+  ) {
+    return this.cancelUploadWith(vault, upload, job, false);
+  }
+  private async cancelUploadWith(
+    vault: Uint8Array,
+    upload: Uint8Array,
+    job: Uint8Array | undefined,
+    shared: boolean,
+  ) {
     this.checkLive();
+    if (shared) this.checkWriter();
     if (this.cleanupState.kind === "idle")
       this.cleanupState = {
         kind: "cancel",
+        shared,
         vault: bytes(vault),
         upload: bytes(upload),
         job: job ? bytes(job) : randomBytes(16),
@@ -872,6 +1167,7 @@ export class VaultClient {
     const j = this.cleanupState;
     if (
       j.kind !== "cancel" ||
+      j.shared !== shared ||
       !equal(j.vault, vault) ||
       !equal(j.upload, upload) ||
       (job && !equal(j.job, job))
@@ -887,6 +1183,8 @@ export class VaultClient {
   }
   async deleteVault(vault: Uint8Array) {
     this.checkLive();
+    if (this.sharedVault && equal(this.sharedVault, vault))
+      this.checkWriter(true);
     const t = this.session.capture();
     if (this.cleanupState.kind === "idle")
       this.cleanupState = {
@@ -917,7 +1215,11 @@ export class VaultClient {
         j.kind === "cancel"
           ? { CancelUpload: { vault: j.vault, upload: j.upload, job: j.job } }
           : { DeleteVault: { vault: j.vault } };
-      const r = await this.mutate(action, j.operation);
+      const r = await this.sendMutation(
+        action,
+        j.operation,
+        j.kind === "cancel" && j.shared,
+      );
       this.session.check(t);
       if (!("Progress" in r)) throw Error("InvalidReceipt");
       if (r.Progress) {
@@ -941,6 +1243,10 @@ export class VaultClient {
       throw e;
     }
   }
+}
+function roleName(role: VaultAccess["role"]): VaultRole {
+  if ("Owner" in role) return "Owner";
+  return "Editor" in role ? "Editor" : "Viewer";
 }
 function equalContext(a: VaultContext, b: VaultContext) {
   return (

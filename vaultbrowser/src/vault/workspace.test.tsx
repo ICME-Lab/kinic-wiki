@@ -64,10 +64,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 async function mounted() {
-  const network = fixtureNetwork();
+  const identity = Ed25519KeyIdentity.generate();
+  const network = fixtureNetwork(identity.getPrincipal());
   const client = new VaultClient({
     actor: network.actor,
-    identity: Ed25519KeyIdentity.generate(),
+    identity,
     canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
     local: true,
   });
@@ -1004,3 +1005,83 @@ it.each([false, true])(
     expect(popup.close).toHaveBeenCalledTimes(1);
   },
 );
+
+it("shows only live role capabilities for shared Vaults and closes on revocation", async () => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Editor: null });
+  x.setBalance(0n);
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  fireEvent.click(await screen.findByText("Vault 2 · Active · Editor"));
+  await screen.findByLabelText("Document title");
+  await save("Shared note");
+  fireEvent.click(screen.getByRole("button", { name: "Shared note" }));
+  await screen.findByRole("button", { name: "Delete document" });
+  expect(
+    screen.queryByText("Permanently delete document and history"),
+  ).toBeNull();
+  expect(screen.queryByText("Vault members")).toBeNull();
+  x.setRole(x.headers[1].id, { Viewer: null });
+  fireEvent(window, new Event("focus"));
+  await waitFor(() => expect(screen.queryByText("Save document")).toBeNull());
+  expect(screen.queryByText("New document")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Shared note" }));
+  await screen.findByText("private words");
+  expect(screen.queryByText("Delete document")).toBeNull();
+  x.setRole(x.headers[1].id, null);
+  fireEvent(window, new Event("focus"));
+  await screen.findByText("Choose or create a Vault");
+  expect(screen.queryByText("private words")).toBeNull();
+});
+
+it("lets only the owner add, update, and remove members by Vault principal", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.click(screen.getByText("Vault members"));
+  await screen.findByText("No additional members.");
+  const guest = Ed25519KeyIdentity.generate().getPrincipal().toText();
+  fireEvent.change(screen.getByLabelText("Member Vault principal"), {
+    target: { value: guest },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+  const member = await screen.findByText(guest);
+  const row = within(member.closest("li")!);
+  fireEvent.change(row.getByLabelText("Member role"), {
+    target: { value: "Editor" },
+  });
+  await waitFor(async () => {
+    const result = await x.actor.list_vault_members(x.headers[0].id);
+    expect("Ok" in result && result.Ok[0].role).toEqual({ Editor: null });
+  });
+  await waitFor(() =>
+    expect(
+      (row.getByRole("button", { name: "Remove member" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  fireEvent.click(row.getByRole("button", { name: "Remove member" }));
+  await waitFor(() => expect(screen.queryByText(guest)).toBeNull());
+});
+
+it("loads subsequent accessible Vault pages and fences a revoked cached context", async () => {
+  const x = await mounted();
+  for (let count = 3; count <= 21; count++) {
+    const extra = { ...x.headers[0], id: new Uint8Array(16).fill(count) };
+    x.headers.push(extra);
+    x.setRole(extra.id, { Viewer: null });
+  }
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh Vaults") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  expect(screen.queryByText("Vault 21 · Active · Viewer")).toBeNull();
+  fireEvent.click(screen.getByText("Load more Vaults"));
+  fireEvent.click(await screen.findByText("Vault 21 · Active · Viewer"));
+  await waitFor(() => expect(x.client.session.root).toBeTruthy());
+  await screen.findByText("No documents yet.");
+  x.setRole(x.headers[20].id, null);
+  fireEvent(window, new Event("focus"));
+  await screen.findByText("Choose or create a Vault");
+  expect(x.client.session.root).toBeUndefined();
+});

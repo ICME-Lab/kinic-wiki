@@ -1471,3 +1471,142 @@ it("reads only previous metadata for a deleted note list entry", async () => {
   expect(await x.client.searchNotes(items, "needle")).toEqual([]);
   expect(x.actor.get_chunk).not.toHaveBeenCalled();
 });
+
+describe("shared Vault access", () => {
+  const reader = Principal.selfAuthenticating(new Uint8Array([9]));
+  function shared() {
+    const { actor, calls } = setup(false);
+    let role: "Editor" | "Viewer" | undefined = "Editor";
+    const method = <K extends keyof VaultActor>(
+      fn: (...args: Parameters<VaultActor[K]>) => ReturnType<VaultActor[K]>,
+    ) => vi.fn(fn);
+    Object.assign(actor, {
+      get_vault_access: method<"get_vault_access">(async () =>
+        role
+          ? {
+              Ok: {
+                owner,
+                role: role === "Editor" ? { Editor: null } : { Viewer: null },
+                header: header(),
+              },
+            }
+          : { Err: { Unauthorized: null } },
+      ),
+      shared_derive_vault_key: method<"shared_derive_vault_key">((request) =>
+        actor.derive_vault_key(request),
+      ),
+      shared_get_chunk: method<"shared_get_chunk">((...args) =>
+        actor.get_chunk(...args),
+      ),
+      shared_mutate: method<"shared_mutate">((_vault, mutation) =>
+        actor.mutate(mutation),
+      ),
+      shared_get_upload_status: method<"shared_get_upload_status">(
+        async () => ({ Ok: { Absent: null } }),
+      ),
+      shared_get_manifest: method<"shared_get_manifest">((...args) =>
+        actor.get_manifest(...args),
+      ),
+    });
+    const member = new VaultClient({
+      actor,
+      identity: { getPrincipal: () => reader } as any,
+      canister: owner.toText(),
+      local: true,
+    });
+    return {
+      member,
+      actor,
+      calls,
+      role: (next: typeof role) => {
+        role = next;
+      },
+    };
+  }
+
+  it("uses the server-recorded owner to read owner ciphertext and binds every read to its Vault", async () => {
+    const { actor, member, calls } = shared();
+    const ownerClient = new VaultClient({
+      actor,
+      identity: { getPrincipal: () => owner } as any,
+      canister: owner.toText(),
+      local: true,
+    });
+    await ownerClient.open(header());
+    const revision = await ownerClient.save(
+      { kind: "note", title: "Owner note" },
+      new Uint8Array([7]),
+    );
+    await member.openAccess(id);
+    expect(member.accessRole).toBe("Editor");
+    expect(actor.shared_derive_vault_key).toHaveBeenCalledOnce();
+    expect((await member.read(revision)).plaintext).toEqual(
+      new Uint8Array([7]),
+    );
+    expect(actor.shared_get_chunk).toHaveBeenCalledWith(
+      id,
+      revision.object,
+      1n,
+      0,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refreshes role with a cached root and rejects a later revoked open", async () => {
+    const { actor, member, role } = shared();
+    await member.openAccess(id);
+    const root = member.session.root;
+    role("Viewer");
+    await member.refreshHeader();
+    expect(member.accessRole).toBe("Viewer");
+    expect(member.session.root).toBe(root);
+    await expect(
+      member.save({ kind: "note", title: "Stale editor" }, new Uint8Array([7])),
+    ).rejects.toThrow("Unauthorized");
+    expect(actor.shared_mutate).not.toHaveBeenCalled();
+    role(undefined);
+    await expect(member.openAccess(id)).rejects.toThrow("Unauthorized");
+    expect(member.session.root).toBeUndefined();
+  });
+
+  it("discards a delayed shared key reply when access changes during derivation", async () => {
+    const { member, actor, role } = shared();
+    const key = deferred<Awaited<ReturnType<VaultActor["shared_derive_vault_key"]>>>();
+    vi.mocked(actor.shared_derive_vault_key).mockReturnValueOnce(key.promise);
+    const pending = member.openAccess(id);
+    const denied = expect(pending).rejects.toThrow("Unauthorized");
+    await vi.waitFor(() => expect(actor.shared_derive_vault_key).toHaveBeenCalledOnce());
+    role(undefined);
+    key.resolve({ Ok: { input: [], public_key: [], encrypted_key: [] } });
+    await denied;
+    expect(member.session.root).toBeUndefined();
+    expect(member.accessRole).toBeUndefined();
+  });
+
+  it("uses shared operation handles for the entire interrupted upload cancel sequence", async () => {
+    const { actor, member, calls } = shared();
+    vi.mocked(actor.shared_mutate).mockRejectedValueOnce(Error("network"));
+    await member.openAccess(id);
+    await expect(
+      member.save(
+        { kind: "attachment", title: "Large file" },
+        new Uint8Array(262145),
+      ),
+    ).rejects.toThrow("network");
+    const begin = vi.mocked(actor.shared_mutate).mock.calls[0][1];
+    if (!("BeginRevision" in begin.action)) throw Error("expected upload");
+    const request = begin.action.BeginRevision;
+    vi.mocked(actor.shared_get_upload_status).mockResolvedValueOnce({
+      Ok: { Pending: { request, received: [], expires: 0n, cancel_job: [] } },
+    });
+    await member.cancelSave();
+    expect(actor.shared_get_upload_status).toHaveBeenCalledWith(
+      id,
+      request.operation,
+    );
+    expect(actor.shared_mutate).toHaveBeenNthCalledWith(2, id, begin);
+    const cancelled = calls.at(-1)?.action;
+    expect(cancelled.CancelUpload.upload).toEqual(request.operation);
+    expect(actor.get_upload_status).not.toHaveBeenCalled();
+  });
+});

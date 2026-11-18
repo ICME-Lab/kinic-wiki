@@ -80,3 +80,54 @@ export function VaultEncryptedCleanup({
     </VaultPanel>
   );
 }
+
+export function VaultSharedUploads({
+  client,
+  disabled,
+  run,
+}: {
+  client: VaultClient;
+  disabled: boolean;
+  run: VaultWork;
+}) {
+  const [uploads, setUploads] =
+    useState<Awaited<ReturnType<VaultClient["pendingUploads"]>>["entries"]>();
+  const refresh = async () =>
+    setUploads((await client.pendingUploads()).entries);
+  return (
+    <details
+      className="vault-disclosure [&:not([open])>div]:hidden"
+      onToggle={(e) => {
+        if (e.currentTarget.open && !uploads) run(refresh);
+      }}
+    >
+      <summary>My interrupted uploads in this Vault</summary>
+      <div className="vault-disclosure-body">
+        <VaultButton disabled={disabled} onClick={() => run(refresh)}>
+          Refresh my uploads
+        </VaultButton>
+        {uploads?.map((upload, index) => (
+          <VaultButton
+            key={index}
+            disabled={disabled}
+            onClick={() =>
+              run(async () => {
+                await client.cancelUpload(
+                  bytes(upload.vault),
+                  bytes(upload.upload),
+                  upload.cancel_job[0]
+                    ? bytes(upload.cancel_job[0])
+                    : undefined,
+                );
+                await refresh();
+              })
+            }
+          >
+            Cancel my interrupted upload {index + 1}
+          </VaultButton>
+        ))}
+        {uploads?.length === 0 ? <p>No interrupted uploads.</p> : null}
+      </div>
+    </details>
+  );
+}

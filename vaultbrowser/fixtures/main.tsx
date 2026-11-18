@@ -12,7 +12,8 @@ import { VaultWorkspace } from "../src/vault/workspace";
 import { fixtureNetwork } from "./network";
 import { EditorView } from "../../packages/ui/node_modules/@codemirror/view";
 import "../src/style.css";
-const network = fixtureNetwork();
+const fixtureIdentity = Ed25519KeyIdentity.generate();
+const network = fixtureNetwork(fixtureIdentity.getPrincipal());
 class UIFixtureClient extends VaultClient {
   override async open(h: Header) {
     if (!this.header || String(this.header.id) !== String(h.id))
@@ -47,7 +48,7 @@ class UIFixtureClient extends VaultClient {
 }
 const client = new UIFixtureClient({
   actor: network.actor,
-  identity: Ed25519KeyIdentity.generate(),
+  identity: fixtureIdentity,
   canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
   local: true,
 });

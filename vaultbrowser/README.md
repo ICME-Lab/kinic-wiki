@@ -28,7 +28,7 @@ node scripts/check-vault-boundary.mjs
 wikibrowser/node_modules/.bin/oxlint --deny-warnings vaultbrowser/src vaultbrowser/fixtures/main.tsx vaultbrowser/fixtures/network.ts packages/vault-client/src packages/vault-client/test
 ```
 
-The browser build is embedded in the dedicated canister's certified responses. Mainnet never fetches a replacement root key. Its II derivation origin is `https://<vault-canister-id>.icp0.io`; the default provider is `https://id.ai`. Local certified configuration requires explicit `ICP_ENVIRONMENT=local-vault`, `VAULT_LOCAL_ORIGIN`, `VAULT_LOCAL_HOST` and `VAULT_LOCAL_II` values. Use the canister gateway for actual II acceptance; Vite is a synthetic fixture, not a certified deployment.
+The browser build is embedded in the dedicated canister's certified responses. Mainnet never fetches a replacement root key. Its II derivation origin is `https://<vault-canister-id>.icp0.io`; the default provider is `https://id.ai`. Local certified configuration requires explicit `ICP_ENVIRONMENT=local-vault`, `VAULT_LOCAL_ORIGIN`, `VAULT_LOCAL_HOST` and `VAULT_LOCAL_II` values. Set `VAULT_LOCAL_WIKI_ORIGIN` to the exact local Wiki loopback HTTP(S) origin to exercise framing and the cross-origin picker. A local build without this value serves embeds for top-level viewing. Production certifies the embed policy for `https://wiki.kinic.xyz`. Use the canister gateway for actual II acceptance. The Vite fixture serves synthetic data.
 
 For the owned synthetic browser gate, in separate terminals:
 

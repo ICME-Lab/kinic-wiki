@@ -12,6 +12,45 @@ fn walk(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+fn loopback_origin(origin: &str) -> bool {
+    let Some((scheme, authority)) = origin.split_once("://") else {
+        return false;
+    };
+    let default_port = match scheme {
+        "http" => 80,
+        "https" => 443,
+        _ => return false,
+    };
+    let (host, port) = if let Some(port) = authority.strip_prefix("[::1]") {
+        ("[::1]", (!port.is_empty()).then_some(port))
+    } else if let Some((host, _)) = authority.split_once(':') {
+        (host, Some(&authority[host.len()..]))
+    } else {
+        (authority, None)
+    };
+    if !matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+        && !(host.ends_with(".localhost")
+            && host.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            }))
+    {
+        return false;
+    }
+    port.is_none_or(|port| {
+        port.strip_prefix(':').is_some_and(|digits| {
+            digits
+                .parse::<u16>()
+                .is_ok_and(|n| n != 0 && n != default_port && n.to_string() == digits)
+        })
+    })
+}
+
 fn main() {
     let root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../vaultbrowser/dist");
@@ -19,6 +58,16 @@ fn main() {
     println!("cargo:rerun-if-env-changed=VAULT_LOCAL_ORIGIN");
     println!("cargo:rerun-if-env-changed=VAULT_LOCAL_HOST");
     println!("cargo:rerun-if-env-changed=VAULT_LOCAL_II");
+    println!("cargo:rerun-if-env-changed=VAULT_LOCAL_WIKI_ORIGIN");
+    if let Some(wiki) = env::var_os("VAULT_LOCAL_WIKI_ORIGIN") {
+        let vault = env::var("VAULT_LOCAL_ORIGIN")
+            .expect("A local Wiki origin requires a local Vault origin");
+        assert!(
+            wiki.to_str()
+                .is_some_and(|origin| origin != vault && loopback_origin(origin)),
+            "VAULT_LOCAL_WIKI_ORIGIN must be a distinct canonical loopback HTTP(S) origin"
+        );
+    }
     let mut files = vec![];
     let mut source = String::from("pub const ASSETS:&[(&str,&str,&[u8])]=&[\n");
     if env::var_os("CARGO_FEATURE_EMBEDDED_ASSETS").is_some() {
@@ -59,9 +108,14 @@ fn main() {
     }
     source.push_str("];\n");
     if env::var_os("CARGO_FEATURE_EMBEDDED_ASSETS").is_some() {
-        let local = ["VAULT_LOCAL_ORIGIN", "VAULT_LOCAL_HOST", "VAULT_LOCAL_II"]
-            .iter()
-            .any(|key| env::var_os(key).is_some());
+        let local = [
+            "VAULT_LOCAL_ORIGIN",
+            "VAULT_LOCAL_HOST",
+            "VAULT_LOCAL_II",
+            "VAULT_LOCAL_WIKI_ORIGIN",
+        ]
+        .iter()
+        .any(|key| env::var_os(key).is_some());
         let synthetic = env::var_os("CARGO_FEATURE_SYNTHETIC_FUNDING_TEST_ONLY").is_some();
         if !local && !synthetic {
             for key in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
