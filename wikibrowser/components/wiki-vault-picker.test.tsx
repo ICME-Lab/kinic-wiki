@@ -3,7 +3,10 @@ import { AnonymousIdentity } from "@icp-sdk/core/agent";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MarkdownEditDocument } from "@/components/markdown-edit-document";
-import type { WikiNode } from "@/lib/types";
+import { writeNodeAuthenticated } from "@/lib/vfs-client";
+import type { WikiNode, WriteNodeResult } from "@/lib/types";
+
+vi.mock("@/lib/vfs-client", () => ({ writeNodeAuthenticated: vi.fn() }));
 
 const origin = "https://vault.kinic.xyz";
 const ready = { type: "kinic-vault-picker-ready" };
@@ -18,11 +21,21 @@ const node: WikiNode = {
   createdAt: "0", updatedAt: "0", metadataJson: "{}"
 };
 
-function editor(current = node, databaseId = "db_test") {
+function editor(current = node, databaseId = "db_test", refresh = async () => current) {
   return <MarkdownEditDocument
     canisterId="test" databaseId={databaseId} node={current} isLargeContent={false}
-    contentBytes={current.content.length} writeIdentity={new AnonymousIdentity()} onNodeSaved={async () => current}
+    contentBytes={current.content.length} writeIdentity={new AnonymousIdentity()} onNodeSaved={refresh}
   />;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((fulfilled, failed) => {
+    resolve = fulfilled;
+    reject = failed;
+  });
+  return { promise, resolve, reject };
 }
 
 // A real Window is required for MessageEvent.source. Stub only the popup boundary.
@@ -42,6 +55,7 @@ function send(source: Window, data: unknown, from = origin) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.mocked(writeNodeAuthenticated).mockReset();
   document.querySelectorAll("iframe").forEach((frame) => frame.remove());
 });
 
@@ -121,6 +135,80 @@ describe("Wiki editor Vault picker", () => {
     send(pending.popup, selection);
     expect(pending.close).toHaveBeenCalledTimes(1);
     expect(container.querySelector(".cm-content")?.textContent).toBe("Different database.");
+  });
+
+  it.each(["success", "failure"] as const)("fences the draft and picker until refresh settles with %s", async (outcome) => {
+    const initial = createPopup();
+    const pending = createPopup();
+    const next = createPopup();
+    const open = vi.spyOn(window, "open")
+      .mockReturnValueOnce(initial.popup).mockReturnValueOnce(pending.popup).mockReturnValueOnce(next.popup);
+    const saved = { ...node, etag: "new-etag", content: `${node.content}\n\n${link}\n` };
+    vi.mocked(writeNodeAuthenticated).mockResolvedValue({ node: saved, created: false });
+    const refresh = deferred<WikiNode>();
+    const refreshNode = vi.fn(() => refresh.promise);
+    render(editor(node, "db_test", refreshNode));
+
+    const insert = screen.getByRole<HTMLButtonElement>("button", { name: "Insert private document" });
+    fireEvent.click(insert);
+    send(initial.popup, ready);
+    send(initial.popup, selection);
+    fireEvent.click(insert);
+    send(pending.popup, ready);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+
+    expect(refreshNode).toHaveBeenCalledOnce();
+    expect(pending.close).toHaveBeenCalledOnce();
+    expect(insert.disabled).toBe(true);
+    expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("false");
+    fireEvent.click(insert);
+    send(pending.popup, selection);
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("textbox").querySelectorAll(".cm-line")).toHaveLength(4);
+
+    await act(async () => {
+      if (outcome === "success") refresh.resolve(saved);
+      else refresh.reject(new Error("lookup unavailable"));
+    });
+    if (outcome === "failure") {
+      expect(screen.getByText("Saved, but refresh failed: lookup unavailable")).toBeDefined();
+    }
+    expect(insert.disabled).toBe(false);
+    expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("true");
+    fireEvent.click(insert);
+    send(next.popup, ready);
+    send(next.popup, selection);
+    expect(screen.getByRole("textbox").textContent?.split(link)).toHaveLength(3);
+  });
+
+  it.each(["write", "refresh"] as const)("preserves a new article's dirty draft when the old article's %s completes", async (stage) => {
+    const initial = createPopup();
+    const next = createPopup();
+    vi.spyOn(window, "open").mockReturnValueOnce(initial.popup).mockReturnValueOnce(next.popup);
+    const saved = { ...node, etag: "new-etag", content: `${node.content}\n\n${link}\n` };
+    const write = deferred<WriteNodeResult>();
+    const refresh = deferred<WikiNode>();
+    vi.mocked(writeNodeAuthenticated).mockReturnValue(stage === "write" ? write.promise : Promise.resolve({ node: saved, created: false }));
+    const refreshNode = vi.fn(() => stage === "refresh" ? refresh.promise : Promise.resolve(saved));
+    const { rerender } = render(editor(node, "db_test", refreshNode));
+
+    fireEvent.click(screen.getByRole("button", { name: "Insert private document" }));
+    send(initial.popup, ready);
+    send(initial.popup, selection);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+
+    rerender(editor({ ...node, content: "Different database." }, "db_other"));
+    fireEvent.click(screen.getByRole("button", { name: "Insert private document" }));
+    send(next.popup, ready);
+    send(next.popup, selection);
+    expect(screen.getByRole("textbox").textContent).toBe(`Different database.${link}`);
+
+    await act(async () => {
+      if (stage === "write") write.resolve({ node: saved, created: false });
+      else refresh.resolve(saved);
+    });
+    expect(screen.getByRole("textbox").textContent).toBe(`Different database.${link}`);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save" }).disabled).toBe(false);
   });
 
   it("closes the owned popup on editor unmount", () => {
