@@ -91,6 +91,34 @@ test("saved fixture article round-trips the editor payload into the actual previ
   await expect(page.locator("iframe")).toHaveAttribute("src", embed);
 });
 
+test("a reference inserted into a draft with an unclosed fence renders outside the code", async ({ page }) => {
+  const embedRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url() === embed) embedRequests.push(request.url());
+  });
+  await page.goto("/?saved");
+  const draft = page.getByRole("textbox");
+  await draft.press("End");
+  await page.keyboard.insertText("\n```txt\nKeep this as code.");
+  await expect(draft.locator(".cm-line").last()).toHaveText("Keep this as code.");
+
+  const [picker] = await Promise.all([
+    page.waitForEvent("popup"), page.getByRole("button", { name: "Insert private document" }).click()
+  ]);
+  await picker.getByRole("button", { name: "Select fixture document" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Open private document" })).toHaveCount(1);
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open private document" })).toHaveCount(1);
+  await expect(page.locator("pre code")).toHaveJSProperty("textContent", "Keep this as code.\n");
+  await expect(draft.locator(".cm-line").nth(2)).toHaveText(reference);
+  await expect(draft.locator(".cm-line").nth(4)).toHaveText("```txt");
+  await expect(draft.locator(".cm-line").last()).toHaveText("Keep this as code.");
+  await expect(page.locator("iframe")).toHaveCount(0);
+  expect(embedRequests).toEqual([]);
+});
+
 test("a reloaded picker reconnects and inserts into the existing draft", async ({ page }) => {
   await page.goto("/");
   const [picker] = await Promise.all([

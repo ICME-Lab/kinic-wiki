@@ -107,7 +107,7 @@ jobs:
           set_output cli_docs '^(docs/CLI\.md|\.github/workflows/ci\.yml)$'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(Cargo\.lock$|vendor/ic-agent/|crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
-          set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^packages/credit-bridge-candid/|^packages/ui/|^wikibrowser/)"
+          set_output wikibrowser "($js_workspace|^packages/deepseek-client/|^packages/vfs-candid/|^packages/credit-bridge-candid/|^packages/payments/|^packages/ui/|^wikibrowser/)"
           set_output extension "($js_workspace|^extensions/wiki-clipper/)"
           set_output wiki_generator "($js_workspace|^packages/deepseek-client/|^workers/wiki-generator/)"
           set_output wiki_mcp "($js_workspace|^packages/vfs-client-core/api-guidance\.json$|^workers/wiki-mcp/)"

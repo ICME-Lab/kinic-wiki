@@ -1734,7 +1734,7 @@ it("shows owner credit guidance after shared key admission fails without offerin
   expect(derive).toHaveBeenCalledOnce();
   expect(screen.getByRole("button", { name: "Retry opening Vault" })).toHaveProperty("disabled", false);
   expect(screen.queryByText("Add balance to create a Vault")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Get quote" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Review payment" })).toBeNull();
 });
 
 it("requires a fresh explicit credential reveal when a Viewer opens an older revision", async () => {

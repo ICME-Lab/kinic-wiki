@@ -10,10 +10,14 @@ An owner adds a teammate using their Vault Internet Identity principal. The owne
 
 ## Share a Vault in the workspace
 
-1. The teammate signs in to Vault and uses **Copy Vault principal**. Internet Identity derives a separate principal for Wiki.
-2. The owner opens the Vault, expands **Vault members**, enters the teammate’s Vault principal, selects Viewer or Editor, and chooses **Add member**. The grant covers every document and its retained history in this Vault.
+1. The teammate signs in to Vault, opens **Account settings**, expands **Account & storage**, and copies the text under **Vault principal**. Internet Identity derives a separate principal for Wiki.
+2. On the Vault card, the owner opens **Actions for [Vault name]** and chooses **Manage members**. This opens the member controls without retrieving the encryption key. The owner enters the teammate’s Vault principal, selects Viewer or Editor, and chooses **Add member**. The grant covers every document and its retained history in this Vault.
 3. The teammate refreshes their Vault list. In the Wiki editor, **Insert private document** opens the Vault picker. Saving the article shares its opaque reference with Wiki readers. Each reader still needs a Vault membership to open the document.
 4. The owner can change the role or choose **Remove member**. The canister checks each future shared call immediately. Open private views recheck on focus, when visibility resumes and every 30 seconds while visible. A view clears once it observes denied access. Revocation leaves any previously copied plaintext, files or keys in the recipient’s possession and does not rotate the encryption key.
+
+The Vault’s recorded owner funds shared calls, including new key retrievals. If opening a shared Vault reports insufficient prepaid balance, contact the owner.
+
+Vault clears the active view after 30 minutes of inactivity in the workspace, picker and document embed. Closing a Vault, signing out or timing out retains any saved nonextractable key handles in the browser. On reopen, Vault authenticates the caller and checks current access before using a saved handle. To remove your saved handles, go to **Account settings → Maintenance → Delete saved keys from this browser**. This closes open Vaults in that browser, keeps the documents, and may require a paid key retrieval when you reopen a Vault.
 
 ## Wire contract
 
@@ -29,4 +33,6 @@ Revocation prevents future shared reads, writes, receipt replays and key retriev
 
 ## Storage and upgrades
 
-Schema 11 validates and upgrades existing schema 8, 9 and 10 databases in place. It indexes the server-issued Vault ID, retains the owner and original headers, and adds grants and reverse lookup by member. Each grant consumes 512 bytes of logical capacity for the record and indexes plus a 512-byte cleanup credit. Vault deletion removes up to 100 member rows in one batch. A pending shared upload carries one small handle within its existing reservation. Committing or cancelling moves its caller and original wire ID into the terminal receipt and removes the live handle in the same transaction. The receipt's full byte length counts toward capacity, and its provenance expires with the receipt. The shared API requires that binding for every existing upload, including begin retries. Legacy owner-created uploads remain on the owner API.
+Schema 13 validates and upgrades the supported owner schemas 8, 9 and 10, grant-bearing schema 10, team schema 11, and subsidy schemas 11 and 12 in place. Migration preserves owner headers, encrypted documents, grants, upload provenance, accounting, subsidy consumption and mutation receipts. A rollback requires a separately validated schema-13-compatible build. See [Vault operations](operations.md) for upgrade order and rollback requirements.
+
+Each grant consumes 512 bytes of logical capacity for the record and indexes plus a 512-byte cleanup credit. Vault deletion removes up to 100 member rows in one batch. A pending shared upload carries one small handle within its existing reservation. Committing or cancelling moves its caller and original wire ID into the terminal receipt and removes the live handle in the same transaction. The receipt's full byte length counts toward capacity, and its provenance expires with the receipt. The shared API requires that binding for every existing upload, including begin retries. Legacy owner-created uploads remain on the owner API.
