@@ -5,9 +5,11 @@ import KinicVaultCore
 import Security
 
 public enum VaultNativeError: Error, LocalizedError {
-    case invalidResponse, rejected, accessLost, changedDuringSync, snapshotTooLarge
+    case invalidResponse, rejected, accessLost, changedDuringSync, snapshotTooLarge, providerDisabled, cleanupFailed
     public var errorDescription: String? {
         switch self {
+        case .providerDisabled: "Enable Kinic Vault in iOS AutoFill settings, then return and sync again."
+        case .cleanupFailed: "Offline Vault cleanup is incomplete. Try disabling again."
         case .invalidResponse: "The Vault response was invalid."
         case .accessLost: "Access to this Vault was lost. Its offline cache has been removed."
         case .rejected: "The Vault rejected this request. Check access and local operating credit."
@@ -63,7 +65,9 @@ public struct VaultNativeHeader: Sendable, Identifiable, Equatable {
         keyName = try VaultWire.field("key_name", value)
         name = try VaultWire.field("name", value, as: Optional<String>.self) ?? "Unnamed Vault"
         sequence = try VaultWire.field("sequence", value)
-        guard case .variant(let state) = try VaultWire.rawField("state", value), state.tag == Candid.fieldID("Active"), id.count == 16, nonce.count == 32, publicKey.count == 96, !keyName.isEmpty, keyName.utf8.count <= 64 else { throw VaultNativeError.invalidResponse }
+        guard case .variant(let state) = try VaultWire.rawField("state", value) else { throw VaultNativeError.invalidResponse }
+        if ["Deleting", "Pending"].contains(where: { state.tag == Candid.fieldID($0) }) { throw VaultNativeError.accessLost }
+        guard state.tag == Candid.fieldID("Active"), id.count == 16, nonce.count == 32, publicKey.count == 96, !keyName.isEmpty, keyName.utf8.count <= 64 else { throw VaultNativeError.invalidResponse }
     }
     public func context(canister: String, owner: String) throws -> VaultContext {
         try VaultContext(canister: canister, owner: owner, vault: id, nonce: nonce, keyName: keyName)

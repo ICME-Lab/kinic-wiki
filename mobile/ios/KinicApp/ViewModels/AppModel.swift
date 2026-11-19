@@ -365,7 +365,9 @@ final class AppModel {
     private var pendingWorkItemSelection: PendingWorkItemSelection?
 
     let assistantConversation: AssistantConversationModel
-    @ObservationIgnored lazy var vaultAutoFill = VaultAutoFillSettingsModel(configuration: configuration)
+    @ObservationIgnored lazy var vaultAutoFill = VaultAutoFillSettingsModel(configuration: configuration, onCleanupFailure: { [weak self] message in
+        self?.statusMessage = message
+    })
     let configuration: AppConfiguration
     var selectedDatabaseId: String
     var selectedBrowseDatabaseId: String {

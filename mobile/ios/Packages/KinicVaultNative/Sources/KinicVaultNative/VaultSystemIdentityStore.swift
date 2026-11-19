@@ -4,10 +4,11 @@ import KinicVaultCore
 
 @MainActor public struct VaultSystemIdentityStore: VaultIdentityRegistering {
     public init() {}
+    public var isEnabled: Bool { get async { await ASCredentialIdentityStore.shared.state().isEnabled } }
     public func replaceAll(_ candidates: [VaultAutoFillCandidate]) async throws {
         let store = ASCredentialIdentityStore.shared
-        let state = await store.state()
-        guard state.isEnabled else { return }
+        if candidates.isEmpty { try await store.removeAllCredentialIdentities(); return }
+        guard await isEnabled else { throw VaultNativeError.providerDisabled }
         var identities: [any ASCredentialIdentity] = []
         for candidate in candidates {
             for domain in candidate.domains {

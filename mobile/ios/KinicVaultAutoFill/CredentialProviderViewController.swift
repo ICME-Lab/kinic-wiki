@@ -80,7 +80,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             guard let self else { return }
             embed(
                 AutoFillRootView(
-                    state: .configurationNeeded,
+                    state: .configuration,
                     onSelect: { _ in },
                     onCancel: { [weak self] in
                         self?.extensionContext.completeExtensionConfigurationRequest()
@@ -226,6 +226,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 }
 
 private enum AutoFillViewState {
+    case configuration
     case configurationNeeded
     case ready(matched: [VaultAutoFillCandidate], all: [VaultAutoFillCandidate])
     case error(String)
@@ -237,10 +238,17 @@ private struct AutoFillRootView: View {
     let onCancel: () -> Void
     @State private var query = ""
 
+    private var cancelTitle: String {
+        if case .configuration = state { return "Done" }
+        return "Cancel"
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 switch state {
+                case .configuration:
+                    ContentUnavailableView("Enable Kinic Vault AutoFill", systemImage: "lock.shield", description: Text("Finish enabling Kinic Vault, then return to Kinic Settings to sign in and sync your Vault."))
                 case .configurationNeeded:
                     ContentUnavailableView(
                         "Open Kinic to Sync Vault",
@@ -261,7 +269,7 @@ private struct AutoFillRootView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button(cancelTitle, action: onCancel)
                 }
             }
         }

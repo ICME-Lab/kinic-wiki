@@ -14,18 +14,25 @@ final class VaultAutoFillSettingsModel {
     private(set) var vaults: [VaultNativeHeader] = []
     private(set) var status = ""
     private(set) var selectedVault: Data?
+    var canConnect: Bool { native != nil && authenticator != nil && cache != nil }
     @ObservationIgnored private var session: ICAuthSession?
     @ObservationIgnored private var native: VaultNativeClient?
     @ObservationIgnored private var authenticator: ICInternetIdentityAuthenticator?
     @ObservationIgnored private var cache: VaultAutoFillSyncController?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var vaultCanister: String?
+    @ObservationIgnored private let onCleanupFailure: (String) -> Void
 
-    init(configuration: AppConfiguration) {
+    init(configuration: AppConfiguration, onCleanupFailure: @escaping (String) -> Void = { _ in }) {
+        self.onCleanupFailure = onCleanupFailure
         if let group = configuration.appGroupId,
            let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
            let accessGroup = configuration.keychainAccessGroup {
             let store = VaultAutoFillSnapshotStore(fileURL: url.appendingPathComponent("VaultAutoFill/snapshot.v1.json"))
             cache = VaultAutoFillSyncController(snapshotStore: store, keys: VaultSystemRootKeys(accessGroup: accessGroup), identities: VaultSystemIdentityStore())
+            // Revocation remains available on a normal cold launch, without any
+            // development configuration or an active authentication session.
+            available = true
         }
 #if DEBUG
         guard let path = ProcessInfo.processInfo.environment["KINIC_LOCAL_VAULT_CONFIG"] else { return }
@@ -35,7 +42,7 @@ final class VaultAutoFillSettingsModel {
             vaultCanister = local.client.canisterId
             native = VaultNativeClient(configuration: local.client, local: true)
             authenticator = try ICInternetIdentityAuthenticator(configuration: local.client, callbackURL: local.callbackURL)
-            status = "Sign in to your local Vault to sync offline AutoFill."
+            status = "Enable Kinic Vault in iOS AutoFill settings, then sign in and sync here."
         } catch { status = "The local Vault configuration is invalid." }
 #endif
     }
@@ -48,6 +55,8 @@ final class VaultAutoFillSettingsModel {
         session = nil; principal = nil; vaults = []; selectedVault = nil
         defer { if generation == ticket { busy = false } }
         do {
+            await native.forgetKeys()
+            guard generation == ticket else { return }
             try await cache.disable()
             guard generation == ticket else { return }
             let identity = try await authenticator.authenticate(prefersEphemeralWebBrowserSession: true)
@@ -55,57 +64,75 @@ final class VaultAutoFillSettingsModel {
             let list = try await native.ownedVaults(identity: identity)
             guard generation == ticket else { return }
             session = identity; principal = identity.principal; vaults = list; selectedVault = list.first?.id
-            status = list.isEmpty ? "No active owned Vaults were found." : "Select a Vault and enable offline AutoFill."
+            status = list.isEmpty ? "No active owned Vaults were found." : "Enable Kinic Vault in iOS AutoFill settings, then select a Vault and sync."
         } catch {
             if generation == ticket { status = error.localizedDescription }
         }
     }
 
     func synchronize() async {
-        guard !busy, let identity = session, let native, let cache,
+        guard !busy, let identity = session, let native, let cache, let canister = vaultCanister,
               let selected = vaults.first(where: { $0.id == selectedVault }) else { return }
         let ticket = generation
         busy = true
         defer { if generation == ticket { busy = false } }
         do {
-            let context = try selected.context(canister: nativeCanister(), owner: identity.principal)
+            let context = try selected.context(canister: canister, owner: identity.principal)
             try await cache.synchronize(context: context) {
                 let payload = try await native.fetchSnapshot(header: selected, identity: identity)
                 guard self.generation == ticket else { throw CancellationError() }
                 return payload
             }
             guard generation == ticket else { return }
-            status = "Offline AutoFill is ready. Enable Kinic Vault in iOS AutoFill settings."
+            status = "Offline AutoFill and QuickType are ready."
         } catch {
             guard generation == ticket else { return }
-            if case VaultNativeError.accessLost = error { _ = try? cache.invalidate() }
-            if case VaultNativeError.changedDuringSync = error { _ = try? cache.invalidate() }
-            status = error.localizedDescription
+            if case VaultNativeError.accessLost = error {
+                vaults.removeAll { $0.id == selected.id }; selectedVault = nil
+                revokeMaterial(message: "Access to this Vault was lost. Its offline data has been removed.")
+            } else if case VaultNativeError.changedDuringSync = error {
+                revokeMaterial(message: "The Vault changed. Sync again to refresh it.", refreshList: true)
+            } else { status = error.localizedDescription }
         }
     }
 
-    // The session is sealed and bound to the configured canister, which is kept
-    // separately rather than inferred from a Wiki principal or a returned header.
-    @ObservationIgnored private var vaultCanister: String?
-    private func nativeCanister() throws -> String {
-        guard let vaultCanister else { throw VaultCryptoError.invalidContext }
-        return vaultCanister
+    private func revokeMaterial(message: String, refreshList: Bool = false) {
+        generation += 1
+        let ticket = generation
+        busy = true
+        status = "Removing offline Vault data…"
+        let cleanup = cache?.invalidate() // fence fetches and try every local channel synchronously
+        let client = native
+        Task {
+            await client?.forgetKeys()
+            do {
+                try await cleanup?.value
+                guard generation == ticket else { return }
+                if refreshList, let client, let identity = session {
+                    let previous = selectedVault
+                    let list = try await client.ownedVaults(identity: identity)
+                    guard generation == ticket else { return }
+                    vaults = list
+                    selectedVault = list.first(where: { $0.id == previous })?.id
+                }
+                status = message
+            } catch {
+                guard generation == ticket else { return }
+                status = "Offline Vault cleanup is incomplete. Try disabling again."
+                onCleanupFailure(status)
+            }
+            if generation == ticket { busy = false }
+        }
     }
 
     func selectVault(_ id: Data?) {
-        guard !busy, selectedVault != id else { return }
-        generation += 1
+        guard !busy, selectedVault != id, id == nil || vaults.contains(where: { $0.id == id }) else { return }
         selectedVault = id
-        do { _ = try cache?.invalidate(); status = "Sync this Vault to enable offline AutoFill." }
-        catch { status = "Could not clear the previous Vault cache. Disable AutoFill and try again." }
+        revokeMaterial(message: "Sync this Vault to enable offline AutoFill.")
     }
 
     func signOut() {
-        generation += 1
-        busy = false; session = nil; principal = nil; vaults = []; selectedVault = nil
-        let client = native
-        Task { await client?.forgetKeys() }
-        do { _ = try cache?.invalidate(); status = "Offline AutoFill disabled on this device." }
-        catch { status = "Could not finish clearing the offline Vault cache. Try disabling again." }
+        session = nil; principal = nil; vaults = []; selectedVault = nil
+        revokeMaterial(message: "Offline AutoFill disabled on this device.")
     }
 }

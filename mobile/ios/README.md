@@ -223,10 +223,14 @@ its HTTPS origin. Ensure the HTTPS Web Vault configuration advertises the same
 derivation origin as native; an HTTP development origin identifies a different
 II user. Changing the local transport scheme does not migrate that user's Vault.
 
-In Kinic Settings, open **Local Vault AutoFill**, sign in separately, choose an
-owned Vault, and sync. Enable Kinic Vault in iOS AutoFill settings. Sync explicitly
-replaces the selected offline Vault. Disable/sign-out clears the snapshot and
-keys before returning and then removes QuickType identities. Cached credentials
+Enable Kinic Vault in iOS AutoFill settings first. In Kinic Settings, open
+**Local Vault AutoFill**, sign in separately, choose an owned Vault, and sync.
+If sync reports that the provider is disabled, enable it and sync again; the app
+does not report QuickType readiness until publication succeeds. Sync explicitly
+replaces the selected offline Vault. Disable/sign-out immediately fences pending work and attempts to remove both
+the snapshot and keys, then removes QuickType identities. Cleanup failures are
+reported for retry; the disable action remains available without the Debug
+connection file on later launches. Cached credentials
 remain usable offline until disabled; remote revocation cannot be observed while
 offline. A fresh certified access denial removes the cache. The cache is bounded
 to 1,000 credentials and 8 MiB of raw manifest/chunk data; an excess fails visibly

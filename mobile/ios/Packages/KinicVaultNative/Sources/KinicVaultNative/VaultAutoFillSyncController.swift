@@ -8,6 +8,7 @@ import KinicVaultCore
     func clear() throws
 }
 @MainActor public protocol VaultIdentityRegistering {
+    var isEnabled: Bool { get async }
     func replaceAll(_ candidates: [VaultAutoFillCandidate]) async throws
 }
 public struct VaultAutoFillSyncPayload: Sendable {
@@ -35,6 +36,10 @@ public struct VaultAutoFillSyncPayload: Sendable {
         let update = Task { @MainActor in
             await previous?.value
             guard self.epoch == ticket else { throw CancellationError() }
+            if !candidates.isEmpty {
+                guard await self.identities.isEnabled else { throw VaultNativeError.providerDisabled }
+                guard self.epoch == ticket else { throw CancellationError() }
+            }
             try await self.identities.replaceAll(candidates)
         }
         identityTail = Task { _ = try? await update.value }
@@ -43,17 +48,23 @@ public struct VaultAutoFillSyncPayload: Sendable {
     }
 
     /// Synchronously fence fetches and remove keys/ciphertext before a logout returns.
-    public func invalidate() throws -> Task<Void, Error> {
+    public func invalidate() -> Task<Void, Error> {
         epoch += 1
         let ticket = epoch
-        try snapshotStore.clear()
-        try keys.clear()
-        return Task { @MainActor in try await self.publish([], ticket: ticket) }
+        var failed = false
+        do { try snapshotStore.clear() } catch { failed = true }
+        do { try keys.clear() } catch { failed = true }
+        let localCleanupFailed = failed
+        return Task { @MainActor in
+            var failed = localCleanupFailed
+            do { try await self.publish([], ticket: ticket) }
+            catch is CancellationError { throw CancellationError() }
+            catch { failed = true }
+            if failed { throw VaultNativeError.cleanupFailed }
+        }
     }
 
-    public func disable() async throws {
-        try await invalidate().value
-    }
+    public func disable() async throws { try await invalidate().value }
 
     public func synchronize(context: VaultContext, load: @MainActor () async throws -> VaultAutoFillSyncPayload) async throws {
         epoch += 1
