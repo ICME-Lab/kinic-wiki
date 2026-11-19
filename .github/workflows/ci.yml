@@ -696,7 +696,7 @@ jobs:
       - name: Test boundary graphs and CI selection
         run: node --test scripts/vault-boundary-graph.test.mjs
       - name: Test backend asset and distribution guards
-        run: node --test scripts/vault-build.test.mjs scripts/vault-release.test.mjs scripts/vault-ci-jobs.test.mjs scripts/vault-browser-teardown.test.mjs
+        run: node --test scripts/vault-build.test.mjs scripts/vault-release.test.mjs scripts/vault-ci-jobs.test.mjs scripts/vault-browser-teardown.test.mjs vaultbrowser/scripts/shared-payment-preflight.test.mjs
       - name: Contracts and origin boundary
         run: |
           node scripts/check-vault-boundary.mjs
@@ -767,7 +767,9 @@ jobs:
       - name: Actual ICRC ledger reconciliation acceptance
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
-        run: pnpm --dir pocketic-tests test:vault-funding-ledger
+        run: |
+          pnpm --dir pocketic-tests test:vault-funding-ledger
+          node --test pocketic-tests/integration/vault-wallet-funding.test.mjs
       - name: Actual Wiki credit bridge cycles and fault acceptance
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic

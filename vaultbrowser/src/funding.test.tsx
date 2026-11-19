@@ -9,7 +9,7 @@ import type { VaultClient } from "@kinic/vault-client";
 import type { Payment, PurchaseRequest } from "@kinic/vault-candid";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Funding } from "./funding";
-import { VaultFundingProvider } from "./funding/session";
+import { VaultFundingProvider, useVaultFundingSession } from "./funding/session";
 import { encodeVaultRecoveryContext, vaultFundingScopes } from "./funding/adapter";
 
 const identity = Ed25519KeyIdentity.generate(), owner = identity.getPrincipal();
@@ -329,6 +329,17 @@ it("restores an OISY preference without prompting for permission or history", as
   expect(wallet.getSnapshot().state).toBe("remembered");
 });
 
+it("waits for the active ledger before offering an OISY connection", async () => {
+  let finish!: () => void;
+  actor.get_funding_config.mockReturnValue(new Promise(resolve => {finish = () => resolve({Ok:[funding]});}));
+  mount();
+  fireEvent.click(screen.getByRole("radio", {name:"OISY"}));
+  const connect = await button("Connect OISY");
+  expect(connect.disabled).toBe(true);
+  await act(async () => finish());
+  await waitFor(() => expect(connect.disabled).toBe(false));
+});
+
 it("requires a restored Plug to grant scopes, keeps it connected through an II payment, and releases it on sign-out", async () => {
   const externalOwner = Principal.fromUint8Array(Uint8Array.of(33,1));
   const plug = {isConnected:vi.fn(async()=>true),requestConnect:vi.fn(async()=>true),
@@ -404,4 +415,17 @@ it("never checks a replacement journal while the original payment is displayed",
   expect(actor.pay_purchase).not.toHaveBeenCalled();
   expect(actor.reconcile_purchase).not.toHaveBeenCalled();
   expect(store.list(scope)[0].id).toBe("05".repeat(16));
+});
+
+it("opens the SDK local signer at the verified replica gateway", async () => {
+  // The pinned SDK accepts HTTP on bare localhost, including nondefault ports.
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  function Connect() {
+    const {session} = useVaultFundingSession();
+    return <button onClick={() => void session!.manager.connect("oisy", []).catch(() => {})}>Connect test signer</button>;
+  }
+  renderReact(<VaultFundingProvider config={config} identity={identity}><Connect/></VaultFundingProvider>);
+  fireEvent.click(screen.getByRole("button",{name:"Connect test signer"}));
+  await waitFor(()=>expect(open).toHaveBeenCalledWith(new URL("/sign",config.host).href,
+    "relyingPartyWindow",expect.any(String)));
 });

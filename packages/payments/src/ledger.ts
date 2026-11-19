@@ -1,3 +1,4 @@
+import { configuredLoopback } from "./network";
 import { Actor, AnonymousIdentity, HttpAgent } from "@icp-sdk/core/agent";
 import type { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
@@ -49,9 +50,7 @@ export async function readLedgerTerms({
   spender: string;
 }): Promise<LedgerTerms> {
   const agent = HttpAgent.createSync({ host, identity: new AnonymousIdentity() });
-  const hostname = new URL(host).hostname;
-  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1")
-    await agent.fetchRootKey();
+  if (configuredLoopback(host)) await agent.fetchRootKey();
   const actor = Actor.createActor<LedgerQueries>(ledgerQueries, {
     agent,
     canisterId: Principal.fromText(ledger),

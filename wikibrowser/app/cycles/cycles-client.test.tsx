@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { throwCanisterError } from "@/lib/vfs-client/actor";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
@@ -63,7 +64,7 @@ beforeEach(() => {
   mocks.approve.mockReset().mockImplementation(async () => { mocks.facts.balanceE8s -= 100000n; mocks.facts.allowanceE8s = 100100000n; return 1n; });
   mocks.purchase.mockReset().mockResolvedValue({ Ok: { block_index: 7n, amount_cycles: 234500000000n, balance_cycles: 234500000000n } });
   mocks.replace.mockReset();
-  mocks.session = { authClient: { getIdentity: () => identity }, principal: iiOwner, authReady: true, authLoading: false,
+  mocks.session = {refreshWalletBalance:vi.fn(), refreshIdentityLedgerBalanceFor:vi.fn(), authClient: { getIdentity: () => identity }, principal: iiOwner, authReady: true, authLoading: false,
     walletSession: manager, walletSnapshot: snapshot, walletPaymentReady: false,
     identityLedgerBalance: "100200000", walletBalance: "100200000", login: vi.fn(), connectWallet: vi.fn(), disconnectWallet: vi.fn(),
     setAuthControlsLocked: vi.fn(), setWalletControlsLocked: vi.fn() };
@@ -80,6 +81,15 @@ async function pay() {
   fireEvent.click(button);
 }
 it("reviews the exact amount plus two fees and requires a separate confirmation", async () => {
+  mocks.facts.balanceE8s = 200200000n;
+  mocks.session.identityLedgerBalance = mocks.facts.balanceE8s.toString();
+  mocks.session.refreshIdentityLedgerBalanceFor = vi.fn(async () => {
+    mocks.session.identityLedgerBalance = mocks.facts.balanceE8s.toString();
+  });
+  mocks.purchase.mockImplementationOnce(async () => {
+    mocks.facts.balanceE8s -= 100100000n;
+    return {Ok:{block_index:7n, amount_cycles:234500000000n, balance_cycles:234500000000n}};
+  });
   render(page());
   await review();
   expect(await screen.findByRole("button", { name: "Pay 1 KINIC" })).toBeTruthy();
@@ -90,6 +100,8 @@ it("reviews the exact amount plus two fees and requires a separate confirmation"
   expect(await screen.findByText("Payment complete")).toBeTruthy();
   expect(mocks.approve).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ amount: 100100000n, fee: [100000n] }), expect.anything());
   expect(mocks.purchase).toHaveBeenCalledWith({ database_id: "db-1", payment_amount_e8s: 100000000n, min_expected_cycles: 234500000000n });
+  expect(mocks.session.refreshIdentityLedgerBalanceFor).toHaveBeenCalledWith(identity, iiOwner);
+  expect(screen.getByText("Balance · 1 KINIC")).toBeTruthy();
   expect(mocks.replace).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "View database" }));
   expect(mocks.replace).toHaveBeenCalledWith(expect.stringContaining("database_id=db-1"));
@@ -133,16 +145,20 @@ it("allows a newly connected wallet to be selected without Internet Identity", a
   await review();
   await pay();
   expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(screen.getByText(/Balance after purchase.*234/)).toBeTruthy();
+  expect(screen.queryByRole("button", {name:"Refresh credit balance"})).toBeNull();
   expect(mocks.purchase).toHaveBeenCalledTimes(1);
 });
 it("funds a validated unlinked URL target using a wallet while signed in", async () => {
   connectPlug();
-  mocks.history.mockRejectedValue(new Error("principal has no access to database: other"));
-  mocks.pending.mockRejectedValue(new Error("principal cannot view pending cycle purchases: other"));
+  mocks.history.mockImplementation(async () => throwCanisterError("sqlite error 1: principal has no access to database: other"));
+  mocks.pending.mockImplementation(async () => throwCanisterError("sqlite error 1: principal cannot view pending cycle purchases: other"));
   render(page("other"));
   await review();
   await pay();
   expect(await screen.findByText("Payment complete")).toBeTruthy();
+  expect(screen.getByText(/Balance after purchase.*234/)).toBeTruthy();
+  expect(screen.queryByRole("button", {name:"Refresh credit balance"})).toBeNull();
   expect(mocks.purchase).toHaveBeenCalledWith(expect.objectContaining({ database_id: "other" }));
 });
 it("blocks new payment review for a known deleted target", async () => {

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createPaymentController } from "../src/controller";
-import { createRecoveryStore } from "../src/recovery-store";
+import { recoveryTargetKey, createRecoveryStore } from "../src/recovery-store";
 import { freezeTerms } from "../src/terms";
 import type { PaymentAdapter, PaymentCheck, PaymentScope, RecoveryRecord } from "../src/types";
 
@@ -19,6 +19,8 @@ function fixture() {
   const guard = { capture: () => generation, isCurrent: (token: unknown) => token === generation };
   const data = new Map<string, string>();
   const storage = {
+    get length() { return data.size; },
+    key: (index: number) => [...data.keys()][index] ?? null,
     getItem: (key: string) => data.get(key) ?? null,
     setItem: vi.fn((key: string, value: string) => { data.set(key, value); }),
     removeItem: vi.fn((key: string) => { data.delete(key); }),
@@ -315,13 +317,13 @@ it("a lost quote uses the adapter's preassigned recovery operation instead of pr
 
 it("an occupied target lock rejects a competing tab without queuing or invoking its adapter", async () => {
   const { make, adapter } = fixture();
-  let occupied = false;
+  const occupied = new Set<string>();
   const locks = {
-    request: async (_key: string, options: { ifAvailable: true }, run: (lock: object | null) => Promise<void>) => {
+    request: async (key: string, options: { ifAvailable: true }, run: (lock: object | null) => Promise<void>) => {
       expect(options.ifAvailable).toBe(true);
-      if (occupied) return run(null);
-      occupied = true;
-      try { await run({}); } finally { occupied = false; }
+      if (occupied.has(key)) return run(null);
+      occupied.add(key);
+      try { await run({}); } finally { occupied.delete(key); }
     },
   };
   const first = make(locks);
@@ -664,4 +666,36 @@ it.each(["cleanup","balance"] as const)("recovers combined receipt cleanup and b
   expect(adapter.submit).toHaveBeenCalledOnce();
   expect(adapter.check).not.toHaveBeenCalled();
   controller.destroy();
+});
+
+
+it.each(["paid", "expired"] as const)("recovers an exact legacy %s journal while another ledger holds the beneficiary", async outcome => {
+  const f = fixture();
+  const stage = outcome === "paid" ? "purchase-dispatched" : "quote-dispatched";
+  const first = {...record, stage};
+  const otherScope = {...scope, ledger:"2vxsx-fae"};
+  const other = {...record, scope:otherScope, id:"p2"};
+  f.data.set(recoveryTargetKey(scope), JSON.stringify(first));
+  f.data.set(recoveryTargetKey(otherScope), JSON.stringify(other));
+  expect(f.store.hasTargetConflict(scope)).toBe(true);
+  expect(f.store.hasTargetConflict(otherScope)).toBe(true);
+  f.adapter.check.mockResolvedValue(outcome === "paid" ? paid : {kind:"unsubmitted", expired:true});
+  const c = f.make();
+  await c.prepare(30n);
+  await c.pay(f.terms.termsKey);
+  expect(f.adapter.prepare).not.toHaveBeenCalled();
+  expect(f.adapter.approve).not.toHaveBeenCalled();
+  expect(f.adapter.submit).not.toHaveBeenCalled();
+  await c.check();
+  expect(f.adapter.check).toHaveBeenCalledWith(first);
+  if (outcome === "expired") {
+    expect(c.getState().canCancelUnsubmitted).toBe(true);
+    await c.cancelUnsubmitted();
+    expect(f.adapter.cancel).toHaveBeenCalledWith(f.terms);
+  } else expect(c.getState()).toMatchObject({phase:"complete", receipt:paid.receipt});
+  expect(f.store.list(scope)).toEqual([]);
+  expect(f.store.list(otherScope)).toEqual([other]);
+  expect(f.adapter.approve).not.toHaveBeenCalled();
+  expect(f.adapter.submit).not.toHaveBeenCalled();
+  c.destroy();
 });

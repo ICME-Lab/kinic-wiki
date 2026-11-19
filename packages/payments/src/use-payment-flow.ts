@@ -8,6 +8,8 @@ import type { PaymentAdapter } from "./types";
 export function browserRecoveryStore() {
   // Access to localStorage itself can throw in browsers with storage disabled.
   return createRecoveryStore({
+    get length() { return window.localStorage.length; },
+    key: index => window.localStorage.key(index),
     getItem: key => window.localStorage.getItem(key),
     setItem: (key, value) => window.localStorage.setItem(key, value),
     removeItem: key => window.localStorage.removeItem(key),
@@ -88,6 +90,7 @@ export function paymentPresentation(state: PaymentControllerState, approvalPaid:
   let message = state.error && formatPaymentFailure(state.error, state.phase === "unresolved" ? "unresolved" : "failed");
   if (state.receipt) {
     message = `Credited ${creditLabel(state.receipt.creditedCycles)}. Reference ${state.receipt.reference}.`;
+    if (state.receipt.balanceAfterCycles !== undefined) message += ` Balance after purchase: ${creditLabel(state.receipt.balanceAfterCycles)}.`;
     if (state.balance !== undefined) message += ` Current balance: ${creditLabel(state.balance)}.`;
     if (state.error && state.error.stage !== "refreshing") message += " " + formatPaymentFailure(state.error);
     if (state.cleanupPending && state.error?.stage !== "complete") message += " Local payment record cleanup is pending.";
@@ -99,12 +102,13 @@ export function paymentPresentation(state: PaymentControllerState, approvalPaid:
 
 export type SourceId = "ii" | "oisy" | "plug";
 export function useFundingProvider(preferenceKey: string, connected?: SourceId) {
-  const [choice, setChoice] = useState<SourceId | null>(() => {
+  const [choice, setChoice] = useState<SourceId | null>(null);
+  useLayoutEffect(() => {
     try {
       const saved = localStorage.getItem(preferenceKey);
-      return saved === "ii" || saved === "oisy" || saved === "plug" ? saved : null;
-    } catch { return null; }
-  });
+      setChoice(saved === "ii" || saved === "oisy" || saved === "plug" ? saved : null);
+    } catch { /* Keep the in-memory selection when storage is unavailable. */ }
+  }, [preferenceKey]);
   const select = (id: string) => {
     if (id !== "ii" && id !== "oisy" && id !== "plug") return;
     setChoice(id);

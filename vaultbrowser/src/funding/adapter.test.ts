@@ -20,6 +20,7 @@ const amount = 100_000_000n, fee = 10n, now = 1_800_000_000_000_000_000n;
 function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
   const values = new Map<string, string>();
   const store = createRecoveryStore({
+    get length() {return values.size;}, key: (i: number) => [...values.keys()][i] ?? null,
     getItem: key => values.get(key) ?? null,
     setItem: (key, value) => { values.set(key, value); }, removeItem: key => { values.delete(key); },
   });
@@ -50,7 +51,8 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
         case "list_payments": reply = state.payment?.wallet.toText() === owner.toText() ? [state.payment] : []; break;
         case "quote_purchase": {
           const req = arg as unknown as PurchaseRequest;
-          const record = JSON.parse([...values.values()][0]);
+          const record = [...values.values()].map(value => JSON.parse(value))
+            .find(record => record.id === Buffer.from(req.operation).toString("hex"));
           expect(record.stage).toBe("quote-dispatched");
           expect(record.id).toBe(Buffer.from(req.operation).toString("hex"));
           if (state.quoteError) {
@@ -103,7 +105,7 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
   const identity = { getPrincipal: () => state.owner };
   const ownerClient = {
     identity, canister: config.canister, session: {capture: () => 7},
-    actor: {account_balance: vi.fn(async () => ({ Ok: 351n }))},
+    actor: {get_funding_config: vi.fn(async (): Promise<{Ok: [] | [FundingConfig]}> => ({Ok:[fundingConfig]})), account_balance: vi.fn(async () => ({ Ok: 351n }))},
   };
   const options = {
     config, fundingConfig, source: provider, beneficiaryIdentity: identity, walletSession, ownerClient, store,
@@ -139,6 +141,54 @@ it.each(["oisy", "plug"] as const)("external_payer_credits_captured_vault_owner 
   expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(1);
   expect(f.ownerClient.actor.account_balance).toHaveBeenCalledTimes(1);
   c.destroy();
+});
+
+it("requires the exact fresh approval even with an older nonexpiring surplus grant", async () => {
+  const f = fixture(), c = f.control();
+  f.state.allowance = 11n * amount;
+  await c.prepare(amount);
+  const p = c.getState().summary!;
+  expect(p.approvalRequired).toBe(true);
+  expect(p.approvalFeeE8s).toBe(fee);
+  await c.pay(p.termsKey);
+  expect(f.approvals).toHaveLength(1);
+  expect(f.approvals[0]).toMatchObject({amount: amount + fee, expected_allowance: [11n * amount],
+    memo: [f.state.payment!.memo], created_at_time: [now + 9n], expires_at: [now + 9n + 300_000_000_000n]});
+  expect(c.getState().phase).toBe("complete");
+  c.destroy();
+});
+
+it.each([false, true])("fences payment when funding is paused after approval=%s", async afterApproval => {
+  const f = fixture(), c = f.control();
+  await c.prepare(amount);
+  const discovery = f.ownerClient.actor.get_funding_config;
+  if (afterApproval) discovery.mockResolvedValueOnce({Ok:[fundingConfig]});
+  discovery.mockResolvedValue({Ok:[]});
+  await c.pay(c.getState().summary!.termsKey);
+  expect(f.approvals).toHaveLength(afterApproval ? 1 : 0);
+  expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(0);
+  const [original] = f.store.list(f.adapter.scope);
+  expect(original.stage).toBe(afterApproval ? "approved" : "quote-dispatched");
+  expect(await f.adapter.check(original)).toMatchObject({kind:"unsubmitted"});
+  c.destroy();
+});
+
+it("blocks a different payer and rotated ledger for the same synthetic beneficiary", async () => {
+  const f = fixture();
+  await f.adapter.prepare(amount);
+  const rotated = createVaultPaymentAdapter({...f.options, source:"ii", fundingConfig:{...fundingConfig, ledger: principal(9)}});
+  expect(f.store.list(rotated.scope)).toEqual([]);
+  expect(f.store.hasTargetConflict(rotated.scope)).toBe(true);
+  const unaffected = fixture("plug");
+  for (const [key,value] of f.values) unaffected.values.set(key,value);
+  unaffected.state.owner = principal(10);
+  const independent = createVaultPaymentAdapter(unaffected.options);
+  expect(unaffected.store.hasTargetConflict(independent.scope)).toBe(false);
+  expect((await independent.prepare(amount)).amountE8s).toBe(amount);
+  await expect(rotated.prepare(amount)).rejects.toThrow();
+  expect(f.calls.filter(c => c.method === "quote_purchase")).toHaveLength(1);
+  expect(f.approvals).toHaveLength(0);
+  expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(0);
 });
 
 it("recovers only the original operation after a lost quote and lost payment", async () => {

@@ -38,3 +38,29 @@ it("preserves the receipt and reports stale balance", () => {
   expect(screen.getByRole("status").textContent).toContain("Payment complete");
   expect(screen.getByRole("status").textContent).toContain("Balance unavailable");
 });
+
+it("hydrates the server payment source before restoring the browser preference", async () => {
+  const { renderToString } = await import("react-dom/server");
+  const { act } = await import("@testing-library/react");
+  const { hydrateRoot } = await import("react-dom/client");
+  const { useFundingProvider } = await import("@kinic/payments/use-payment-flow");
+  function Source() {
+    const {source} = useFundingProvider("payments.hydration-source");
+    return <span>{source}</span>;
+  }
+  const host = document.createElement("div");
+  localStorage.removeItem("payments.hydration-source");
+  host.innerHTML = renderToString(<Source/>);
+  expect(host.textContent).toBe("ii");
+  localStorage.setItem("payments.hydration-source","oisy");
+  const errors: unknown[] = [];
+  let root!: ReturnType<typeof hydrateRoot>;
+  try {
+    await act(async()=>{root=hydrateRoot(host,<Source/>,{onRecoverableError:err=>errors.push(err)});});
+    expect(host.textContent).toBe("oisy");
+    expect(errors).toEqual([]);
+  } finally {
+    act(()=>root?.unmount());
+    localStorage.removeItem("payments.hydration-source");
+  }
+});

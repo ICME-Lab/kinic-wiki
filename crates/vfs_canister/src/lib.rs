@@ -650,6 +650,31 @@ fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
     }]
 }
 
+fn decode_consent_database_id(bytes: &[u8]) -> Option<String> {
+    use candid::de::{DecoderConfig, IDLDeserialize};
+    if bytes.len() > 256 {
+        return None;
+    }
+    let mut limits = DecoderConfig::new();
+    limits
+        .set_max_type_len(8)
+        .set_decoding_quota(1024)
+        .set_skipping_quota(0);
+    let mut decoder = IDLDeserialize::new_with_config(bytes, &limits).ok()?;
+    let id: String = decoder.get_value().ok()?;
+    if !decoder.is_done()
+        || id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    {
+        return None;
+    }
+    decoder.done().ok()?;
+    Some(id)
+}
+
 #[update]
 fn icrc21_canister_call_consent_message(
     request: Icrc21ConsentMessageRequest,
@@ -664,6 +689,17 @@ fn icrc21_canister_call_consent_message(
         utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
     };
     match request.method.as_str() {
+        "list_database_cycles_pending_purchases" => {
+            let Some(database_id) = decode_consent_database_id(&request.arg) else {
+                return icrc21_unavailable("Expected one valid database ID.".to_string());
+            };
+            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+                metadata,
+                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+                    "Read pending cycles purchases visible to your account for database `{database_id}`."
+                )),
+            })
+        }
         "purchase_database_cycles" => {
             let purchase = match Decode!(&request.arg, DatabaseCyclesPurchaseRequest) {
                 Ok(decoded) => decoded,

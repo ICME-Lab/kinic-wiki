@@ -29,7 +29,7 @@ const operation = () => {
   new DataView(bytes.buffer).setUint32(12, ++counter);
   return bytes;
 };
-import { ledgerTypes } from "../helpers/official-icrc-ledger.mjs";
+import { installOfficialLedger } from "../helpers/official-icrc-ledger.mjs";
 const wasm = resolve(
   root,
   "target/vault-funding-fault/build/wasm32-unknown-unknown/release/vault_canister.wasm",
@@ -71,44 +71,7 @@ try {
       }),
   };
   const account = (p) => ({ owner: p, subaccount: [] });
-  const { Init, factory } = ledgerTypes(IDL);
-  const ledger = await f.pic.setupCanister({
-    sender: owner,
-    idlFactory: factory,
-    targetCanisterId: Principal.fromText("73mez-iiaaa-aaaaq-aaasq-cai"),
-    wasm: resolve(root, "target/tools/ic-icrc1-ledger.wasm.gz"),
-    cycles: 100_000_000_000_000n,
-    arg: IDL.encode(
-      [Init],
-      [
-        {
-          Init: {
-            minting_account: account(other),
-            fee_collector_account: [],
-            transfer_fee: 10n,
-            decimals: [8],
-            max_memo_length: [32],
-            token_symbol: "TEST",
-            token_name: "Official local ledger",
-            metadata: [],
-            initial_balances: [[account(owner), 100_000_000_000n]],
-            feature_flags: [{ icrc2: true }],
-            archive_options: {
-              num_blocks_to_archive: 110n,
-              trigger_threshold: 120n,
-              max_transactions_per_response: [100n],
-              max_message_size_bytes: [],
-              cycles_for_archive_creation: [10_000_000_000_000n],
-              node_max_memory_size_bytes: [],
-              controller_id: owner,
-              more_controller_ids: [],
-            },
-            index_principal: [],
-          },
-        },
-      ],
-    ),
-  });
+  const ledger = await installOfficialLedger({pic, IDL, Principal, root, owner, other});
   ledger.actor.setPrincipal(owner);
   const drop = f.pic.createActor(
     () => IDL.Service({ fixture_drop_reply: IDL.Func([], [], []) }),

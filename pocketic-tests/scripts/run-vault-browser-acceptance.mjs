@@ -11,13 +11,15 @@ import {
   rmSync,
   copyFileSync,
 } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const teamEmbeds = process.argv[2] === "--team-embeds";
-assert.ok(process.argv.length === (teamEmbeds ? 3 : 2), "Expected no argument or --team-embeds");
+const paymentMode = process.argv[2];
+assert.ok(process.argv.length === 2 || (process.argv.length === 3 && ["--team-embeds", "--payments-only", "--serve-payments"].includes(paymentMode)), "Expected no argument, --team-embeds, --payments-only or --serve-payments");
 const canisters = teamEmbeds ? ["vault", "ledger", "ii", "ii_frontend"] : ["wiki", "vault", "ledger", "ii", "ii_frontend"];
 const verifier = teamEmbeds ? "vaultbrowser/scripts/verify-team-embeds.mjs" : "vaultbrowser/scripts/verify-acceptance.mjs";
 const freePort = () =>
@@ -154,7 +156,7 @@ try {
     ]);
   const vaultURL = `http://${ids.vault}.localhost:${port}`,
     iiURL = `http://${ids.ii_frontend}.localhost:${port}`;
-  const wikiURL = `http://127.0.0.1:${wikiPort}`;
+  const wikiURL = `http://${wikiPort === 3000 ? "localhost" : "127.0.0.1"}:${wikiPort}`;
   const bridgeLocalEnv = {
     VITE_CREDIT_BRIDGE_LOCAL_TEST: "1",
     VITE_CREDIT_BRIDGE_WIKI_ORIGIN: wikiURL,
@@ -331,6 +333,7 @@ try {
         ...bridgeLocalEnv,
         ...(teamEmbeds ? { VITE_LOCAL_VAULT_ORIGIN: vaultURL } : {}),
         VITE_WIKI_IC_HOST: `http://127.0.0.1:${port}`,
+        VITE_OISY_SIGNER_URL: `http://localhost:${port}/sign`,
         VITE_ENABLE_LOCAL_II_E2E: "1",
         VITE_II_PROVIDER_URL: iiURL,
         VITE_KINIC_WIKI_CANISTER_ID: ids.wiki,
@@ -346,7 +349,31 @@ try {
     if (i === 119) throw Error("Wiki server did not start");
     await new Promise((r) => setTimeout(r, 250));
   }
-  run("node", [verifier], {
+  if (teamEmbeds) {
+    run("node", [verifier], { VAULT_ACCEPTANCE_URL:vaultURL, WIKI_ACCEPTANCE_URL:wikiURL, II_ACCEPTANCE_URL:iiURL, VAULT_ACCEPTANCE_PROJECT:project, VAULT_ACCEPTANCE_WASM:defaultLocalWasm, VAULT_ACCEPTANCE_IDENTITY:"vault-browser-fixture", ...fixtureEnv });
+  } else {
+  const paymentDatabase = output("icp", ["canister", "call", "wiki", "create_database",
+    '(record {name="Disposable shared payment acceptance"})', "--candid", join(root,"crates/vfs_canister/vfs.did"), ...scope, ...idArgs]);
+  const databaseId = /database_id\s*=\s*"([^"]+)"/.exec(paymentDatabase)?.[1];
+  assert.ok(databaseId, "Owned Wiki database was not created");
+  const fixtureConfig = {
+    project, ids, vaultURL, wikiURL, iiURL, signerURL: `http://localhost:${port}/sign`, databaseId,
+    replica: `http://127.0.0.1:${port}`, sourceCommit: output("git",["rev-parse","HEAD"]),
+    wasmSha256: hash(readFileSync(vaultWasm)),
+    sourceDiffSha256: hash(output("git",["diff","HEAD","--binary"])),
+  };
+  const manifest = join(project,"payments.json");
+  writeFileSync(manifest, JSON.stringify(fixtureConfig,null,2));
+  if (process.argv.includes("--serve-payments")) {
+    assert.ok(process.stdin.isTTY, "Interactive ownership of the fixture is required");
+    const input = createInterface({input:process.stdin,output:process.stdout});
+    try {
+      console.log("Owned payment manifest", manifest);
+      await input.question("Press Enter to tear down this fixture.\n", {signal:AbortSignal.timeout(30*60*1000)});
+    } finally {input.close();}
+  } else {
+  run("node", ["vaultbrowser/scripts/verify-shared-payments.mjs", manifest, wikiURL, vaultURL, iiURL, fixtureConfig.signerURL], fixtureEnv);
+  run("node", ["vaultbrowser/scripts/verify-acceptance.mjs", ...(process.argv.includes("--payments-only") ? ["--funding-only"] : [])], {
     VAULT_ACCEPTANCE_URL: vaultURL,
     WIKI_ACCEPTANCE_URL: wikiURL,
     II_ACCEPTANCE_URL: iiURL,
@@ -355,6 +382,8 @@ try {
     VAULT_ACCEPTANCE_IDENTITY: "vault-browser-fixture",
     ...fixtureEnv,
   });
+  }
+  }
 } finally {
   const cleanupErrors = [];
   try {

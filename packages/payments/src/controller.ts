@@ -1,5 +1,5 @@
 import { classifyPaymentFailure, PaymentFailure } from "./errors";
-import { recoveryTargetKey, samePaymentScope, type RecoveryStore } from "./recovery-store";
+import { withRecoveryLock, type PaymentLocks, samePaymentScope, type RecoveryStore } from "./recovery-store";
 import { normalizePaymentScope } from "./terms";
 import type {
   PaymentAdapter, PaymentCheck, PaymentErrorCode, PaymentPhase, PaymentReceipt,
@@ -13,9 +13,7 @@ export type PaymentControllerState = PaymentViewState & {
   cleanupPending?: true;
 };
 
-export type PaymentLocks = {
-  request(name: string, options: { ifAvailable: true }, run: (lock: object | null) => Promise<void>): Promise<void>;
-};
+export type {PaymentLocks} from "./recovery-store";
 
 export type PaymentControllerOptions<C> = {
   adapter: PaymentAdapter<C>;
@@ -78,9 +76,13 @@ export function createPaymentController<C>({
     }
   }
 
-  function journal() {
-    if (store.hasTargetConflict(scope)) throw new PaymentFailure("AccountChanged");
-    return store.list(scope)[0] ?? null;
+  function journal(recoverExisting = false) {
+    const own = store.list(scope)[0] ?? null;
+    // Older clients could retain two ledger-specific originals. Permit only
+    // their status/cleanup path; fresh approval and purchase stay fenced.
+    if ((!recoverExisting || !own) && store.hasTargetConflict(scope))
+      throw new PaymentFailure("AccountChanged");
+    return own;
   }
 
   function unresolved(stage: PaymentPhase, code: PaymentErrorCode, review = false) {
@@ -129,7 +131,7 @@ export function createPaymentController<C>({
         if (writes) throw new PaymentFailure("CoordinationUnavailable");
         await action();
       } else {
-        await locks.request(recoveryTargetKey(scope), { ifAvailable: true }, async lock => {
+        await withRecoveryLock(locks, scope, async lock => {
           if (!current()) return;
           if (!lock) throw new PaymentFailure("Unavailable");
           await action();
@@ -233,6 +235,7 @@ export function createPaymentController<C>({
   async function refresh(receipt: PaymentReceipt, visible?: PaymentSummary) {
     const complete = { phase: "complete", summary: visible, receipt,
       ...(state.cleanupPending ? { cleanupPending: true as const } : {}) } as const;
+    if (adapter.capabilities.refreshCredit === false) { publish(complete); return; }
     publish({ ...complete, phase: "refreshing" });
     if (!current()) return;
     try {
@@ -256,7 +259,8 @@ export function createPaymentController<C>({
         try {
           const context = result.acknowledgedContext === undefined ? r.context : {
             acknowledged: result.acknowledgedContext,
-            receipt: { reference: result.receipt.reference, creditedCycles: result.receipt.creditedCycles.toString() },
+            receipt: { reference: result.receipt.reference, creditedCycles: result.receipt.creditedCycles.toString(),
+              ...(result.receipt.balanceAfterCycles === undefined ? {} : {balanceAfterCycles:result.receipt.balanceAfterCycles.toString()}) },
           };
           const paidRecord = { ...r, stage: "paid" as const, context };
           store.put(paidRecord);
@@ -368,7 +372,7 @@ export function createPaymentController<C>({
   async function checkPayment(silentOnly: boolean, expectedId?: string) {
     await run("checking", false, async () => {
       if (silentOnly && !adapter.capabilities.silentCheck) return;
-      const saved = journal();
+      const saved = journal(true);
       if (expectedId !== undefined && saved && saved.id !== expectedId)
         throw new PaymentFailure("AccountChanged");
       if (cleanConfirmedReceipt(saved)) return;
@@ -390,7 +394,7 @@ export function createPaymentController<C>({
       if (saved.stage === "approval-dispatched" && result.kind === "unsubmitted") {
         // Only the adapter can correlate authoritative approval history. It
         // records that evidence before reporting the purchase unsubmitted.
-        const latest = journal();
+        const latest = journal(true);
         if (latest?.id !== saved.id) throw new PaymentFailure("AccountChanged");
         record = latest;
       }
@@ -402,7 +406,7 @@ export function createPaymentController<C>({
     const p = prepared;
     if (!state.canCancelUnsubmitted || !p || !adapter.cancel || !adapter.capabilities.cancelUnsubmitted) return;
     await run("checking", true, async () => {
-      const saved = journal();
+      const saved = journal(true);
       if (!saved || saved.id !== p.id || (saved.stage !== "approved" && saved.stage !== "quote-dispatched")) {
         throw new PaymentFailure("AccountChanged");
       }
@@ -425,7 +429,7 @@ export function createPaymentController<C>({
   }
 
   try {
-    record = journal();
+    record = journal(true);
     if (record) {
       unresolved(dispatchPhase(record.stage), "Unknown");
       scheduleChecks();

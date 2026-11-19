@@ -10,9 +10,9 @@ import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { Principal } from "@icp-sdk/core/principal";
 import { VaultClient, ok, bytes } from "@kinic/vault-client";
 import { importKey } from "@kinic/vault-crypto";
-import { Funding } from "../src/funding";
-import { VaultFundingProvider } from "../src/funding/session";
 import { loadConfig } from "../src/config";
+import { VaultFundingProvider } from "../src/funding/session";
+import { Funding } from "../src/funding";
 import type { Payment, VaultActor } from "@kinic/vault-client/contracts";
 import type { Header } from "@kinic/vault-client/contracts";
 import { VaultWorkspace } from "../src/vault/workspace";
@@ -91,6 +91,7 @@ if (fixtureState === "funding") {
 const config = await loadConfig();
 const fundingState = { calls: 0, funded: 0 };
 const fundingIdentity = Ed25519KeyIdentity.generate();
+const fundingTime = BigInt(Date.now()) * 1_000_000n;
 let fundingPayment: Payment = {
   preparing: false,
   reconciliation: [],
@@ -100,7 +101,7 @@ let fundingPayment: Payment = {
     beneficiary: fundingIdentity.getPrincipal(),
     amount_e8s: 100_000_000n,
     min_credits: 20_000_000n,
-    created_at_time: 100n,
+    created_at_time: fundingTime,
   },
   config: {
     ledger: fundingIdentity.getPrincipal(),
@@ -110,7 +111,7 @@ let fundingPayment: Payment = {
   fee: 10n,
   credits: 100_000_000n,
   memo: new Uint8Array(32).fill(3),
-  created_at_time: 100n,
+  created_at_time: fundingTime,
   status: { Unknown: null },
   generation: 1n,
   attempt: 1n,
@@ -159,23 +160,32 @@ const fundingClient = new VaultClient({
     },
   } as unknown as VaultActor,
 });
-// The shared payment transport and Candid encoding run against test actors.
-HttpAgent.prototype.fetchRootKey = async () => new Uint8Array();
-const fundingActors = {
-  ...fundingClient.actor,
-  get_funding_config: async () => ({ Ok: [fundingPayment.config] }),
-  icrc1_decimals: async () => 8,
-  icrc1_fee: async () => 10n,
-  icrc1_balance_of: async () => 100_000_010n,
-  icrc2_allowance: async () => ({ allowance: 0n, expires_at: [] }),
-};
-Actor.createActor = (_factory, { canisterId }) => {
-  const target = typeof canisterId === "string" ? canisterId : canisterId.toText();
-  if (fixtureState === "funding" && (target === config.canister || target === fundingPayment.config.ledger.toText()))
-    return fundingActors as never;
-  if (target === config.canister) return network.actor as never;
-  throw Error("UnknownSyntheticActor");
-};
+if (fixtureState === "funding") {
+  const fundingConfig = config;
+  // In-memory Candid actors only for the standalone visual/scan regression.
+  // The separate II/provider acceptance uses the owned replica and its root key.
+  if (fundingConfig.host !== location.origin || !["localhost","127.0.0.1"].includes(location.hostname)) throw Error("Expected local fixture");
+  const actors = new Map<string, object>([
+    [fundingConfig.canister, Object.assign(fundingClient.actor, {
+      get_funding_config: async () => ({Ok:[fundingPayment.config]}),
+      account_balance: async () => ({Ok:fundingPayment.credits}),
+    })],
+    [fundingPayment.config.ledger.toText(), {
+      icrc1_decimals:async()=>8, icrc1_fee:async()=>10n, icrc1_balance_of:async()=>1_000_000_000n,
+      icrc2_allowance:async()=>({allowance:0n,expires_at:[]}),
+    }],
+  ]);
+  const original = HttpAgent.createSync.bind(HttpAgent);
+  HttpAgent.createSync = options => {
+    if (options?.host !== fundingConfig.host) throw Error("Unknown fixture network");
+    return Object.assign(original(options), {fetchRootKey:async()=>new Uint8Array()});
+  };
+  Actor.createActor = (_factory, options) => {
+    const actor = actors.get(String(options.canisterId));
+    if (!actor) throw Error("Unknown fixture canister");
+    return actor as never;
+  };
+}
 Object.assign(window, { syntheticFunding: fundingState });
 function FundingFixture() {
   return (
