@@ -4,8 +4,22 @@ import { ArrowUpRight, LockKeyhole } from "lucide-react";
 
 export function VaultChrome({ actions }: { actions?: ReactNode }) {
   const nav=useVaultNavigation();
+  const skipTarget = nav.view === "settings" || nav.view === "vault-settings"
+    ? "vault-settings-title"
+    : nav.view === "help" ? "vault-help-title" : "vault-content";
+
   return (
-    <><a className="vault-skip-link" onClick={event=>{event.preventDefault();(document.getElementById((nav.view === "settings" || nav.view === "vault-settings") ? "vault-settings-title" : nav.view === "help" ? "vault-help-title" : "vault-content")??document.getElementById("vault-main"))?.focus();}} href={(nav.view === "settings" || nav.view === "vault-settings") ? "#vault-settings-title" : nav.view === "help" ? "#vault-help-title" : "#vault-main"}>Skip to content</a>
+    <><a
+      className="vault-skip-link"
+      href={skipTarget === "vault-content" ? "#vault-main" : `#${skipTarget}`}
+      onClick={(event) => {
+        event.preventDefault();
+        const target = document.getElementById(skipTarget)
+          ?? document.getElementById("vault-welcome-title")
+          ?? document.getElementById("vault-main");
+        target?.focus();
+      }}
+    >Skip to content</a>
     <header className="vault-chrome chrome-material">
       <div className="vault-chrome-inner">
         <a className="vault-brand" href="/" onClick={event=>{if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&!event.altKey){event.preventDefault();nav.go("/");}}} aria-label="Kinic Vault home">
