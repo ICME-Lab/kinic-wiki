@@ -361,7 +361,6 @@ try {
       return get.call(this, key);
     };
   });
-  await owner.page.reload();
   let derived = 0;
   const observeOwner = (request) => {
     if (
@@ -371,6 +370,9 @@ try {
       derived++;
   };
   owner.page.on("request", observeOwner);
+  await owner.page.reload();
+  // Reload preserves /vault-settings but drops its in-memory Vault selection.
+  await action(owner.page, "Back to Vault");
   await manageMembers(owner.page);
   await expect(owner.page.getByLabel("Document title")).toHaveCount(0);
   await row.getByRole("button", { name: "Remove member" }).click();
