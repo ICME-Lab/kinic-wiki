@@ -26,32 +26,10 @@ pub(crate) fn admit_credit(
         )
         .map_err(|_| Error::Storage)?;
     let refunds:i64=db.query_row("SELECT coalesce(sum(CASE WHEN actual IS NULL THEN reserved WHEN in_flight=1 THEN actual ELSE 0 END),0) FROM vault_cycle_reservations WHERE owner=?1",params![owner],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
-    let mut capacity = u128::from(u64::try_from(balance).map_err(|_| Error::Storage)?)
+    let capacity = u128::from(u64::try_from(balance).map_err(|_| Error::Storage)?)
         + u128::from(u64::try_from(refunds).map_err(|_| Error::Storage)?)
-        + u128::from(amount);
-    for payment in crate::funding::all_payments(db)? {
-        let payment = payment?;
-        let excluded = exclude_payment.is_some_and(|(wallet, operation)| {
-            payment.wallet.to_text() == wallet && payment.request.operation.as_slice() == operation
-        });
-        if !excluded
-            && payment.request.beneficiary.to_text() == owner
-            && matches!(
-                payment.status,
-                crate::funding::Status::InFlight | crate::funding::Status::Unknown
-            )
-        {
-            capacity += u128::from(payment.credits);
-        }
-    }
-    for (beneficiary, operation, credits) in crate::bridge::reservations(db)? {
-        let excluded = exclude_payment.is_some_and(|(wallet, excluded_operation)| {
-            beneficiary.to_text() == wallet && operation.as_slice() == excluded_operation
-        });
-        if beneficiary.to_text() == owner && !excluded {
-            capacity += u128::from(credits);
-        }
-    }
+        + u128::from(amount)
+        + crate::payment_holds::beneficiary(db, owner, exclude_payment)?;
     if capacity > i64::MAX as u128 {
         return Err(Error::QuotaExceeded);
     }
@@ -102,6 +80,17 @@ impl State {
         let generation = self
             .vault_current_generation()
             .map_err(|_| "Vault generation unavailable")?;
+        self.write_index(|tx| {
+            tx.execute(
+                "DELETE FROM vault_cycle_reservations WHERE rowid IN
+                 (SELECT rowid FROM vault_cycle_reservations WHERE in_flight=0
+                    AND execution_billed>=execution_checkpoint AND settled_at_ms IS NOT NULL
+                    AND settled_at_ms<=?1 ORDER BY settled_at_ms LIMIT 128)",
+                params![now.saturating_sub(DAY_MS)],
+            )
+            .map_err(sql_error)?;
+            Ok(())
+        })?;
         self.write_index(|tx|{
             let sponsored=crate::key_subsidy::reserve_in(tx,owner,token,amount).map_err(|e|format!("key subsidy reservation: {e:?}"))?;
             let amount=amount.checked_sub(sponsored).ok_or("key subsidy exceeds reservation")?;
@@ -109,9 +98,6 @@ impl State {
                 return if reserved==amount as i64 && settled.is_none(){Ok(())}else{Err("reservation replay conflict".into())}
             }
             require_account(tx,owner)?;settle_storage(tx,owner,now)?;
-            tx.execute("DELETE FROM vault_cycle_reservations WHERE in_flight=0 AND execution_billed>=execution_checkpoint AND settled_at_ms IS NOT NULL AND settled_at_ms<=?1",params![now.saturating_sub(DAY_MS)]).map_err(sql_error)?;
-            let count:i64=tx.query_row("SELECT count(*) FROM vault_cycle_reservations",params![],|r|sqlite::row_get(r,0)).map_err(sql_error)?;
-            if count>=10000{return Err("Vault reservation journal full".into())}
             let amount=i64::try_from(amount).map_err(|_|"cycle reservation overflow")?;
             let balance=load_balance(tx, owner)?;
             if balance<amount{return Err("insufficient Vault account balance".into())}

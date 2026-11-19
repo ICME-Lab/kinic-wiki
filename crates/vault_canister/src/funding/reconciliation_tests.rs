@@ -185,6 +185,141 @@ fn reconciliation_and_late_callback_share_atomic_credit_and_stale_upgrade_lease_
         100_000_000
     );
 }
+fn completion_reserves() -> i64 {
+    transaction(|db| {
+        db.query_row(
+            "SELECT count(*) FROM payment_completion_reservations",
+            [],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)
+    })
+    .expect("schema must support durable payment completion reservations")
+}
+
+#[test]
+fn reconciliation_starts_advances_and_credits_at_the_page_limit() {
+    let payment = prepare_dispatch(&sent(), principal(95), 999).unwrap();
+    let payment = complete_payment(&payment, Outcome::Unknown).unwrap();
+    assert_eq!(completion_reserves(), 1);
+    let page_limit = transaction(|db| {
+        // Make an audit write depend on a free page even if the audit table
+        // currently has room. The filler exists only in this test.
+        db.execute_batch(
+            "CREATE TABLE page_limit_filler(data BLOB);
+            CREATE TRIGGER page_limit_audit BEFORE INSERT ON account_ledger
+            BEGIN INSERT INTO page_limit_filler VALUES(zeroblob(32768)); END;
+            CREATE TRIGGER page_limit_record_growth BEFORE UPDATE OF record ON payments
+            WHEN length(NEW.record)>length(OLD.record)
+            BEGIN INSERT INTO page_limit_filler VALUES(zeroblob(32768)); END;",
+        )
+        .unwrap();
+        let pages: i64 = db
+            .query_row("PRAGMA page_count", [], |r| sql::row_get(r, 0))
+            .unwrap();
+        let free: i64 = db
+            .query_row("PRAGMA freelist_count", [], |r| sql::row_get(r, 0))
+            .unwrap();
+        assert_eq!(free, 0);
+        db.execute_batch(&format!("PRAGMA max_page_count={pages};"))
+            .unwrap();
+        Ok(pages)
+    })
+    .unwrap();
+
+    let scan = begin_scan(payment.wallet, &payment.request.operation, 1).unwrap();
+    let missed = finish_scan(
+        &scan,
+        Ok(ScanBatch {
+            end: 1001,
+            blocks: vec![Block {
+                id: 999u64.into(),
+                block: Value::Map(vec![]),
+            }],
+        }),
+        2,
+    )
+    .unwrap();
+    assert_eq!(missed.next, Nat::from(1000u64));
+    assert_eq!(missed.payment.status, Status::Unknown);
+    assert_eq!(completion_reserves(), 1);
+    let scan = begin_scan(payment.wallet, &payment.request.operation, 3).unwrap();
+    let mut matching = block();
+    let Value::Map(outer) = &mut matching else {
+        unreachable!()
+    };
+    let Value::Map(fields) = &mut outer[0].1 else {
+        unreachable!()
+    };
+    fields.iter_mut().find(|(key, _)| key == "memo").unwrap().1 = Value::Blob(scan.memo.clone());
+    let progress = finish_scan(
+        &scan,
+        Ok(ScanBatch {
+            end: 1001,
+            blocks: vec![Block {
+                id: 1000u64.into(),
+                block: matching,
+            }],
+        }),
+        4,
+    )
+    .unwrap();
+    assert_eq!(progress.payment.status, Status::Paid(1000));
+    assert_eq!(completion_reserves(), 0);
+    assert_eq!(
+        begin_scan(scan.wallet, &scan.request.operation, 5)
+            .unwrap()
+            .status,
+        Status::Paid(1000)
+    );
+    transaction(|db| {
+        assert_eq!(
+            db.query_row("PRAGMA page_count", [], |r| sql::row_get::<i64>(r, 0))
+                .unwrap(),
+            page_limit
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM account_ledger WHERE kind='purchase'",
+                [],
+                |r| sql::row_get::<i64>(r, 0)
+            )
+            .unwrap(),
+            1
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        crate::state::State
+            .balance(&principal(92).to_text())
+            .unwrap(),
+        100_000_000
+    );
+}
+
+#[test]
+fn recovering_interrupted_unsent_quote_releases_completion_space() {
+    let payment = sent();
+    assert_eq!(completion_reserves(), 1);
+    crate::state::State.vault_start_generation().unwrap();
+    let recovered = begin_scan(payment.wallet, &payment.request.operation, 1).unwrap();
+    assert_eq!(recovered.status, Status::Quoted);
+    assert_eq!(completion_reserves(), 0);
+    transaction(|db| {
+        let accounts: i64 = db
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(accounts, 0);
+        assert_eq!(
+            crate::payment_holds::beneficiary(db, &payment.request.beneficiary.to_text(), None)?,
+            0
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+
 #[test]
 fn archive_ranges_are_clipped_to_requested_window_and_only_direct_ledger_callbacks_are_used() {
     let response = GetBlocksResult {

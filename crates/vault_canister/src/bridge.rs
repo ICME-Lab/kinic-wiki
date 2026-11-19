@@ -131,6 +131,7 @@ pub(crate) fn decode(raw: &str) -> Result<Option<Record>> {
         Ok(None)
     }
 }
+#[cfg(test)]
 fn rows(db: &sql::Connection) -> Result<Vec<(Principal, Vec<u8>, Record)>> {
     let mut q = db
         .prepare("SELECT wallet,operation,record FROM payments")
@@ -154,6 +155,27 @@ fn rows(db: &sql::Connection) -> Result<Vec<(Principal, Vec<u8>, Record)>> {
         }
     }
     Ok(out)
+}
+fn rows_for_owner(
+    db: &sql::Connection,
+    owner: Principal,
+) -> Result<Vec<(Principal, Vec<u8>, Record)>> {
+    let mut query = db
+        .prepare("SELECT operation,record FROM payments WHERE wallet=?1")
+        .map_err(|_| Error::Storage)?;
+    let records: Vec<(Vec<u8>, String)> =
+        sql::query_map(&mut query, params![owner.to_text()], |r| {
+            Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?))
+        })
+        .map_err(|_| Error::Storage)?;
+    records
+        .into_iter()
+        .filter_map(|(operation, raw)| match decode(&raw) {
+            Ok(Some(record)) => Some(Ok((owner, operation, record))),
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
 }
 fn load(db: &sql::Connection, owner: Principal, operation: &[u8]) -> Result<Option<Record>> {
     let raw: Option<String> = db
@@ -221,13 +243,13 @@ fn ensure_no_live_fee(
     }
 }
 fn admit(db: &sql::Connection, owner: Principal, now: u64) -> Result<()> {
-    db.execute(
-        "DELETE FROM payments WHERE expires<?1",
-        params![(now / 1_000_000_000).min(i64::MAX as u64) as i64],
-    )
-    .map_err(|_| Error::Storage)?;
-    let(count,owned):(i64,i64)=db.query_row("SELECT count(*),coalesce(sum(wallet=?1),0) FROM (SELECT wallet FROM payments UNION ALL SELECT wallet FROM quote_fee_flights)",params![owner.to_text()],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
-    if count >= 1024 || owned >= 16 {
+    crate::capacity::collect_expired_payments(
+        db,
+        owner,
+        (now / 1_000_000_000).min(i64::MAX as u64) as i64,
+    )?;
+    let owned:i64=db.query_row("SELECT (SELECT count(*) FROM payments WHERE wallet=?1)+(SELECT count(*) FROM quote_fee_flights WHERE wallet=?1)",params![owner.to_text()],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+    if owned >= 16 {
         Err(Error::QuotaExceeded)
     } else {
         Ok(())
@@ -281,7 +303,27 @@ fn begin_link(owner: Principal, operation: Vec<u8>, now: u64) -> Result<LinkChal
 }
 fn find_link(db: &sql::Connection, challenge: &[u8]) -> Result<(Principal, Vec<u8>, Record)> {
     id(challenge)?;
-    let mut matches = rows(db)?
+    let encoded = serde_json::to_string(challenge).map_err(|_| Error::Storage)?;
+    let mut query=db.prepare("SELECT wallet,operation,record FROM payments INDEXED BY payments_link_challenge WHERE json_type(record,'$.bridge_v1.Link.challenge.challenge')='array' AND json_extract(record,'$.bridge_v1.Link.challenge.challenge')=?1").map_err(|_|Error::Storage)?;
+    let records: Vec<(String, Vec<u8>, String)> =
+        sql::query_map(&mut query, params![encoded], |r| {
+            Ok((
+                sql::row_get(r, 0)?,
+                sql::row_get(r, 1)?,
+                sql::row_get(r, 2)?,
+            ))
+        })
+        .map_err(|_| Error::Storage)?;
+    let mut matches = records
+        .into_iter()
+        .map(|(wallet, operation, raw)| {
+            Ok((
+                Principal::from_text(wallet).map_err(|_| Error::Storage)?,
+                operation,
+                decode(&raw)?.ok_or(Error::Storage)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?
         .into_iter()
         .filter(|(_, _, r)| matches!(r,Record::Link{challenge:c,..} if c.challenge==challenge));
     let found = matches.next().ok_or(Error::NotFound)?;
@@ -371,13 +413,12 @@ fn revoke(owner: Principal) -> Result<BridgeRevocation> {
         let through_generation = s.serial;
         s.serial = s.serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
         save_settings(db, &s)?;
-        for (w, op, r) in rows(db)? {
-            if w == owner
-                && let Record::Link {
-                    challenge,
-                    wiki_owner,
-                    ..
-                } = r
+        for (w, op, r) in rows_for_owner(db, owner)? {
+            if let Record::Link {
+                challenge,
+                wiki_owner,
+                ..
+            } = r
             {
                 save(
                     db,
@@ -401,13 +442,12 @@ fn revoke(owner: Principal) -> Result<BridgeRevocation> {
 /// A late acknowledgement only releases challenges fenced by this revocation.
 fn finish_revoke(revocation: &BridgeRevocation) -> Result<()> {
     transaction(|db| {
-        for (w, op, r) in rows(db)? {
-            if w == revocation.vault_owner
-                && let Record::Link {
-                    challenge,
-                    revoked: true,
-                    ..
-                } = r
+        for (w, op, r) in rows_for_owner(db, revocation.vault_owner)? {
+            if let Record::Link {
+                challenge,
+                revoked: true,
+                ..
+            } = r
                 && challenge.generation <= revocation.through_generation
             {
                 db.execute(
@@ -421,6 +461,7 @@ fn finish_revoke(revocation: &BridgeRevocation) -> Result<()> {
     })
 }
 /// Prepared intents reserve future balances and account membership across every funding path.
+#[cfg(test)]
 pub(crate) fn reservations(db: &sql::Connection) -> Result<Vec<(Principal, Vec<u8>, u64)>> {
     Ok(rows(db)?
         .into_iter()
@@ -505,19 +546,9 @@ fn prepare(
         }
         ensure_no_live_fee(db, owner, &offer.operation, now)?;
         admit(db, owner, now)?;
-        crate::capacity::admit_beneficiary(db, owner)?;
         crate::capacity::admit_credit(db, owner, owner, &offer.operation, offer.amount_cycles)?;
-        let mut daily = u128::from(offer.amount_cycles);
-        for (_, _, r) in rows(db)? {
-            if let Record::Credit {
-                offer, status, day, ..
-            } = r
-                && (status == CreditStatus::Prepared
-                    || (day == now / DAY && status == CreditStatus::Accepted))
-            {
-                daily += u128::from(offer.amount_cycles)
-            }
-        }
+        let daily =
+            u128::from(offer.amount_cycles) + crate::payment_holds::bridge_day(db, now / DAY)?;
         if daily > u128::from(s.config.daily_limit_cycles) {
             return Err(Error::QuotaExceeded);
         }

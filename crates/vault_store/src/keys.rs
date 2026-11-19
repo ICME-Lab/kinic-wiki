@@ -1,6 +1,6 @@
 //! Global key-service admission, with durable reservations surviving UTC rollover/upgrades.
 use super::*;
-use vault_types::capacity::{KEY_OWNER_CHARGE, KEY_OWNER_ROWS, KEY_ROW, KEY_ROWS};
+use vault_types::capacity::{KEY_OWNER_CHARGE, KEY_OWNER_ROWS, KEY_ROW};
 pub const DERIVE_RESERVATION: u64 = 30_000_000_000;
 pub fn reserve(db: &Connection, vault: &[u8], token: u64, now: u64, required: u64) -> Result<()> {
     id(vault)?;
@@ -17,17 +17,61 @@ pub fn reserve(db: &Connection, vault: &[u8], token: u64, now: u64, required: u6
             |r| sql::row_get(r, 0),
         )
         .map_err(|_| Error::Unauthorized)?;
-    let (mine,all):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=?1 THEN 1 ELSE 0 END),0),count(*) FROM key_flights WHERE in_flight=1",params![owner],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
-    if mine >= 1 || all >= 8 {
+    let mine: i64 = db
+        .query_row(
+            "SELECT count(*) FROM key_flights WHERE owner=?1 AND in_flight=1",
+            params![owner],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    if mine >= 1 {
         return Err(Error::Busy);
     }
-    let (mine,total):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=?1 THEN 1 ELSE 0 END),0),count(*) FROM key_flights WHERE day=?2",params![owner,(now/DAY) as i64],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
+    let all: i64 = db
+        .query_row(
+            "SELECT count(*) FROM key_flights WHERE in_flight=1",
+            params![],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    if all >= 8 {
+        return Err(Error::Busy);
+    }
+    let mine: i64 = db
+        .query_row(
+            "SELECT count(*) FROM key_flights WHERE owner=?1 AND day=?2",
+            params![owner, (now / DAY) as i64],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    let total: i64 = db
+        .query_row(
+            "SELECT count(*) FROM key_flights WHERE day=?1",
+            params![(now / DAY) as i64],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
     if mine >= 100 || total >= 1000 {
         return Err(Error::QuotaExceeded);
     }
-    // Outstanding work from earlier days still consumes today's available budget.
-    let budget:i64=db.query_row("SELECT COALESCE(sum(CASE WHEN in_flight=1 THEN reserved WHEN settled>=?1 THEN actual ELSE 0 END),0) FROM key_flights",params![((now/DAY)*DAY) as i64],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
-    if budget as u64 + DERIVE_RESERVATION > 30_000_000_000_000 {
+    // Outstanding work from earlier days still consumes today's cycle budget.
+    let reserved: i64 = db
+        .query_row(
+            "SELECT coalesce(sum(reserved),0) FROM key_flights WHERE in_flight=1",
+            params![],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    let spent: i64 = db
+        .query_row(
+            "SELECT coalesce(sum(actual),0) FROM key_flights WHERE in_flight=0 AND settled>=?1",
+            params![((now / DAY) * DAY) as i64],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    let budget = u128::try_from(reserved).map_err(|_| Error::Storage)?
+        + u128::try_from(spent).map_err(|_| Error::Storage)?;
+    if budget + u128::from(DERIVE_RESERVATION) > 30_000_000_000_000 {
         return Err(Error::QuotaExceeded);
     }
     admit_rows(db, 1)?;
@@ -37,7 +81,7 @@ pub fn reserve(db: &Connection, vault: &[u8], token: u64, now: u64, required: u6
     {
         return Err(Error::InvalidInput);
     }
-    // The global 16 MiB pool already prepays this row. The owner billing charge remains 4096 B.
+    // The owner billing charge remains 4096 B; global reporting counts this retained row.
     if content::usage(db)?
         .checked_add(KEY_OWNER_CHARGE)
         .ok_or(Error::QuotaExceeded)?
@@ -113,8 +157,8 @@ pub fn admit_rows(db: &Connection, additional: usize) -> Result<()> {
     if additional == 0 || additional > KEY_OWNER_ROWS {
         return Err(Error::InvalidInput);
     }
-    let (mine,total):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM key_flights",params![],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
-    if mine as usize + additional > KEY_OWNER_ROWS || total as usize + additional > KEY_ROWS {
+    let mine:i64=db.query_row("SELECT count(*) FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+    if mine as usize + additional > KEY_OWNER_ROWS {
         return Err(Error::QuotaExceeded);
     }
     Ok(())
@@ -123,20 +167,32 @@ pub fn admit_rows(db: &Connection, additional: usize) -> Result<()> {
 /// One bounded batch. Service callers commit a batch before fallible admission so
 /// completed journals make progress even when new admission fails.
 pub fn collect_completed(db: &Connection, now: u64) -> Result<Vec<Principal>> {
-    const SELECT: &str = "SELECT rowid,owner FROM key_flights WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2 ORDER BY CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 0 ELSE 1 END,settled,owner,token LIMIT 128";
-    let mut statement = db.prepare(SELECT).map_err(|_| Error::Storage)?;
-    let rows: Vec<(i64, Vec<u8>)> = sql::query_map(
-        &mut statement,
-        params![now.saturating_sub(DAY) as i64, (now / DAY) as i64],
-        |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
-    )
-    .map_err(|_| Error::Storage)?;
     let mut owners = std::collections::BTreeSet::new();
-    for (row, owner) in rows {
-        let owner = Principal::try_from_slice(&owner).map_err(|_| Error::Storage)?;
-        owners.insert(owner);
-        db.execute("DELETE FROM key_flights WHERE rowid=?1", params![row])
-            .map_err(|_| Error::Storage)?;
+    let mut remaining = 128i64;
+    for query in [
+        "SELECT rowid,owner FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2 ORDER BY settled,token LIMIT ?3",
+        "SELECT rowid,owner FROM key_flights WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL AND settled<=?1 AND day<?2 ORDER BY settled,owner,token LIMIT ?3",
+    ] {
+        if remaining == 0 {
+            break;
+        }
+        let mut statement = db.prepare(query).map_err(|_| Error::Storage)?;
+        let rows: Vec<(i64, Vec<u8>)> = sql::query_map(
+            &mut statement,
+            params![
+                now.saturating_sub(DAY) as i64,
+                (now / DAY) as i64,
+                remaining
+            ],
+            |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+        )
+        .map_err(|_| Error::Storage)?;
+        remaining -= rows.len() as i64;
+        for (row, owner) in rows {
+            owners.insert(Principal::try_from_slice(&owner).map_err(|_| Error::Storage)?);
+            db.execute("DELETE FROM key_flights WHERE rowid=?1", params![row])
+                .map_err(|_| Error::Storage)?;
+        }
     }
     Ok(owners.into_iter().collect())
 }

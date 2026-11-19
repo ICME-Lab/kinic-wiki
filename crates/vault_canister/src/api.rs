@@ -291,7 +291,19 @@ fn mutate(request: Mutation) -> Result<MutationResult> {
 }
 #[ic_cdk::query]
 fn global_capacity() -> Result<GlobalCapacity> {
-    crate::state::transaction(vault_store::content::global_capacity)
+    crate::state::transaction(|db| {
+        let mut capacity = vault_store::content::global_capacity(db)?;
+        let accounting = crate::capacity::accounting_reserved(db)?;
+        capacity.used = capacity
+            .used
+            .checked_add(accounting)
+            .ok_or(Error::Storage)?;
+        capacity.accounting_reserved = capacity
+            .accounting_reserved
+            .checked_add(accounting)
+            .ok_or(Error::Storage)?;
+        Ok(capacity)
+    })
 }
 pub(crate) fn settle_key_reservation_for_owner(
     owner: OwnerContext,

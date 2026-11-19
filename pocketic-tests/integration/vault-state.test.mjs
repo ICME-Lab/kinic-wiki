@@ -19,6 +19,8 @@ const hex = (b) => Buffer.from(b).toString("hex").toUpperCase(),
 const f = await fixture({ wasm: resolve(out, "vault-state.wasm") });
 const clients = [];
 try {
+  const pageBound = BigInt(await f.controls.fixture_read("SELECT CAST(max_page_count AS TEXT) FROM pragma_max_page_count"));
+  assert.ok(pageBound > 262144n, `SQLite page bound still limits Vault to 4 GiB: ${pageBound}`);
   const wire = lossy(f.actor),
     client = new VaultClient({
       actor: wire.actor,
@@ -70,7 +72,7 @@ try {
   await client.open(header);
   assert.deepEqual((await client.read(completed)).plaintext, pendingPlaintext);
   console.log(
-    "PASS schema13 same-Wasm upgrade keeps content, pending ciphertext/upload, exact operation receipts, balance and reservations; real client resumes save and decrypts the original pending plaintext after reopening",
+    "PASS schema14 same-Wasm upgrade keeps content, pending ciphertext/upload, exact operation receipts, balance and reservations; real client resumes save and decrypts the original pending plaintext after reopening",
   );
   // Max file, max vaults, optimistic conflict and immutable creation binding.
   const bad = {
@@ -133,7 +135,7 @@ try {
     "UPDATE revisions SET plain_size=plain_size-" + inflation + " " + row,
   );
   // Prepaid PutChunk/Commit completion is separate from zero-credit cleanup:
-  // admit a funded upload, then consume unrelated shared logical capacity.
+  // admit a funded upload, then consume this owner's content allowance.
   await f.fundOwner(other);
   const otherActor = f.actorFor(other);
   const otherClient = new VaultClient({
@@ -145,7 +147,7 @@ try {
   clients.push(otherClient);
   const otherHeader = await otherClient.create();
   await otherClient.open(otherHeader);
-  const unrelated = await otherClient.save(
+  await otherClient.save(
     { kind: "note", title: "unrelated capacity" },
     encode("another owner's accounting row"),
   );
@@ -169,30 +171,32 @@ try {
     await f.actor.get_quota(header.id),
   ).reserved;
   assert.ok(reservedBeforeCompletion > 0n);
-  const capacityBeforeFill = ok(await f.actor.global_capacity());
-  let unrelatedInflation = 0n;
-  const unrelatedRow =
+  const ownerContentLimit = 200n * 1024n * 1024n;
+  let ownerInflation = 0n;
+  const ownerRow =
     "WHERE owner=x'" +
-    hex(other.toUint8Array()) +
+    hex(owner.toUint8Array()) +
     "' AND object=x'" +
-    hex(unrelated.object) +
+    hex(committed.object) +
     "' AND revision=1";
-  const fillSharedCapacity = async () => {
-    const capacity = ok(await f.actor.global_capacity());
-    const extra = capacity.limit - capacity.used;
+  const fillOwnerCapacity = async () => {
+    const quota = ok(await f.actor.get_quota(header.id));
+    const extra = ownerContentLimit - quota.charged - quota.reserved;
     assert.ok(extra >= 0n);
     await f.controls.fixture_execute(
-      "UPDATE revisions SET charge=charge+" + extra + " " + unrelatedRow,
+      "UPDATE revisions SET charge=charge+" + extra + " " + ownerRow,
     );
-    unrelatedInflation += extra;
-    assert.equal(ok(await f.actor.global_capacity()).used, capacity.limit);
+    ownerInflation += extra;
+    const filled = ok(await f.actor.get_quota(header.id));
+    assert.equal(filled.charged + filled.reserved, ownerContentLimit);
   };
-  await fillSharedCapacity();
+  await fillOwnerCapacity();
   assert.ok(
     ok(await f.actor.account_balance()) > 0n,
     "ordinary upload writes require positive credit",
   );
-  err(
+  const otherUpload = operation();
+  ok(
     await otherActor.mutate({
       operation: operation(),
       action: {
@@ -200,18 +204,19 @@ try {
           vault: otherHeader.id,
           object: b(221),
           expected_revision: 0n,
-          operation: operation(),
+          operation: otherUpload,
           plain_size: 1n,
           manifest: b(1, 64),
           chunk_hashes: [b(2, 32)],
         },
       },
     }),
-    "QuotaExceeded",
   );
-  assert.equal(
-    ok(await f.actor.global_capacity()).used,
-    capacityBeforeFill.limit,
+  ok(
+    await otherActor.mutate({
+      operation: operation(),
+      action: { CancelUpload: { vault: otherHeader.id, upload: otherUpload, job: operation() } },
+    }),
   );
   const completionStart = wire.calls.length;
   // Successful chunks release unused receipt headroom. Fill that space again
@@ -230,7 +235,7 @@ try {
         .length,
       index + 1,
     );
-    await fillSharedCapacity();
+    await fillOwnerCapacity();
   }
   assert.ok(ok(await f.actor.account_balance()) > 0n);
   const prepaidRevision = await client.resumeSave();
@@ -253,9 +258,7 @@ try {
     ["PutChunk", "PutChunk", "PutChunk", "CommitRevision"],
   );
   assert.equal(ok(await f.actor.get_quota(header.id)).reserved, 0n);
-  assert.ok(
-    ok(await f.actor.global_capacity()).used < capacityBeforeFill.limit,
-  );
+  assert.ok(ok(await f.actor.get_quota(header.id)).charged <= ownerContentLimit);
   assert.deepEqual(
     (await client.read(prepaidRevision)).plaintext,
     prepaidPlaintext,
@@ -269,19 +272,21 @@ try {
   for (const call of completionCalls)
     assert.deepEqual(await f.actor.mutate(call.args[0]), call.result);
   assert.equal(await allocationSnapshot(), allocationBeforeReplay);
-  assert.deepEqual(ok(await f.actor.global_capacity()), capacityBeforeReplay);
+  const capacityAfterReplay = ok(await f.actor.global_capacity());
+  assert.equal(capacityAfterReplay.used - capacityBeforeReplay.used, 4n * 512n);
+  assert.equal(capacityAfterReplay.accounting_reserved - capacityBeforeReplay.accounting_reserved, 4n * 512n);
   assert.ok(ok(await f.actor.account_balance()) > 0n);
   await f.controls.fixture_execute(
     "UPDATE revisions SET charge=charge-" +
-      unrelatedInflation +
+      ownerInflation +
       " " +
-      unrelatedRow,
+      ownerRow,
   );
   console.log(
-    "PASS funded upload completes each of three unsent chunks and commit from full shared capacity, decrypts original bytes, releases reservation and exactly replays completion without new allocation",
+    "PASS funded upload completes each unsent chunk and commit at its owner content allowance while another owner admits work",
   );
 
-  // An admitted, real three-chunk upload is cancellable at zero balance and full shared capacity.
+  // An admitted, real three-chunk upload is cancellable at zero balance and full owner capacity.
   // Use direct encrypted Begin/Put calls so no successful commit is discarded.
   const payload = cryptoLib.randomBytes(2 * 1024 * 1024 + 1),
     context = {
@@ -315,33 +320,20 @@ try {
   for (const [index, bytes] of doc.chunks.entries())
     ok(await send({ PutChunk: { upload, index, bytes } }));
   // Inflate one retained revision's accounting charge, never disable an admission guard.
-  const capacity = ok(await f.actor.global_capacity());
+  const cancelQuota = ok(await f.actor.get_quota(header.id));
+  const cancelInflation = ownerContentLimit - cancelQuota.charged - cancelQuota.reserved;
   await f.controls.fixture_execute(
     "UPDATE revisions SET charge=charge+" +
-      (capacity.limit - capacity.used) +
-      " WHERE rowid=(SELECT min(rowid) FROM revisions); UPDATE accounts SET balance_cycles=0 WHERE owner='" +
+      cancelInflation +
+      " WHERE rowid=(SELECT min(rowid) FROM revisions WHERE owner=X'" +
+      hex(owner.toUint8Array()) +
+      "'); UPDATE accounts SET balance_cycles=0 WHERE owner='" +
       owner.toText() +
       "';",
   );
-  assert.equal(ok(await f.actor.global_capacity()).used, capacity.limit);
+  const fullOwner = ok(await f.actor.get_quota(header.id));
+  assert.equal(fullOwner.charged + fullOwner.reserved, ownerContentLimit);
   assert.equal(ok(await f.actor.account_balance()), 0n);
-  err(
-    await otherActor.mutate({
-      operation: operation(),
-      action: {
-        BeginRevision: {
-          ...begin,
-          vault: otherHeader.id,
-          operation: operation(),
-          object: b(221),
-          plain_size: 1n,
-          manifest: b(1, 64),
-          chunk_hashes: [b(2, 32)],
-        },
-      },
-    }),
-    "QuotaExceeded",
-  );
   const job = operation(),
     first = {
       operation: operation(),
@@ -376,8 +368,10 @@ try {
   assert.deepEqual(ok(await f.actor.mutate(first)), result);
   await f.controls.fixture_execute(
     "UPDATE revisions SET charge=charge-" +
-      (capacity.limit - capacity.used) +
-      " WHERE rowid=(SELECT min(rowid) FROM revisions);",
+      cancelInflation +
+      " WHERE rowid=(SELECT min(rowid) FROM revisions WHERE owner=X'" +
+      hex(owner.toUint8Array()) +
+      "');",
   );
   // Purge and whole-vault cleanup retain their zero-credit path as well.
   const purge = {
@@ -421,7 +415,7 @@ try {
   assert.equal(await operationCount(), noWorkBefore);
   assert.equal(ok(await f.actor.account_balance()), 0n);
   console.log(
-    "PASS quota/vault/optimistic guards, cross-owner shared-capacity refusal, zero-balance bounded cancel/purge/delete/GC, exact Progress(false) replay, terminal conflict and no-work Collect allocates no receipt",
+    "PASS owner quota/vault/optimistic guards, zero-balance bounded cancel/purge/delete/GC, exact Progress(false) replay, terminal conflict and no-work Collect allocates no receipt",
   );
   // Actual client cancellation after a lost chunk and lost cleanup response.
   await f.controls.fixture_execute(
@@ -500,6 +494,11 @@ try {
   assert.equal(await cursor(), hex(idle.toUint8Array()));
   assert.equal(await count(), "1");
   await f.upgrade();
+  // PocketIC 16.1 drains the install-code debit by scheduler round. Let the
+  // upgraded canister's debit clear before crossing the first timer deadline.
+  const upgradedAt = await f.pic.getTime();
+  await f.pic.tick(150);
+  assert.equal(await f.pic.getTime(), upgradedAt);
   assert.equal(await cursor(), hex(idle.toUint8Array()));
   await tick();
   assert.equal(await cursor(), hex(busy.toUint8Array()));
@@ -557,16 +556,16 @@ try {
   original.destroy();
   otherClient.destroy();
   const now = Math.floor((await full.pic.getTime()) / 1000);
+  const ownerHex = hex(owner.toUint8Array());
   await full.controls.fixture_execute(
-    "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 10000-(SELECT count(*) FROM operations WHERE admission=0)-(SELECT count(*) FROM upload_outcomes)) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT X'" +
-      hex(owner.toUint8Array()) +
+    "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 10000-(SELECT count(*) FROM operations WHERE admission=0 AND owner=X'" + ownerHex + "')-(SELECT count(*) FROM upload_outcomes WHERE owner=X'" + ownerHex + "')) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT X'" +
+      ownerHex +
       "',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00'," +
       (now + 86400) +
       ",x+100000,0,0 FROM n;",
   );
-  const extra =
-    ok(await full.actor.global_capacity()).limit -
-    ok(await full.actor.global_capacity()).used;
+  const otherQuota = ok(await otherActor.get_quota(otherHeader.id));
+  const extra = 200n * 1024n * 1024n - otherQuota.charged - otherQuota.reserved;
   await full.controls.fixture_execute(
     "UPDATE revisions SET charge=charge+" +
       extra +
@@ -577,13 +576,13 @@ try {
       "';",
   );
   const capacity = ok(await full.actor.global_capacity());
-  assert.equal(capacity.used, capacity.limit);
-  assert.equal(capacity.accounting_reserved, 19n * 1024n * 1024n);
+  assert.ok(capacity.used > 200n * 1024n * 1024n);
+  assert.ok(capacity.accounting_reserved >= 64n * 1024n);
   assert.ok(ok(await full.actor.account_balance()) > 100_000_000_000n);
   const state = async () =>
     JSON.parse(
       await full.controls.fixture_read(
-        "SELECT json_object('ordinary',(SELECT count(*) FROM operations WHERE admission=0)+(SELECT count(*) FROM upload_outcomes),'protected',(SELECT count(*) FROM operations WHERE admission=3),'flights',(SELECT count(*) FROM key_flights),'activeFlights',(SELECT count(*) FROM key_flights WHERE in_flight=1 AND phase IN ('reserved','sent')),'reservations',(SELECT count(*) FROM vault_cycle_reservations))",
+        "SELECT json_object('ordinary',(SELECT count(*) FROM operations WHERE admission=0 AND owner=X'" + ownerHex + "')+(SELECT count(*) FROM upload_outcomes WHERE owner=X'" + ownerHex + "'),'protected',(SELECT count(*) FROM operations WHERE admission=3),'flights',(SELECT count(*) FROM key_flights),'activeFlights',(SELECT count(*) FROM key_flights WHERE in_flight=1 AND phase IN ('reserved','sent')),'reservations',(SELECT count(*) FROM vault_cycle_reservations))",
       ),
     );
   const before = await state();
@@ -596,7 +595,7 @@ try {
   await assert.rejects(fresh.open(h), /LostResponse/);
   const afterLost = await state();
   assert.equal(afterLost.protected, before.protected + 1);
-  assert.equal(ok(await full.actor.global_capacity()).used, capacity.limit);
+  assert.ok(ok(await full.actor.global_capacity()).used >= capacity.used);
   await fresh.open(h);
   assert.equal(
     new TextDecoder().decode((await fresh.read(revision)).plaintext),
@@ -618,9 +617,9 @@ try {
   const neverOpened = makeClient(firstActor, firstOwner);
   await neverOpened.open(unopened);
   assert.ok(neverOpened.session.root);
-  assert.equal(ok(await full.actor.global_capacity()).used, capacity.limit);
-  assert.ok(ok(await full.actor.get_quota(h.id)).charged <= capacity.limit);
-  // Protected receipts and accounting survive compatible current9 upgrade.
+  assert.ok(ok(await full.actor.global_capacity()).used >= capacity.used);
+  assert.ok(ok(await full.actor.get_quota(h.id)).charged <= 200n * 1024n * 1024n);
+  // Protected receipts and accounting survive compatible schema14 upgrade.
   const snapshot = await full.controls.fixture_read(
     "SELECT json_object('operations',(SELECT json_group_array(hex(operation)||':'||admission||':'||hex(result)) FROM operations),'balances',(SELECT json_group_array(owner||':'||balance_cycles) FROM accounts),'reservations',(SELECT json_group_array(token||':'||reserved||':'||coalesce(actual,0)) FROM vault_cycle_reservations))",
   );
@@ -636,7 +635,7 @@ try {
     ok(keyCalls[1].result),
   );
   console.log(
-    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema13 protected receipt preservation at full cross-owner live content and 10000 ordinary receipts; fixed prepaid capacity conserved",
+    "PASS fresh vetKD open/read, first-open control, lost-key exact replay/conflict and schema14 protected receipt preservation at full cross-owner live content and 10000 owner receipts",
   );
 } finally {
   fullClients.forEach((c) => c.destroy());
@@ -661,8 +660,8 @@ try {
   ));
   const seeded = await read();
   await billing.upgrade();
-  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "13");
-  assert.deepEqual(await read(), seeded, "schema13 preserves fractional fees and checkpoints");
+  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "14");
+  assert.deepEqual(await read(), seeded, "schema14 preserves fractional fees and checkpoints");
   assert.equal(await billing.controls.fixture_read("SELECT value FROM global_settings WHERE key='serial'"), "9000", "upgrade preserves the never-reused ID serial");
   await billing.controls.fixture_execute(
     `CREATE TRIGGER fixture_fail_owner_billing BEFORE UPDATE OF balance_cycles ON accounts WHEN OLD.owner='${failedOwner}' BEGIN SELECT RAISE(ABORT,'injected owner billing failure'); END;`,
@@ -688,7 +687,7 @@ try {
   assertBilled(recovered);
   assertBilled(stillHealthy);
   assert.ok(recovered.balance < healthy.balance, "failed owner catches up from its unchanged checkpoint");
-  console.log("PASS actual schema13 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
+  console.log("PASS actual schema14 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
 } finally {
   await billing.close();
 }

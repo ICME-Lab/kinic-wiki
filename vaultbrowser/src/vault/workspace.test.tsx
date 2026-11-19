@@ -639,6 +639,8 @@ it("shows account and storage in settings without an empty upload recovery secti
   expect(within(settings).getByText("Account & storage")).toBeTruthy();
   clickAndDiscard(accountSummary);
   expect(within(settings).getByRole("region", { name: "Vault account" })).toBeTruthy();
+  expect(within(settings).queryByText("Shared capacity")).toBeNull();
+  expect(within(settings).getByRole("button", { name: "Review payment" })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Interrupted uploads", hidden: true })).toBeNull();
   clickAndDiscard(screen.getByRole("button", { name: "Back to Vault" }));
   expect(accountSummary.closest("[hidden]")).not.toBeNull();

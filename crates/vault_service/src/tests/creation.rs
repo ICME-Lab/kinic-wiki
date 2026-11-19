@@ -129,9 +129,10 @@ fn server_identity_uses_global_operation_serial_across_owners_and_intervening_wo
     assert_eq!(other.id, 3u128.to_be_bytes());
 }
 
-// Catches leaving tombstones at global capacity or reusing a deleted identity.
+// Other owners' Vaults do not consume this owner's admission; deletion still
+// physically removes its row without recycling a server-issued identity.
 #[test]
-fn physical_deletion_recovers_global_capacity_without_reusing_identity() {
+fn physical_deletion_and_cross_owner_vault_admission_preserve_identity() {
     let e = Env::new();
     let h = e.create();
     e.transaction(|db| {
@@ -160,10 +161,8 @@ fn physical_deletion_recovers_global_capacity_without_reusing_identity() {
     let request = CreateVault {
         operation: vec![3; 16],
     };
-    assert_eq!(
-        block_on(create_vault(&e, request.clone())),
-        Err(Error::QuotaExceeded)
-    );
+    let other = block_on(create_vault(&e, request)).unwrap();
+    assert_ne!(other.id, h.id);
     let delete = Action::DeleteVault {
         vault: h.id.clone(),
     };
@@ -179,7 +178,13 @@ fn physical_deletion_recovers_global_capacity_without_reusing_identity() {
         e.change(80, delete.clone()),
         Ok(MutationResult::Progress(true))
     ));
-    let next = block_on(create_vault(&e, request)).unwrap();
+    let next = block_on(create_vault(
+        &e,
+        CreateVault {
+            operation: vec![4; 16],
+        },
+    ))
+    .unwrap();
     assert_ne!(next.id, h.id);
     assert!(matches!(e.change(81, delete.clone()), Err(Error::NotFound)));
     e.now.set(e.now() + DAY + 1);

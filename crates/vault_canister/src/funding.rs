@@ -12,6 +12,7 @@ pub(crate) use consent::{
     Icrc10SupportedStandard, Icrc21ConsentMessageRequest, Icrc21ConsentMessageResponse,
 };
 use kinic_sqlite_compat::{self as sql, OptionalExtension, params};
+pub(crate) use reconciliation::initialize_scan_slots;
 pub use reconciliation::{ReconciliationProgress, ReconciliationState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -102,8 +103,7 @@ fn load(db: &sql::Connection, w: Principal, id: &[u8]) -> Result<Option<Payment>
     })
     .transpose()
 }
-/// Shared bounded payment scan for admission checks. Decode lazily so callers can
-/// stop at the first capacity/lease conflict without interpreting unrelated rows.
+#[cfg(test)]
 pub(crate) fn all_payments(db: &sql::Connection) -> Result<impl Iterator<Item = Result<Payment>>> {
     let mut statement = db
         .prepare("SELECT record FROM payments")
@@ -180,8 +180,45 @@ fn validate_receipts(p: &Payment) -> Result<()> {
     }
     Ok(())
 }
+// Wallet, operation, expires, and three length prefixes use at most 99 of
+// the 4,096-byte row budget. Stable-size pending rows can advance a scan
+// even when SQLite cannot allocate a new page.
+const PENDING_RECORD_BYTES: usize = vault_types::capacity::PAYMENT_ROW - (63 + 16 + 8 + 12);
+
+pub(crate) fn pad_pending_payments(db: &sql::Connection) -> Result<()> {
+    db.execute(
+        "UPDATE payments SET record=record || printf('%*s', ?1 - length(CAST(record AS BLOB)), '')
+         WHERE json_extract(record,'$.status') IN ('InFlight','Unknown')",
+        params![PENDING_RECORD_BYTES as i64],
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(())
+}
+
 fn save(db: &sql::Connection, p: &Payment) -> Result<()> {
     validate_receipts(p)?;
+    let mut raw = serde_json::to_string(p).map_err(|_| Error::Storage)?;
+    if matches!(p.status, Status::InFlight | Status::Unknown) {
+        let padding = PENDING_RECORD_BYTES
+            .checked_sub(raw.len())
+            .ok_or(Error::QuotaExceeded)?;
+        raw.extend(std::iter::repeat_n(' ', padding));
+        // Pending-to-pending writes keep the same deadline. Do not rewrite
+        // the expiry index or allocate a new journal row during reconciliation.
+        let same_expiry: i64 = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE wallet=?1 AND operation=?2 AND expires=?3)",
+            params![p.wallet.to_text(),p.request.operation,i64::MAX],
+            |r| sql::row_get(r, 0),
+        ).map_err(|_| Error::Storage)?;
+        if same_expiry != 0 {
+            db.execute(
+                "UPDATE payments SET record=?3 WHERE wallet=?1 AND operation=?2",
+                params![p.wallet.to_text(), p.request.operation, raw],
+            )
+            .map_err(|_| Error::Storage)?;
+            return Ok(());
+        }
+    }
     let expiry = if matches!(p.status, Status::Quoted) {
         p.created_at_time / 1_000_000_000 + 300
     } else if matches!(p.status, Status::InFlight | Status::Unknown) {
@@ -189,7 +226,7 @@ fn save(db: &sql::Connection, p: &Payment) -> Result<()> {
     } else {
         p.created_at_time / 1_000_000_000 + 7 * 86400
     };
-    db.execute("INSERT INTO payments(wallet,operation,record,expires) VALUES(?1,?2,?3,?4) ON CONFLICT(wallet,operation) DO UPDATE SET record=excluded.record,expires=excluded.expires",params![p.wallet.to_text(),p.request.operation,serde_json::to_string(p).map_err(|_|Error::Storage)?,expiry as i64]).map_err(|_|Error::Storage)?;
+    db.execute("INSERT INTO payments(wallet,operation,record,expires) VALUES(?1,?2,?3,?4) ON CONFLICT(wallet,operation) DO UPDATE SET record=excluded.record,expires=excluded.expires",params![p.wallet.to_text(),p.request.operation,raw,expiry as i64]).map_err(|_|Error::Storage)?;
     Ok(())
 }
 fn generation(db: &sql::Connection) -> Result<i64> {
@@ -265,16 +302,12 @@ pub fn admit_quote(
             params![generation, nanos],
         )
         .map_err(|_| Error::Storage)?;
-        db.execute(
-            "DELETE FROM payments WHERE expires<?1",
-            params![(now / 1_000_000_000) as i64],
-        )
-        .map_err(|_| Error::Storage)?;
-        let (payments, owned): (i64, i64) = db
+        crate::capacity::collect_expired_payments(db, wallet, (now / 1_000_000_000) as i64)?;
+        let owned: i64 = db
             .query_row(
-                "SELECT count(*),coalesce(sum(wallet=?1),0) FROM payments",
+                "SELECT count(*) FROM payments WHERE wallet=?1",
                 params![wallet.to_text()],
-                |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+                |r| sql::row_get(r, 0),
             )
             .map_err(|_| Error::Storage)?;
         let (flights, own_flights): (i64, i64) = db
@@ -284,7 +317,7 @@ pub fn admit_quote(
                 |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
             )
             .map_err(|_| Error::Storage)?;
-        if payments + flights >= 1024 || owned + own_flights >= 16 {
+        if owned + own_flights >= 16 {
             return Err(Error::QuotaExceeded);
         }
         // One caller cannot monopolize all eight physical fee calls. A 120s lease
@@ -455,7 +488,6 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         let mut p = load(db, wallet, id)?.ok_or(Error::NotFound)?;
         let current = generation(db)?;
         let orphan = payment_eligibility(&p, current, now)?;
-        crate::capacity::admit_beneficiary(db, p.request.beneficiary)?;
         validate_receipts(&p)?;
         crate::capacity::admit_credit(
             db,
@@ -464,6 +496,7 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
             &p.request.operation,
             p.credits,
         )?;
+        crate::capacity::reserve_payment_completion(db, p.wallet, &p.request.operation)?;
         p.uncertain |= (orphan && !p.preparing) || matches!(p.status, Status::Unknown);
         p.status = Status::InFlight;
         p.generation = current;
@@ -479,6 +512,7 @@ pub enum Outcome {
     Rejected(Status),
 }
 fn credit_payment(db: &sql::Connection, p: &Payment) -> Result<()> {
+    crate::capacity::release_payment_completion(db, p.wallet, &p.request.operation)?;
     let owner = p.request.beneficiary.to_text();
     let balance: i64 = db
         .query_row(
@@ -536,12 +570,18 @@ pub fn complete_payment(sent: &Payment, outcome: Outcome) -> Result<Payment> {
                 if p.uncertain {
                     Status::Unknown
                 } else {
+                    crate::capacity::release_payment_completion(
+                        db,
+                        p.wallet,
+                        &p.request.operation,
+                    )?;
                     s
                 }
             }
         };
         if matches!(p.status, Status::Paid(_)) {
             p.uncertain = false;
+            reconciliation::release_scan_slot(db, &p)?;
             if let Some(scan) = &mut p.reconciliation {
                 scan.lease_until = 0;
             }

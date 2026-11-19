@@ -254,7 +254,14 @@ try {
   assert.ok(purgeCall);
   const capacityAfterPurge = ok(await f.actor.global_capacity());
   assert.deepEqual(await f.actor.mutate(purgeCall.args[0]), purgeCall.result);
-  assert.deepEqual(ok(await f.actor.global_capacity()), capacityAfterPurge);
+  // Exact replay preserves content and receipt allocation and records one
+  // billed execution audit row in both aggregate accounting fields.
+  const replayAuditBytes = 512n;
+  assert.deepEqual(ok(await f.actor.global_capacity()), {
+    ...capacityAfterPurge,
+    used: capacityAfterPurge.used + replayAuditBytes,
+    accounting_reserved: capacityAfterPurge.accounting_reserved + replayAuditBytes,
+  });
   for (const revision of [0n, 1n, 2n, 3n])
     err(
       await f.actor.get_manifest(header.id, note.object, revision),
@@ -295,7 +302,7 @@ try {
     false,
   );
   console.log(
-    "PASS irreversible multi-revision purge hides explicit old manifests/chunks/history, rejects purged object reuse and replays the exact purge without allocation",
+    "PASS irreversible multi-revision purge hides explicit old manifests/chunks/history, rejects purged object reuse and replays the exact purge without allocating content or another receipt",
   );
   await client.purgeObject(credential);
   err(await f.actor.get_manifest(header.id, credential.object, 0n), "NotFound");
