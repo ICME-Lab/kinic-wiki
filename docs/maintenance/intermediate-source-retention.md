@@ -18,7 +18,14 @@ revision number and original content hash. Reject changed snapshots rather than
 refreshing the guard without reinspection. The canister refuses terminal or
 protected records, incoming links, published nodes, pending publication recovery,
 retained learning-publication references, shared evidence and multi-version
-history. Work is capped at one 1 MB raw source and a bounded publication scan.
+history. Work is capped at one 1 MB raw source. Publication receipts are indexed
+by node ID in batches of up to 16 receipts, with a 4 MB batch budget that permits
+one larger receipt to be indexed on its own. When the call returns
+`indexing publication references; retry archive to continue`, it has saved
+index progress and has removed no node. Retry the same guarded request while
+the snapshot is unchanged. Every call checks for newly appended receipts
+before using the index. Logical rebuilds copy the original receipts and derive
+the index again on demand.
 
 Deletion, FTS/link removal, sync removal and revision pruning share one SQLite
 transaction. Tombstone identity and delta-sync records remain. No schema

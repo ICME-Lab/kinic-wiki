@@ -1,6 +1,7 @@
 //! Same-image retention, deliberately limited to raw, single-revision hook events.
 //! No VACUUM, mount allocation, schema rewrite, or unbounded history scan.
 use super::*;
+use serde::Deserialize;
 use serde_json::Value;
 use vfs_types::{
     ArchiveIntermediateSourceRequest, ArchiveIntermediateSourceResult, StoragePageStats,
@@ -59,31 +60,103 @@ fn eligible(node: &Node) -> Result<(), String> {
     }
     Ok(())
 }
-// Publication receipts can retain revision references after their current target
-// has changed. Fail closed rather than silently invalidating such references.
-fn check_publication_refs(conn: &Connection, node_id: &str) -> Result<(), String> {
-    let (count,bytes):(i64,i64)=conn.query_row("SELECT COUNT(*),COALESCE(SUM(length(CAST(request_json AS BLOB))),0) FROM (SELECT request_json FROM learning_publication_commits LIMIT 257)",params![],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?))).map_err(|e|e.to_string())?;
-    if count > 256 || bytes > 4_000_000 {
-        return Err("publication reference inspection exceeds archive budget".into());
-    }
-    let mut stmt = conn
-        .prepare("SELECT request_json FROM learning_publication_commits LIMIT 256")
-        .map_err(|e| e.to_string())?;
-    let rows = crate::sqlite::query_map(&mut stmt, params![], |r| {
-        crate::sqlite::row_get::<String>(r, 0)
-    })
-    .map_err(|e| e.to_string())?;
-    for row in rows {
-        let json: Value = serde_json::from_str(&row).map_err(|e| e.to_string())?;
-        let refs = json["evidence"]
-            .as_array()
-            .ok_or("invalid publication receipt")?;
-        if refs.iter().any(|r| r["node_id"].as_str() == Some(node_id)) {
-            return Err("source is retained by a publication receipt".into());
-        }
-    }
-    Ok(())
+// Publication receipts are append-only in the live image. Logical rebuilds
+// copy the receipts and discard this derived index, whose cursor uses rowids.
+const REFERENCE_SCHEMA: &str = include_str!("../../migrations/archive_publication_refs.sql");
+const RECEIPTS_PER_ARCHIVE: i64 = 16;
+const RECEIPT_BYTES_PER_ARCHIVE: u64 = 4_000_000;
+
+#[derive(Deserialize)]
+struct PublicationReceipt {
+    evidence: Vec<PublicationReference>,
 }
+
+#[derive(Deserialize)]
+struct PublicationReference {
+    node_id: String,
+}
+
+fn canonical_node_id(text: &str) -> Result<i64, String> {
+    let id = text
+        .parse::<i64>()
+        .map_err(|_| "invalid archive node identity")?;
+    if id <= 0 || id.to_string() != text {
+        return Err("invalid archive node identity".into());
+    }
+    Ok(id)
+}
+
+// Finish indexing every receipt visible in this transaction before allowing a
+// deletion. Bytes are budgeted between receipts so a large receipt is not a
+// permanent barrier. The first receipt is bounded by the publication API.
+fn index_publication_refs(conn: &Connection) -> Result<bool, String> {
+    conn.execute_batch(REFERENCE_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    let mut last = conn
+        .query_row(
+            "SELECT last_receipt_rowid FROM archive_publication_scan WHERE id = 1",
+            params![],
+            |row| crate::sqlite::row_get::<i64>(row, 0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(0);
+    let mut stmt = conn
+        .prepare(
+            "SELECT rowid, length(CAST(request_json AS BLOB))
+             FROM learning_publication_commits WHERE rowid > ?1
+             ORDER BY rowid LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let receipts =
+        crate::sqlite::query_map(&mut stmt, params![last, RECEIPTS_PER_ARCHIVE], |row| {
+            Ok((
+                crate::sqlite::row_get::<i64>(row, 0)?,
+                crate::sqlite::row_get::<i64>(row, 1)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut bytes = 0u64;
+    for (rowid, size) in receipts {
+        let size = u64::try_from(size).map_err(|e| e.to_string())?;
+        if bytes > 0 && bytes.saturating_add(size) > RECEIPT_BYTES_PER_ARCHIVE {
+            break;
+        }
+        let json = conn
+            .query_row(
+                "SELECT request_json FROM learning_publication_commits WHERE rowid = ?1",
+                params![rowid],
+                |row| crate::sqlite::row_get::<String>(row, 0),
+            )
+            .map_err(|e| e.to_string())?;
+        let receipt: PublicationReceipt = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        for reference in receipt.evidence {
+            conn.execute(
+                "INSERT INTO archive_publication_refs (node_id) VALUES (?1)
+                 ON CONFLICT (node_id) DO NOTHING",
+                params![canonical_node_id(&reference.node_id)?],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        last = rowid;
+        bytes = bytes.saturating_add(size);
+    }
+    if bytes > 0 {
+        conn.execute(
+            "INSERT INTO archive_publication_scan (id, last_receipt_rowid) VALUES (1, ?1)
+             ON CONFLICT (id) DO UPDATE SET last_receipt_rowid = excluded.last_receipt_rowid",
+            params![last],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    conn.query_row(
+        "SELECT NOT EXISTS(SELECT 1 FROM learning_publication_commits WHERE rowid > ?1)",
+        params![last],
+        |row| crate::sqlite::row_bool(row, 0),
+    )
+    .map_err(|e| e.to_string())
+}
+
 impl FsStore {
     pub fn storage_page_stats(&self) -> Result<StoragePageStats, String> {
         self.read_conn(stats)
@@ -100,10 +173,7 @@ impl FsStore {
         {
             return Err("invalid archive guard".into());
         }
-        let node_id = r
-            .expected_node_id
-            .parse::<i64>()
-            .map_err(|_| "invalid archive node identity")?;
+        let node_id = canonical_node_id(&r.expected_node_id)?;
         let revision =
             i64::try_from(r.expected_revision).map_err(|_| "invalid archive revision")?;
         self.write_conn(|tx| {
@@ -120,13 +190,29 @@ impl FsStore {
             if !owned || history!=(1,revision,revision) || !exact { return Err("archive requires exactly the backed-up raw revision".into()); }
             let referenced:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM fs_links WHERE target_path=?1) OR EXISTS(SELECT 1 FROM fs_evidence_bindings WHERE path=?1)",params![r.path],|row|crate::sqlite::row_bool(row,0)).map_err(|e|e.to_string())?;
             if referenced { return Err("source has links or shared evidence bindings".into()); }
-            check_publication_refs(tx,&r.expected_node_id)?;
+            if !index_publication_refs(tx)? {
+                // Commit the bounded index progress without deleting anything.
+                return Ok(Err("indexing publication references; retry archive to continue".into()));
+            }
+            let retained = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM archive_publication_refs WHERE node_id = ?1)",
+                params![node_id],
+                |row| crate::sqlite::row_bool(row, 0),
+            ).map_err(|e| e.to_string())?;
+            if retained {
+                return Ok(Err("source is retained by a publication receipt".into()));
+            }
             let before=stats(tx)?;
             // Normal delete preserves change log, tombstone identity, links and FTS.
             // Its transient delete snapshot is pruned in this same transaction.
             delete_node_with_history(tx,&stored)?;
             tx.execute("DELETE FROM fs_node_revisions WHERE node_id=?1",params![node_id]).map_err(|e|e.to_string())?;
-            Ok(ArchiveIntermediateSourceResult{path:r.path,snapshot_revision:snapshot(tx)?,before,after:stats(tx)?})
-        })
+            Ok(Ok(ArchiveIntermediateSourceResult {
+                path: r.path,
+                snapshot_revision: snapshot(tx)?,
+                before,
+                after: stats(tx)?,
+            }))
+        })?
     }
 }

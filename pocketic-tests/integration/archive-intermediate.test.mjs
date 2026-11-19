@@ -41,8 +41,16 @@ test('upgrade_and_archive_reuse_same_mount_without_stable_memory_growth',{timeou
   const directory=`/Sources/learning-runs/${sha('run')}`;
   for(const path of ['/Sources/learning-runs',directory])ok(await actor.mkdir_node({database_id,path}));
   const make=(id)=>{const path=`${directory}/${sha(id)}.json`;const content=JSON.stringify({id,run_id:'run',kind:'hook',payload:{capture:{event:'PostToolUse',terminal:false,text:'syntheticRetentionNeedle '.repeat(13000)}}});return file(path,content,'Source');};
-  const one=make('first');ok(await actor.write_nodes({database_id,nodes:[one,file('/Knowledge/keep.md','preserve other data','File',{protected:true})]}));
+  const one=make('first');
+  const retained=make('published-evidence');
+  ok(await actor.write_nodes({database_id,nodes:[one,retained,file('/Knowledge/keep.md','preserve other data','File',{protected:true})]}));
   const r=ok(await actor.current_node_revision({database_id,path:one.path}))[0];
+  const published=ok(await actor.current_node_revision({database_id,path:retained.path}))[0];
+  ok(await actor.publish_learning({
+   database_id,operation_id:'retain-published-evidence',scope_guards:[],
+   targets:[file('/Knowledge/derived.md','retention fixture','File',{authority:'agent'})],
+   evidence:[{path:retained.path,node_id:published.node_id,revision:published.revision,etag:published.node.etag,content_hash:published.content_hash}],
+  }));
   const original=ok(await actor.read_node(database_id,'/Knowledge/keep.md'));
   await pic.upgradeCanister({sender:owner,canisterId,wasm,arg:IDL.encode([],[])});
   const stats=ok(await actor.database_storage_stats({database_id}));
@@ -52,6 +60,13 @@ test('upgrade_and_archive_reuse_same_mount_without_stable_memory_growth',{timeou
   assert.match((await actor.archive_intermediate_source(request)).Err,/controller/);
   assert.match((await actor.database_storage_stats({database_id})).Err,/controller/);
   actor.setPrincipal(owner);
+  const retainedRequest={
+   ...request,path:retained.path,expected_etag:published.node.etag,
+   expected_node_id:published.node_id,expected_revision:published.revision,expected_content_hash:published.content_hash,
+  };
+  assert.match((await actor.archive_intermediate_source(retainedRequest)).Err,/retained by a publication receipt/);
+  assert.ok('Err' in await actor.archive_intermediate_source({...retainedRequest,expected_node_id:`0${published.node_id}`}));
+  assert.deepEqual(ok(await actor.current_node_revision({database_id,path:retained.path}))[0],published);
   assert.ok('Err' in await actor.archive_intermediate_source({...request,expected_mount:stats.mount_id+1}));
   assert.ok('Err' in await actor.archive_intermediate_source({...request,expected_revision:r.revision+1n}));
   assert.deepEqual(ok(await actor.current_node_revision({database_id,path:one.path}))[0],r);

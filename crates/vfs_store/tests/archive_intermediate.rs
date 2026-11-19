@@ -7,13 +7,12 @@ fn hash(s: &str) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))
 }
 fn fixture(store: &FsStore, terminal: bool) -> (String, NodeRevision) {
-    let path = format!(
-        "/Sources/learning-runs/{}/{}.json",
-        hash("run"),
-        hash("hook")
-    );
+    fixture_with_event_id(store, terminal, "hook")
+}
+fn fixture_with_event_id(store: &FsStore, terminal: bool, id: &str) -> (String, NodeRevision) {
+    let path = format!("/Sources/learning-runs/{}/{}.json", hash("run"), hash(id));
     ensure_parent_folders(store, &path, 1);
-    let body = serde_json::json!({"id":"hook","run_id":"run","kind":"hook","payload":{"capture":{"event":"PostToolUse","terminal":terminal,"text":"needle ".repeat(30000)}}}).to_string();
+    let body = serde_json::json!({"id":id,"run_id":"run","kind":"hook","payload":{"capture":{"event":"PostToolUse","terminal":terminal,"text":"needle ".repeat(30000)}}}).to_string();
     store
         .write_node(
             WriteNodeRequest {
@@ -175,10 +174,7 @@ fn incoming_links_protect_source_and_its_history() {
     assert_eq!(store.current_node_revision(&path).unwrap().unwrap(), r);
 }
 
-#[test]
-fn publication_receipt_protects_old_revision_even_when_current_article_no_longer_links() {
-    let (_dir, store) = new_store();
-    let (path, r) = fixture(&store, false);
+fn publish_using(store: &FsStore, path: &str, source: &NodeRevision) {
     store
         .publish_learning(
             LearningPublicationRequest {
@@ -193,22 +189,80 @@ fn publication_receipt_protects_old_revision_even_when_current_article_no_longer
                     expected_etag: None,
                 }],
                 evidence: vec![RevisionRef {
-                    path: path.clone(),
-                    node_id: r.node_id.clone(),
-                    revision: r.revision,
-                    etag: r.node.etag.clone(),
-                    content_hash: r.content_hash.clone(),
+                    path: path.into(),
+                    node_id: source.node_id.clone(),
+                    revision: source.revision,
+                    etag: source.node.etag.clone(),
+                    content_hash: source.content_hash.clone(),
                 }],
             },
             3,
         )
         .unwrap();
+}
+
+#[test]
+fn publication_receipt_protects_old_revision_even_when_current_article_no_longer_links() {
+    let (_dir, store) = new_store();
+    let (path, r) = fixture(&store, false);
+    publish_using(&store, &path, &r);
     assert!(
         store
             .archive_intermediate_source(request(&store, &r))
             .is_err()
     );
+    let mut alias = request(&store, &r);
+    alias.expected_node_id.insert(0, '0');
+    assert!(
+        store.archive_intermediate_source(alias).is_err(),
+        "alternate spelling of the node identity must preserve publication references"
+    );
     assert_eq!(store.current_node_revision(&path).unwrap().unwrap(), r);
+}
+
+#[test]
+fn large_publication_history_does_not_permanently_block_unreferenced_source() {
+    let (dir, store) = new_store();
+    let (path, r) = fixture(&store, false);
+    let (protected_path, protected) = fixture_with_event_id(&store, false, "later-receipt");
+    let mut conn = rusqlite::Connection::open(dir.path().join("wiki.sqlite3")).unwrap();
+    let tx = conn.transaction().unwrap();
+    for id in 0..257 {
+        tx.execute(
+            "INSERT INTO learning_publication_commits (operation_id, request_json, result_json)
+             VALUES (?1, ?2, '{}')",
+            rusqlite::params![id.to_string(), r#"{"evidence":[]}"#],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+
+    let req = request(&store, &r);
+    let mut result = store.archive_intermediate_source(req.clone());
+    assert!(matches!(&result, Err(error) if error.contains("retry archive to continue")));
+    assert!(store.rebuild_start_cursor().is_ok());
+    for _ in 0..64 {
+        if !matches!(&result, Err(error) if error.contains("retry archive to continue")) {
+            break;
+        }
+        assert_eq!(store.current_node_revision(&path).unwrap().unwrap(), r);
+        result = store.archive_intermediate_source(req.clone());
+    }
+    result.expect("unreferenced source remains eligible after indexing old receipts");
+    assert!(store.read_node(&path).unwrap().is_none());
+
+    publish_using(&store, &protected_path, &protected);
+    let err = store
+        .archive_intermediate_source(request(&store, &protected))
+        .unwrap_err();
+    assert!(err.contains("retained by a publication receipt"));
+    assert_eq!(
+        store
+            .current_node_revision(&protected_path)
+            .unwrap()
+            .unwrap(),
+        protected
+    );
 }
 
 #[test]
