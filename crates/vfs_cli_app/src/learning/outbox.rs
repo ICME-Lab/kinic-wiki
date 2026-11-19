@@ -243,7 +243,7 @@ impl Outbox {
     pub(super) async fn flush_owned(&self, client: &impl VfsApi, db: &str) -> Result<usize> {
         self.flush_owned_selection(client, db, None).await
     }
-    async fn flush_owned_selection(
+    pub(super) async fn flush_owned_selection(
         &self,
         client: &impl VfsApi,
         db: &str,

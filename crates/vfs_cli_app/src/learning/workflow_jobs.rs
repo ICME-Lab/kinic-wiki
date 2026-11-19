@@ -266,6 +266,9 @@ pub async fn drain_selected(
         }
         first_pass = false;
         let outbox = open_outbox(client, c, state)?;
+        if require_wakeup && outbox.background_delivery_paused()? {
+            return Ok(json!({"delivery_paused":true,"pending_sync":true,"jobs":q.list()?}));
+        }
         refresh_claude_evidence(&q, &outbox, selection.run_id.as_deref())?;
         let selected = if selection.run_id.is_some() || selection.max_jobs.is_some() {
             Some(
@@ -285,13 +288,12 @@ pub async fn drain_selected(
         } else {
             None
         };
-        if let Some(runs) = &selected {
+        if let Some(_delivery_lease) = outbox.acquire()? {
+            if require_wakeup && outbox.background_delivery_paused()? {
+                return Ok(json!({"delivery_paused":true,"pending_sync":true,"jobs":q.list()?}));
+            }
             outbox
-                .flush_runs(client, c.database_id.as_deref().unwrap(), runs)
-                .await?;
-        } else {
-            outbox
-                .flush_exclusive(client, c.database_id.as_deref().unwrap())
+                .flush_owned_selection(client, c.database_id.as_deref().unwrap(), selected.as_ref())
                 .await?;
         }
         let selected_job = |job: &LearningJob| {
@@ -328,6 +330,9 @@ pub async fn drain_selected(
         let jobs = q.list()?;
         let mut delivery_blocked = false;
         for mut job in jobs {
+            if require_wakeup && outbox.background_delivery_paused()? {
+                return Ok(json!({"delivery_paused":true,"pending_sync":true,"jobs":q.list()?}));
+            }
             if attempted.contains(&attempt_key(&job)) || !selected_job(&job) {
                 continue;
             }

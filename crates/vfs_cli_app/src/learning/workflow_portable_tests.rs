@@ -2078,7 +2078,15 @@ async fn paused_background_delivery_keeps_pending_events_but_manual_flush_works(
         .await
         .unwrap();
     assert_eq!(reply["delivery_paused"], true);
+    let project = load_project(&a.join(CONFIG_FILE)).unwrap();
+    let queue = job_driver::queue(&client, &c, &state, &project).unwrap();
+    queue.request_wakeup().unwrap();
+    let paused = job_driver::drain_with_config(&client, &c, &a, &state, None, true)
+        .await
+        .unwrap();
     assert_eq!(out.pending_count().unwrap(), 1);
+    assert_eq!(paused["delivery_paused"], true);
+    assert!(queue.pending_wakeup().unwrap().is_some());
     assert!(
         client
             .read_node("db", &evidence_path(&e))
