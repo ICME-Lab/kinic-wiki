@@ -494,6 +494,11 @@ try {
   assert.equal(await cursor(), hex(idle.toUint8Array()));
   assert.equal(await count(), "1");
   await f.upgrade();
+  // PocketIC 16.1 drains the install-code debit by scheduler round. Let the
+  // upgraded canister's debit clear before crossing the first timer deadline.
+  const upgradedAt = await f.pic.getTime();
+  await f.pic.tick(150);
+  assert.equal(await f.pic.getTime(), upgradedAt);
   assert.equal(await cursor(), hex(idle.toUint8Array()));
   await tick();
   assert.equal(await cursor(), hex(busy.toUint8Array()));
