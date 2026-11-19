@@ -398,14 +398,10 @@ fn reconcile_consent_waits_for_another_operations_same_wallet_lease() {
         let dispatched = reconciliation::prepare_dispatch(&preparing, principal(3), 40).unwrap();
         complete_payment(&dispatched, Outcome::Unknown).unwrap()
     };
-    let mut active = make_unknown(16);
+    let active = make_unknown(16);
     let other = make_unknown(17);
-    let lease_until = 181_000_000_000;
-    let scan = active.reconciliation.as_mut().unwrap();
-    scan.lease = 1;
-    scan.lease_until = lease_until;
-    scan.lease_generation = active.generation;
-    transaction(|db| save(db, &active)).unwrap();
+    let active = reconciliation::begin_scan(wallet, &active.request.operation, CREATED).unwrap();
+    let lease_until = active.reconciliation.as_ref().unwrap().lease_until;
     let before = financial_writes();
     let preview = |now| {
         consent(

@@ -26,25 +26,10 @@ pub(crate) fn admit_credit(
         )
         .map_err(|_| Error::Storage)?;
     let refunds:i64=db.query_row("SELECT coalesce(sum(CASE WHEN actual IS NULL THEN reserved WHEN in_flight=1 THEN actual ELSE 0 END),0) FROM vault_cycle_reservations WHERE owner=?1",params![owner],|r|sqlite::row_get(r,0)).map_err(|_|Error::Storage)?;
-    let mut capacity = u128::from(u64::try_from(balance).map_err(|_| Error::Storage)?)
+    let capacity = u128::from(u64::try_from(balance).map_err(|_| Error::Storage)?)
         + u128::from(u64::try_from(refunds).map_err(|_| Error::Storage)?)
-        + u128::from(amount);
-    for payment in crate::funding::pending_for_beneficiary(db, owner)? {
-        let excluded = exclude_payment.is_some_and(|(wallet, operation)| {
-            payment.wallet.to_text() == wallet && payment.request.operation.as_slice() == operation
-        });
-        if !excluded {
-            capacity += u128::from(payment.credits);
-        }
-    }
-    for (beneficiary, operation, credits) in crate::bridge::reservations_for(db, owner)? {
-        let excluded = exclude_payment.is_some_and(|(wallet, excluded_operation)| {
-            beneficiary.to_text() == wallet && operation.as_slice() == excluded_operation
-        });
-        if !excluded {
-            capacity += u128::from(credits);
-        }
-    }
+        + u128::from(amount)
+        + crate::payment_holds::beneficiary(db, owner, exclude_payment)?;
     if capacity > i64::MAX as u128 {
         return Err(Error::QuotaExceeded);
     }

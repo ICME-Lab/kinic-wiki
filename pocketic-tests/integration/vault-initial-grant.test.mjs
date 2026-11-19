@@ -48,3 +48,35 @@ try {
   assert.ok(after.balance<=before,"upgrade/bootstrap must not replenish credit");
   console.log("PASS: new account 10B plus first-key subsidy, anonymous denial, sponsored real vetKD with exact lost-response replay and cached reuse, normal credit preserved; clearing keys or upgrading cannot renew the subsidy.");
 }finally{for(const c of clients)c.destroy();await f.close();}
+
+
+const fullFaucet = await fixture({
+  wasm: resolve("target/vault-ii-acceptance/vault-state.wasm"),
+  fund: false,
+});
+let fundedClient;
+try {
+  const paidBalance = 100_000_000_000n;
+  await fullFaucet.controls.fixture_execute(
+    "WITH RECURSIVE slots(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM slots WHERE n<1024) " +
+    "INSERT INTO key_subsidies(owner) SELECT 'fixture-subsidy-'||n FROM slots;" +
+    `INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES('${owner.toText()}',${paidBalance},0);`,
+  );
+  assert.deepEqual(ok(await fullFaucet.actor.initialize_vault_account()), {balance:paidBalance,grant_cycles:0n});
+  const keyCost = ok(await fullFaucet.actor.vault_key_cost([]));
+  assert.equal(keyCost.first_key_free, false);
+  assert.equal(keyCost.owner_fee, keyCost.fee);
+  fundedClient = new VaultClient({
+    actor: fullFaucet.actor,
+    identity: { getPrincipal: () => owner },
+    canister: fullFaucet.canisterId.toText(),
+    local: true,
+  });
+  const header = await fundedClient.create();
+  await fundedClient.open(header);
+  assert.ok(ok(await fullFaucet.actor.account_balance()) < paidBalance - keyCost.fee);
+  console.log("PASS: paid account initialization, creation and real key retrieval remain available after the subsidy faucet fills.");
+} finally {
+  fundedClient?.destroy();
+  await fullFaucet.close();
+}

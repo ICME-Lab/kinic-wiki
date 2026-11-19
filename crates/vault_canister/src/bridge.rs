@@ -475,26 +475,6 @@ pub(crate) fn reservations(db: &sql::Connection) -> Result<Vec<(Principal, Vec<u
         })
         .collect())
 }
-/// Prepared offers for one beneficiary.
-pub(crate) fn reservations_for(
-    db: &sql::Connection,
-    owner: &str,
-) -> Result<Vec<(Principal, Vec<u8>, u64)>> {
-    let mut query=db.prepare("SELECT record FROM payments INDEXED BY payments_prepared_bridge_owner WHERE json_extract(record,'$.bridge_v1.Credit.offer.vault_owner')=?1 AND json_extract(record,'$.bridge_v1.Credit.status')='Prepared'").map_err(|_|Error::Storage)?;
-    let records: Vec<String> = sql::query_map(&mut query, params![owner], |r| sql::row_get(r, 0))
-        .map_err(|_| Error::Storage)?;
-    records
-        .into_iter()
-        .map(|raw| match decode(&raw)? {
-            Some(Record::Credit {
-                offer,
-                status: CreditStatus::Prepared,
-                ..
-            }) => Ok((offer.vault_owner, offer.operation, offer.amount_cycles)),
-            _ => Err(Error::Storage),
-        })
-        .collect()
-}
 struct OfferLookup {
     settings: Settings,
     generation: i64,
@@ -537,25 +517,6 @@ fn finish_lookup(
     // Do not let another user's challenge/revoke cancel this owner's harmless intent.
     prepare(owner, snapshot.settings.config.peer, offer, now)
 }
-fn credit_total(db: &sql::Connection, day: u64) -> Result<u128> {
-    let (prepared, accepted): (i64, i64) = db
-        .query_row(
-            "SELECT
-          (SELECT coalesce(sum(json_extract(record,'$.bridge_v1.Credit.offer.amount_cycles')),0)
-           FROM payments INDEXED BY payments_prepared_bridge_owner
-           WHERE json_extract(record,'$.bridge_v1.Credit.status')='Prepared'),
-          (SELECT coalesce(sum(json_extract(record,'$.bridge_v1.Credit.offer.amount_cycles')),0)
-           FROM payments INDEXED BY payments_accepted_bridge_day
-           WHERE json_extract(record,'$.bridge_v1.Credit.status')='Accepted'
-             AND json_extract(record,'$.bridge_v1.Credit.day')=?1)",
-            params![day as i64],
-            |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
-        )
-        .map_err(|_| Error::Storage)?;
-    Ok(u128::try_from(prepared).map_err(|_| Error::Storage)?
-        + u128::try_from(accepted).map_err(|_| Error::Storage)?)
-}
-
 fn prepare(
     owner: Principal,
     caller: Principal,
@@ -585,9 +546,9 @@ fn prepare(
         }
         ensure_no_live_fee(db, owner, &offer.operation, now)?;
         admit(db, owner, now)?;
-        crate::capacity::allocate_beneficiary(db, owner, now)?;
         crate::capacity::admit_credit(db, owner, owner, &offer.operation, offer.amount_cycles)?;
-        let daily = u128::from(offer.amount_cycles) + credit_total(db, now / DAY)?;
+        let daily =
+            u128::from(offer.amount_cycles) + crate::payment_holds::bridge_day(db, now / DAY)?;
         if daily > u128::from(s.config.daily_limit_cycles) {
             return Err(Error::QuotaExceeded);
         }

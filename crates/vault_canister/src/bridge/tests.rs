@@ -124,6 +124,19 @@ fn expired_intent_is_authoritative_not_accepted() {
         CreditStatus::NotAccepted
     );
     ack_credit(p(9), o, 300_000_000_001).unwrap();
+    transaction(|db| {
+        let accounts: i64 = db
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(accounts, 0);
+        assert_eq!(
+            crate::payment_holds::beneficiary(db, &p(1).to_text(), None)?,
+            0
+        );
+        assert_eq!(crate::payment_holds::bridge_day(db, 0)?, 0);
+        Ok(())
+    })
+    .unwrap();
 }
 #[test]
 fn acknowledged_paid_day_reservation_survives_gc() {
@@ -139,6 +152,76 @@ fn acknowledged_paid_day_reservation_survives_gc() {
     })
     .unwrap();
 }
+#[test]
+fn bridge_budget_totals_follow_acceptance_replay_rollover_and_receipt_expiry() {
+    setup();
+    let mut o = offer();
+    o.expires_at_ns = DAY + 100;
+    prepare(p(1), p(9), o.clone(), DAY - 100).unwrap();
+    prepare(p(1), p(9), o.clone(), DAY - 99).unwrap();
+    let budget = |day| transaction(|db| crate::payment_holds::bridge_day(db, day)).unwrap();
+    assert_eq!(budget(0), 100);
+    assert_eq!(budget(1), 100);
+    receive(p(9), o.clone(), DAY + 1, 100, |n| n).unwrap();
+    receive(p(9), o.clone(), DAY + 2, 100, |_| panic!("accepted twice")).unwrap();
+    ack_credit(p(9), o, DAY + 3).unwrap();
+    assert_eq!(budget(0), 0);
+    assert_eq!(budget(1), 100);
+    assert_eq!(budget(2), 0);
+    transaction(|db| {
+        admit(db, p(3), DAY * 2 + 1_000_000_000)?;
+        assert!(load(db, p(1), &[7; 16])?.is_none());
+        let holds: i64 = db
+            .query_row("SELECT count(*) FROM payment_holds", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(holds, 0);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn bridge_admission_fits_a_fixed_sql_budget_with_thousands_of_prepared_offers() {
+    setup();
+    transaction(|db| {
+        for n in 0u32..2_048 {
+            let mut existing = offer();
+            existing.vault_owner = Principal::self_authenticating(n.to_be_bytes());
+            existing.operation = vec![9; 16];
+            existing.amount_cycles = 1;
+            save(db, existing.vault_owner, &existing.operation.clone(), Record::Credit {
+                offer: existing, status: CreditStatus::Prepared, acknowledged: false, day: 0,
+            })?;
+        }
+        // Give the former aggregate the same partial index it used before totals.
+        db.execute_batch("CREATE INDEX fixture_prepared_owner ON payments(json_extract(record,'$.bridge_v1.Credit.offer.vault_owner'),json_extract(record,'$.bridge_v1.Credit.offer.amount_cycles')) WHERE json_extract(record,'$.bridge_v1.Credit.status')='Prepared';").unwrap();
+        let _budget = kinic_sqlite_compat::install_progress_handler(db, 20, 200);
+        let error = db.query_row(
+            "SELECT sum(json_extract(record,'$.bridge_v1.Credit.offer.amount_cycles')) FROM payments INDEXED BY fixture_prepared_owner WHERE json_extract(record,'$.bridge_v1.Credit.status')='Prepared'",
+            [], |r| r.get::<_,i64>(0),
+        ).unwrap_err();
+        assert!(kinic_sqlite_compat::is_interrupted(&error));
+        Ok(())
+    }).unwrap();
+    configure(BridgeConfig {
+        peer: p(9),
+        enabled: true,
+        daily_limit_cycles: 10_000,
+        physical_reserve_cycles: 1,
+    })
+    .unwrap();
+    transaction(|db| {
+        let _budget = kinic_sqlite_compat::install_progress_handler(db, 20, 200);
+        assert_eq!(crate::payment_holds::bridge_day(db, 0)?, 2_048);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        prepare(p(1), p(9), offer(), 0).unwrap().status,
+        CreditStatus::Prepared
+    );
+}
+
 #[test]
 fn cycles_storage_failure_never_accepts_or_credits() {
     setup();
@@ -264,11 +347,6 @@ fn bridge_pending_account_does_not_block_another_beneficiary() {
     })
     .unwrap();
     prepare(p(1), p(9), offer(), 0).unwrap();
-    transaction(|db| {
-        crate::capacity::allocate_beneficiary(db, p(3), 0)?;
-        Ok(())
-    })
-    .unwrap();
     receive(p(9), offer(), 1, 100, |n| n).unwrap();
 }
 #[test]
@@ -315,7 +393,7 @@ fn legacy_icrc_admission_counts_bridge_even_with_same_operation() {
     prepare(p(1), p(9), o.clone(), 0).unwrap();
     transaction(|db| {
         db.execute(
-            "UPDATE accounts SET balance_cycles=?2 WHERE owner=?1",
+            "INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,?2,0)",
             params![p(1).to_text(), i64::MAX - 20_000_050],
         )
         .unwrap();

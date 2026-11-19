@@ -112,21 +112,6 @@ pub(crate) fn schema_statements() -> Vec<String> {
     );
     statements
 }
-/// Allocate the beneficiary account row in the same transaction as dispatch admission.
-pub(crate) fn allocate_beneficiary(
-    db: &Connection,
-    beneficiary: candid::Principal,
-    now: u64,
-) -> Result<()> {
-    db.execute(
-        "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms)
-         VALUES(?1,0,0,?2) ON CONFLICT(owner) DO NOTHING",
-        params![beneficiary.to_text(), (now / 1_000_000) as i64],
-    )
-    .map_err(|_| Error::Storage)?;
-    Ok(())
-}
-
 pub(crate) const PAYMENT_COMPLETION_BYTES: u64 = 1_048_576;
 
 /// Allocate SQLite pages before a transfer could have been dispatched.
@@ -181,6 +166,8 @@ pub(crate) fn accounting_reserved(db: &Connection) -> Result<u64> {
         ("initial_cycle_grants", GRANT_ROW as u64),
         ("key_subsidies", SUBSIDY_ROW as u64),
         ("payment_completion_reservations", PAYMENT_COMPLETION_BYTES),
+        ("payment_scan_slots", SMALL_ROW as u64),
+        ("payment_holds", SMALL_ROW as u64),
     ] {
         let count: i64 = db
             .query_row(&format!("SELECT count(*) FROM {table}"), params![], |r| {

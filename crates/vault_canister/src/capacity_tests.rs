@@ -212,11 +212,12 @@ fn unknown_payment_keeps_completion_pages_until_paid_at_sqlite_page_limit() {
     .unwrap();
 }
 #[test]
-fn beneficiary_account_exists_before_a_ledger_debit_can_start() {
+fn failed_payment_leaves_no_permanent_beneficiary_account() {
     state::initialize().unwrap();
     let beneficiary = principal(2_000);
     let payment = quote(3_000, beneficiary, 1);
-    begin_payment(payment.wallet, &payment.request.operation, 1).unwrap();
+    let sent = begin_payment(payment.wallet, &payment.request.operation, 1).unwrap();
+    complete_payment(&sent, Outcome::Rejected(Status::InsufficientFunds)).unwrap();
     state::transaction(|db| {
         let count: i64 = db
             .query_row(
@@ -225,7 +226,7 @@ fn beneficiary_account_exists_before_a_ledger_debit_can_start() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 0);
         Ok(())
     })
     .unwrap();
@@ -420,10 +421,87 @@ fn capacity_unknown_past_retry_window_remains_protected() {
             serde_json::from_str::<Payment>(&raw).unwrap().status,
             Status::Unknown
         ));
-        crate::capacity::allocate_beneficiary(db, principal(2001), 0)?;
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+fn beneficiary_hold_total_tracks_cross_payer_admission_retry_and_settlement() {
+    state::initialize().unwrap();
+    let owner = principal(2000);
+    let a = quote(3000, owner, 1);
+    let b = quote(3001, owner, 2);
+    let other = quote(3002, principal(2001), 3);
+    let held = || {
+        state::transaction(|db| crate::payment_holds::beneficiary(db, &owner.to_text(), None))
+            .unwrap()
+    };
+    assert_eq!(held(), 0);
+    let a = begin_payment(a.wallet, &a.request.operation, 1).unwrap();
+    let b = begin_payment(b.wallet, &b.request.operation, 1).unwrap();
+    let other = begin_payment(other.wallet, &other.request.operation, 1).unwrap();
+    assert_eq!(held(), 200_000_000);
+    state::transaction(|db| {
+        let wallet = a.wallet.to_text();
+        let excluded = Some((wallet.as_str(), a.request.operation.as_slice()));
+        assert_eq!(
+            crate::payment_holds::beneficiary(db, &owner.to_text(), excluded)?,
+            100_000_000
+        );
+        let wallet = other.wallet.to_text();
+        let excluded = Some((wallet.as_str(), other.request.operation.as_slice()));
+        assert_eq!(
+            crate::payment_holds::beneficiary(db, &owner.to_text(), excluded)?,
+            200_000_000
+        );
+        let buckets: i64 = db
+            .query_row(
+                "SELECT count(*) FROM payment_holds WHERE kind='beneficiary'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(buckets, 2);
+        Ok(())
+    })
+    .unwrap();
+    complete_payment(&a, Outcome::Unknown).unwrap();
+    let retried = begin_payment(a.wallet, &a.request.operation, 2).unwrap();
+    assert_eq!(held(), 200_000_000);
+    complete_payment(&retried, Outcome::Paid(7)).unwrap();
+    assert_eq!(held(), 100_000_000);
+    complete_payment(&b, Outcome::Rejected(Status::InsufficientFunds)).unwrap();
+    assert_eq!(held(), 0);
+}
+
+#[test]
+fn beneficiary_admission_fits_a_fixed_sql_budget_with_thousands_of_payers() {
+    state::initialize().unwrap();
+    let owner = principal(2000);
+    let mut payment = quote(3000, owner, 1);
+    payment.status = Status::Unknown;
+    state::transaction(|db| {
+        for n in 0..2_048 {
+            payment.wallet = principal(4000 + n);
+            db.execute(
+                "INSERT INTO payments VALUES(?1,?2,?3,9223372036854775807)",
+                params![payment.wallet.to_text(), payment.request.operation, serde_json::to_string(&payment).unwrap()],
+            ).unwrap();
+        }
+        let owner = owner.to_text();
+        {
+            let _budget = kinic_sqlite_compat::install_progress_handler(db, 20, 200);
+            crate::accounting::admit_credit(db, &owner, 100_000_000, None)?;
+        }
+        // The former indexed lookup still had to visit every matching journal row.
+        db.execute_batch("CREATE INDEX fixture_pending_beneficiary ON payments(json_extract(record,'$.request.beneficiary')) WHERE json_extract(record,'$.status') IN ('InFlight','Unknown');").unwrap();
+        let mut old = db.prepare("SELECT record FROM payments WHERE json_extract(record,'$.request.beneficiary')=?1 AND json_extract(record,'$.status') IN ('InFlight','Unknown')").unwrap();
+        let _budget = kinic_sqlite_compat::install_progress_handler(db, 20, 200);
+        let error = kinic_sqlite_compat::query_map(&mut old, params![owner], |r| r.get::<_,String>(0)).unwrap_err();
+        assert!(kinic_sqlite_compat::is_interrupted(&error));
+        Ok(())
+    }).unwrap();
 }
 
 #[test]

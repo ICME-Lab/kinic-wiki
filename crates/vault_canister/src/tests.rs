@@ -1356,6 +1356,35 @@ fn initial_grant_preserves_new_paid_credit_and_admits_after_former_account_cap()
     .unwrap();
 }
 #[test]
+fn a_full_subsidy_faucet_still_initializes_a_funded_account() {
+    state::initialize().unwrap();
+    let owner = p(243);
+    credit(owner, 100_000_000_000);
+    state::transaction(|db| {
+        for n in 0..vault_types::capacity::SUBSIDIES {
+            crate::key_subsidy::initialize_in(db, &format!("faucet-{n}"))?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let initial = state::State.initialize_account(owner, 0).unwrap();
+    assert_eq!(initial.balance, 100_000_000_000);
+    assert_eq!(initial.grant_cycles, 0);
+    state::State
+        .vault_require_spending(&owner.to_text(), 0)
+        .unwrap();
+    state::transaction(|db| {
+        assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+        assert_eq!(
+            kinic_cycle_grants::recorded(db, kinic_cycle_grants::Scope::Vault, &owner.to_text())
+                .unwrap(),
+            None
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
 fn initial_grant_receipt_and_balance_roll_back_on_ledger_failure() {
     state::initialize().unwrap();
     state::transaction(|db| {db.execute_batch("CREATE TRIGGER fail_free_grant BEFORE INSERT ON account_ledger WHEN NEW.kind='free_grant' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();Ok(())}).unwrap();

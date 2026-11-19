@@ -198,8 +198,9 @@ fn completion_reserves() -> i64 {
 }
 
 #[test]
-fn reconciliation_frees_completion_space_before_crediting_at_the_page_limit() {
-    let scan = scanning();
+fn reconciliation_starts_advances_and_credits_at_the_page_limit() {
+    let payment = prepare_dispatch(&sent(), principal(95), 999).unwrap();
+    let payment = complete_payment(&payment, Outcome::Unknown).unwrap();
     assert_eq!(completion_reserves(), 1);
     let page_limit = transaction(|db| {
         // Make an audit write depend on a free page even if the audit table
@@ -207,6 +208,9 @@ fn reconciliation_frees_completion_space_before_crediting_at_the_page_limit() {
         db.execute_batch(
             "CREATE TABLE page_limit_filler(data BLOB);
             CREATE TRIGGER page_limit_audit BEFORE INSERT ON account_ledger
+            BEGIN INSERT INTO page_limit_filler VALUES(zeroblob(32768)); END;
+            CREATE TRIGGER page_limit_record_growth BEFORE UPDATE OF record ON payments
+            WHEN length(NEW.record)>length(OLD.record)
             BEGIN INSERT INTO page_limit_filler VALUES(zeroblob(32768)); END;",
         )
         .unwrap();
@@ -223,6 +227,23 @@ fn reconciliation_frees_completion_space_before_crediting_at_the_page_limit() {
     })
     .unwrap();
 
+    let scan = begin_scan(payment.wallet, &payment.request.operation, 1).unwrap();
+    let missed = finish_scan(
+        &scan,
+        Ok(ScanBatch {
+            end: 1001,
+            blocks: vec![Block {
+                id: 999u64.into(),
+                block: Value::Map(vec![]),
+            }],
+        }),
+        2,
+    )
+    .unwrap();
+    assert_eq!(missed.next, Nat::from(1000u64));
+    assert_eq!(missed.payment.status, Status::Unknown);
+    assert_eq!(completion_reserves(), 1);
+    let scan = begin_scan(payment.wallet, &payment.request.operation, 3).unwrap();
     let mut matching = block();
     let Value::Map(outer) = &mut matching else {
         unreachable!()
@@ -234,22 +255,22 @@ fn reconciliation_frees_completion_space_before_crediting_at_the_page_limit() {
     let progress = finish_scan(
         &scan,
         Ok(ScanBatch {
-            end: 124,
+            end: 1001,
             blocks: vec![Block {
-                id: 123u64.into(),
+                id: 1000u64.into(),
                 block: matching,
             }],
         }),
-        2,
+        4,
     )
     .unwrap();
-    assert_eq!(progress.payment.status, Status::Paid(123));
+    assert_eq!(progress.payment.status, Status::Paid(1000));
     assert_eq!(completion_reserves(), 0);
     assert_eq!(
-        begin_scan(scan.wallet, &scan.request.operation, 3)
+        begin_scan(scan.wallet, &scan.request.operation, 5)
             .unwrap()
             .status,
-        Status::Paid(123)
+        Status::Paid(1000)
     );
     transaction(|db| {
         assert_eq!(
@@ -285,6 +306,18 @@ fn recovering_interrupted_unsent_quote_releases_completion_space() {
     let recovered = begin_scan(payment.wallet, &payment.request.operation, 1).unwrap();
     assert_eq!(recovered.status, Status::Quoted);
     assert_eq!(completion_reserves(), 0);
+    transaction(|db| {
+        let accounts: i64 = db
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(accounts, 0);
+        assert_eq!(
+            crate::payment_holds::beneficiary(db, &payment.request.beneficiary.to_text(), None)?,
+            0
+        );
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

@@ -21,6 +21,22 @@ impl crate::state::State {
                 amount
             } else {
                 let cycles = VAULT_INITIAL_CYCLES;
+                let faucet_full: i64 = db
+                    .query_row(
+                        "SELECT (NOT EXISTS(SELECT 1 FROM key_subsidies WHERE owner=?1)
+                        AND EXISTS(SELECT 1 FROM key_subsidies LIMIT 1 OFFSET ?2))
+                        OR EXISTS(SELECT 1 FROM initial_cycle_grants LIMIT 1 OFFSET ?3)",
+                        params![
+                            principal,
+                            vault_types::capacity::SUBSIDIES as i64 - 1,
+                            vault_types::capacity::GRANT_RECEIPTS as i64 - 1
+                        ],
+                        |r| sql::row_get(r, 0),
+                    )
+                    .map_err(|_| Error::Storage)?;
+                if faucet_full != 0 {
+                    return account_initialization(db, &principal, 0);
+                }
                 crate::key_subsidy::initialize_in(db, &principal)?;
                 crate::accounting::settle_storage(db, &principal, now)
                     .map_err(|_| Error::Storage)?;
@@ -29,11 +45,7 @@ impl crate::state::State {
                     Err(Error::QuotaExceeded) => {
                         // Do not consume eligibility or block reconciliation of a
                         // transfer already paid. A later initialization can claim.
-                        let balance:i64=db.query_row("SELECT COALESCE((SELECT balance_cycles FROM accounts WHERE owner=?1),0)",params![principal],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
-                        return Ok(AccountInitialization {
-                            balance: balance as u64,
-                            grant_cycles: 0,
-                        });
+                        return account_initialization(db, &principal, 0);
                     }
                     Err(error) => return Err(error),
                 }
@@ -60,19 +72,26 @@ impl crate::state::State {
                 }
                 cycles
             };
-            let balance: i64 = db
-                .query_row(
-                    "SELECT COALESCE((SELECT balance_cycles FROM accounts WHERE owner=?1),0)",
-                    params![principal],
-                    |r| sql::row_get(r, 0),
-                )
-                .map_err(|_| Error::Storage)?;
-            Ok(AccountInitialization {
-                balance: balance.max(0) as u64,
-                grant_cycles: cycles,
-            })
+            account_initialization(db, &principal, cycles)
         })
     }
+}
+fn account_initialization(
+    db: &sql::Connection,
+    principal: &str,
+    cycles: u64,
+) -> Result<AccountInitialization> {
+    let balance: i64 = db
+        .query_row(
+            "SELECT COALESCE((SELECT balance_cycles FROM accounts WHERE owner=?1),0)",
+            params![principal],
+            |r| sql::row_get(r, 0),
+        )
+        .map_err(|_| Error::Storage)?;
+    Ok(AccountInitialization {
+        balance: balance.max(0) as u64,
+        grant_cycles: cycles,
+    })
 }
 #[ic_cdk::update]
 fn initialize_vault_account() -> Result<AccountInitialization> {

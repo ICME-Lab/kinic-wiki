@@ -107,10 +107,90 @@ pub(super) fn prepare_dispatch(sent: &Payment, spender: Principal, start: u64) -
         Ok(p)
     })
 }
+// The eight lease rows are allocated with schema 14. Fixed-size updates
+// leave the final settlement reserve available throughout a history scan.
+const SLOT_BYTES: usize = 512;
+
+pub(crate) fn initialize_scan_slots(db: &sql::Connection) -> Result<()> {
+    db.execute(
+        "WITH RECURSIVE slots(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM slots WHERE n<8)
+         INSERT INTO payment_scan_slots
+         SELECT n,printf('%*s',?1,'null') FROM slots",
+        params![SLOT_BYTES as i64],
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+struct ScanSlot {
+    wallet: Principal,
+    operation: Vec<u8>,
+    lease: u64,
+    generation: i64,
+    expires: u64,
+}
+
+fn scan_slots(db: &sql::Connection) -> Result<Vec<(i64, Option<ScanSlot>)>> {
+    let mut query = db
+        .prepare("SELECT slot,record FROM payment_scan_slots ORDER BY slot")
+        .map_err(|_| Error::Storage)?;
+    let rows: Vec<(i64, String)> = sql::query_map(&mut query, params![], |r| {
+        Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?))
+    })
+    .map_err(|_| Error::Storage)?;
+    if rows.len() != 8 {
+        return Err(Error::Storage);
+    }
+    rows.into_iter()
+        .map(|(slot, raw)| {
+            Ok((
+                slot,
+                serde_json::from_str(&raw).map_err(|_| Error::Storage)?,
+            ))
+        })
+        .collect()
+}
+
+fn write_scan_slot(db: &sql::Connection, slot: i64, scan: Option<ScanSlot>) -> Result<()> {
+    let mut raw = serde_json::to_string(&scan).map_err(|_| Error::Storage)?;
+    let padding = SLOT_BYTES.checked_sub(raw.len()).ok_or(Error::Storage)?;
+    raw.extend(std::iter::repeat_n(' ', padding));
+    db.execute(
+        "UPDATE payment_scan_slots SET record=?2 WHERE slot=?1",
+        params![slot, raw],
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(())
+}
+
+pub(super) fn release_scan_slot(db: &sql::Connection, payment: &Payment) -> Result<()> {
+    let Some(reconciliation) = payment
+        .reconciliation
+        .as_ref()
+        .filter(|scan| scan.lease_until != 0)
+    else {
+        return Ok(());
+    };
+    let slot = scan_slots(db)?.into_iter().find(|(_, scan)| {
+        scan.as_ref().is_some_and(|scan| {
+            scan.wallet == payment.wallet
+                && scan.operation == payment.request.operation
+                && scan.lease == reconciliation.lease
+                && scan.generation == reconciliation.lease_generation
+        })
+    });
+    if let Some((slot, _)) = slot {
+        write_scan_slot(db, slot, None)?;
+    }
+    Ok(())
+}
+
 pub(super) enum ScanAdmission {
     AlreadyPaid,
     RecoverQuote,
     History {
+        slot: i64,
         lease: u64,
         lease_until: u64,
         lease_generation: i64,
@@ -139,33 +219,19 @@ pub(super) fn scan_admission(
     if payment.preparing {
         return Ok(ScanAdmission::RecoverQuote);
     }
-    let mut query = db
-        .prepare(
-            "SELECT wallet FROM payments
-         WHERE json_extract(record,'$.reconciliation') IS NOT NULL
-           AND json_extract(record,'$.reconciliation.lease_generation')=?1
-           AND json_extract(record,'$.reconciliation.lease_until')>?2
-         LIMIT 8",
-        )
-        .map_err(|_| Error::Storage)?;
-    let wallets: Vec<String> = sql::query_map(
-        &mut query,
-        params![
-            current,
-            i64::try_from(now).map_err(|_| Error::InvalidInput)?
-        ],
-        |r| sql::row_get(r, 0),
-    )
-    .map_err(|_| Error::Storage)?;
-    if wallets.len() >= 8
-        || wallets
-            .iter()
-            .any(|wallet| *wallet == payment.wallet.to_text())
-    {
-        return Err(Error::Busy);
+    let mut available = None;
+    for (slot, scan) in scan_slots(db)? {
+        if let Some(scan) = scan.filter(|scan| scan.generation == current && scan.expires > now) {
+            if scan.wallet == payment.wallet {
+                return Err(Error::Busy);
+            }
+        } else if available.is_none() {
+            available = Some(slot);
+        }
     }
     let scan = payment.reconciliation.as_ref().ok_or(Error::Storage)?;
     Ok(ScanAdmission::History {
+        slot: available.ok_or(Error::Busy)?,
         lease: scan.lease.checked_add(1).ok_or(Error::QuotaExceeded)?,
         lease_until: now
             .checked_add(180_000_000_000)
@@ -174,7 +240,7 @@ pub(super) fn scan_admission(
     })
 }
 
-fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
+pub(super) fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
     auth(wallet)?;
     if id.len() != 16 {
         return Err(Error::InvalidInput);
@@ -191,10 +257,22 @@ fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
                 crate::capacity::release_payment_completion(db, p.wallet, &p.request.operation)?;
             }
             ScanAdmission::History {
+                slot,
                 lease,
                 lease_until,
                 lease_generation,
             } => {
+                write_scan_slot(
+                    db,
+                    slot,
+                    Some(ScanSlot {
+                        wallet: p.wallet,
+                        operation: p.request.operation.clone(),
+                        lease,
+                        generation: lease_generation,
+                        expires: lease_until,
+                    }),
+                )?;
                 let scan = p.reconciliation.as_mut().ok_or(Error::Storage)?;
                 scan.lease = lease;
                 scan.lease_until = lease_until;
@@ -278,6 +356,7 @@ fn finish_scan(
                 }
             }
         }
+        release_scan_slot(db, &p)?;
         let scan = p.reconciliation.as_mut().ok_or(Error::Conflict)?;
         scan.next = next;
         scan.end = end;

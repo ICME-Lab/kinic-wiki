@@ -116,6 +116,7 @@ fn initialize_inner(db: &Connection) -> Result<()> {
     if version != 0 {
         migrate_capacity(db)?;
     }
+    crate::funding::initialize_scan_slots(db)?;
     validate(&read_contract(db)?, &latest)?;
     execute(db, &format!("PRAGMA user_version={CURRENT_VERSION};"))
 }
@@ -131,6 +132,8 @@ fn migrate_capacity(db: &Connection) -> Result<()> {
     )?;
     execute(db, vault_store::KEY_OWNER_COUNT_TRIGGER)?;
     execute(db, CAPACITY)?;
+    crate::funding::pad_pending_payments(db)?;
+    crate::payment_holds::initialize(db)?;
     execute(
         db,
         &format!(
@@ -193,6 +196,7 @@ fn latest_statements() -> Vec<String> {
     statements.extend(crate::capacity::schema_statements());
     statements.extend(crate::capacity::grant_schema_statements());
     statements.extend(crate::capacity::subsidy_schema_statements());
+    statements.extend(crate::payment_holds::schema_statements());
     statements
 }
 

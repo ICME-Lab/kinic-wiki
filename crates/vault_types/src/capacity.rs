@@ -6,6 +6,7 @@ pub const KEY_OWNER_ROWS: usize = 512;
 pub const KEY_ROW: usize = 256;
 /// Existing conservative owner storage tariff, independent of global row-value accounting.
 pub const KEY_OWNER_CHARGE: u64 = 4096;
+/// Historical schema-13 global pool. Current admission uses owner quotas.
 pub const ACCOUNTING_POOL: u64 = 19 * 1024 * 1024;
 pub const SUBSIDIES: usize = 1024;
 pub const SUBSIDY_ROW: usize = 256;
@@ -48,7 +49,7 @@ pub fn row_size(variable: &[usize], scalars: usize) -> Option<usize> {
     })
 }
 #[test]
-fn worst_case_pool_and_rows_fit() {
+fn historical_pool_and_retained_row_sizes_fit() {
     let total = SUBSIDIES * SUBSIDY_ROW
         + GRANT_RECEIPTS * GRANT_ROW
         + ACCOUNTS * SMALL_ROW

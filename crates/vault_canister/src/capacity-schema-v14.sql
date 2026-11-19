@@ -1,10 +1,6 @@
 CREATE INDEX operations_owner_expiry ON operations(owner,expires);
 CREATE INDEX upload_outcomes_owner_expiry ON upload_outcomes(owner,expires,upload);
 CREATE INDEX payments_wallet_expiry ON payments(wallet,expires);
-CREATE INDEX payments_pending_beneficiary ON payments(json_extract(record,'$.request.beneficiary')) WHERE json_extract(record,'$.status') IN ('InFlight','Unknown');
-CREATE INDEX payments_prepared_bridge_owner ON payments(json_extract(record,'$.bridge_v1.Credit.offer.vault_owner'),json_extract(record,'$.bridge_v1.Credit.offer.amount_cycles')) WHERE json_extract(record,'$.bridge_v1.Credit.status')='Prepared';
-CREATE INDEX payments_accepted_bridge_day ON payments(json_extract(record,'$.bridge_v1.Credit.day'),json_extract(record,'$.bridge_v1.Credit.offer.amount_cycles')) WHERE json_extract(record,'$.bridge_v1.Credit.status')='Accepted';
-CREATE INDEX payments_reconciliation_lease ON payments(json_extract(record,'$.reconciliation.lease_generation'),json_extract(record,'$.reconciliation.lease_until')) WHERE json_extract(record,'$.reconciliation') IS NOT NULL;
 CREATE INDEX payments_link_challenge ON payments(json_extract(record,'$.bridge_v1.Link.challenge.challenge')) WHERE json_type(record,'$.bridge_v1.Link.challenge.challenge')='array';
 CREATE INDEX key_flights_active ON key_flights(owner) WHERE in_flight=1;
 CREATE INDEX key_flights_gc_global ON key_flights(settled,owner,token) WHERE in_flight=0 AND phase!='cancelled' AND settled IS NOT NULL;
@@ -13,3 +9,5 @@ CREATE INDEX key_flights_settled ON key_flights(settled) WHERE in_flight=0;
 CREATE INDEX vault_cycle_reservations_gc ON vault_cycle_reservations(settled_at_ms) WHERE in_flight=0 AND execution_billed>=execution_checkpoint AND settled_at_ms IS NOT NULL;
 CREATE TABLE payment_completion_reservations(wallet TEXT NOT NULL,operation BLOB NOT NULL,spare BLOB NOT NULL CHECK(length(spare)=1048576),PRIMARY KEY(wallet,operation),FOREIGN KEY(wallet,operation) REFERENCES payments(wallet,operation) ON DELETE CASCADE);
 CREATE TRIGGER payment_completion_delete AFTER DELETE ON payments BEGIN DELETE FROM payment_completion_reservations WHERE wallet=OLD.wallet AND operation=OLD.operation; END;
+CREATE TABLE payment_scan_slots(slot INTEGER PRIMARY KEY CHECK(slot BETWEEN 1 AND 8),record TEXT NOT NULL CHECK(length(record)=512));
+CREATE TABLE payment_holds(kind TEXT NOT NULL,bucket TEXT NOT NULL,total INTEGER NOT NULL CHECK(typeof(total)='integer' AND total>=0),PRIMARY KEY(kind,bucket));
