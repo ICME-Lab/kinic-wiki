@@ -314,3 +314,44 @@ it("retains the same wallet manager across console route remounts and suspends i
   act(()=>window.dispatchEvent(new Event("pagehide")));
   expect(suspend).toHaveBeenCalledTimes(1);
 });
+
+
+it("retains an unscoped OISY across navigation during ledger discovery and can authorize it again", async () => {
+  const { WikiWalletLifetime } = await import("./wiki-wallet-lifetime");
+  const runtime = await import("@/lib/wallet-runtime");
+  const { getCyclesBillingConfig } = await import("@/lib/vfs-client");
+  const { createWalletSessionManager } = await import("@kinic/payments/wallet-session");
+  const config = deferred<Awaited<ReturnType<typeof getCyclesBillingConfig>>>();
+  const configMock = vi.mocked(getCyclesBillingConfig);
+  configMock.mockReturnValueOnce(config.promise).mockReturnValueOnce(config.promise);
+  const signer = {
+    permissions: async () => [{ scope: { method: "icrc27_accounts" as const }, state: "granted" as const }],
+    requestPermissions: async () => [], accounts: async () => [{ owner: "aaaaa-aa" }],
+    disconnect: async () => {}, callCanister: vi.fn(),
+  };
+  const manager = createWalletSessionManager({ origin: location.origin, host: "https://icp0.io", signerUrl: "https://oisy.com/sign",
+    storage: null, legacyStorage: null, transports: { openSigner: async () => signer } });
+  const factory = vi.spyOn(runtime, "createWikiWalletSession").mockReturnValue(manager);
+  const route = (key: string) => <WikiWalletLifetime><AppSessionProvider key={key}><SessionProbe /></AppSessionProvider></WikiWalletLifetime>;
+  let oldConnect!: Promise<void>;
+  try {
+    const view = render(route("dashboard"));
+    await waitFor(() => expect(observed.authReady).toBe(true));
+    act(() => { oldConnect = observed.connectWallet("oisy"); });
+    await waitFor(() => expect(observed.wallet?.provider).toBe("oisy"));
+    expect(observed.walletPaymentReady).toBe(false);
+    view.rerender(route("listing"));
+    await waitFor(() => expect(observed.authReady).toBe(true));
+    await act(async () => {
+      config.resolve({ kinicLedgerCanisterId: "ryjl3-tyaaa-aaaaa-aaaba-cai" } as Awaited<ReturnType<typeof getCyclesBillingConfig>>);
+      await oldConnect;
+    });
+    expect(observed.walletSession).toBe(manager);
+    expect(observed.wallet?.provider).toBe("oisy");
+    expect(observed.walletPaymentReady).toBe(false);
+    await act(async () => { await observed.connectWallet("oisy"); });
+    expect(observed.walletPaymentReady).toBe(true);
+  } finally {
+    factory.mockRestore();
+  }
+});

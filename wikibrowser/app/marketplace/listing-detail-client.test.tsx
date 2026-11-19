@@ -99,16 +99,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Marketplace funding source", () => {
-  it("offers scope consent for a restored Plug without purchasing on consent", async () => {
+  it.each(["plug", "oisy"] as const)("offers scope consent for an unscoped %s without purchasing on consent", async provider => {
     const connectWallet = vi.fn();
-    Object.assign(mocks.session, { wallet: { provider: "plug", connection: { principal: "payer" } }, walletPaymentReady: false,
+    Object.assign(mocks.session, { wallet: { provider, connection: { principal: "payer", owner: "payer" } }, walletPaymentReady: false,
       walletBalance: "50200000", connectWallet });
-    render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
-    const consent = await screen.findByRole("button", { name: "Authorize Plug for purchase" });
+    const view = render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    const label = provider === "oisy" ? "OISY" : "Plug";
+    const consent = await screen.findByRole("button", { name: `Authorize ${label} for purchase` });
     expect(connectWallet).not.toHaveBeenCalled();
     fireEvent.click(consent);
-    expect(connectWallet).toHaveBeenCalledWith("plug");
+    expect(connectWallet).toHaveBeenCalledWith(provider);
     expect(mocks.purchase).not.toHaveBeenCalled();
+    // A cancelled permission request keeps the explicit authorization action.
+    view.rerender(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    expect(screen.getByRole("button", { name: `Authorize ${label} for purchase` })).toBeTruthy();
+    expect(mocks.purchase).not.toHaveBeenCalled();
+    mocks.session.walletPaymentReady = true;
+    view.rerender(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    fireEvent.click(screen.getByRole("button", { name: `Purchase with ${label}` }));
+    await waitFor(() => expect(mocks.purchase).toHaveBeenCalledTimes(1));
   });
 
   it("rechecks the price before approving an exact-boundary II purchase", async () => {
