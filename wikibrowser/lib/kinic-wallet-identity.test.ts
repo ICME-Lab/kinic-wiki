@@ -1,9 +1,15 @@
+import { IDL } from "@icp-sdk/core/candid";
+import type { WalletSessionManager } from "@kinic/payments/wallet-session";
+import type { FundingTransport, WalletCall } from "@kinic/payments/wallet-types";
 import { Principal } from "@icp-sdk/core/principal";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getConnectedWalletKinicBalance,
   KinicAfterApproveError,
+  transferKinicFromIdentity,
   purchaseCyclesWithIdentity,
-  purchaseMarketAccessWithIdentity
+  purchaseMarketAccessWithIdentity,
+  purchaseMarketAccessWithOisy
 } from "@/lib/kinic-wallet";
 
 const mocks = vi.hoisted(() => ({
@@ -138,4 +144,44 @@ describe("Internet Identity KINIC purchases", () => {
     expect(mocks.ledgerApprove).toHaveBeenCalledTimes(1);
     expect(mocks.purchaseCycles).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it("rejects an unsupported subaccount before reading its owner balance", async () => {
+  const connection = { owner: VFS_CANISTER_ID, subaccount: Uint8Array.of(1) };
+  await expect(getConnectedWalletKinicBalance(VFS_CANISTER_ID, { provider: "oisy", connection }))
+    .rejects.toThrow("default ledger account");
+  expect(mocks.getCyclesBillingConfig).not.toHaveBeenCalled();
+  expect(mocks.createActor).not.toHaveBeenCalled();
+});
+
+it("retains the direct-send recipient, explicit fee, block result and ledger errors", async () => {
+  const transfer = vi.fn().mockResolvedValueOnce({ Ok: 303n }).mockResolvedValueOnce({ Err: { TemporarilyUnavailable: null } });
+  mocks.createActor.mockImplementation(() => ({ icrc1_transfer: transfer }));
+  const request = { canisterId: VFS_CANISTER_ID, identity, toPrincipal: LEDGER_CANISTER_ID, amountE8s: 44n };
+  expect(await transferKinicFromIdentity(request)).toBe("303");
+  expect(transfer).toHaveBeenCalledWith(expect.objectContaining({ amount: 44n, fee: [100000n],
+    to: { owner: Principal.fromText(LEDGER_CANISTER_ID), subaccount: [] } }));
+  await expect(transferKinicFromIdentity(request)).rejects.toThrow("ledger transfer failed: TemporarilyUnavailable");
+});
+
+
+it("retains the root-owned OISY signer after Marketplace success and purchase failure", async () => {
+  const order = (await mocks.marketPurchase()).Ok;
+  const transport: FundingTransport = {
+    account: { provider: "oisy", owner: VFS_CANISTER_ID }, silentCheck: false, approve: vi.fn(async () => 77n),
+    call: vi.fn(async (request: WalletCall) => {
+      const fn = request.interfaceFactory({ IDL })._fields.find(([name]) => name === request.method)![1];
+      return IDL.encode(fn.retTypes, [{ Ok: order }]);
+    }),
+    disconnect: vi.fn(async () => {}), revalidate: vi.fn(async () => {})
+  };
+  const session = { revalidate: vi.fn(async () => transport), disconnect: vi.fn() };
+  const connection = { owner: VFS_CANISTER_ID, transport, session: session as unknown as WalletSessionManager };
+  const request = { canisterId: VFS_CANISTER_ID, listingId: "listing-1", priceE8s: 50000000n, accessPrincipal: VFS_CANISTER_ID };
+  expect(await purchaseMarketAccessWithOisy(request, connection)).toMatchObject({ provider: "oisy", orderId: "order-1", approveBlockIndex: "77", ledgerBlockIndex: "99" });
+  vi.mocked(transport.call).mockRejectedValueOnce(new Error("reply lost"));
+  await expect(purchaseMarketAccessWithOisy(request, connection)).rejects.toBeInstanceOf(KinicAfterApproveError);
+  expect(transport.disconnect).not.toHaveBeenCalled();
+  expect(session.disconnect).not.toHaveBeenCalled();
 });

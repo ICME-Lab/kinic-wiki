@@ -1,3 +1,4 @@
+import { WikiWalletLifetime } from "@/app/wiki-wallet-lifetime";
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toast";
@@ -30,7 +31,7 @@ function RootDocument() {
       <head><HeadContent /></head>
       <body>
         <TooltipProvider delayDuration={120}>
-          <div className="flex min-h-screen flex-col"><Outlet /></div>
+          <WikiWalletLifetime><div className="flex min-h-screen flex-col"><Outlet /></div></WikiWalletLifetime>
           <Toaster />
           <CommandPalette />
         </TooltipProvider>

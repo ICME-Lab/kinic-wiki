@@ -22,6 +22,8 @@ export default defineConfig({
           MCP_REVIEW_LOGIN_ENABLED: "true",
           MCP_REVIEW_USERNAME_HASH: credentialHash("openai-review"),
           MCP_REVIEW_PASSWORD_HASH: credentialHash("review-password"),
+          MCP_REVIEW_SECONDARY_USERNAME_HASH: credentialHash("muse-review-secondary"),
+          MCP_REVIEW_SECONDARY_PASSWORD_HASH: credentialHash("muse-review-secondary-password"),
           MCP_REVIEW_IDENTITY_KEY: JSON.stringify(reviewIdentity.toJSON()),
           MCP_REVIEW_IDENTITY_PRINCIPAL: reviewIdentity.getPrincipal().toText(),
           MCP_REVIEW_ACCESS_VERSION: "review-v1",

@@ -37,6 +37,20 @@ impl Grant {
                     database_id == &self.database_id,
                     "scoped identity grant command database mismatch; use the authorized database"
                 ),
+                DatabaseCommand::EvidenceRebuild { command } => {
+                    use vfs_cli::cli::EvidenceRebuildCommand as E;
+                    let target = match command {
+                        E::Preview { database_id } | E::Begin { database_id, .. } => database_id,
+                        E::Step { args } | E::Verify { args } => &args.database_id,
+                        E::Activate { args } | E::Rollback { args } | E::ResumeWrites { args } => {
+                            &args.database_id
+                        }
+                    };
+                    ensure!(
+                        target == &self.database_id,
+                        "scoped identity grant command database mismatch; use the authorized database"
+                    );
+                }
                 DatabaseCommand::Create { .. } | DatabaseCommand::List { .. } => {
                     anyhow::bail!(
                         "scoped identity grant cannot authorize this command; use a separately authorized administration workspace"
@@ -232,6 +246,16 @@ mod tests {
     }
     #[test]
     fn scoped_grant_rejects_each_changed_destination() {
+        use clap::Parser;
+        let parsed = crate::cli::Cli::try_parse_from([
+            "kinic",
+            "database",
+            "evidence-rebuild",
+            "preview",
+            "another-db",
+        ])
+        .unwrap();
+        assert!(grant().check_command(&parsed.command).is_err());
         let g = grant();
         let base = connection();
         assert!(g.check_target(&base).is_ok());

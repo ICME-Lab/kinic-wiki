@@ -90,6 +90,7 @@ impl VfsService {
     ) -> Result<NodePublication, String> {
         self.recover_pending_publication_mutations()?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(&request.database_id)?;
         validate_public_node_id(public_id)?;
         self.require_publishable_node(&request)?;
 
@@ -114,6 +115,7 @@ impl VfsService {
     pub fn unpublish_node(&self, caller: &str, request: PublishNodeRequest) -> Result<(), String> {
         self.recover_pending_publication_mutations()?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(&request.database_id)?;
         self.require_publishable_node(&request)?;
         self.write_index(|conn| {
             conn.execute(

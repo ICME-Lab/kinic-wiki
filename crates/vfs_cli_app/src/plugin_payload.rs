@@ -50,6 +50,11 @@ pub const CODEX_PLUGIN_FILES: &[PayloadFile] = &[
 
 pub const CLAUDE_PLUGIN_FILES: &[PayloadFile] = &[
     PayloadFile {
+        path: "scripts/learning-hook.sh",
+        content: include_str!("../../../plugins/claude-code/scripts/learning-hook.sh"),
+        executable: true,
+    },
+    PayloadFile {
         path: ".claude-plugin/plugin.json",
         content: include_str!("../../../plugins/claude-code/.claude-plugin/plugin.json"),
         executable: false,

@@ -11,3 +11,4 @@ tsconfig.tsbuildinfo
 .dev.vars
 cloudflare-env.d.ts
 next-env.d.ts
+.tanstack/

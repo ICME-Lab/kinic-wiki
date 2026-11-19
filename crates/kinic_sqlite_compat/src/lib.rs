@@ -878,3 +878,8 @@ mod read_authorizer_tests {
         assert!(!policy.permits(31, None, Some("load_extension"), None));
     }
 }
+
+/// SQLite represents booleans as integers on both supported backends.
+pub fn row_bool(row: &Row<'_>, index: usize) -> Result<bool> {
+    row_get::<i64>(row, index).map(|value| value != 0)
+}

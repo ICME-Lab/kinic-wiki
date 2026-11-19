@@ -1,4 +1,4 @@
-"""Thin Codex transport; the CLI owns project routing, evidence, and learning jobs."""
+"""Thin Codex/Claude transport; the CLI owns project routing, evidence, and learning jobs."""
 from __future__ import annotations
 
 import json
@@ -17,14 +17,18 @@ CLI_TIMEOUT_SECONDS = 2
 RECALL_TIMEOUT_SECONDS = 10
 
 
-def handle(data: dict) -> dict:
+def handle(data: dict, engine: str = "codex") -> dict:
+    if engine not in {"codex", "claude"}:
+        raise ValueError("unsupported engine")
+    if os.environ.get("KINIC_LEARNING_OWNED_RUN") == "1":
+        return {}
     event = data.get("hook_event_name")
     if event not in {"UserPromptSubmit", "PostToolUse", "Stop"}:
         raise ValueError("unsupported hook event")
     cwd = Path(data.get("cwd") or os.getcwd()).resolve()
     # Forward source paths and original evidence to the CLI only. It handles
     # redaction, persisted transcript parsing, session binding, and completeness.
-    request = {**data, "event": event, "engine": "codex", "cwd": str(cwd)}
+    request = {**data, "event": event, "engine": engine, "cwd": str(cwd)}
     if event == "UserPromptSubmit":
         request["task"] = data.get("prompt", "")
     if event == "Stop":
@@ -32,7 +36,7 @@ def handle(data: dict) -> dict:
     cli = resolve_cli()
     if not cli:
         raise ValueError("CLI unavailable")
-    command = cli_command(cli, "agent", "hook", "--engine", "codex", "--cwd", str(cwd))
+    command = cli_command(cli, "agent", "hook", "--engine", engine, "--cwd", str(cwd))
     configured = os.environ.get("KINIC_LEARNING_RECALL_CONFIG")
     if configured:
         command.extend(["--recall-config", configured])
@@ -77,7 +81,12 @@ def main() -> int:
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError("hook input must be an object")
-        output = handle(data)
+        engine = "codex"
+        if len(sys.argv) > 1:
+            if len(sys.argv) != 3 or sys.argv[1] != "--engine":
+                raise ValueError("unsupported hook arguments")
+            engine = sys.argv[2]
+        output = handle(data, engine)
     except subprocess.TimeoutExpired:
         # Fixed fields only: never echo task text, command arguments or CLI output.
         print(json.dumps({"source": "kinic_hook", "code": "recall_timeout"

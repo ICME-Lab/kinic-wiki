@@ -1294,6 +1294,7 @@ mod tests {
                         evaluation_path: None,
                         error: None,
                         config_hash: None,
+                        terminal_evidence: None,
                         retry_policy: None,
                         pause: None,
                     };

@@ -8,7 +8,7 @@ const LEASE_MS = 5 * 60 * 1000;
 const SOURCE_JOB_COLUMNS = `database_id, source_path, source_etag, status, target_path,
   attempts, last_error, lease_owner, lease_expires_at, generated_target_path,
   generated_target_etag, generated_target_observed, generated_content,
-  generated_context_paths, llm_duration_ms, updated_at`;
+  generated_context_paths, llm_duration_ms, updated_at, requested_target_root`;
 
 export type GeneratedArtifact = {
   targetPath: string;
@@ -19,6 +19,7 @@ export type GeneratedArtifact = {
 };
 
 export type SourceJobClaim =
+  | { kind: "destination_conflict" }
   | { kind: "generate" }
   | { kind: "resume"; artifact: GeneratedArtifact }
   | { kind: "completed"; targetPath: string }
@@ -60,10 +61,18 @@ export function shouldSkipJob(job: SourceJob | null, sourceEtag: string): boolea
   return job?.source_etag === sourceEtag && job.status === "completed";
 }
 
+export class SourceTargetConflictError extends Error {
+  constructor() { super("source_target_conflict"); }
+}
+
 export async function enqueueSourceJob(env: RuntimeEnv, message: SourceQueueMessage): Promise<boolean> {
-  const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
+  // Reserve the destination atomically before publishing. A concurrent submission
+  // cannot replace the destination for the same source version, even after failure.
+  const reserved = await upsertQueuedJob(env.DB, message);
+  const job = reserved ?? await loadJob(env.DB, message.databaseId, message.sourcePath);
+  if (!job || job.source_etag !== message.sourceEtag) return false;
+  if ((job.requested_target_root ?? null) !== (message.targetRoot ?? null)) throw new SourceTargetConflictError();
   if (shouldSkipJob(job, message.sourceEtag)) return false;
-  await upsertQueuedJob(env.DB, message);
   await env.WIKI_GENERATION_QUEUE.send(message);
   return true;
 }
@@ -88,11 +97,12 @@ export async function claimSourceJob(
        WHERE database_id = ?1
          AND source_path = ?2
          AND source_etag = ?3
+         AND requested_target_root IS ?7
          AND status IN ('queued', 'processing', 'generated')
          AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?6)
        RETURNING ${SOURCE_JOB_COLUMNS}`
     )
-    .bind(message.databaseId, message.sourcePath, message.sourceEtag, owner, expiresAt, nowIso)
+    .bind(message.databaseId, message.sourcePath, message.sourceEtag, owner, expiresAt, nowIso, message.targetRoot ?? null)
     .first<SourceJob>();
   if (claimed) {
     if (claimed.status !== "generated") return { kind: "generate" };
@@ -107,6 +117,7 @@ export async function claimSourceJob(
 
   const current = await loadJob(db, message.databaseId, message.sourcePath);
   if (!current || current.source_etag !== message.sourceEtag) return { kind: "superseded", job: current };
+  if ((current.requested_target_root ?? null) !== (message.targetRoot ?? null)) return { kind: "destination_conflict" };
   if (current.status === "completed" && current.target_path) return { kind: "completed", targetPath: current.target_path };
   if (current.status === "failed") return { kind: "failed", error: current.last_error ?? "source generation failed" };
   return { kind: "busy", retryAfterSeconds: leaseRetryDelay(current.lease_expires_at, now) };
@@ -234,26 +245,28 @@ export async function markFailed(
   if (!updated) throw new Error("source generation failure lease was lost");
 }
 
-async function upsertQueuedJob(db: D1Database, message: SourceQueueMessage): Promise<void> {
-  await db
+async function upsertQueuedJob(db: D1Database, message: SourceQueueMessage): Promise<SourceJob | null> {
+  return db
     .prepare(
       `INSERT INTO source_jobs
        (database_id, source_path, source_etag, status, target_path, attempts, last_error,
         lease_owner, lease_expires_at, generated_target_path, generated_target_etag,
         generated_target_observed, generated_content, generated_context_paths,
-        llm_duration_ms, updated_at)
-       VALUES (?1, ?2, ?3, 'queued', NULL, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, ?4)
+        llm_duration_ms, updated_at, requested_target_root)
+       VALUES (?1, ?2, ?3, 'queued', NULL, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, ?4, ?5)
        ON CONFLICT(database_id, source_path)
-       DO UPDATE SET source_etag = excluded.source_etag, status = 'queued', target_path = NULL,
+       DO UPDATE SET source_etag = excluded.source_etag, requested_target_root = excluded.requested_target_root, status = 'queued', target_path = NULL,
                      attempts = 0, last_error = NULL, lease_owner = NULL, lease_expires_at = NULL,
                      generated_target_path = NULL, generated_target_etag = NULL,
                      generated_target_observed = 0, generated_content = NULL,
                      generated_context_paths = NULL, llm_duration_ms = NULL,
                      updated_at = excluded.updated_at
-       WHERE source_jobs.source_etag <> excluded.source_etag OR source_jobs.status = 'failed'`
+       WHERE source_jobs.source_etag <> excluded.source_etag
+          OR (source_jobs.status = 'failed' AND source_jobs.requested_target_root IS excluded.requested_target_root)
+       RETURNING ${SOURCE_JOB_COLUMNS}`
     )
-    .bind(message.databaseId, message.sourcePath, message.sourceEtag, new Date().toISOString())
-    .run();
+    .bind(message.databaseId, message.sourcePath, message.sourceEtag, new Date().toISOString(), message.targetRoot ?? null)
+    .first<SourceJob>();
 }
 
 function artifactFromJob(job: SourceJob): GeneratedArtifact {

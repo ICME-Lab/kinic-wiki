@@ -154,6 +154,7 @@ fn fs_migrations_create_tables() {
             "vfs_store:002_publication_mutation_commits".to_string(),
             "vfs_store:003_fts_trigram".to_string(),
             "vfs_store:004_node_revisions".to_string(),
+            "vfs_store:005_evidence_storage".to_string(),
         ]
     );
 
@@ -1323,6 +1324,7 @@ fn fs_migrations_are_idempotent() {
             "vfs_store:002_publication_mutation_commits".to_string(),
             "vfs_store:003_fts_trigram".to_string(),
             "vfs_store:004_node_revisions".to_string(),
+            "vfs_store:005_evidence_storage".to_string(),
         ]
     );
 
@@ -1385,6 +1387,7 @@ fn fs_migration_003_rebuilds_fts_with_trigram() {
             "vfs_store:002_publication_mutation_commits".to_string(),
             "vfs_store:003_fts_trigram".to_string(),
             "vfs_store:004_node_revisions".to_string(),
+            "vfs_store:005_evidence_storage".to_string(),
         ]
     );
 

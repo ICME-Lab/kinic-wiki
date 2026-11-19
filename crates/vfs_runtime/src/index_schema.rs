@@ -72,6 +72,9 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     apply_voice_migration(&tx)?;
+    apply_maintenance_migration(&tx)?;
+    apply_bridge_migration(&tx)?;
+    apply_bridge_fence_expiry_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -113,6 +116,9 @@ fn run_index_migrations_in_tx(
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     apply_voice_migration(conn)?;
+    apply_maintenance_migration(conn)?;
+    apply_bridge_migration(conn)?;
+    apply_bridge_fence_expiry_migration(conn)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -169,16 +175,83 @@ fn validate_current_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     validate_index_schema(conn)
 }
 
+const INDEX_SCHEMA_VOICE_VERSIONS: &[&str] = &[
+    INDEX_SCHEMA_VERSION_INITIAL,
+    INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+    INDEX_SCHEMA_VERSION_CURRENT,
+    INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
+    INDEX_SCHEMA_VERSION_VOICE,
+];
 fn apply_pending_index_migrations(
+    conn: &Transaction<'_>,
+    config: Option<&CyclesBillingConfig>,
+) -> Result<(), String> {
+    let versions = applied_index_versions(conn)?;
+    if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS {
+        return Ok(());
+    }
+    let refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+    if refs == INDEX_SCHEMA_VERSIONS[..7] {
+        return apply_bridge_fence_expiry_migration(conn);
+    }
+    if refs == INDEX_SCHEMA_VERSIONS[..6] {
+        apply_bridge_migration(conn)?;
+        return apply_bridge_fence_expiry_migration(conn);
+    }
+    if versions.iter().any(|v| {
+        v == INDEX_SCHEMA_VERSION_MAINTENANCE
+            || v == INDEX_SCHEMA_VERSION_BRIDGE
+            || v == INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY
+    }) {
+        return Err("unsupported index schema version".into());
+    }
+    apply_index_migrations_through_voice(conn, config)?;
+    apply_maintenance_migration(conn)?;
+    apply_bridge_migration(conn)?;
+    apply_bridge_fence_expiry_migration(conn)
+}
+fn apply_bridge_fence_expiry_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!(
+        "../migrations/index_db/008_credit_bridge_fence_expiry.sql"
+    ))
+    .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
+    Ok(())
+}
+fn apply_bridge_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!("../migrations/index_db/007_credit_bridge.sql"))
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE)?;
+    Ok(())
+}
+
+fn apply_maintenance_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!(
+        "../migrations/index_db/006_database_maintenance.sql"
+    ))
+    .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_MAINTENANCE)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_MAINTENANCE)?;
+    Ok(())
+}
+fn apply_index_migrations_through_voice(
     conn: &Transaction<'_>,
     config: Option<&CyclesBillingConfig>,
 ) -> Result<(), String> {
     let mut versions = applied_index_versions(conn)?;
     let mut version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
-    if version_refs == INDEX_SCHEMA_VERSIONS {
+    if version_refs == INDEX_SCHEMA_VOICE_VERSIONS {
         return Ok(());
     }
-    if version_refs == INDEX_SCHEMA_VERSIONS[..4] {
+    if version_refs == INDEX_SCHEMA_VOICE_VERSIONS[..4] {
         apply_voice_migration(conn)?;
         return Ok(());
     }
@@ -213,7 +286,7 @@ fn apply_pending_index_migrations(
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
             INDEX_SCHEMA_VERSION_CURRENT,
         ]
-        && version_refs != INDEX_SCHEMA_VERSIONS
+        && version_refs != INDEX_SCHEMA_VOICE_VERSIONS
     {
         return Err(format!(
             "unsupported index schema version; recreate the index database: {}",
@@ -221,7 +294,7 @@ fn apply_pending_index_migrations(
         ));
     }
 
-    if version_refs == INDEX_SCHEMA_VERSIONS {
+    if version_refs == INDEX_SCHEMA_VOICE_VERSIONS {
         return Ok(());
     }
 
@@ -291,6 +364,11 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
 
 fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in [
+        "credit_bridge_settings",
+        "credit_bridge_links",
+        "credit_bridge_fences",
+        "credit_bridge_owners",
+        "credit_bridge_transfers",
         "schema_migrations",
         "voice_rates",
         "voice_policies",
@@ -299,6 +377,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_members",
         "database_mount_history",
         "source_capture_trigger_sessions",
+        "database_maintenance",
         "ops_answer_sessions",
         "source_run_sessions",
         "database_cycle_accounts",
@@ -322,6 +401,43 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     }
     for (table, columns) in [
         ("schema_migrations", &["version", "applied_at"][..]),
+        ("credit_bridge_settings", &["id", "record"][..]),
+        (
+            "credit_bridge_links",
+            &["wiki_owner", "vault_owner", "record"][..],
+        ),
+        (
+            "credit_bridge_fences",
+            &["vault_owner", "generation", "expires_at_ns"][..],
+        ),
+        (
+            "credit_bridge_owners",
+            &["wiki_owner", "epoch", "expires_at_ns"][..],
+        ),
+        (
+            "credit_bridge_transfers",
+            &[
+                "operation",
+                "database_id",
+                "payer",
+                "unresolved",
+                "refund_reserve",
+                "record",
+            ][..],
+        ),
+        (
+            "database_maintenance",
+            &[
+                "migration_id",
+                "database_id",
+                "is_current",
+                "state_json",
+                "source_file",
+                "target_file",
+                "last_operation",
+                "last_request_hash",
+            ][..],
+        ),
         (
             "databases",
             &[
@@ -565,7 +681,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         }
     }
     for index in [
+        "credit_bridge_pending_database",
+        "credit_bridge_pending_payer",
         "databases_active_mount_id_idx",
+        "database_maintenance_current",
         "source_capture_trigger_sessions_expiry_idx",
         "ops_answer_sessions_expiry_idx",
         "source_run_sessions_expiry_idx",

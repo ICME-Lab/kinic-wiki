@@ -1275,3 +1275,131 @@ fn main_cli_parses_claude_setup_as_local_command() {
     assert!(!setup.command.requires_identity());
     assert!(!setup.command.probes_anonymous_database_read());
 }
+
+#[test]
+fn maintenance_cli_requires_explicit_target_and_state() {
+    assert!(
+        Cli::try_parse_from(["kinic", "database", "evidence-rebuild", "preview", "memo"]).is_ok()
+    );
+    assert!(
+        Cli::try_parse_from(["kinic", "database", "evidence-rebuild", "activate", "memo"]).is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "kinic",
+            "database",
+            "evidence-rebuild",
+            "activate",
+            "memo",
+            "--migration-id",
+            "id",
+            "--expected-state-hash",
+            "hash"
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "kinic",
+            "database",
+            "evidence-rebuild",
+            "step",
+            "memo",
+            "--migration-id",
+            "id",
+            "--expected-step",
+            "1",
+            "--max-rows",
+            "0"
+        ])
+        .is_err()
+    );
+}
+
+/// docs/CLI.md is the operator reference for this binary. Every visible top-level
+/// command needs an explicit code reference or invocation, either with its own
+/// section or with a pointer to its guide. This checks presence, not argument or
+/// prose correctness; incidental words inside arguments and JSON do not count.
+#[test]
+fn cli_reference_mentions_every_top_level_command() {
+    let reference = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/CLI.md"),
+    )
+    .expect("read docs/CLI.md");
+    let documented = documented_command_names(&reference);
+    let missing: Vec<String> = Cli::command()
+        .get_subcommands()
+        .filter(|command| !command.is_hide_set() && command.get_name() != "help")
+        .map(|command| command.get_name().to_string())
+        .filter(|name| !documented.contains(name.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/CLI.md code never mentions these commands: {missing:?}"
+    );
+}
+
+fn documented_command_names(reference: &str) -> std::collections::BTreeSet<&str> {
+    let mut cli = Cli::command();
+    cli.build();
+    let mut code = Vec::new();
+    let mut in_fence = false;
+    for line in reference.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if in_fence {
+            code.push(line);
+        } else {
+            code.extend(line.split('`').skip(1).step_by(2));
+        }
+    }
+    code.iter()
+        .filter_map(|text| {
+            let mut words = text.split_whitespace();
+            let first = words.next()?;
+            if first != "kinic-vfs-cli" && !first.ends_with("/kinic-vfs-cli") {
+                return Some(first);
+            }
+            // Skip global options and their values before the subcommand.
+            while let Some(word) = words.next() {
+                if !word.starts_with('-') {
+                    return Some(word);
+                }
+                let option = word.strip_prefix("--")?;
+                let (name, value) = option
+                    .split_once('=')
+                    .map_or((option, None), |(name, value)| (name, Some(value)));
+                let argument = cli
+                    .get_arguments()
+                    .find(|argument| argument.get_long() == Some(name))?;
+                if argument.get_action().takes_values() && value.is_none() {
+                    words.next()?;
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+#[test]
+fn cli_reference_ignores_incidental_command_words() {
+    let reference = r#"The status is healthy.
+`--path /tmp/status.json`
+```json
+{"status": "ok"}
+```
+`echo status`
+`kinic-vfs-cli --database-id status --help`
+"#;
+    assert!(!documented_command_names(reference).contains("status"));
+}
+
+#[test]
+fn cli_reference_accepts_command_examples_and_guide_references() {
+    let reference = "`status` and `learn ...`: see the learning guide.\n```bash\nkinic-vfs-cli --database-id <database-id> read-node --path /Knowledge/a.md\nkinic-vfs-cli --local --database-id=sample query-context --task example\n```";
+    let names = documented_command_names(reference);
+    assert!(names.contains("status"));
+    assert!(names.contains("learn"));
+    assert!(names.contains("read-node"));
+    assert!(names.contains("query-context"));
+}

@@ -84,15 +84,36 @@ test("real Wasm authorizer protects Reader and public Reader, reused queries, an
       banner: { js: "import { createRequire as nodeRequire } from 'node:module'; const require = nodeRequire(import.meta.url);" } });
     const { createNodeReader } = await import(output);
     const port = await pic.makeLive();
-    const client = await createNodeReader({ KINIC_WIKI_CANISTER_ID: canisterId.toText(), KINIC_WIKI_IC_HOST: `http://127.0.0.1:${port}` });
-    const single = await client.readOne(id, "/policy.md");
-    assert.equal(single.content, body);
-    const batch = await client.readMany(id, ["/policy.md", "/missing.md", "relative", "/policy.md"]);
-    assert.deepEqual(batch[0].node, single);
-    assert.deepEqual(batch[3].node, single);
-    assert.equal(batch[1].node, null);
-    assert.ok(batch[2].error);
-    await assert.rejects(client.readMany(id, Array(11).fill("/policy.md")), /1 to 10/);
+    // The workspace SDK uses the v3 query/read_state routes; this pinned
+    // PocketIC gateway implements their v2 equivalents. Adapt only this local
+    // transport. The real MCP actor still verifies the unchanged certificates
+    // and query signatures against PocketIC's fetched root key.
+    const gateway = `http://127.0.0.1:${port}`;
+    const originalFetch = globalThis.fetch;
+    let adaptedRequests = 0;
+    globalThis.fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.origin === gateway && /^\/api\/v3\/canister\/[^/]+\/(query|read_state)$/.test(url.pathname)) {
+        url.pathname = url.pathname.replace('/api/v3/', '/api/v2/');
+        adaptedRequests++;
+        input = input instanceof Request ? new Request(url, input) : url;
+      }
+      return originalFetch(input, init);
+    };
+    try {
+      const client = await createNodeReader({ KINIC_WIKI_CANISTER_ID: canisterId.toText(), KINIC_WIKI_IC_HOST: `http://127.0.0.1:${port}` });
+      const single = await client.readOne(id, "/policy.md");
+      assert.equal(single.content, body);
+      const batch = await client.readMany(id, ["/policy.md", "/missing.md", "relative", "/policy.md"]);
+      assert.deepEqual(batch[0].node, single);
+      assert.deepEqual(batch[3].node, single);
+      assert.equal(batch[1].node, null);
+      assert.ok(batch[2].error);
+      await assert.rejects(client.readMany(id, Array(11).fill("/policy.md")), /1 to 10/);
+      assert.ok(adaptedRequests > 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
     await pic.stopLive();
   } finally {
     await pic.tearDown();

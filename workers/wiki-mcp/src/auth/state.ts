@@ -126,6 +126,7 @@ export type AccessTokenAuthentication =
   | { kind: "invalid" }
   | {
       kind: "valid";
+      clientRedirectUri: string;
       scope: string;
       actionPermission: ActionPermission;
       identitySource: IdentitySource;
@@ -133,6 +134,7 @@ export type AccessTokenAuthentication =
     }
   | {
       kind: "valid";
+      clientRedirectUri: string;
       scope: string;
       actionPermission: ActionPermission;
       identitySource: "internet_identity";
@@ -474,6 +476,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
 
   async validateAccessToken(token: string, resource: string, now: number): Promise<{
     sessionExpiresAt: number;
+    clientRedirectUri: string;
     scope: string;
     actionPermission: ActionPermission;
     identitySource: IdentitySource;
@@ -498,6 +501,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
     }
     return {
       sessionExpiresAt: record.sessionExpiresAt,
+      clientRedirectUri: record.redirectUri,
       scope: record.scope,
       actionPermission: record.actionPermission,
       identitySource: record.identitySource
@@ -517,6 +521,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
     if (!requireDelegation || validated.identitySource === "review_service") {
       return {
         kind: "valid",
+        clientRedirectUri: validated.clientRedirectUri,
         scope: validated.scope,
         actionPermission: validated.actionPermission,
         identitySource: validated.identitySource,
@@ -524,6 +529,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
       };
     }
     const authorization = {
+      clientRedirectUri: validated.clientRedirectUri,
       scope: validated.scope,
       actionPermission: validated.actionPermission,
       identitySource: "internet_identity" as const
@@ -592,6 +598,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
   private async mintAndCacheDelegation(
     targetOrigin: string,
     authorization: {
+      clientRedirectUri: string;
       scope: string;
       actionPermission: ActionPermission;
       identitySource: "internet_identity";

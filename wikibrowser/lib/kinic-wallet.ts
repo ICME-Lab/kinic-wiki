@@ -1,15 +1,12 @@
-import { IcrcWallet } from "@dfinity/oisy-wallet-signer/icrc-wallet";
-import { base64ToUint8Array, uint8ArrayToBase64 } from "@dfinity/utils";
-import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
-import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf, type Identity } from "@icp-sdk/core/agent";
-import { IDL } from "@icp-sdk/core/candid";
+import { Actor, AnonymousIdentity, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { createAuthenticatedActor } from "@/lib/vfs-client/actor";
 import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
-import { idlFactory } from "@kinic/vfs-candid";
+import type { FundingTransport } from "@kinic/payments/wallet-types";
+import type { WalletSessionManager } from "@kinic/payments/wallet-session";
 import { cyclesForPaymentAmountE8s, formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64 } from "@/lib/cycles";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { configuredIcHost } from "@/lib/wallet-runtime";
+import { callWikiWithPayer, createWikiWalletSession, wikiPaymentScopes } from "@/lib/wallet-runtime";
 
 type WalletProvider = "oisy" | "plug";
 export type FundingProvider = "ii" | WalletProvider;
@@ -32,6 +29,7 @@ type CyclesPurchaseResult = {
 };
 
 type MarketPurchaseRequest = {
+  isCurrent?: () => boolean;
   canisterId: string;
   listingId: string;
   priceE8s: bigint;
@@ -102,33 +100,6 @@ type AllowanceCallResult<T> = {
   approveBlockIndex: string | null;
 };
 
-type IcrcCallCanisterRequestParams = {
-  canisterId: string;
-  sender: string;
-  method: string;
-  arg: string;
-  nonce?: string;
-};
-
-type IcrcCallCanisterResult = {
-  contentMap: string;
-  certificate: string;
-};
-
-type CyclesPurchaseWalletConnectOptions = {
-  url: string;
-  windowOptions?: { position: "center" | "top-right"; width: number; height: number; features?: string } | string;
-  connectionOptions?: { pollingIntervalInMilliseconds?: number; timeoutInMilliseconds?: number };
-  onDisconnect?: () => void;
-  host?: string;
-};
-
-type PlugWallet = {
-  requestConnect: (input?: { whitelist?: string[]; host?: string }) => Promise<boolean>;
-  createActor: <T>(input: { canisterId: string; interfaceFactory: unknown }) => Promise<T>;
-  agent?: { getPrincipal: () => Promise<Principal> };
-};
-
 type PlugVfsActor = {
   purchase_database_cycles: (request: DatabaseCyclesPurchaseRequest) => Promise<{ Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } } | { Err: string }>;
   market_purchase_access: (request: MarketPurchaseCanisterRequest) => Promise<{ Ok: RawMarketOrder } | { Err: string }>;
@@ -153,7 +124,7 @@ type LedgerActor = {
   icrc2_approve: (request: LedgerApproveArgs) => Promise<{ Ok: bigint } | { Err: unknown }>;
 };
 
-type PlugLedgerActor = LedgerActor;
+
 
 type LedgerAllowanceArgs = {
   account: LedgerAccount;
@@ -194,96 +165,52 @@ type LedgerAccount = {
 
 export type ConnectedOisyWallet = {
   owner: string;
+  session?: WalletSessionManager;
+  transport?: FundingTransport;
 };
 
 export type ConnectedPlugWallet = {
   principal: string;
+  session?: WalletSessionManager;
+  transport?: FundingTransport;
 };
 
 export type ConnectedKinicWallet = { provider: "oisy"; connection: ConnectedOisyWallet } | { provider: "plug"; connection: ConnectedPlugWallet };
 export type KinicFundingSource = { provider: "ii"; identity: Identity } | ConnectedKinicWallet;
 
-declare global {
-  interface Window {
-    ic?: {
-      plug?: PlugWallet;
-    };
-  }
-}
-
-const DEFAULT_OISY_SIGNER_URL = "https://oisy.com/sign";
-const CALL_TIMEOUT_MS = 120_000;
 const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
-type KinicIcrcWalletOptions = {
-  origin: string;
-  popup: Window;
-  onDisconnect?: () => void;
-  host?: string;
-};
-
-class KinicIcrcWallet extends IcrcWallet {
-  constructor(options: KinicIcrcWalletOptions) {
-    super(options);
-  }
-
-  static override async connect({ onDisconnect, host, ...rest }: CyclesPurchaseWalletConnectOptions): Promise<KinicIcrcWallet> {
-    return KinicIcrcWallet.connectSigner({
-      options: rest,
-      init: (params) => new KinicIcrcWallet({ ...params, onDisconnect, host })
-    });
-  }
-
-  async callCanister(params: IcrcCallCanisterRequestParams): Promise<IcrcCallCanisterResult> {
-    return this.call({
-      params,
-      options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
-    });
-  }
-}
-
-function openOisyWallet(): Promise<KinicIcrcWallet> {
-  return KinicIcrcWallet.connect({
-    url: import.meta.env.VITE_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
-    host: configuredIcHost()
-  });
-}
-
-async function safeDisconnectOisyWallet(wallet: KinicIcrcWallet): Promise<void> {
-  try {
-    await wallet.disconnect();
-  } catch {
-    // Cleanup failures must not hide connect, approve, or purchase errors.
-  }
-}
-
 export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
-  const wallet = await openOisyWallet();
+  const manager = createWikiWalletSession(true);
   try {
-    const accounts = await wallet.accounts();
-    const account = accounts[0];
-    if (!account) throw new Error("OISY account not found");
-    return { owner: account.owner };
+    const transport = await manager.connect("oisy", []);
+    return { owner: transport.account.owner };
   } finally {
-    await safeDisconnectOisyWallet(wallet);
+    await manager.disconnect().catch(() => {});
   }
 }
 
 export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
-  const plug = window.ic?.plug;
-  if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await plug.requestConnect({
-    host: configuredIcHost()
-  });
-  if (!connected) throw new Error("Plug connection rejected");
-  const principal = await plug.agent?.getPrincipal();
-  if (!principal) throw new Error("Plug principal is not available");
-  return { principal: principal.toText() };
+  const manager = createWikiWalletSession(true);
+  try {
+    const transport = await manager.connect("plug", []);
+    return { principal: transport.account.owner };
+  } finally {
+    manager.destroy();
+  }
+}
+
+function assertDefaultWallet(connection: ConnectedOisyWallet | ConnectedPlugWallet) {
+  const subaccount = Reflect.get(connection, "subaccount");
+  if (subaccount !== undefined && subaccount !== null && subaccount !== "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    && !(subaccount instanceof Uint8Array && subaccount.length === 32 && subaccount.every(byte => byte === 0)))
+    throw new Error("Use a default ledger account for funding.");
 }
 
 export async function getConnectedWalletKinicBalance(canisterId: string, wallet: ConnectedKinicWallet): Promise<string> {
   assertConfiguredCyclesCanister(canisterId);
+  assertDefaultWallet(wallet.connection);
   const config = await getCyclesBillingConfig(canisterId);
   const balance = await getLedgerBalance(config.kinicLedgerCanisterId, connectedWalletPrincipal(wallet));
   return balance.toString();
@@ -348,144 +275,101 @@ export async function purchaseCyclesWithIdentity(request: CyclesPurchaseRequest,
 
 export async function purchaseMarketAccessWithIdentity(request: MarketPurchaseRequest, identity: Identity): Promise<MarketPurchaseResult> {
   const prepared = await prepareMarketPurchase(request, identity.getPrincipal().toText());
+  assertFundingCurrent(request.isCurrent);
   const { value: order, approveBlockIndex } = await runIdentityAllowanceCall(prepared, request.canisterId, identity, async (vfsActor) => {
+    assertFundingCurrent(request.isCurrent);
     const result = await vfsActor.market_purchase_access(rawMarketPurchaseRequest(request));
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
-  });
+  }, request.isCurrent);
   return normalizeMarketOrder(order, "ii", approveBlockIndex, prepared.approvedAllowanceE8s.toString());
 }
 
 export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
-  const prepared = await prepareCyclesPurchase(request, connection.owner);
-  const { value: purchase, approveBlockIndex } = await runOisyAllowanceCall(prepared, request.canisterId, connection.owner, (wallet) =>
-    oisyCallCyclesPurchase(wallet, connection.owner, request.canisterId, prepared.purchaseRequest)
-  );
-  return {
-    provider: "oisy",
-    approveBlockIndex,
-    approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    purchasedCycles: formatRawCycles(BigInt(purchase.amountCycles)),
-    paymentAmountE8s: prepared.paymentAmountE8s.toString(),
-    transferFeeE8s: prepared.transferFeeE8s.toString(),
-    purchaseBlockIndex: purchase.blockIndex,
-    balanceCycles: purchase.balanceCycles ? formatRawCycles(BigInt(purchase.balanceCycles)) : null
-  };
+  return purchaseExternalCycles(request, { provider: "oisy", connection });
 }
 
 export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, connection: ConnectedPlugWallet): Promise<CyclesPurchaseResult> {
-  const prepared = await prepareCyclesPurchase(request, connection.principal);
-  const { value: purchase, approveBlockIndex } = await runPlugAllowanceCall(prepared, request.canisterId, connection.principal, async (vfsActor) => {
-    const result = await vfsActor.purchase_database_cycles(prepared.purchaseRequest);
+  return purchaseExternalCycles(request, { provider: "plug", connection });
+}
+
+async function purchaseExternalCycles(request: CyclesPurchaseRequest, wallet: ConnectedKinicWallet): Promise<CyclesPurchaseResult> {
+  assertDefaultWallet(wallet.connection);
+  const prepared = await prepareCyclesPurchase(request, connectedWalletPrincipal(wallet));
+  const { value: purchase, approveBlockIndex } = await runExternalAllowanceCall(prepared, request.canisterId, wallet, async transport => {
+    const result = await callWikiWithPayer(transport, request.canisterId, "purchase_database_cycles", [prepared.purchaseRequest]);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
   });
-  return {
-    provider: "plug",
-    approveBlockIndex,
-    approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    purchasedCycles: formatRawCycles(purchase.amount_cycles),
-    paymentAmountE8s: prepared.paymentAmountE8s.toString(),
-    transferFeeE8s: prepared.transferFeeE8s.toString(),
-    purchaseBlockIndex: purchase.block_index.toString(),
-    balanceCycles: formatRawCycles(purchase.balance_cycles)
-  };
+  return { provider: wallet.provider, approveBlockIndex, approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
+    purchasedCycles: formatRawCycles(purchase.amount_cycles), paymentAmountE8s: prepared.paymentAmountE8s.toString(),
+    transferFeeE8s: prepared.transferFeeE8s.toString(), purchaseBlockIndex: purchase.block_index.toString(),
+    balanceCycles: formatRawCycles(purchase.balance_cycles) };
 }
 
 export async function purchaseMarketAccessWithOisy(request: MarketPurchaseRequest, connection: ConnectedOisyWallet): Promise<MarketPurchaseResult> {
-  assertConfiguredCyclesCanister(request.canisterId);
-  const prepared = await prepareMarketPurchase(request, connection.owner);
-  const { value: order, approveBlockIndex } = await runOisyAllowanceCall(prepared, request.canisterId, connection.owner, (wallet) =>
-    oisyCallMarketPurchase(wallet, connection.owner, request.canisterId, rawMarketPurchaseRequest(request))
-  );
-  return normalizeMarketOrder(order, "oisy", approveBlockIndex, prepared.approvedAllowanceE8s.toString());
+  return purchaseExternalMarketAccess(request, { provider: "oisy", connection });
 }
 
 export async function purchaseMarketAccessWithPlug(request: MarketPurchaseRequest, connection: ConnectedPlugWallet): Promise<MarketPurchaseResult> {
-  assertConfiguredCyclesCanister(request.canisterId);
-  const prepared = await prepareMarketPurchase(request, connection.principal);
-  const { value: order, approveBlockIndex } = await runPlugAllowanceCall(prepared, request.canisterId, connection.principal, async (vfsActor) => {
-    const result = await vfsActor.market_purchase_access(rawMarketPurchaseRequest(request));
+  return purchaseExternalMarketAccess(request, { provider: "plug", connection });
+}
+
+async function purchaseExternalMarketAccess(request: MarketPurchaseRequest, wallet: ConnectedKinicWallet): Promise<MarketPurchaseResult> {
+  assertDefaultWallet(wallet.connection);
+  const prepared = await prepareMarketPurchase(request, connectedWalletPrincipal(wallet));
+  assertFundingCurrent(request.isCurrent);
+  const { value: order, approveBlockIndex } = await runExternalAllowanceCall(prepared, request.canisterId, wallet, async transport => {
+    const result = await callWikiWithPayer(transport, request.canisterId, "market_purchase_access", [rawMarketPurchaseRequest(request)], request.isCurrent);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
-  });
-  return normalizeMarketOrder(order, "plug", approveBlockIndex, prepared.approvedAllowanceE8s.toString());
+  }, request.isCurrent);
+  return normalizeMarketOrder(order, wallet.provider, approveBlockIndex, prepared.approvedAllowanceE8s.toString());
 }
 
-async function runOisyAllowanceCall<T>(
-  prepared: PreparedKinicAllowance,
-  canisterId: string,
-  owner: string,
-  callCanister: (wallet: KinicIcrcWallet) => Promise<T>
+function assertFundingCurrent(isCurrent?: () => boolean) {
+  if (isCurrent && !isCurrent()) throw new Error("The selected payment has changed.");
+}
+
+async function runExternalAllowanceCall<T>(
+  prepared: PreparedKinicAllowance, canisterId: string, wallet: ConnectedKinicWallet, call: (transport: FundingTransport) => Promise<T>,
+  isCurrent?: () => boolean
 ): Promise<AllowanceCallResult<T>> {
-  const wallet = await openOisyWallet();
+  const session = wallet.connection.session;
+  const manager = session ?? createWikiWalletSession(true);
+  const scopes = wikiPaymentScopes(canisterId, prepared.kinicLedgerCanisterId);
   try {
-    const accounts = await wallet.accounts();
-    const account = accounts[0];
-    if (!account) throw new Error("OISY account not found");
-    if (account.owner !== owner) throw new Error("OISY owner changed; connect OISY again");
+    const transport = session ? await manager.revalidate(scopes) : await manager.connect(wallet.provider, scopes);
+    assertFundingCurrent(isCurrent);
+    if (transport.account.provider !== wallet.provider || transport.account.owner !== connectedWalletPrincipal(wallet)
+      || (session && wallet.connection.transport !== transport)) throw new Error("Wallet account changed; reconnect the wallet.");
     let approveBlockIndex: string | null = null;
     if (prepared.approvalRequired) {
-      const approvedBlockIndex = await wallet.approve({
-        owner,
-        ledgerCanisterId: prepared.kinicLedgerCanisterId,
-        params: approveParams(canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt),
-        options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
-      });
-      approveBlockIndex = approvedBlockIndex.toString();
+      const args = rawApproveArgs(canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt);
+      try { approveBlockIndex = (await transport.approve(prepared.kinicLedgerCanisterId, args, {isCurrent})).toString(); }
+      catch (error) { throw new Error(`ledger approve failed: ${errorMessage(error)}`); }
     }
-    const value = await callAfterApprove(() => callCanister(wallet), { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
+    const value = await callAfterApprove(() => { assertFundingCurrent(isCurrent); return call(transport); }, { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
     return { value, approveBlockIndex };
   } finally {
-    await safeDisconnectOisyWallet(wallet);
+    if (!session) {
+      if (wallet.provider === "oisy") await manager.disconnect().catch(() => {});
+      manager.destroy();
+    }
   }
-}
-
-async function runPlugAllowanceCall<T>(
-  prepared: PreparedKinicAllowance,
-  canisterId: string,
-  expectedPrincipal: string,
-  callCanister: (vfsActor: PlugVfsActor) => Promise<T>
-): Promise<AllowanceCallResult<T>> {
-  const plug = window.ic?.plug;
-  if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await plug.requestConnect({
-    whitelist: [canisterId, prepared.kinicLedgerCanisterId],
-    host: configuredIcHost()
-  });
-  if (!connected) throw new Error("Plug connection rejected");
-  const principal = await plug.agent?.getPrincipal();
-  if (!principal) throw new Error("Plug principal is not available");
-  if (principal.toText() !== expectedPrincipal) throw new Error("Plug principal changed; connect Plug again");
-  let approveBlockIndex: string | null = null;
-  if (prepared.approvalRequired) {
-    const ledgerActor = await plug.createActor<PlugLedgerActor>({
-      canisterId: prepared.kinicLedgerCanisterId,
-      interfaceFactory: ledgerIdlFactory
-    });
-    const approve = await ledgerActor.icrc2_approve(
-      rawApproveArgs(canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt)
-    );
-    if ("Err" in approve) throw new Error(`ledger approve failed: ${formatLedgerApproveError(approve.Err)}`);
-    approveBlockIndex = approve.Ok.toString();
-  }
-  const vfsActor = await plug.createActor<PlugVfsActor>({
-    canisterId,
-    interfaceFactory: idlFactory
-  });
-  const value = await callAfterApprove(() => callCanister(vfsActor), { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
-  return { value, approveBlockIndex };
 }
 
 async function runIdentityAllowanceCall<T>(
   prepared: PreparedKinicAllowance,
   canisterId: string,
   identity: Identity,
-  callCanister: (vfsActor: PlugVfsActor) => Promise<T>
+  callCanister: (vfsActor: PlugVfsActor) => Promise<T>,
+  isCurrent?: () => boolean
 ): Promise<AllowanceCallResult<T>> {
   let approveBlockIndex: string | null = null;
   if (prepared.approvalRequired) {
     const ledgerActor = await createLedgerActor(prepared.kinicLedgerCanisterId, identity);
+    assertFundingCurrent(isCurrent);
     const approve = await ledgerActor.icrc2_approve(
       rawApproveArgs(canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt)
     );
@@ -495,16 +379,6 @@ async function runIdentityAllowanceCall<T>(
   const vfsActor = (await createAuthenticatedActor(canisterId, identity)) as unknown as PlugVfsActor;
   const value = await callAfterApprove(() => callCanister(vfsActor), { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
   return { value, approveBlockIndex };
-}
-
-function approveParams(canisterId: string, allowanceE8s: bigint, expectedAllowanceE8s: bigint, expiresAt: bigint): ApproveParams {
-  return {
-    spender: { owner: Principal.fromText(canisterId), subaccount: [] },
-    amount: allowanceE8s,
-    expected_allowance: expectedAllowanceE8s,
-    expires_at: expiresAt,
-    created_at_time: BigInt(Date.now()) * 1_000_000n
-  };
 }
 
 function rawApproveArgs(canisterId: string, allowanceE8s: bigint, expectedAllowanceE8s: bigint, expiresAt: bigint): LedgerApproveArgs {
@@ -644,50 +518,6 @@ function connectedWalletPrincipal(wallet: ConnectedKinicWallet): string {
   return wallet.provider === "oisy" ? wallet.connection.owner : wallet.connection.principal;
 }
 
-async function oisyCallCyclesPurchase(
-  wallet: KinicIcrcWallet,
-  owner: string,
-  canisterId: string,
-  request: DatabaseCyclesPurchaseRequest
-): Promise<{ blockIndex: string; amountCycles: string; balanceCycles: string }> {
-  const arg = encodeCyclesPurchaseArgs(request);
-  const result = await wallet.callCanister({
-    canisterId,
-    sender: owner,
-    method: "purchase_database_cycles",
-    arg
-  });
-  return decodeOisyCyclesPurchaseResult({
-    canisterId,
-    sender: owner,
-    method: "purchase_database_cycles",
-    arg,
-    result
-  });
-}
-
-async function oisyCallMarketPurchase(
-  wallet: KinicIcrcWallet,
-  owner: string,
-  canisterId: string,
-  request: MarketPurchaseCanisterRequest
-): Promise<RawMarketOrder> {
-  const arg = encodeMarketPurchaseArgs(request);
-  const result = await wallet.callCanister({
-    canisterId,
-    sender: owner,
-    method: "market_purchase_access",
-    arg
-  });
-  return decodeOisyMarketPurchaseResult({
-    canisterId,
-    sender: owner,
-    method: "market_purchase_access",
-    arg,
-    result
-  });
-}
-
 async function callAfterApprove<T>(run: () => Promise<T>, context: { approveBlockIndex: string | null; expiresAt: bigint | null }): Promise<T> {
   try {
     return await run();
@@ -708,158 +538,6 @@ function errorMessage(cause: unknown): string {
     return safeJsonWithBigInts(cause);
   }
   return String(cause);
-}
-
-function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): string {
-  const PurchaseRequest = IDL.Record({
-    database_id: IDL.Text,
-    payment_amount_e8s: IDL.Nat64,
-    min_expected_cycles: IDL.Nat64
-  });
-  return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
-}
-
-function encodeMarketPurchaseArgs(request: MarketPurchaseCanisterRequest): string {
-  const PurchaseRequest = IDL.Record({
-    listing_id: IDL.Text,
-    price_e8s: IDL.Nat64,
-    access_principal: IDL.Text
-  });
-  return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
-}
-
-async function decodeOisyCyclesPurchaseResult({
-  canisterId,
-  sender,
-  method,
-  arg,
-  result
-}: {
-  canisterId: string;
-  sender: string;
-  method: string;
-  arg: string;
-  result: IcrcCallCanisterResult;
-}): Promise<{ blockIndex: string; amountCycles: string; balanceCycles: string }> {
-  const reply = await decodeOisyCanisterReply({ canisterId, sender, method, arg, result });
-  return decodePurchaseResult(reply);
-}
-
-async function decodeOisyMarketPurchaseResult({
-  canisterId,
-  sender,
-  method,
-  arg,
-  result
-}: {
-  canisterId: string;
-  sender: string;
-  method: string;
-  arg: string;
-  result: IcrcCallCanisterResult;
-}): Promise<RawMarketOrder> {
-  const reply = await decodeOisyCanisterReply({ canisterId, sender, method, arg, result });
-  return decodeMarketPurchaseResult(reply);
-}
-
-async function decodeOisyCanisterReply({
-  canisterId,
-  sender,
-  method,
-  arg,
-  result
-}: {
-  canisterId: string;
-  sender: string;
-  method: string;
-  arg: string;
-  result: IcrcCallCanisterResult;
-}): Promise<Uint8Array> {
-  const contentMap = Cbor.decode<Record<string, unknown>>(base64ToUint8Array(result.contentMap));
-  const responseMethod = contentMap.method_name;
-  if (typeof responseMethod !== "string" || responseMethod !== method) throw new Error("wallet response method mismatch");
-  const responseCanisterId = bytesFromUnknown(contentMap.canister_id, "wallet response canister");
-  if (Principal.fromUint8Array(responseCanisterId).toText() !== Principal.fromText(canisterId).toText()) {
-    throw new Error("wallet response canister mismatch");
-  }
-  const responseSender = bytesFromUnknown(contentMap.sender, "wallet response sender");
-  if (Principal.fromUint8Array(responseSender).toText() !== Principal.fromText(sender).toText()) {
-    throw new Error("wallet response sender mismatch");
-  }
-  const responseArg = bytesFromUnknown(contentMap.arg, "wallet response argument");
-  if (!sameBytes(base64ToUint8Array(arg), responseArg)) throw new Error("wallet response argument mismatch");
-  const requestId = requestIdOf(contentMap);
-  const host = import.meta.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
-  const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
-  if (agent.isLocal()) await agent.fetchRootKey();
-  if (!agent.rootKey) throw new Error("agent root key unavailable");
-  const certificate = await Certificate.create({
-    certificate: base64ToUint8Array(result.certificate),
-    rootKey: agent.rootKey,
-    principal: { canisterId: Principal.fromText(canisterId) }
-  });
-  const reply = lookupResultToBuffer(certificate.lookup_path([new TextEncoder().encode("request_status"), requestId, "reply"]));
-  if (!reply) throw new Error("wallet response reply unavailable");
-  return reply;
-}
-
-function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; amountCycles: string; balanceCycles: string } {
-  const [decoded] = IDL.decode([purchaseResultType()], reply);
-  if (!isObject(decoded)) throw new Error("wallet response result mismatch");
-  if (hasOwn(decoded, "Err")) {
-    const error = Reflect.get(decoded, "Err");
-    throw new Error(typeof error === "string" ? error : "cycles purchase failed");
-  }
-  const ok = Reflect.get(decoded, "Ok");
-  if (!isObject(ok)) throw new Error("wallet response result mismatch");
-  const blockIndex = Reflect.get(ok, "block_index");
-  const amountCycles = Reflect.get(ok, "amount_cycles");
-  const balanceCycles = Reflect.get(ok, "balance_cycles");
-  if (typeof blockIndex !== "bigint" || typeof amountCycles !== "bigint" || typeof balanceCycles !== "bigint") {
-    throw new Error("wallet response result mismatch");
-  }
-  return {
-    blockIndex: blockIndex.toString(),
-    amountCycles: amountCycles.toString(),
-    balanceCycles: balanceCycles.toString()
-  };
-}
-
-function purchaseResultType() {
-  return IDL.Variant({
-    Ok: IDL.Record({ block_index: IDL.Nat64, amount_cycles: IDL.Nat64, balance_cycles: IDL.Nat64 }),
-    Err: IDL.Text
-  });
-}
-
-function decodeMarketPurchaseResult(reply: Uint8Array): RawMarketOrder {
-  const [decoded] = IDL.decode([marketPurchaseResultType()], reply);
-  if (!isObject(decoded)) throw new Error("wallet response result mismatch");
-  if (hasOwn(decoded, "Err")) {
-    const error = Reflect.get(decoded, "Err");
-    throw new Error(typeof error === "string" ? error : "market purchase failed");
-  }
-  const ok = Reflect.get(decoded, "Ok");
-  if (!isRawMarketOrder(ok)) throw new Error("wallet response result mismatch");
-  return ok;
-}
-
-function marketPurchaseResultType() {
-  const MarketOrder = IDL.Record({
-    order_id: IDL.Text,
-    listing_id: IDL.Text,
-    database_id: IDL.Text,
-    buyer_principal: IDL.Text,
-    seller_principal: IDL.Text,
-    payout_principal: IDL.Text,
-    price_e8s: IDL.Nat64,
-    ledger_block_index: IDL.Nat64,
-    created_at_ms: IDL.Int64
-  });
-  return IDL.Variant({
-    Ok: MarketOrder,
-    Err: IDL.Text
-  });
 }
 
 function rawMarketPurchaseRequest(request: MarketPurchaseRequest): MarketPurchaseCanisterRequest {
@@ -988,36 +666,12 @@ function safeJsonWithBigInts(value: unknown): string {
   }
 }
 
-function bytesFromUnknown(value: unknown, label: string): Uint8Array {
-  if (value instanceof Uint8Array) return value;
-  throw new Error(`${label} mismatch`);
-}
-
 function isObject(value: unknown): value is object {
   return typeof value === "object" && value !== null;
 }
 
 function hasOwn(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function isRawMarketOrder(value: unknown): value is RawMarketOrder {
-  if (!isObject(value)) return false;
-  return (
-    typeof Reflect.get(value, "order_id") === "string" &&
-    typeof Reflect.get(value, "listing_id") === "string" &&
-    typeof Reflect.get(value, "database_id") === "string" &&
-    typeof Reflect.get(value, "buyer_principal") === "string" &&
-    typeof Reflect.get(value, "seller_principal") === "string" &&
-    typeof Reflect.get(value, "payout_principal") === "string" &&
-    typeof Reflect.get(value, "price_e8s") === "bigint" &&
-    typeof Reflect.get(value, "ledger_block_index") === "bigint" &&
-    typeof Reflect.get(value, "created_at_ms") === "bigint"
-  );
-}
-
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
 const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {

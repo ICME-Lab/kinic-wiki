@@ -90,14 +90,19 @@ pub(crate) fn load_stored_node(
     conn: &Connection,
     path: &str,
 ) -> Result<Option<StoredNode>, String> {
-    conn.query_row(
-        "SELECT id, path, kind, content, created_at, updated_at, etag, metadata_json
+    let mut stored: Option<StoredNode> = conn
+        .query_row(
+            "SELECT id, path, kind, content, created_at, updated_at, etag, metadata_json
          FROM fs_nodes WHERE path = ?1",
-        params![path],
-        map_stored_node,
-    )
-    .optional()
-    .map_err(|error| error.to_string())
+            params![path],
+            map_stored_node,
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if let Some(stored) = stored.as_mut() {
+        crate::fs_store::evidence::hydrate_node(conn, &mut stored.node)?;
+    }
+    Ok(stored)
 }
 
 pub(crate) fn load_scoped_entry_rows(

@@ -1380,6 +1380,43 @@ fn purchase_database_cycles_allows_non_owner_payer() {
 }
 
 #[test]
+fn icrc21_pending_purchase_read_is_bounded_and_read_only() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Consent read".into(),
+    })
+    .unwrap();
+    let id = database.database_id;
+    let before = list_databases().unwrap();
+    let method = "list_database_cycles_pending_purchases";
+    let response =
+        icrc21_canister_call_consent_message(consent_request(method, Encode!(&id).unwrap()));
+    let Icrc21ConsentMessageResponse::Ok(info) = response else {
+        panic!("missing read consent");
+    };
+    let Icrc21ConsentMessage::GenericDisplayMessage(message) = info.consent_message;
+    assert!(message.contains("Read") && message.contains(&id));
+    for arg in [
+        vec![],
+        Encode!(&42u64).unwrap(),
+        Encode!(&id, &id).unwrap(),
+        vec![0; 4097],
+    ] {
+        assert!(matches!(
+            icrc21_canister_call_consent_message(consent_request(method, arg)),
+            Icrc21ConsentMessageResponse::Err(_)
+        ));
+    }
+    assert_eq!(list_databases().unwrap(), before);
+    assert!(
+        list_database_cycles_pending_purchases(id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn icrc21_purchase_database_cycles_returns_consent_message() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
@@ -3316,5 +3353,156 @@ fn retired_voice_methods_cannot_modify_or_reconcile_credits() {
     assert_eq!(
         super::get_voice_reservation("session".into()).unwrap_err(),
         "voice retired"
+    );
+}
+
+#[test]
+fn writer_cannot_begin_step_activate_or_read_private_rebuild_status() {
+    install_test_service();
+    let writer = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .unwrap()
+            .grant_database_access(
+                "default",
+                "2vxsx-fae",
+                &writer.to_text(),
+                DatabaseRole::Writer,
+                1,
+            )
+            .unwrap()
+    });
+    set_test_caller_principal_for_test(writer);
+    let r = vfs_types::EvidenceRebuildRequest {
+        database_id: "default".into(),
+        expected_source_mount: 11,
+        expected_schema: "vfs_store:005_evidence_storage".into(),
+    };
+    assert!(
+        super::evidence_rebuild_begin(r)
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_status(vfs_types::DatabaseIdRequest {
+            database_id: "default".into()
+        })
+        .unwrap_err()
+        .contains("controller")
+    );
+    let step = vfs_types::EvidenceRebuildStepRequest {
+        database_id: "default".into(),
+        migration_id: "not-authorized".into(),
+        expected_step: 0,
+        max_rows: 3,
+        max_bytes: 65536,
+    };
+    assert!(
+        super::evidence_rebuild_step(step.clone())
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_verify(step)
+            .unwrap_err()
+            .contains("controller")
+    );
+    let control = vfs_types::EvidenceRebuildControlRequest {
+        database_id: "default".into(),
+        migration_id: "not-authorized".into(),
+        expected_state_hash: "not-authorized".into(),
+    };
+    assert!(
+        super::evidence_rebuild_activate(control.clone())
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_rollback(control.clone())
+            .unwrap_err()
+            .contains("controller")
+    );
+    assert!(
+        super::evidence_rebuild_resume_writes(control)
+            .unwrap_err()
+            .contains("controller")
+    );
+}
+
+#[test]
+fn controller_gate_does_not_charge_rejected_writer_update() {
+    install_test_service();
+    let writer = Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .unwrap()
+            .grant_database_access(
+                "default",
+                "2vxsx-fae",
+                &writer.to_text(),
+                DatabaseRole::Writer,
+                1,
+            )
+            .unwrap()
+    });
+    let balance = || {
+        SERVICE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .unwrap()
+                .list_database_summaries_for_caller("2vxsx-fae")
+                .unwrap()
+                .into_iter()
+                .find(|d| d.database_id == "default")
+                .unwrap()
+                .cycles_balance
+        })
+    };
+    let before = balance();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    let idle = super::evidence_rebuild_status(vfs_types::DatabaseIdRequest {
+        database_id: "default".into(),
+    })
+    .unwrap();
+    super::evidence_rebuild_begin(vfs_types::EvidenceRebuildRequest {
+        database_id: "default".into(),
+        expected_source_mount: idle.source_mount,
+        expected_schema: idle.source_schema,
+    })
+    .unwrap();
+    set_test_caller_principal_for_test(writer);
+    assert!(
+        write_node(WriteNodeRequest {
+            database_id: "default".into(),
+            path: "/Knowledge/rejected.md".into(),
+            kind: NodeKind::File,
+            content: "must not commit".into(),
+            metadata_json: "{}".into(),
+            expected_etag: None
+        })
+        .is_err()
+    );
+    assert_eq!(balance(), before);
+}
+
+#[test]
+fn bekko_refill_endpoints_require_controller_and_start_disabled() {
+    use super::bekko_refill::{check_bekko_refill, configure_bekko_refill, get_bekko_refill_state};
+    use vfs_types::BekkoRefillConfig;
+    install_test_service();
+    super::with_service(|svc| svc.initialize_bekko_refill(0)).unwrap();
+    set_test_caller_principal_for_test(Principal::anonymous());
+    assert!(get_bekko_refill_state().is_err());
+    assert!(configure_bekko_refill(BekkoRefillConfig::default()).is_err());
+    assert!(block_on_ready(check_bekko_refill()).is_err());
+    set_test_caller_principal_for_test(Principal::management_canister());
+    assert!(!get_bekko_refill_state().unwrap().config.enabled);
+    assert!(
+        block_on_ready(check_bekko_refill())
+            .unwrap()
+            .active
+            .is_none()
     );
 }

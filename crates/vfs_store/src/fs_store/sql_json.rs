@@ -101,8 +101,24 @@ fn validate_select_tokens(tokens: &[SqlToken], label: &str) -> Result<(), String
         return Err(format!("{label} must start with SELECT"));
     }
     let blocked = [
-        "pragma", "attach", "detach", "insert", "update", "delete", "create", "drop", "alter",
-        "replace", "vacuum", "reindex", "analyze",
+        "pragma",
+        "attach",
+        "detach",
+        "insert",
+        "update",
+        "delete",
+        "create",
+        "drop",
+        "alter",
+        "replace",
+        "vacuum",
+        "reindex",
+        "analyze",
+        "credit_bridge_settings",
+        "credit_bridge_links",
+        "credit_bridge_fences",
+        "credit_bridge_owners",
+        "credit_bridge_transfers",
     ];
     for token in tokens {
         if blocked.contains(&token.value.as_str()) {
@@ -389,7 +405,13 @@ fn sql_syntax_tokens(
                             index += 2;
                             continue;
                         }
-                        if quote != b'\'' {
+                        // SQLite also permits single-quoted table identifiers. Private bridge
+                        // names must participate in denial even in that spelling.
+                        if quote != b'\''
+                            || sql[start..index]
+                                .to_ascii_lowercase()
+                                .starts_with("credit_bridge_")
+                        {
                             let value = &sql[start..index];
                             let escaped = format!("{}{}", closing as char, closing as char);
                             tokens.push(SqlToken {

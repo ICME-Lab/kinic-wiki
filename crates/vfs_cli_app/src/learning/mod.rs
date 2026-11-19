@@ -1,4 +1,5 @@
 //! CLI-owned orchestration for agent experience, retrieval and guarded learning.
+pub mod delivery_policy;
 mod model;
 mod outbox;
 mod retrieval;

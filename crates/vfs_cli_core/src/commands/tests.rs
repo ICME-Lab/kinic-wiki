@@ -50,6 +50,7 @@ struct MockClient {
     child_lists: Mutex<Vec<ListChildrenRequest>>,
     contexts: Mutex<Vec<NodeContextRequest>>,
     memory_manifests: Mutex<Vec<String>>,
+    maintenance_queries: Mutex<Vec<String>>,
     query_contexts: Mutex<Vec<QueryContextRequest>>,
     source_evidence_requests: Mutex<Vec<SourceEvidenceRequest>>,
     export_snapshots: Mutex<Vec<ExportSnapshotRequest>>,
@@ -93,6 +94,30 @@ fn entry(path: &str, kind: NodeEntryKind, etag: &str) -> NodeEntry {
 
 #[async_trait]
 impl VfsApi for MockClient {
+    async fn evidence_rebuild_status(&self, database_id: &str) -> Result<EvidenceRebuildStatus> {
+        self.maintenance_queries
+            .lock()
+            .unwrap()
+            .push(database_id.into());
+        Ok(EvidenceRebuildStatus {
+            database_id: database_id.into(),
+            migration_id: String::new(),
+            phase: "Idle".into(),
+            step: 0,
+            state_hash: "hash".into(),
+            source_mount: 11,
+            target_mount: 0,
+            source_schema: "vfs_store:005_evidence_storage".into(),
+            source_guard: "guard".into(),
+            cursor_json: "{}".into(),
+            verification_digest: String::new(),
+            verified: false,
+            source_logical_bytes: 1024,
+            target_logical_bytes: 0,
+            retained_old_logical_bytes: 0,
+            resume_writes_allowed: false,
+        })
+    }
     async fn status(&self, _database_id: &str) -> Result<Status> {
         unreachable!()
     }
@@ -1718,4 +1743,25 @@ async fn graph_neighborhood_sends_depth_request() {
     assert_eq!(neighborhoods[0].center_path, "/Knowledge/a.md");
     assert_eq!(neighborhoods[0].depth, 2);
     assert_eq!(neighborhoods[0].limit, 9);
+}
+
+#[tokio::test]
+async fn maintenance_cli_preview_is_read_only_and_requires_exact_state() {
+    let client = MockClient::default();
+    run_vfs_command(
+        &client,
+        &test_connection(),
+        VfsCommand::Database {
+            command: crate::cli::DatabaseCommand::EvidenceRebuild {
+                command: crate::cli::EvidenceRebuildCommand::Preview {
+                    database_id: "alpha".into(),
+                },
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(*client.maintenance_queries.lock().unwrap(), vec!["alpha"]);
+    assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    assert!(client.writes.lock().unwrap().is_empty());
 }

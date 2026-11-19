@@ -248,9 +248,14 @@ pub(crate) fn load_content_substring_candidates(
         .map(|prefix| prefix_filter_sql_for_column("path", prefix, values.len() + 1))
         .unwrap_or_else(|| (String::new(), Vec::new()));
     values.extend(scope_values);
+    let source = if crate::fs_store::evidence::search_storage_enabled(conn)? {
+        "fs_search_content"
+    } else {
+        "fs_nodes"
+    };
     let sql = format!(
         "SELECT id, path, kind
-         FROM fs_nodes
+         FROM {source}
          WHERE {predicates}{}
          ORDER BY path ASC
          LIMIT {}",
@@ -664,7 +669,7 @@ fn load_selected_contents(
     } else {
         "content"
     };
-    let sql = format!("SELECT id, {column} FROM fs_nodes WHERE id IN ({placeholders})");
+    let sql = format!("SELECT id, {column}, path FROM fs_nodes WHERE id IN ({placeholders})");
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(&mut stmt, crate::sqlite::params_from_i64s(ids), |row| {
         let content = if prefix_only {
@@ -679,10 +684,30 @@ fn load_selected_contents(
         } else {
             crate::sqlite::row_get::<String>(row, 1)?
         };
-        Ok((crate::sqlite::row_get::<i64>(row, 0)?, content))
+        Ok((
+            crate::sqlite::row_get::<i64>(row, 0)?,
+            content,
+            crate::sqlite::row_get::<String>(row, 2)?,
+        ))
     })
     .map_err(|error| error.to_string())?;
-    Ok(rows.into_iter().collect())
+    let mut contents = BTreeMap::new();
+    for (id, mut content, path) in rows {
+        if content.starts_with("kinic:evidence:v1:") {
+            if let Some(node) = crate::fs_helpers::load_node(conn, &path)? {
+                content = node.content;
+            }
+            if prefix_only && content.len() > 160000 {
+                let mut end = 160000;
+                while !content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                content.truncate(end);
+            }
+        }
+        contents.insert(id, content);
+    }
+    Ok(contents)
 }
 
 fn find_fts_anchor(content: &str, plan: &SearchQueryPlan) -> Option<(usize, usize)> {

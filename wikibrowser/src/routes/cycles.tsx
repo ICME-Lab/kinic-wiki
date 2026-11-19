@@ -18,7 +18,10 @@ export const Route = createFileRoute("/cycles")({
 
 function CyclesRoute() {
   const search = Route.useSearch();
-  return <AdminRouteShell><CyclesClient canisterId={import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? ""} databaseId={search.database_id ?? search.databaseId ?? ""} databaseStatus={search.status ?? null} /></AdminRouteShell>;
+  return <AdminRouteShell>
+    {import.meta.env.DEV && import.meta.env.MODE === "bridge-local-test" &&
+      <p className="mx-auto w-full max-w-2xl p-3 text-sm font-semibold">Synthetic test funding. No real KINIC is used.</p>}
+    <CyclesClient canisterId={import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? ""} databaseId={search.database_id ?? search.databaseId ?? ""} databaseStatus={search.status ?? null} /></AdminRouteShell>;
 }
 
 function stringValue(value: unknown): string | undefined {

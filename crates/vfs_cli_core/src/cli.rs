@@ -376,6 +376,11 @@ pub enum MarketCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
+    /// Controller-only bounded evidence rebuild. Preview is read-only.
+    EvidenceRebuild {
+        #[command(subcommand)]
+        command: EvidenceRebuildCommand,
+    },
     #[command(about = "Create a database and print its generated database id")]
     Create { name: String },
     #[command(about = "Update one database metadata record from JSON")]
@@ -543,4 +548,58 @@ impl DatabaseRoleArg {
             Self::Reader => DatabaseRole::Reader,
         }
     }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum EvidenceRebuildCommand {
+    Preview {
+        database_id: String,
+    },
+    Begin {
+        database_id: String,
+        #[arg(long)]
+        expected_source_mount: u16,
+        #[arg(long)]
+        expected_schema: String,
+    },
+    Step {
+        #[command(flatten)]
+        args: EvidenceRebuildStepArgs,
+    },
+    Verify {
+        #[command(flatten)]
+        args: EvidenceRebuildStepArgs,
+    },
+    Activate {
+        #[command(flatten)]
+        args: EvidenceRebuildControlArgs,
+    },
+    Rollback {
+        #[command(flatten)]
+        args: EvidenceRebuildControlArgs,
+    },
+    ResumeWrites {
+        #[command(flatten)]
+        args: EvidenceRebuildControlArgs,
+    },
+}
+#[derive(Args, Debug, Clone)]
+pub struct EvidenceRebuildStepArgs {
+    pub database_id: String,
+    #[arg(long)]
+    pub migration_id: String,
+    #[arg(long)]
+    pub expected_step: u64,
+    #[arg(long,default_value_t=32,value_parser=clap::value_parser!(u32).range(1..=32))]
+    pub max_rows: u32,
+    #[arg(long,default_value_t=262144,value_parser=clap::value_parser!(u32).range(1..=2097152))]
+    pub max_bytes: u32,
+}
+#[derive(Args, Debug, Clone)]
+pub struct EvidenceRebuildControlArgs {
+    pub database_id: String,
+    #[arg(long)]
+    pub migration_id: String,
+    #[arg(long)]
+    pub expected_state_hash: String,
 }

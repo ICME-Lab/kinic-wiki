@@ -621,7 +621,9 @@ impl VfsService {
     ) -> Result<(), String> {
         let database_id = request.database_id.as_str();
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(database_id)?;
         self.require_no_pending_cycles_operations(database_id)?;
+        self.read_index(|c| credit_bridge::guard_delete(c, database_id, false))?;
         let status = self.read_index(|conn| load_database_status(conn, database_id))?;
         if !matches!(status, DatabaseStatus::Pending | DatabaseStatus::Active) {
             return Err(format!(
@@ -673,6 +675,7 @@ impl VfsService {
         now: i64,
     ) -> Result<(), String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(database_id)?;
         if caller == principal && role != DatabaseRole::Owner {
             return Err("owner cannot downgrade own access".to_string());
         }
@@ -703,6 +706,7 @@ impl VfsService {
     ) -> Result<DatabaseMetadata, String> {
         validate_database_id(&request.database_id)?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(&request.database_id)?;
         self.database_meta(&request.database_id)?;
         let metadata = normalize_database_metadata(DatabaseMetadata {
             name: request.name,
@@ -744,6 +748,7 @@ impl VfsService {
     ) -> Result<(), String> {
         validate_database_id(&request.database_id)?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(&request.database_id)?;
         let mut metadata = self.database_meta(&request.database_id)?.metadata;
         metadata.name = request.name;
         let metadata = normalize_database_metadata(metadata)?;
@@ -767,6 +772,7 @@ impl VfsService {
         principal: &str,
     ) -> Result<(), String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_maintenance_open(database_id)?;
         self.database_meta(database_id)?;
         if caller == principal {
             return Err("owner cannot revoke own access".to_string());
@@ -977,13 +983,16 @@ pub(crate) fn insert_initial_free_database_grant(
     grant_cycles: i64,
     now: i64,
 ) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO database_free_cycle_grants
-         (principal, database_id, grant_cycles, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![caller, database_id, grant_cycles, now],
-    )
-    .map_err(|error| error.to_string())?;
+    if !kinic_cycle_grants::record_once(
+        conn,
+        kinic_cycle_grants::Scope::Wiki,
+        caller,
+        database_id,
+        u64::try_from(grant_cycles).map_err(|_| "negative grant cycles")?,
+        now,
+    )? {
+        return Err("initial free database grant already used".into());
+    }
     Ok(())
 }
 

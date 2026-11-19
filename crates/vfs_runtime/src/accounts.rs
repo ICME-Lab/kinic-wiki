@@ -13,6 +13,7 @@ impl VfsService {
     pub fn delete_account(&self, caller: &str, now: i64) -> Result<AccountDeletionOutcome, String> {
         require_account_deletion_principal(caller)?;
         let sole_owned_databases = self.read_index(|conn| {
+            credit_bridge::guard_delete(conn, caller, true)?;
             let databases = load_sole_owned_databases(conn, caller)?;
             require_no_account_deletion_pending_operations(conn, caller, &databases)?;
             Ok(databases)

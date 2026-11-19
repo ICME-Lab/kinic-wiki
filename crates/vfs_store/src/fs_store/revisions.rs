@@ -37,9 +37,15 @@ fn current_revision(conn: &Connection, path: &str) -> Result<Option<NodeRevision
          JOIN fs_nodes n ON n.id=i.current_row_id
          WHERE n.path=?1 ORDER BY r.revision DESC LIMIT 1"
     );
-    conn.query_row(&sql, params![path], revision_from_row)
+    let mut revision = conn
+        .query_row(&sql, params![path], revision_from_row)
         .optional()
-        .map_err(|error| error.to_string())
+        .map_err(|e| e.to_string())?;
+    if let Some(rev) = revision.as_mut() {
+        evidence::hydrate_node(conn, &mut rev.node)?;
+        rev.content_hash = sha256_hex(&rev.node.content);
+    }
+    Ok(revision)
 }
 
 fn scope_revision_for_conn(conn: &Connection, prefix: &str) -> Result<u64, String> {
@@ -147,6 +153,7 @@ impl FsStore {
             let mut revisions = Vec::new();
             // Stop reading rows when the response is full. Collecting all 100 full
             // snapshots first would make memory scale with the largest node size.
+            let mut hydration_error = None;
             let scan = crate::sqlite::query_try_map_limit(
                 &mut stmt,
                 params![node_id, before, (limit + 1) as i64],
@@ -155,7 +162,12 @@ impl FsStore {
                     if revisions.len() == limit {
                         return Err(crate::sqlite::QueryTryMapError::Validation(()));
                     }
-                    let revision = revision_from_row(row)?;
+                    let mut revision = revision_from_row(row)?;
+                    if let Err(error) = evidence::hydrate_node(conn, &mut revision.node) {
+                        hydration_error = Some(error);
+                        return Err(crate::sqlite::QueryTryMapError::Validation(()));
+                    }
+                    revision.content_hash = sha256_hex(&revision.node.content);
                     // Fixed overhead reserves the Candid record and scalar fields.
                     let size = 512
                         + revision.node_id.len()
@@ -172,6 +184,9 @@ impl FsStore {
                     Ok(())
                 },
             );
+            if let Some(error) = hydration_error {
+                return Err(error);
+            }
             let more = match scan {
                 Ok(_) => false,
                 Err(crate::sqlite::QueryTryMapError::Validation(())) => true,

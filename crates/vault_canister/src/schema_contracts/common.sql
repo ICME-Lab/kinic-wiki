@@ -1,0 +1,55 @@
+CREATE TABLE owner_scope(slot INTEGER PRIMARY KEY CHECK(slot=1),owner BLOB NOT NULL);
+CREATE TABLE vaults(owner BLOB NOT NULL,id BLOB NOT NULL CHECK(length(id)=16), operation BLOB NOT NULL CHECK(length(operation)=16), header TEXT NOT NULL,cleanup_budget INTEGER NOT NULL DEFAULT 1 CHECK(cleanup_budget>=0),PRIMARY KEY(owner,id));
+CREATE TABLE upload_outcomes(owner BLOB NOT NULL,upload BLOB NOT NULL CHECK(length(upload)=16),digest BLOB NOT NULL CHECK(length(digest)=32),result TEXT NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(owner,upload));
+CREATE TABLE global_settings(key TEXT PRIMARY KEY NOT NULL,value TEXT NOT NULL);
+CREATE TABLE key_flights(owner BLOB NOT NULL,vault BLOB NOT NULL CHECK(length(vault)=16),token INTEGER NOT NULL,day INTEGER NOT NULL,reserved INTEGER NOT NULL,actual INTEGER,created INTEGER NOT NULL,settled INTEGER,payment INTEGER NOT NULL DEFAULT 0,phase TEXT NOT NULL DEFAULT 'reserved',in_flight INTEGER NOT NULL DEFAULT 1,generation INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(owner,token));
+CREATE INDEX key_flights_day ON key_flights(day,settled);
+CREATE TABLE operations(owner BLOB NOT NULL,operation BLOB NOT NULL CHECK(length(operation)=16),digest BLOB NOT NULL CHECK(length(digest)=32),result BLOB,expires INTEGER NOT NULL,token INTEGER NOT NULL,runtime INTEGER NOT NULL,admission INTEGER NOT NULL DEFAULT 0 CHECK(admission IN (0,1,2,3)),PRIMARY KEY(owner,operation));
+CREATE INDEX operations_expiry ON operations(expires,owner);
+CREATE UNIQUE INDEX vault_creation_operation ON vaults(owner,operation);
+CREATE TRIGGER IF NOT EXISTS key_pool_insert_size BEFORE INSERT ON key_flights
+WHEN (84+length(NEW.owner)+length(NEW.vault)+length(CAST(NEW.phase AS BLOB)))>256 OR length(NEW.owner)>29 OR length(CAST(NEW.phase AS BLOB))>32
+BEGIN SELECT RAISE(ABORT,'key row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS key_pool_update_size BEFORE UPDATE ON key_flights
+WHEN (84+length(NEW.owner)+length(NEW.vault)+length(CAST(NEW.phase AS BLOB)))>256 OR length(NEW.owner)>29 OR length(CAST(NEW.phase AS BLOB))>32
+BEGIN SELECT RAISE(ABORT,'key row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS key_pool_count BEFORE INSERT ON key_flights
+WHEN NOT EXISTS(SELECT 1 FROM key_flights WHERE owner=NEW.owner AND token=NEW.token)
+AND ((SELECT count(*) FROM key_flights)>=4096 OR (SELECT count(*) FROM key_flights WHERE owner=NEW.owner)>=512)
+BEGIN SELECT RAISE(ABORT,'key row count capacity'); END;
+CREATE TABLE revisions(owner BLOB NOT NULL,vault BLOB NOT NULL, object BLOB NOT NULL, revision INTEGER NOT NULL, born INTEGER NOT NULL, retired INTEGER, plain_size INTEGER NOT NULL, manifest BLOB NOT NULL, hashes TEXT NOT NULL, deleted INTEGER NOT NULL, charge INTEGER NOT NULL, PRIMARY KEY(owner,vault,object,revision));
+CREATE INDEX revision_sequence ON revisions(owner,vault,born,retired);
+CREATE TABLE objects(owner BLOB NOT NULL,vault BLOB NOT NULL, object BLOB NOT NULL, head INTEGER NOT NULL,purged INTEGER NOT NULL DEFAULT 0 CHECK(purged IN (0,1)), PRIMARY KEY(owner,vault,object));
+CREATE TABLE uploads(owner BLOB NOT NULL,id BLOB NOT NULL, vault BLOB NOT NULL, object BLOB NOT NULL, expected INTEGER NOT NULL, expires INTEGER NOT NULL, digest BLOB NOT NULL, request TEXT NOT NULL, reserved INTEGER NOT NULL,receipt_budget INTEGER NOT NULL,cleanup_budget INTEGER NOT NULL CHECK(cleanup_budget>=0),cancel_job BLOB,PRIMARY KEY(owner,id));
+CREATE UNIQUE INDEX one_upload_per_vault ON uploads(owner,vault);
+CREATE TABLE chunks(owner BLOB NOT NULL,upload BLOB NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(owner,upload,idx));
+CREATE TABLE revision_chunks(owner BLOB NOT NULL,vault BLOB NOT NULL, object BLOB NOT NULL, revision INTEGER NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(owner,vault,object,revision,idx));
+CREATE INDEX upload_outcomes_global_expiry ON upload_outcomes(expires,owner);
+CREATE INDEX uploads_global_expiry ON uploads(expires,owner);
+CREATE INDEX revisions_global_retired ON revisions(retired,owner) WHERE retired IS NOT NULL;
+CREATE TABLE IF NOT EXISTS vault_cycle_reservations(owner TEXT NOT NULL,token TEXT NOT NULL,reserved INTEGER NOT NULL,actual INTEGER,created_at_ms INTEGER NOT NULL,settled_at_ms INTEGER,in_flight INTEGER NOT NULL DEFAULT 1,generation INTEGER NOT NULL DEFAULT 0,execution_checkpoint INTEGER NOT NULL DEFAULT 0,execution_billed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(owner,token));
+CREATE TABLE IF NOT EXISTS vault_storage_billing_state(slot INTEGER PRIMARY KEY CHECK(slot=1),cursor_owner TEXT NOT NULL,billing_now_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS payments(wallet TEXT NOT NULL,operation BLOB NOT NULL,record TEXT NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(wallet,operation));
+CREATE INDEX IF NOT EXISTS payments_expiry ON payments(expires);
+CREATE TABLE IF NOT EXISTS account_ledger(id INTEGER PRIMARY KEY AUTOINCREMENT,owner TEXT NOT NULL,kind TEXT NOT NULL,amount_cycles INTEGER NOT NULL,balance_after INTEGER NOT NULL,at_ms INTEGER NOT NULL,operation BLOB);
+CREATE INDEX IF NOT EXISTS account_ledger_owner ON account_ledger(owner,id);
+CREATE TABLE IF NOT EXISTS quote_fee_flights(wallet TEXT NOT NULL,operation BLOB NOT NULL,token INTEGER NOT NULL,generation INTEGER NOT NULL,expires_ns INTEGER NOT NULL,record TEXT NOT NULL,PRIMARY KEY(wallet,operation));
+CREATE INDEX uploads_expiry ON uploads(owner,expires);
+CREATE TRIGGER IF NOT EXISTS accounting_accounts_count BEFORE INSERT ON accounts WHEN NOT EXISTS(SELECT 1 FROM accounts WHERE owner=NEW.owner) AND (SELECT count(*) FROM accounts)>=1024 AND NOT EXISTS(SELECT 1 FROM payments WHERE json_extract(record,'$.request.beneficiary')=NEW.owner AND json_extract(record,'$.status') IN ('InFlight','Unknown')) BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_payments_INSERT_size BEFORE INSERT ON payments WHEN (4+length(CAST(NEW.wallet AS BLOB))+4+length(CAST(NEW.operation AS BLOB))+4+length(CAST(NEW.record AS BLOB))+8)>4096 OR length(NEW.operation)<>16 OR length(CAST(NEW.wallet AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_payments_UPDATE_size BEFORE UPDATE ON payments WHEN (4+length(CAST(NEW.wallet AS BLOB))+4+length(CAST(NEW.operation AS BLOB))+4+length(CAST(NEW.record AS BLOB))+8)>4096 OR length(NEW.operation)<>16 OR length(CAST(NEW.wallet AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_payments_count BEFORE INSERT ON payments WHEN NOT EXISTS(SELECT 1 FROM payments WHERE wallet=NEW.wallet AND operation=NEW.operation) AND (SELECT count(*) FROM payments)>=1024  BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_quote_fee_flights_INSERT_size BEFORE INSERT ON quote_fee_flights WHEN (4+length(CAST(NEW.wallet AS BLOB))+4+length(CAST(NEW.operation AS BLOB))+4+length(CAST(NEW.record AS BLOB))+24)>4096 OR length(NEW.operation)<>16 OR length(CAST(NEW.wallet AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_quote_fee_flights_UPDATE_size BEFORE UPDATE ON quote_fee_flights WHEN (4+length(CAST(NEW.wallet AS BLOB))+4+length(CAST(NEW.operation AS BLOB))+4+length(CAST(NEW.record AS BLOB))+24)>4096 OR length(NEW.operation)<>16 OR length(CAST(NEW.wallet AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_quote_fee_flights_count BEFORE INSERT ON quote_fee_flights WHEN NOT EXISTS(SELECT 1 FROM quote_fee_flights WHERE wallet=NEW.wallet AND operation=NEW.operation) AND (SELECT count(*) FROM quote_fee_flights)>=8  BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_vault_cycle_reservations_INSERT_size BEFORE INSERT ON vault_cycle_reservations WHEN (4+length(CAST(NEW.owner AS BLOB))+4+length(CAST(NEW.token AS BLOB))+64)>512 OR length(CAST(NEW.owner AS BLOB))>63 OR length(CAST(NEW.token AS BLOB))>128 OR length(NEW.token)=0 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_vault_cycle_reservations_UPDATE_size BEFORE UPDATE ON vault_cycle_reservations WHEN (4+length(CAST(NEW.owner AS BLOB))+4+length(CAST(NEW.token AS BLOB))+64)>512 OR length(CAST(NEW.owner AS BLOB))>63 OR length(CAST(NEW.token AS BLOB))>128 OR length(NEW.token)=0 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_vault_cycle_reservations_count BEFORE INSERT ON vault_cycle_reservations WHEN NOT EXISTS(SELECT 1 FROM vault_cycle_reservations WHERE owner=NEW.owner AND token=NEW.token) AND (SELECT count(*) FROM vault_cycle_reservations)>=10000  BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_account_ledger_INSERT_size BEFORE INSERT ON account_ledger WHEN (4+length(CAST(NEW.owner AS BLOB))+4+length(CAST(NEW.kind AS BLOB))+4+length(CAST(NEW.operation AS BLOB))+32)>512 OR length(CAST(NEW.owner AS BLOB))>63 OR length(CAST(NEW.kind AS BLOB))>32 OR length(NEW.operation)>16 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_account_ledger_UPDATE_size BEFORE UPDATE ON account_ledger WHEN (4+length(CAST(NEW.owner AS BLOB))+4+length(CAST(NEW.kind AS BLOB))+4+length(CAST(NEW.operation AS BLOB))+32)>512 OR length(CAST(NEW.owner AS BLOB))>63 OR length(CAST(NEW.kind AS BLOB))>32 OR length(NEW.operation)>16 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_account_ledger_count BEFORE INSERT ON account_ledger WHEN NOT EXISTS(SELECT 1 FROM account_ledger WHERE id=NEW.id) AND (SELECT count(*) FROM account_ledger)>=10000  BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_global_settings_INSERT_size BEFORE INSERT ON global_settings WHEN (4+length(CAST(NEW.key AS BLOB))+4+length(CAST(NEW.value AS BLOB))+0)>8192  BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_global_settings_UPDATE_size BEFORE UPDATE ON global_settings WHEN (4+length(CAST(NEW.key AS BLOB))+4+length(CAST(NEW.value AS BLOB))+0)>8192  BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_global_settings_count BEFORE INSERT ON global_settings WHEN NOT EXISTS(SELECT 1 FROM global_settings WHERE key=NEW.key) AND (SELECT count(*) FROM global_settings)>=7  BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_vault_storage_billing_state_INSERT_size BEFORE INSERT ON vault_storage_billing_state WHEN (4+length(CAST(NEW.cursor_owner AS BLOB))+16)>512 OR length(CAST(NEW.cursor_owner AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_vault_storage_billing_state_UPDATE_size BEFORE UPDATE ON vault_storage_billing_state WHEN (4+length(CAST(NEW.cursor_owner AS BLOB))+16)>512 OR length(CAST(NEW.cursor_owner AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;

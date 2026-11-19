@@ -1,4 +1,8 @@
 use vfs_types::ScopeRevisionRequest;
+use vfs_types::{
+    EvidenceRebuildControlRequest, EvidenceRebuildRequest, EvidenceRebuildStatus,
+    EvidenceRebuildStepRequest,
+};
 // Where: crates/vfs_client/src/lib.rs
 // What: Reusable canister client for the VFS public API.
 // Why: CLI and non-CLI consumers should share one transport implementation.
@@ -44,6 +48,45 @@ pub trait VfsApi: Sync {
     }
     async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
+    }
+    async fn evidence_rebuild_status(&self, _database_id: &str) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
+    }
+    async fn evidence_rebuild_begin(
+        &self,
+        _r: EvidenceRebuildRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
+    }
+    async fn evidence_rebuild_step(
+        &self,
+        _r: EvidenceRebuildStepRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
+    }
+    async fn evidence_rebuild_verify(
+        &self,
+        _r: EvidenceRebuildStepRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
+    }
+    async fn evidence_rebuild_activate(
+        &self,
+        _r: EvidenceRebuildControlRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
+    }
+    async fn evidence_rebuild_rollback(
+        &self,
+        _r: EvidenceRebuildControlRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
+    }
+    async fn evidence_rebuild_resume_writes(
+        &self,
+        _r: EvidenceRebuildControlRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        Err(anyhow!("evidence rebuild is unsupported by this client"))
     }
     async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
@@ -573,6 +616,65 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn evidence_rebuild_status(&self, database_id: &str) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> = self
+            .query(
+                "evidence_rebuild_status",
+                &vfs_types::DatabaseIdRequest {
+                    database_id: database_id.into(),
+                },
+            )
+            .await?;
+        result.map_err(|e| anyhow!(e))
+    }
+    async fn evidence_rebuild_begin(
+        &self,
+        r: EvidenceRebuildRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> =
+            self.update("evidence_rebuild_begin", &r).await?;
+        result.map_err(|e| anyhow!(e))
+    }
+    async fn evidence_rebuild_step(
+        &self,
+        r: EvidenceRebuildStepRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> =
+            self.update("evidence_rebuild_step", &r).await?;
+        result.map_err(|e| anyhow!(e))
+    }
+    async fn evidence_rebuild_verify(
+        &self,
+        r: EvidenceRebuildStepRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> =
+            self.update("evidence_rebuild_verify", &r).await?;
+        result.map_err(|e| anyhow!(e))
+    }
+    async fn evidence_rebuild_activate(
+        &self,
+        r: EvidenceRebuildControlRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> =
+            self.update("evidence_rebuild_activate", &r).await?;
+        result.map_err(|e| anyhow!(e))
+    }
+    async fn evidence_rebuild_rollback(
+        &self,
+        r: EvidenceRebuildControlRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> =
+            self.update("evidence_rebuild_rollback", &r).await?;
+        result.map_err(|e| anyhow!(e))
+    }
+    async fn evidence_rebuild_resume_writes(
+        &self,
+        r: EvidenceRebuildControlRequest,
+    ) -> Result<EvidenceRebuildStatus> {
+        let result: Result<EvidenceRebuildStatus, String> =
+            self.update("evidence_rebuild_resume_writes", &r).await?;
+        result.map_err(|e| anyhow!(e))
+    }
     async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
