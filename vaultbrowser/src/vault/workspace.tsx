@@ -136,6 +136,7 @@ function Workspace({ client }: { client: VaultClient }) {
   const [error, setError] = useState("");
   const [spending, setSpending] = useState<SpendingStatus>();
   const [balance, setBalance] = useState(0n);
+  const [balanceReady, setBalanceReady] = useState(false);
   const [accountReady, setAccountReady] = useState(false);
   const [keyCost, setKeyCost] = useState<bigint>();
   const [firstKeyFree, setFirstKeyFree] = useState(false);
@@ -151,6 +152,7 @@ function Workspace({ client }: { client: VaultClient }) {
   const balanceRequest = useRef(0);
   const refreshBalance = useCallback(async () => {
     const request = ++balanceRequest.current;
+    setBalanceReady(false);
     const ticket = client.session.capture();
     // Admission can settle accrued storage before the balance is read.
     const status = ok(await client.actor.get_spending_status());
@@ -164,6 +166,7 @@ function Workspace({ client }: { client: VaultClient }) {
     if (alive.current && request === balanceRequest.current) {
       setSpending(status);
       setBalance(value);
+      setBalanceReady(true);
       setKeyCost("Ok" in cost ? cost.Ok.fee : undefined);
       setFirstKeyFree(firstFree);
     }
@@ -452,8 +455,8 @@ function Workspace({ client }: { client: VaultClient }) {
       client.session.check(ticket);
       await open(header, true);
     });
-  const eligible = accountReady && !!spending && "Available" in spending
-    && balance >= 20_000_000n;
+  const available = accountReady && !!spending && "Available" in spending;
+  const eligible = available && balanceReady && balance >= 20_000_000n;
   const ownerCreditLow = !!spending && "AccountCreditLow" in spending;
   const serviceReserveLow = !!spending && "ServiceReserveLow" in spending;
   const serviceUnconfigured = !!spending && "Unconfigured" in spending;
@@ -468,7 +471,7 @@ function Workspace({ client }: { client: VaultClient }) {
   const canAffordCreation = eligible && creationKeyCost !== undefined
     && balance >= creationKeyCost + creationExecutionBudget;
   const canCreateVault = client.hasUncertainCreation || canAffordCreation;
-  const balanceRequirementKnown = (eligible || ownerCreditLow) && (
+  const balanceRequirementKnown = (available || ownerCreditLow) && (
     (selected
       ? selectedOwner && (opened || ("Active" in selected.state && ownerKeyCost !== undefined))
       : keyCost !== undefined)
@@ -477,7 +480,7 @@ function Workspace({ client }: { client: VaultClient }) {
     ? eligible
     : selected ? canRetrieveKey : canAffordCreation;
   const inlineFunding = nav.view === "workspace" && !settingsOpen
-    && (eligible || ownerCreditLow) && !!capacity && !opened
+    && (available || ownerCreditLow) && !!capacity && !opened
     && (selected ? selectedOwner && needsKeyFunding && !canRetrieveKey : keyCost !== undefined && !canCreateVault);
   const retryable = client.hasInterruptedChange;
   const retryButton = (className = "") => (
