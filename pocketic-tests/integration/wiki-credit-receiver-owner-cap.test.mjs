@@ -1,4 +1,4 @@
-// Fill one Vault owner's real payment journal through normal Wiki transfers.
+// Exercise the Vault receiver's per-wallet admission and cross-owner growth with real Wiki transfers.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -67,47 +67,57 @@ try {
   assert.ok('Offered' in ok(await wiki.actor.execute_vault_transfer(op(17), { Exact: amount })).phase);
   vault.actor.setPrincipal(vaultOwner);
   const denied = await vault.actor.prepare_wiki_credit(op(17));
-  assert.ok('Err' in denied && 'Capacity' in denied.Err, JSON.stringify(denied));
+  assert.deepEqual(denied, { Err: { Capacity: null } });
   assert.equal(ok(await vault.actor.account_balance()), 15n * amount);
   wiki.actor.setPrincipal(wikiOwner);
   assert.ok('Refunded' in ok(await wiki.actor.cancel_vault_transfer(op(17))).phase);
   assert.equal(ok(await vault.actor.account_balance()), 15n * amount);
-  // The first owner occupies 16 rows. Another 504 distinct linked owners,
-  // each with one paid credit, fill the global 1,024-row payment journal.
+  // The first owner occupies 16 rows. Each additional owner creates a link
+  // and a paid credit. After 504 more owners the fixture reaches the former
+  // shared 1,024-row boundary.
   const whoIndex = (n) => {
     const bytes = new Uint8Array(32);
     new DataView(bytes.buffer).setUint32(28, n);
     return Principal.selfAuthenticating(bytes);
   };
-  const globalStart = performance.now();
-  const cyclesBeforeGlobal = await pic.getCyclesBalance(vault.canisterId);
-  let lastWikiOwner, lastVaultOwner, lastOperation;
-  for (let n = 1; n <= 504; n++) {
-    lastVaultOwner = whoIndex(3000 + n);
-    lastWikiOwner = whoIndex(2000 + n);
-    lastOperation = new Uint8Array(16);
-    new DataView(lastOperation.buffer).setUint32(12, n);
-    vault.actor.setPrincipal(lastVaultOwner);
-    const nextChallenge = ok(await vault.actor.begin_wiki_link(new Uint8Array(16).fill(99)));
-    wiki.actor.setPrincipal(lastWikiOwner);
+  const fundLinkedOwner = async (n) => {
+    const sender = whoIndex(2000 + n), receiver = whoIndex(3000 + n);
+    const operation = new Uint8Array(16);
+    new DataView(operation.buffer).setUint32(12, n);
+    vault.actor.setPrincipal(receiver);
+    const nextChallenge = ok(await vault.actor.begin_wiki_link(op(99)));
+    assert.equal(nextChallenge.vault_owner.toText(), receiver.toText());
+    wiki.actor.setPrincipal(sender);
     assert.equal(ok(await wiki.actor.approve_vault_link(nextChallenge.challenge)).active, true);
-    const nextDb = ok(await wiki.actor.create_database({ name: `Global row ${n}` })).database_id;
-    ok(await wiki.actor.quote_vault_transfer(nextDb, { Exact: amount }, lastOperation));
-    assert.ok('Offered' in ok(await wiki.actor.execute_vault_transfer(lastOperation, { Exact: amount })).phase);
-    vault.actor.setPrincipal(lastVaultOwner);
-    assert.ok('Prepared' in ok(await vault.actor.prepare_wiki_credit(lastOperation)).status);
-    wiki.actor.setPrincipal(lastWikiOwner);
-    assert.ok('Paid' in ok(await wiki.actor.execute_vault_transfer(lastOperation, { Exact: amount })).phase);
+    const nextDb = ok(await wiki.actor.create_database({ name: `Receiver pressure ${n}` })).database_id;
+    ok(await wiki.actor.quote_vault_transfer(nextDb, { Exact: amount }, operation));
+    assert.ok('Offered' in ok(await wiki.actor.execute_vault_transfer(operation, { Exact: amount })).phase);
+    assert.ok('Prepared' in ok(await vault.actor.prepare_wiki_credit(operation)).status);
+    assert.ok('Paid' in ok(await wiki.actor.execute_vault_transfer(operation, { Exact: amount })).phase);
+    return { sender, receiver, operation };
+  };
+  const pressureStart = performance.now();
+  const cyclesBeforePressure = await pic.getCyclesBalance(vault.canisterId);
+  let boundaryPayment;
+  for (let n = 1; n <= 504; n++) {
+    boundaryPayment = await fundLinkedOwner(n);
   }
-  const elapsedToGlobalLimitMs = Math.round(performance.now() - globalStart);
-  const cyclesAtGlobalLimit = await pic.getCyclesBalance(vault.canisterId);
-  vault.actor.setPrincipal(whoIndex(4000));
-  const globalDenied = await vault.actor.begin_wiki_link(new Uint8Array(16).fill(88));
-  assert.ok('Err' in globalDenied && 'Capacity' in globalDenied.Err, JSON.stringify(globalDenied));
-  vault.actor.setPrincipal(lastVaultOwner);
-  assert.equal(ok(await vault.actor.account_balance()), amount);
-  wiki.actor.setPrincipal(lastWikiOwner);
-  assert.ok('Paid' in ok(await wiki.actor.get_vault_transfer(lastOperation)).phase);
+  const beyondBoundary = await fundLinkedOwner(505);
+  const elapsedBeyondFormerLimitMs = Math.round(performance.now() - pressureStart);
+  const cyclesBeyondFormerLimit = await pic.getCyclesBalance(vault.canisterId);
+  // All the links were created after this first challenge, before its expiry.
+  assert.ok(BigInt(await pic.getTime()) * 1_000_000n < challenge.expires_at_ns);
+
+  for (const { sender, receiver, operation } of [boundaryPayment, beyondBoundary]) {
+    vault.actor.setPrincipal(receiver);
+    assert.equal(ok(await vault.actor.account_balance()), amount);
+    wiki.actor.setPrincipal(sender);
+    assert.ok('Paid' in ok(await wiki.actor.get_vault_transfer(operation)).phase);
+  }
+  vault.actor.setPrincipal(vaultOwner);
+  assert.equal(ok(await vault.actor.account_balance()), 15n * amount);
+  wiki.actor.setPrincipal(wikiOwner);
+  assert.ok('Paid' in ok(await wiki.actor.get_vault_transfer(op(2))).phase);
   vault.actor.setPrincipal(admin);
   const aggregate = ok(await vault.actor.global_capacity());
   assert.equal(aggregate.limit, (1n << 64n) - 1n);
@@ -115,8 +125,9 @@ try {
   console.log(JSON.stringify({ receiverOwnerRows: 16, linkRows: 1, paidCreditRows: 15,
     seventeenthOwnerRowDeniedBeforeSend: true, knownUnsentRefundAtLimit: true,
     elapsedToOwnerLimitMs, receiverPhysicalCyclesDelta: String(cyclesAtOwnerLimit - cyclesBefore),
-    receiverGlobalRows: 1024, newLinkAtGlobalLimitRejected: true,
-    oldPaidTransferReadableAtGlobalLimit: true, elapsedToGlobalLimitMs,
-    receiverPhysicalCyclesDeltaToGlobalLimit: String(cyclesAtGlobalLimit - cyclesBeforeGlobal),
+    receiverRowsCreated: 1026, linkedOwners: 506, paidCredits: 520,
+    newLinkAndPaidCreditBeyondFormerLimit: true, oldPaidTransferReadableBeyondFormerLimit: true,
+    elapsedBeyondFormerLimitMs,
+    receiverPhysicalCyclesDeltaBeyondFormerLimit: String(cyclesBeyondFormerLimit - cyclesBeforePressure),
     wasmSha256: { wiki: sha(wikiWasm), vault: sha(vaultWasm) }, realFunds: false, productionDeployment: false }));
 } finally { try { await pic?.tearDown(); } finally { await server.stop(); } }
