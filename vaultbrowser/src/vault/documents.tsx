@@ -480,7 +480,7 @@ function Documents({
         ) : null}
       </div>
       {saveStatus ? <output aria-live="polite">{saveStatus}</output> : null}
-      {canEdit && pendingSave ? (
+      {canEdit && pendingSave && !importPending ? (
         <div className="vault-notice vault-notice--warn vault-pending-save">
           <output>
             {disabled

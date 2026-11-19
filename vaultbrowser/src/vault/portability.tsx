@@ -209,7 +209,7 @@ export function VaultPortabilityPanel({
   };
 
   const resolveImport = async (cancel: boolean) => {
-    if (pendingIndex === undefined || working.current || disabled || writesDisabled) return;
+    if (pendingIndex === undefined || working.current || disabled) return;
     working.current = true;
     setBusy(true);
     const ticket = client.session.capture();
@@ -224,7 +224,13 @@ export function VaultPortabilityPanel({
       setStatus(committed ? "Import save confirmed. Continue with the remaining items." : "Unfinished import save cancelled. Remaining items can be retried.");
       try { await refresh(); } catch { /* Confirmed outcomes survive list-refresh errors. */ }
     } catch (cause) {
-      if (alive.current && client.session.capture() === ticket) setStatus(`Could not resolve import save: ${vaultError(cause)}`);
+      if (alive.current && client.session.capture() === ticket) {
+        if (!client.hasPendingSave) {
+          setPendingIndex(undefined);
+          callbacks.current.onPendingSaveChange?.(false);
+        }
+        setStatus(`Could not resolve import save: ${vaultError(cause)}`);
+      }
     } finally {
       if (alive.current && client.session.capture() === ticket) { working.current = false; setBusy(false); }
     }
@@ -416,8 +422,8 @@ export function VaultPortabilityPanel({
               </div> : null}
               {pending ? <div role="status">
                 <p>A save result is unknown. Resolve it before importing more items.</p>
-                <VaultButton disabled={busy || disabled || writesDisabled} onClick={() => start(() => resolveImport(false))}>Resolve import save</VaultButton>
-                <VaultButton disabled={busy || disabled || writesDisabled} onClick={() => start(() => resolveImport(true))}>Cancel unfinished import save</VaultButton>
+                <VaultButton disabled={busy || disabled} onClick={() => start(() => resolveImport(false))}>Resolve import save</VaultButton>
+                <VaultButton disabled={busy || disabled} onClick={() => start(() => resolveImport(true))}>Cancel unfinished import save</VaultButton>
               </div> : null}
               {parsed.warnings.map((warning) => (
                 <p key={warning} className="vault-field-hint">

@@ -554,6 +554,8 @@ body {
 }
 .vault-documents-tools {
   display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
 }
@@ -1357,7 +1359,7 @@ body {
     border-right: 0;
   }
   .vault-documents-header {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
   }
   .vault-new-document {
     width: 36px;

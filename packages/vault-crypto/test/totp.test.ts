@@ -88,3 +88,7 @@ describe("ambiguous and malformed TOTP parameters", () => {
     await expect(generateTotp({ secret: "JBSWY3DPEHPK3PXP", algorithm: "SHA-1", ...options })).rejects.toThrow(/InvalidTotp/);
   });
 });
+
+it.each(["&algorithm=", "&algorithm"])("rejects an explicitly empty TOTP algorithm %s", suffix => {
+  expect(() => parseTotpInput("otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP" + suffix)).toThrow("UnsupportedTotpAlgorithm");
+});

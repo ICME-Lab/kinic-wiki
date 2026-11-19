@@ -84,6 +84,23 @@ describe("VaultDocuments password manager features", () => {
     expect((saved[1] as { customFields?: unknown[] }).customFields).toBeUndefined();
   });
 
+  it("keeps an import-owned pending save out of the editor recovery controls", async () => {
+    const { client, save } = makeClient();
+    save.mockImplementationOnce(async () => { Object.assign(client, { hasPendingSave: true }); throw Error("NetworkError"); });
+    Object.assign(client, { resumeSave: async () => { Object.assign(client, { hasPendingSave: false }); return { revision: 1n }; } });
+    render(<VaultDocuments client={client} items={[]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Import / Export" }));
+    const file = { name: "logins.csv", size: 60, text: async () => "name,url,username,password\nSite,https://site.test,alice,secret" };
+    fireEvent.change(screen.getByLabelText("Select CSV or JSON file"), { target: { files: [file] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Import 1 item(s)" }));
+    await screen.findByRole("button", { name: "Resolve import save" });
+    expect(screen.queryByRole("button", { name: "Resume save" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel save" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Resolve import save" }));
+    await screen.findByText(/Import save confirmed/);
+    expect((screen.getByRole("button", { name: "Close import and export" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("filters by category and instant metadata fields (domain, username, tag) without body reads", () => {
     const items: Item[] = [
       {

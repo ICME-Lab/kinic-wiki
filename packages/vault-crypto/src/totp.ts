@@ -40,7 +40,7 @@ export function decodeBase32(input: string): Uint8Array {
 }
 
 function parseAlgorithm(raw: string | null): TotpAlgorithm {
-  if (!raw) return "SHA-1";
+  if (raw === null) return "SHA-1";
   const upper = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (upper === "SHA1") return "SHA-1";
   if (upper === "SHA256") return "SHA-256";

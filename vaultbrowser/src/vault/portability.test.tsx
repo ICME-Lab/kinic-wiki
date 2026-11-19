@@ -15,7 +15,7 @@ function setup() {
     session: { capture: () => epoch, check: (ticket: number) => { if (ticket !== epoch) throw Error("Locked"); }, addLockCleanup: (f: () => void) => { cleanups.add(f); return () => cleanups.delete(f); } },
   } as unknown as VaultClient;
   const props = { client, items: [], disabled: false, writesDisabled: false, refresh: vi.fn(async () => {}), onClose: vi.fn() };
-  return { props, save, resumeSave, lock: () => { epoch++; for (const f of cleanups) f(); } };
+  return { props, save, resumeSave, cancelSave, lock: () => { epoch++; for (const f of cleanups) f(); } };
 }
 const envelope = (bodies: string[]) => JSON.stringify({ format: "kinic-vault-export", items: bodies.map((body, i) => ({ kind: "note", title: `Item ${i}`, body })) });
 async function load(content: string | Promise<string>) {
@@ -95,4 +95,34 @@ it("stops after the in-flight save and retries only the remaining items", async 
   fireEvent.click(screen.getByRole("button", { name: "Import 2 item(s)" }));
   await screen.findByText(/Imported 2 item/);
   expect(x.save).toHaveBeenCalledTimes(3);
+});
+
+it("allows cancellation of an owned save after funding becomes unavailable", async () => {
+  const x = setup();
+  x.save.mockImplementationOnce(async () => { Object.assign(x.props.client, { hasPendingSave: true }); throw Error("NetworkError"); });
+  x.cancelSave.mockImplementation(async () => { Object.assign(x.props.client, { hasPendingSave: false }); return { Cancelled: null }; });
+  const view = render(<VaultPortabilityPanel {...x.props} />);
+  await load(envelope(["one"]));
+  fireEvent.click(await screen.findByRole("button", { name: "Import 1 item(s)" }));
+  await screen.findByRole("button", { name: "Resolve import save" });
+  view.rerender(<VaultPortabilityPanel {...x.props} writesDisabled />);
+  const cancel = screen.getByRole("button", { name: "Cancel unfinished import save" }) as HTMLButtonElement;
+  expect(cancel.disabled).toBe(false);
+  fireEvent.click(cancel);
+  await screen.findByText(/Unfinished import save cancelled/);
+});
+it("releases ownership after a definitive resume rejection without losing the item", async () => {
+  const x = setup();
+  x.save.mockImplementationOnce(async () => { Object.assign(x.props.client, { hasPendingSave: true }); throw Error("NetworkError"); });
+  x.resumeSave.mockImplementation(async () => { Object.assign(x.props.client, { hasPendingSave: false }); throw Error("InsufficientCredit"); });
+  render(<VaultPortabilityPanel {...x.props} />);
+  await load(envelope(["one"]));
+  fireEvent.click(await screen.findByRole("button", { name: "Import 1 item(s)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Resolve import save" }));
+  await screen.findByText(/Could not resolve import save/);
+  expect(screen.queryByRole("button", { name: "Resolve import save" })).toBeNull();
+  const retry = screen.getByRole("button", { name: "Import 1 item(s)" }) as HTMLButtonElement;
+  expect(retry.disabled).toBe(false);
+  fireEvent.click(retry);
+  await screen.findByText(/Imported 1 item/);
 });
