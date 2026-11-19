@@ -67,7 +67,7 @@ describe("VaultDocuments password manager features", () => {
     const saved: unknown[] = [];
     save.mockImplementation(async (meta, plain) => {
       saved.push(JSON.parse(new TextDecoder().decode(plain)));
-      return { ...item.revision, revision: 2n, metadata: meta };
+      return { object: new Uint8Array(16).fill(1), revision: 2n, deleted: false, manifest: new Uint8Array(), chunk_count: 1, total_size: 10n, created_at: 1n, metadata: meta };
     });
     render(<VaultDocuments client={client} items={[item]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
     fireEvent.click(screen.getByRole("button", { name: "Imported" }));

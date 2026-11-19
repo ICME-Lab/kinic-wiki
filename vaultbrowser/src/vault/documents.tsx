@@ -74,6 +74,8 @@ function Documents({
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [portabilityOpen, setPortabilityOpen] = useState(false);
+  const [importPending, setImportPending] = useState(false);
+  const closePortability = useCallback(() => setPortabilityOpen(false), []);
   const search = useRef<AbortController | undefined>(undefined);
   const [bodyMatches, setBodyMatches] = useState<Item[]>();
   const [searchStatus, setSearchStatus] = useState("");
@@ -97,6 +99,7 @@ function Documents({
       setQuery("");
       setCategory("all");
       setPortabilityOpen(false);
+      setImportPending(false);
       setSearchStatus("");
       setSaveStatus("");
     });
@@ -444,9 +447,11 @@ function Documents({
         <VaultPortabilityPanel
           client={client}
           items={items}
-          disabled={disabled || pendingSave}
+          disabled={disabled || (pendingSave && !importPending)}
           writesDisabled={writesDisabled}
-          onClose={() => setPortabilityOpen(false)}
+          run={run}
+          onPendingSaveChange={setImportPending}
+          onClose={closePortability}
           refresh={refresh}
         />
       ) : null}

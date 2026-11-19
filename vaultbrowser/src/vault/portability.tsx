@@ -44,6 +44,8 @@ export function VaultPortabilityPanel({
   writesDisabled,
   onClose,
   refresh,
+  run,
+  onPendingSaveChange,
 }: {
   client: VaultClient;
   items: Item[];
@@ -51,6 +53,8 @@ export function VaultPortabilityPanel({
   writesDisabled: boolean;
   onClose: () => void;
   refresh: () => Promise<void>;
+  run?: (work: () => Promise<void>) => void;
+  onPendingSaveChange?: (pending: boolean) => void;
 }) {
   const [tab, setTab] = useState<"import" | "export">("import");
   const [parsed, setParsed] = useState<ImportResult>();
@@ -59,6 +63,13 @@ export function VaultPortabilityPanel({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState<{ done: number; total: number }>();
+  const [outcomes, setOutcomes] = useState<Record<number, "saved" | "oversized">>({});
+  const [pendingIndex, setPendingIndex] = useState<number>();
+  const callbacks = useRef({ onClose, onPendingSaveChange });
+  useLayoutEffect(() => { callbacks.current = { onClose, onPendingSaveChange }; });
+  const fileEpoch = useRef(0);
+  const working = useRef(false);
+  const start = (work: () => Promise<void>) => { if (run) run(work); else void work(); };
   const cancelled = useRef(false);
   const alive = useRef(true);
 
@@ -66,21 +77,32 @@ export function VaultPortabilityPanel({
     alive.current = true;
     const detach = client.session.addLockCleanup(() => {
       cancelled.current = true;
+      fileEpoch.current++;
+      working.current = false;
+      setOutcomes({});
+      setPendingIndex(undefined);
+      callbacks.current.onPendingSaveChange?.(false);
       setParsed(undefined);
       setParseError("");
       setStatus("");
       setProgress(undefined);
       setBusy(false);
-      onClose();
+      callbacks.current.onClose();
     });
     return () => {
+      fileEpoch.current++;
       alive.current = false;
       cancelled.current = true;
       detach();
     };
-  }, [client, onClose]);
+  }, [client]);
 
   const handleFile = async (file: File | undefined) => {
+    if (working.current || pendingIndex !== undefined) return;
+    const epoch = ++fileEpoch.current;
+    const ticket = client.session.capture();
+    const current = () => alive.current && epoch === fileEpoch.current && ticket === client.session.capture();
+    setOutcomes({});
     setParsed(undefined);
     setParseError("");
     setStatus("");
@@ -91,6 +113,7 @@ export function VaultPortabilityPanel({
     }
     try {
       const text = await file.text();
+      if (!current()) return;
       const result = parseImportFile(text, file.name);
       if (result.items.length === 0) {
         setParseError("No credentials or notes were found in this file.");
@@ -98,6 +121,7 @@ export function VaultPortabilityPanel({
       }
       setParsed(result);
     } catch (cause) {
+      if (!current()) return;
       const code = cause instanceof Error ? cause.message : "";
       if (code === "EncryptedBitwardenJsonUnsupported") {
         setParseError(
@@ -123,79 +147,91 @@ export function VaultPortabilityPanel({
       ),
   );
 
-  const importCandidates = parsed
-    ? skipDuplicates
-      ? parsed.items.filter(
-          (entry) =>
-            !existingKeys.has(
-              duplicateKey(
-                entry.kind,
-                entry.title,
-                entry.kind === "credential" ? entry.record.username : undefined,
-              ),
-            ),
-        )
-      : parsed.items
-    : [];
-
-  const duplicateCount = parsed ? parsed.items.length - importCandidates.length : 0;
+  const indexed = (parsed?.items ?? []).map((entry, index) => ({ entry, index }));
+  const duplicate = (entry: ImportResult["items"][number]) => skipDuplicates && existingKeys.has(
+    duplicateKey(entry.kind, entry.title, entry.kind === "credential" ? entry.record.username : undefined),
+  );
+  const importCandidates = indexed.filter(({ entry, index }) => !outcomes[index] && !duplicate(entry));
+  const duplicateCount = indexed.filter(({ entry, index }) => !outcomes[index] && duplicate(entry)).length;
+  const oversizedCount = Object.values(outcomes).filter(value => value === "oversized").length;
+  const pending = pendingIndex !== undefined;
 
   const runImport = async () => {
-    if (!parsed || importCandidates.length === 0 || busy || disabled || writesDisabled) {
-      return;
-    }
+    if (!parsed || !importCandidates.length || working.current || disabled || writesDisabled || client.hasPendingSave) return;
+    working.current = true;
     cancelled.current = false;
     setBusy(true);
     setStatus("");
     setProgress({ done: 0, total: importCandidates.length });
     const ticket = client.session.capture();
+    const current = () => alive.current && client.session.capture() === ticket;
     let importedCount = 0;
+    let activeIndex: number | undefined;
+    const next = { ...outcomes };
     try {
       for (let i = 0; i < importCandidates.length; i++) {
-        if (cancelled.current || !alive.current) break;
+        if (cancelled.current || !current()) break;
         client.session.check(ticket);
-        const entry = importCandidates[i];
+        const { entry, index } = importCandidates[i];
+        activeIndex = index;
         const plain = utf8.encode(entry.plaintext);
         try {
           if (plain.length > 256 * 1024) {
-            continue;
+            next[index] = "oversized";
+          } else {
+            await client.save(entry.metadata, plain);
+            client.session.check(ticket);
+            next[index] = "saved";
+            importedCount++;
           }
-          await client.save(entry.metadata, plain);
-          importedCount++;
-        } finally {
-          plain.fill(0);
-        }
-        client.session.check(ticket);
-        if (alive.current) {
-          setProgress({ done: i + 1, total: importCandidates.length });
-        }
+        } finally { plain.fill(0); }
+        if (!current()) return;
+        setOutcomes({ ...next });
+        setProgress({ done: i + 1, total: importCandidates.length });
       }
-      client.session.check(ticket);
-      await refresh();
-      if (alive.current) {
-        setStatus(
-          cancelled.current
-            ? `Import stopped after ${importedCount} item(s).`
-            : `Imported ${importedCount} item(s) into this Vault.`,
-        );
-        if (!cancelled.current) setParsed(undefined);
-      }
+      if (!current()) return;
+      const oversized = Object.values(next).filter(value => value === "oversized").length;
+      setStatus(cancelled.current ? `Import stopped after ${importedCount} item(s).` : `Imported ${importedCount} item(s) into this Vault.`);
+      if (!cancelled.current && oversized === 0) setParsed(undefined);
     } catch (cause) {
-      if (alive.current) {
-        setStatus(
-          `Imported ${importedCount} item(s) before an error occurred: ${vaultError(cause)}`,
-        );
+      if (!current()) return;
+      if (client.hasPendingSave && activeIndex !== undefined) {
+        setPendingIndex(activeIndex);
+        callbacks.current.onPendingSaveChange?.(true);
       }
+      setStatus(`Imported ${importedCount} item(s) before an error occurred: ${vaultError(cause)}`);
     } finally {
-      if (alive.current) {
-        setBusy(false);
-        setProgress(undefined);
+      if (current()) {
+        try { await refresh(); } catch { /* Keep confirmed outcomes for safe retry. */ }
+        if (current()) { working.current = false; setBusy(false); setProgress(undefined); }
       }
     }
   };
 
+  const resolveImport = async (cancel: boolean) => {
+    if (pendingIndex === undefined || working.current || disabled || writesDisabled) return;
+    working.current = true;
+    setBusy(true);
+    const ticket = client.session.capture();
+    const index = pendingIndex;
+    try {
+      const committed = cancel ? "Committed" in await client.cancelSave() : !!await client.resumeSave();
+      client.session.check(ticket);
+      if (!alive.current) return;
+      if (committed) setOutcomes(previous => ({ ...previous, [index]: "saved" }));
+      setPendingIndex(undefined);
+      callbacks.current.onPendingSaveChange?.(false);
+      setStatus(committed ? "Import save confirmed. Continue with the remaining items." : "Unfinished import save cancelled. Remaining items can be retried.");
+      try { await refresh(); } catch { /* Confirmed outcomes survive list-refresh errors. */ }
+    } catch (cause) {
+      if (alive.current && client.session.capture() === ticket) setStatus(`Could not resolve import save: ${vaultError(cause)}`);
+    } finally {
+      if (alive.current && client.session.capture() === ticket) { working.current = false; setBusy(false); }
+    }
+  };
+
   const runExport = async (mode: "json" | "csv") => {
-    if (busy || disabled) return;
+    if (busy || disabled || pending) return;
     const activeItems = items.filter((item) => !item.revision.deleted);
     const exportTargets = activeItems.filter((item) =>
       mode === "csv"
@@ -310,7 +346,7 @@ export function VaultPortabilityPanel({
           <VaultButton
             size="sm"
             tone={tab === "import" ? "primary" : "ghost"}
-            disabled={busy}
+            disabled={busy || pending}
             onClick={() => {
               setTab("import");
               setStatus("");
@@ -322,7 +358,7 @@ export function VaultPortabilityPanel({
           <VaultButton
             size="sm"
             tone={tab === "export" ? "primary" : "ghost"}
-            disabled={busy}
+            disabled={busy || pending}
             onClick={() => {
               setTab("export");
               setStatus("");
@@ -336,7 +372,7 @@ export function VaultPortabilityPanel({
           size="icon"
           tone="ghost"
           aria-label="Close import and export"
-          disabled={busy}
+          disabled={busy || pending}
           onClick={onClose}
         >
           <X size={16} aria-hidden />
@@ -356,7 +392,7 @@ export function VaultPortabilityPanel({
               type="file"
               accept=".csv,.json,text/csv,application/json"
               className="vault-input"
-              disabled={busy || disabled || writesDisabled}
+              disabled={busy || pending || disabled || writesDisabled}
               onChange={(e) => {
                 void handleFile(e.target.files?.[0]);
               }}
@@ -374,6 +410,15 @@ export function VaultPortabilityPanel({
                 {parsed.items.length} item(s) found
                 {duplicateCount > 0 ? ` (${duplicateCount} duplicate skipped)` : ""}
               </p>
+              {oversizedCount > 0 ? <div role="alert">
+                <p>{oversizedCount} item(s) exceed the 256 KiB limit and were not imported. Keep your source file.</p>
+                <ul aria-label="Import item results">{indexed.filter(({ index }) => outcomes[index] === "oversized").map(({ entry, index }) => <li key={index}>{entry.title}: exceeds 256 KiB</li>)}</ul>
+              </div> : null}
+              {pending ? <div role="status">
+                <p>A save result is unknown. Resolve it before importing more items.</p>
+                <VaultButton disabled={busy || disabled || writesDisabled} onClick={() => start(() => resolveImport(false))}>Resolve import save</VaultButton>
+                <VaultButton disabled={busy || disabled || writesDisabled} onClick={() => start(() => resolveImport(true))}>Cancel unfinished import save</VaultButton>
+              </div> : null}
               {parsed.warnings.map((warning) => (
                 <p key={warning} className="vault-field-hint">
                   {warning}
@@ -383,7 +428,7 @@ export function VaultPortabilityPanel({
                 <input
                   type="checkbox"
                   checked={skipDuplicates}
-                  disabled={busy}
+                  disabled={busy || pending}
                   onChange={(e) => setSkipDuplicates(e.target.checked)}
                 />
                 <span>Skip items with the same title and username</span>
@@ -393,13 +438,13 @@ export function VaultPortabilityPanel({
                   size="sm"
                   tone="primary"
                   disabled={
-                    busy ||
+                    busy || pending ||
                     disabled ||
                     writesDisabled ||
                     importCandidates.length === 0
                   }
                   onClick={() => {
-                    void runImport();
+                    start(runImport);
                   }}
                 >
                   Import {importCandidates.length} item(s)
@@ -431,7 +476,7 @@ export function VaultPortabilityPanel({
               tone="primary"
               disabled={busy || disabled}
               onClick={() => {
-                void runExport("json");
+                start(() => runExport("json"));
               }}
             >
               Export all (JSON)
@@ -440,7 +485,7 @@ export function VaultPortabilityPanel({
               size="sm"
               disabled={busy || disabled}
               onClick={() => {
-                void runExport("csv");
+                start(() => runExport("csv"));
               }}
             >
               Export logins (CSV)
