@@ -666,6 +666,22 @@ it("retries delete progress exactly and clears delivered cleanup errors", async 
   ).resolves.toBeUndefined();
 });
 
+it("replays the older interrupted mutation before a retained deletion job", async () => {
+  const { client, actor } = setup();
+  const mutate = vi.mocked(actor.mutate);
+  mutate
+    .mockRejectedValueOnce(Error("lost collection reply"))
+    .mockResolvedValueOnce({ Ok: { Collected: 1n } })
+    .mockResolvedValueOnce({ Ok: { Progress: true } });
+  await expect(client.collect()).rejects.toThrow("lost collection reply");
+  await expect(client.deleteVault(id)).rejects.toThrow("ResolvePendingMutation");
+  await client.retryInterruptedChange();
+  expect(mutate.mock.calls[0][0]).toEqual(mutate.mock.calls[1][0]);
+  await client.retryInterruptedChange();
+  expect(mutate.mock.calls[2][0].action).toEqual({ DeleteVault: { vault: id } });
+  expect(client.hasInterruptedChange).toBe(false);
+});
+
 it("reconciliation uses the exact operation once and fences locked replies", async () => {
   const { client, actor } = setup();
   let resolve!: (value: any) => void;

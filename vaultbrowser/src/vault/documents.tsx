@@ -392,7 +392,7 @@ function Documents({
             <VaultButton
               size="sm"
               tone="primary"
-              disabled={disabled || writesDisabled}
+              disabled={disabled}
               onClick={() =>
                 run(async () => {
                   const ticket = client.session.capture();

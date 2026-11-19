@@ -147,6 +147,13 @@ export const idlFactory = ({ IDL }) => {
     'charged' : IDL.Nat64,
   });
   const Result_11 = IDL.Variant({ 'Ok' : Quota, 'Err' : Error });
+  const SpendingStatus = IDL.Variant({
+    'AccountCreditLow' : IDL.Null,
+    'Available' : IDL.Null,
+    'ServiceReserveLow' : IDL.Null,
+    'Unconfigured' : IDL.Null,
+  });
+  const Result_12 = IDL.Variant({ 'Ok' : SpendingStatus, 'Err' : Error });
   const CommittedUpload = IDL.Record({
     'object' : IDL.Vec(IDL.Nat8),
     'vault' : IDL.Vec(IDL.Nat8),
@@ -175,7 +182,7 @@ export const idlFactory = ({ IDL }) => {
     'Expired' : IDL.Null,
     'Pending' : PendingUpload,
   });
-  const Result_12 = IDL.Variant({ 'Ok' : UploadStatus, 'Err' : Error });
+  const Result_13 = IDL.Variant({ 'Ok' : UploadStatus, 'Err' : Error });
   const AccessRole = IDL.Variant({
     'Viewer' : IDL.Null,
     'Editor' : IDL.Null,
@@ -186,7 +193,7 @@ export const idlFactory = ({ IDL }) => {
     'role' : AccessRole,
     'header' : Header,
   });
-  const Result_13 = IDL.Variant({ 'Ok' : VaultAccess, 'Err' : Error });
+  const Result_14 = IDL.Variant({ 'Ok' : VaultAccess, 'Err' : Error });
   const GlobalCapacity = IDL.Record({
     'used' : IDL.Nat64,
     'overcommitted' : IDL.Bool,
@@ -194,7 +201,7 @@ export const idlFactory = ({ IDL }) => {
     'overage' : IDL.Nat64,
     'accounting_reserved' : IDL.Nat64,
   });
-  const Result_14 = IDL.Variant({ 'Ok' : GlobalCapacity, 'Err' : Error });
+  const Result_15 = IDL.Variant({ 'Ok' : GlobalCapacity, 'Err' : Error });
   const HttpRequest = IDL.Record({
     'url' : IDL.Text,
     'method' : IDL.Text,
@@ -255,7 +262,7 @@ export const idlFactory = ({ IDL }) => {
     'balance' : IDL.Nat64,
     'grant_cycles' : IDL.Nat64,
   });
-  const Result_15 = IDL.Variant({
+  const Result_16 = IDL.Variant({
     'Ok' : AccountInitialization,
     'Err' : Error,
   });
@@ -263,18 +270,18 @@ export const idlFactory = ({ IDL }) => {
     'next' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'entries' : IDL.Vec(VaultAccess),
   });
-  const Result_16 = IDL.Variant({ 'Ok' : VaultAccessPage, 'Err' : Error });
+  const Result_17 = IDL.Variant({ 'Ok' : VaultAccessPage, 'Err' : Error });
   const RevisionPage = IDL.Record({
     'next' : IDL.Opt(IDL.Nat64),
     'entries' : IDL.Vec(Revision),
   });
-  const Result_17 = IDL.Variant({ 'Ok' : RevisionPage, 'Err' : Error });
+  const Result_18 = IDL.Variant({ 'Ok' : RevisionPage, 'Err' : Error });
   const ObjectPage = IDL.Record({
     'next' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'entries' : IDL.Vec(Revision),
   });
-  const Result_18 = IDL.Variant({ 'Ok' : ObjectPage, 'Err' : Error });
-  const Result_19 = IDL.Variant({ 'Ok' : IDL.Vec(Payment), 'Err' : Error });
+  const Result_19 = IDL.Variant({ 'Ok' : ObjectPage, 'Err' : Error });
+  const Result_20 = IDL.Variant({ 'Ok' : IDL.Vec(Payment), 'Err' : Error });
   const PendingUploadSummary = IDL.Record({
     'expires' : IDL.Nat64,
     'vault' : IDL.Vec(IDL.Nat8),
@@ -285,13 +292,13 @@ export const idlFactory = ({ IDL }) => {
     'next' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'entries' : IDL.Vec(PendingUploadSummary),
   });
-  const Result_20 = IDL.Variant({ 'Ok' : PendingUploads, 'Err' : Error });
+  const Result_21 = IDL.Variant({ 'Ok' : PendingUploads, 'Err' : Error });
   const VaultMember = IDL.Record({
     'principal' : IDL.Principal,
     'role' : AccessRole,
   });
-  const Result_21 = IDL.Variant({ 'Ok' : IDL.Vec(VaultMember), 'Err' : Error });
-  const Result_22 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
+  const Result_22 = IDL.Variant({ 'Ok' : IDL.Vec(VaultMember), 'Err' : Error });
+  const Result_23 = IDL.Variant({ 'Ok' : IDL.Vec(Header), 'Err' : Error });
   const SaveInline = IDL.Record({
     'request' : BeginRevision,
     'bytes' : IDL.Vec(IDL.Nat8),
@@ -345,8 +352,8 @@ export const idlFactory = ({ IDL }) => {
     'Revision' : Revision,
     'Upload' : Upload,
   });
-  const Result_23 = IDL.Variant({ 'Ok' : MutationResult, 'Err' : Error });
-  const Result_24 = IDL.Variant({ 'Ok' : IDL.Opt(Payment), 'Err' : Error });
+  const Result_24 = IDL.Variant({ 'Ok' : MutationResult, 'Err' : Error });
+  const Result_25 = IDL.Variant({ 'Ok' : IDL.Opt(Payment), 'Err' : Error });
   const CreditStatus = IDL.Variant({
     'Prepared' : IDL.Null,
     'Accepted' : IDL.Null,
@@ -356,7 +363,7 @@ export const idlFactory = ({ IDL }) => {
     'status' : CreditStatus,
     'offer' : CreditOffer,
   });
-  const Result_25 = IDL.Variant({ 'Ok' : CreditReceipt, 'Err' : BridgeError });
+  const Result_26 = IDL.Variant({ 'Ok' : CreditReceipt, 'Err' : BridgeError });
   const ReconciliationProgress = IDL.Record({
     'end' : IDL.Nat,
     'next' : IDL.Nat,
@@ -364,16 +371,16 @@ export const idlFactory = ({ IDL }) => {
     'scanned' : IDL.Nat64,
     'payment' : Payment,
   });
-  const Result_26 = IDL.Variant({
+  const Result_27 = IDL.Variant({
     'Ok' : ReconciliationProgress,
     'Err' : Error,
   });
-  const Result_27 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : Error });
+  const Result_28 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : Error });
   const BridgeRevocation = IDL.Record({
     'through_generation' : IDL.Nat64,
     'vault_owner' : IDL.Principal,
   });
-  const Result_28 = IDL.Variant({
+  const Result_29 = IDL.Variant({
     'Ok' : BridgeRevocation,
     'Err' : BridgeError,
   });
@@ -388,14 +395,14 @@ export const idlFactory = ({ IDL }) => {
     'owner_fee' : IDL.Nat64,
     'first_key_free' : IDL.Bool,
   });
-  const Result_29 = IDL.Variant({ 'Ok' : KeyRetrievalCost, 'Err' : Error });
+  const Result_30 = IDL.Variant({ 'Ok' : KeyRetrievalCost, 'Err' : Error });
   const LinkStatus = IDL.Record({
     'wiki_owner' : IDL.Principal,
     'active' : IDL.Bool,
     'generation' : IDL.Nat64,
     'vault_owner' : IDL.Principal,
   });
-  const Result_30 = IDL.Variant({
+  const Result_31 = IDL.Variant({
     'Ok' : IDL.Opt(LinkStatus),
     'Err' : BridgeError,
   });
@@ -425,10 +432,11 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'get_quota' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_11], []),
-    'get_upload_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_12], []),
-    'get_vault_access' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_13], []),
+    'get_spending_status' : IDL.Func([], [Result_12], []),
+    'get_upload_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_13], []),
+    'get_vault_access' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_14], []),
     'get_vault_header' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_5], []),
-    'global_capacity' : IDL.Func([], [Result_14], ['query']),
+    'global_capacity' : IDL.Func([], [Result_15], ['query']),
     'http_request' : IDL.Func([HttpRequest], [HttpResponse], ['query']),
     'icrc10_supported_standards' : IDL.Func(
         [],
@@ -440,41 +448,41 @@ export const idlFactory = ({ IDL }) => {
         [Icrc21ConsentMessageResponse],
         [],
       ),
-    'initialize_vault_account' : IDL.Func([], [Result_15], []),
+    'initialize_vault_account' : IDL.Func([], [Result_16], []),
     'inspect_wiki_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_2], []),
-    'list_accessible_vaults' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_16], []),
+    'list_accessible_vaults' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_17], []),
     'list_history' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Nat64],
-        [Result_17],
+        [Result_18],
         [],
       ),
     'list_objects' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_18],
+        [Result_19],
         [],
       ),
-    'list_payments' : IDL.Func([], [Result_19], ['query']),
-    'list_pending_uploads' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_20], []),
-    'list_vault_members' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_21], []),
-    'list_vaults' : IDL.Func([], [Result_22], []),
-    'mutate' : IDL.Func([Mutation], [Result_23], []),
+    'list_payments' : IDL.Func([], [Result_20], ['query']),
+    'list_pending_uploads' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_21], []),
+    'list_vault_members' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_22], []),
+    'list_vaults' : IDL.Func([], [Result_23], []),
+    'mutate' : IDL.Func([Mutation], [Result_24], []),
     'pay_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_3], []),
-    'payment_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_24], ['query']),
-    'prepare_wiki_credit' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_25], []),
+    'payment_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_25], ['query']),
+    'prepare_wiki_credit' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_26], []),
     'quote_purchase' : IDL.Func([PurchaseRequest], [Result_3], []),
-    'receive_wiki_credit' : IDL.Func([CreditOffer], [Result_25], []),
-    'reconcile_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_26], []),
+    'receive_wiki_credit' : IDL.Func([CreditOffer], [Result_26], []),
+    'reconcile_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_27], []),
     'remove_vault_member' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Principal],
-        [Result_27],
+        [Result_28],
         [],
       ),
-    'revoke_wiki_link' : IDL.Func([], [Result_28], []),
-    'set_config' : IDL.Func([IDL.Opt(VaultConfig)], [Result_27], []),
-    'set_funding_config' : IDL.Func([IDL.Opt(FundingConfig)], [Result_27], []),
+    'revoke_wiki_link' : IDL.Func([], [Result_29], []),
+    'set_config' : IDL.Func([IDL.Opt(VaultConfig)], [Result_28], []),
+    'set_funding_config' : IDL.Func([IDL.Opt(FundingConfig)], [Result_28], []),
     'set_vault_member' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Principal, AccessRole],
-        [Result_27],
+        [Result_28],
         [],
       ),
     'set_wiki_bridge_config' : IDL.Func([BridgeConfig], [Result_1], []),
@@ -492,29 +500,29 @@ export const idlFactory = ({ IDL }) => {
     'shared_get_quota' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_11], []),
     'shared_get_upload_status' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_12],
+        [Result_13],
         [],
       ),
     'shared_list_history' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Nat64],
-        [Result_17],
+        [Result_18],
         [],
       ),
     'shared_list_objects' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_18],
+        [Result_19],
         [],
       ),
     'shared_list_pending_uploads' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8)],
-        [Result_20],
+        [Result_21],
         [],
       ),
-    'shared_mutate' : IDL.Func([IDL.Vec(IDL.Nat8), Mutation], [Result_23], []),
-    'vault_key_cost' : IDL.Func([IDL.Opt(IDL.Text)], [Result_29], ['query']),
+    'shared_mutate' : IDL.Func([IDL.Vec(IDL.Nat8), Mutation], [Result_24], []),
+    'vault_key_cost' : IDL.Func([IDL.Opt(IDL.Text)], [Result_30], ['query']),
     'wiki_bridge_config' : IDL.Func([], [IDL.Opt(BridgeConfig)], ['query']),
-    'wiki_credit_status' : IDL.Func([CreditOffer], [Result_25], []),
-    'wiki_link_status' : IDL.Func([], [Result_30], []),
+    'wiki_credit_status' : IDL.Func([CreditOffer], [Result_26], []),
+    'wiki_link_status' : IDL.Func([], [Result_31], []),
   });
 };
 export const init = ({ IDL }) => { return []; };

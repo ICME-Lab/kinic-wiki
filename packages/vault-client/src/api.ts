@@ -100,7 +100,7 @@ export class VaultClient {
   private vaultDenialListeners = new Set<(vault: Uint8Array) => void>();
   private pinnedPublicKey?: Uint8Array;
   private rootEpoch?: number;
-  private creating?: { operation: Uint8Array };
+  private creating?: { operation: Uint8Array; ambiguous: boolean };
   private keyAttempt?: {
     binding: string;
     vault: Uint8Array;
@@ -387,6 +387,9 @@ export class VaultClient {
     this.session.check(t);
     return list;
   }
+  get hasUncertainCreation() {
+    return this.creating?.ambiguous ?? false;
+  }
   async create() {
     this.checkLive();
     if (!this.creating || this.header || this.sharedVault) {
@@ -397,11 +400,17 @@ export class VaultClient {
     const t = this.session.capture();
     const attempt = (this.creating ??= {
       operation: randomBytes(16),
+      ambiguous: false,
     });
-    const h = ok(
-      await this.actor.create_vault({ operation: bytes(attempt.operation) }),
-    );
+    const result = await this.actor
+      .create_vault({ operation: bytes(attempt.operation) })
+      .catch((error) => {
+        if (this.creating === attempt && this.session.capture() === t)
+          attempt.ambiguous = true;
+        throw error;
+      });
     this.session.check(t);
+    const h = ok(result);
     if (bytes(h.id).length !== 16) throw Error("TargetChanged");
     this.header = structuredClone(h);
     this.creating = undefined;
@@ -767,6 +776,33 @@ export class VaultClient {
   }
   get hasPendingMutation() {
     return this.request.kind !== "idle";
+  }
+  get hasInterruptedChange() {
+    return (
+      !this.hasPendingSave &&
+      (this.request.kind === "ambiguous" || this.cleanupState.kind !== "idle")
+    );
+  }
+  async retryInterruptedChange() {
+    if (this.hasPendingSave) throw Error("SavePending");
+    const cleanup = this.cleanupState;
+    const request = this.request;
+    // A cleanup can be queued behind an older request with an unknown result.
+    if (
+      cleanup.kind === "idle" ||
+      (request.kind !== "idle" &&
+        !equal(cleanup.operation, bytes(request.mutation.operation)))
+    ) {
+      await this.retryMutation();
+      return;
+    }
+    if (cleanup.kind === "delete") return this.deleteVault(cleanup.vault);
+    return this.cancelUploadWith(
+      cleanup.vault,
+      cleanup.upload,
+      cleanup.job,
+      cleanup.shared,
+    );
   }
   async renameVault(header: Header, name: string) {
     if (this.hasPendingSave) throw Error("SavePending");

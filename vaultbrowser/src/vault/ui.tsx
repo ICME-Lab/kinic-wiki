@@ -97,6 +97,8 @@ const errors: Record<string, string> = {
   UnsupportedKey: "This Vault uses an unsupported key service anchor.",
   KeyFundingRequired:
     "Add prepaid balance here to retrieve this Vault's key. Saved keys can still be used without a retrieval fee.",
+  ServiceReserveLow:
+    "New paid operations are paused because the Vault service cycles reserve is low.",
   BalanceUnavailable:
     "The operation finished, but the balance could not be refreshed. Refresh balance before starting another paid operation.",
   KeyService:
