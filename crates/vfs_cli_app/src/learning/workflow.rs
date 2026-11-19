@@ -1617,6 +1617,9 @@ async fn deliver_configured(
 ) -> Result<Value> {
     let (cwd, engine, config) = context;
     let outbox = open_outbox(client, c, state)?;
+    if engine.is_some() && outbox.background_delivery_paused()? {
+        return Ok(json!({"sent":0,"delivery_paused":true,"pending_sync":true}));
+    }
     // Retain this project's wakeup even if another project or a synchronous
     // sender currently owns delivery. The wait occurs only in the finite child.
     let lease = if engine.is_some() {
@@ -1634,6 +1637,9 @@ async fn deliver_configured(
         }
         return Ok(json!({"sent":0,"busy":true}));
     };
+    if engine.is_some() && outbox.background_delivery_paused()? {
+        return Ok(json!({"sent":0,"delivery_paused":true,"pending_sync":true}));
+    }
     if let Some(engine) = engine {
         let root = hooks::inbox_root(c, state, engine, config, cwd)?;
         if root.exists() {
@@ -1662,6 +1668,9 @@ async fn deliver_configured(
                 }
             }
         }
+    }
+    if engine.is_some() && outbox.background_delivery_paused()? {
+        return Ok(json!({"sent":0,"delivery_paused":true,"pending_sync":true}));
     }
     let db = c.database_id.as_deref().context("database required")?;
     let report = if let Some(policy) = policy {

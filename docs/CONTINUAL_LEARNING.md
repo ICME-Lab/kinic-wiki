@@ -401,3 +401,21 @@ preimages so a newly introduced dependency cannot disappear from inspection
 merely because its target was just removed. Unrelated arrivals are permitted.
 For protected records, `protected_by` reports a blocking example rather than
 every possible reference; candidates without blockers inspect all sources.
+
+### Temporarily pause background evidence delivery
+
+An operator may create a private marker named `background-delivery-paused-<scope>`
+in the effective learning state directory. `<scope>` is the existing outbox scope:
+SHA-256 of the compact JSON array `[endpoint, database_id, principal]`, where
+`endpoint` is `<replica_host>:<canister_id>`. Its existence stops native background
+`agent flush --engine ...` and automatic `learn drain --require-wakeup` before
+sending pending evidence. Both recheck the marker after acquiring the delivery
+lease. A paused drain retains its wakeup.
+Hook intake remains durable locally; paused delivery reports `sent: 0`,
+`delivery_paused: true` and `pending_sync: true`, never acknowledgement.
+Explicit manual flush and reviewed storage operations remain available. Marker
+inspection errors fail closed. This marker does not terminate an already-running
+sender; wait for it to exit before relying on the pause. Removing the marker
+allows background delivery again, including old pending evidence: inspect the
+inventory before resuming. Learning/publication settings and queued bytes/IDs are
+independent and unchanged by the marker.
