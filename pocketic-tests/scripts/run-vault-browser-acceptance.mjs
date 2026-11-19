@@ -35,7 +35,7 @@ const port = Number(process.env.VAULT_ACCEPTANCE_PORT ?? (await freePort()));
 // Wiki's certified local alternative-origins list intentionally allows only
 // these fixed dev origins. Probe before claiming one; never stop an occupant.
 let wikiPort;
-for (const candidate of (teamEmbeds ? [3016] : [3100, 3010])) {
+for (const candidate of (teamEmbeds ? [3016] : [3100, 3010, 3000])) {
   try {
     await new Promise((resolve, reject) => {
       const probe = createServer();
