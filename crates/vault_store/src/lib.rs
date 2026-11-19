@@ -5,8 +5,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use vault_types::*;
 pub const SCHEMA: &str = concat!(
     include_str!("schema.sql"),
-    include_str!("key-capacity-schema.sql")
+    include_str!("key-capacity-schema.sql"),
+    include_str!("key-owner-count-trigger.sql")
 );
+pub const KEY_OWNER_COUNT_TRIGGER: &str = include_str!("key-owner-count-trigger.sql");
 pub const SHARING_SCHEMA: &str = include_str!("sharing-schema.sql");
 pub const CONTENT_SCHEMA: &str = concat!(
     include_str!("content-schema.sql"),

@@ -46,8 +46,7 @@ pub async fn create_vault(env: &impl Environment, r: CreateVault) -> Result<Head
             "SELECT count(*) FROM vaults WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
             params![], |row| sql::row_get(row, 0),
         ).map_err(|_| Error::Storage)?;
-        let total: i64 = db.query_row("SELECT count(*) FROM vaults", params![], |row| sql::row_get(row, 0)).map_err(|_| Error::Storage)?;
-        if count >= 3 || total >= 10000 {
+        if count >= 3 {
             return Err(Error::QuotaExceeded);
         }
         let token = ops::begin(db, &r.operation, &digest, env.now())?;

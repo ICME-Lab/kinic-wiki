@@ -237,7 +237,7 @@ fn changing_default_key_does_not_change_existing_vault_context() {
     assert_eq!(e.transaction(|db| store::header(db, &h.id)).unwrap(), h);
 }
 #[test]
-fn fresh_key_admission_at_full_shared_content_and_ordinary_receipts() {
+fn fresh_key_admission_at_full_other_owner_content_and_ordinary_receipts() {
     let e = Env::new();
     e.create();
     e.owner.set(Principal::from_slice(&[2]));
@@ -279,7 +279,7 @@ fn fresh_key_admission_at_full_shared_content_and_ordinary_receipts() {
         Err(Error::Conflict)
     );
     e.transaction(|db| {
-        assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
+        assert!(store::content::global_usage(db)? > TOTAL_MAX);
         assert!(store::content::usage(db)? <= TOTAL_MAX);
         Ok(())
     })
@@ -337,9 +337,9 @@ fn protected_key_callback_is_bounded_and_cannot_publish_after_cancellation() {
     let e = Env::new();
     e.create();
     e.transaction(|db| {
-        let extra = TOTAL_MAX - store::content::global_usage(db)?;
+        let extra = TOTAL_MAX - 8192 - store::content::usage(db)?;
         db.execute(
-            "INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",
+            "INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",
             params![vec![1u8; 16], vec![3u8; 16], vec![0u8; 64], extra as i64],
         )
         .unwrap();
@@ -348,7 +348,7 @@ fn protected_key_callback_is_bounded_and_cannot_publish_after_cancellation() {
     .unwrap();
     e.hook.replace(Some(Box::new(|e| {
         e.transaction(|db| {
-            assert_eq!(store::content::global_usage(db)?, TOTAL_MAX);
+            assert!(store::content::usage(db)? <= TOTAL_MAX);
             let (token, _) = store::keys::current(db)?.unwrap();
             assert_eq!(
                 store::keys::cancel_pending(db, e.now())?,
@@ -388,8 +388,8 @@ fn protected_key_admission_keeps_combined_rates_inflight_credit_and_owner_checks
     e.create();
     e.transaction(|db| {
         db.execute("WITH RECURSIVE n(x) AS (SELECT 1000 UNION ALL SELECT x+1 FROM n WHERE x<1098) INSERT INTO key_flights(owner,vault,token,day,reserved,actual,created,settled,in_flight) SELECT X'01',zeroblob(16),x,0,30000000000,0,100,100,0 FROM n",[]).unwrap();
-        let extra=TOTAL_MAX-store::content::global_usage(db)?;
-        db.execute("INSERT INTO revisions VALUES(X'02',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
+        let extra=TOTAL_MAX-8192-store::content::usage(db)?;
+        db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![3u8;16],vec![0u8;64],extra as i64]).unwrap();
         Ok(())
     }).unwrap();
     let request = DeriveKey {

@@ -1101,11 +1101,6 @@ body {
 }
 
 /* Account summary */
-.vault-stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
 .vault-stat {
   display: grid;
   gap: 4px;
@@ -1131,20 +1126,6 @@ body {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.vault-meter {
-  height: 6px;
-  margin-top: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgb(var(--line));
-}
-.vault-meter > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: rgb(var(--action));
-}
-
 
 /* ───────────────────────── Responsive ───────────────────────── */
 

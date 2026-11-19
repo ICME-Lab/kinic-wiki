@@ -23,12 +23,14 @@ fn head(db: &Connection, v: &[u8], o: &[u8]) -> Result<u64> {
         .map_err(db_error)?
         .unwrap_or(0) as u64)
 }
-// Recheck at the write boundary: reservations in other vaults may have committed.
+// Recheck at the write boundary because other Vaults owned by this caller may have committed.
 pub(crate) fn check_object_capacity(db: &Connection, v: &[u8], o: &[u8]) -> Result<()> {
     let count: i64 = db
-        .query_row("SELECT count(*) FROM objects", params![], |r| {
-            sql::row_get(r, 0)
-        })
+        .query_row(
+            "SELECT count(*) FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",
+            params![],
+            |r| sql::row_get(r, 0),
+        )
         .map_err(db_error)?;
     if count >= ROW_MAX && head(db, v, o)? == 0 {
         return Err(Error::QuotaExceeded);
@@ -37,7 +39,7 @@ pub(crate) fn check_object_capacity(db: &Connection, v: &[u8], o: &[u8]) -> Resu
 }
 pub(crate) fn check_revision_capacity(db: &Connection) -> Result<()> {
     let count: i64 = db
-        .query_row("SELECT count(*) FROM revisions", params![], |r| {
+        .query_row("SELECT count(*) FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)", params![], |r| {
             sql::row_get(r, 0)
         })
         .map_err(db_error)?;
@@ -123,7 +125,36 @@ fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
         let n:i64=db.query_row("SELECT count(*) FROM key_flights WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
         total += n as u64 * 4096;
     } else {
-        total += capacity::ACCOUNTING_POOL;
+        total = total
+            .checked_add(accounting_reserved(db)?)
+            .ok_or(Error::QuotaExceeded)?;
+    }
+    Ok(total)
+}
+fn accounting_reserved(db: &Connection) -> Result<u64> {
+    let mut total = capacity::SETTINGS as u64;
+    for (query, row) in [
+        ("SELECT count(*) FROM key_flights", capacity::KEY_ROW as u64),
+        (
+            "SELECT count(*) FROM operations WHERE admission=1",
+            capacity::CLEANUP_ROW as u64,
+        ),
+        (
+            "SELECT count(*) FROM operations WHERE admission=3",
+            capacity::KEY_CONTROL_ROW as u64,
+        ),
+    ] {
+        let count: i64 = db
+            .query_row(query, params![], |r| sql::row_get(r, 0))
+            .map_err(db_error)?;
+        total = total
+            .checked_add(
+                u64::try_from(count)
+                    .map_err(|_| Error::Storage)?
+                    .checked_mul(row)
+                    .ok_or(Error::QuotaExceeded)?,
+            )
+            .ok_or(Error::QuotaExceeded)?;
     }
     Ok(total)
 }
@@ -137,19 +168,14 @@ pub fn global_capacity(db: &Connection) -> Result<GlobalCapacity> {
     let used = global_usage(db)?;
     Ok(GlobalCapacity {
         used,
-        limit: TOTAL_MAX,
-        accounting_reserved: capacity::ACCOUNTING_POOL,
-        overcommitted: used > TOTAL_MAX,
-        overage: used.saturating_sub(TOTAL_MAX),
+        accounting_reserved: accounting_reserved(db)?,
+        limit: u64::MAX,
+        overcommitted: false,
+        overage: 0,
     })
 }
 pub fn check_capacity(db: &Connection, extra: u64) -> Result<()> {
-    if usage(db)?.checked_add(extra).ok_or(Error::QuotaExceeded)? > TOTAL_MAX
-        || global_usage(db)?
-            .checked_add(extra)
-            .ok_or(Error::QuotaExceeded)?
-            > TOTAL_MAX
-    {
+    if usage(db)?.checked_add(extra).ok_or(Error::QuotaExceeded)? > TOTAL_MAX {
         return Err(Error::QuotaExceeded);
     }
     Ok(())
@@ -158,16 +184,6 @@ fn receipt_slots_used(db: &Connection) -> Result<i64> {
     db.query_row(
         "SELECT (SELECT count(*) FROM operations WHERE admission=0 AND owner=(SELECT owner FROM owner_scope WHERE slot=1))+(SELECT count(*) FROM (SELECT * FROM upload_outcomes WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))
               + (SELECT COALESCE(sum(1+receipt_budget/131072),0) FROM (SELECT * FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)))",
-        params![],
-        |r| sql::row_get(r, 0),
-    )
-    .map_err(db_error)
-}
-
-fn global_receipt_slots_used(db: &Connection) -> Result<i64> {
-    db.query_row(
-        "SELECT (SELECT count(*) FROM operations WHERE admission=0)+(SELECT count(*) FROM upload_outcomes)
-              + (SELECT COALESCE(sum(1+receipt_budget/131072),0) FROM uploads)",
         params![],
         |r| sql::row_get(r, 0),
     )
@@ -184,9 +200,7 @@ pub fn check_receipt_capacity(db: &Connection, now: u64) -> Result<()> {
 }
 fn check_receipt_capacity_for(db: &Connection, now: u64, additional: i64) -> Result<()> {
     collect_expired_upload_outcomes(db, now)?;
-    if receipt_slots_used(db)? + additional > ROW_MAX
-        || global_receipt_slots_used(db)? + additional > ROW_MAX
-    {
+    if receipt_slots_used(db)? + additional > ROW_MAX {
         return Err(Error::QuotaExceeded);
     }
     Ok(())
@@ -719,7 +733,17 @@ pub fn maintain_expired(db: &Connection, now: u64) -> Result<Option<(Principal, 
         .optional()
         .map_err(db_error)?;
     let cursor = cursor.unwrap_or_default();
-    let next:Option<Vec<u8>>=db.query_row("SELECT owner FROM (SELECT owner FROM vaults UNION SELECT owner FROM uploads UNION SELECT owner FROM upload_outcomes UNION SELECT owner FROM operations UNION SELECT owner FROM key_flights) WHERE hex(owner)>?1 ORDER BY hex(owner) LIMIT 1",params![cursor],|r|sql::row_get(r,0)).optional().map_err(db_error)?;
+    // The cursor stores the hex encoding of a BLOB. Seek the next owner
+    // in each primary key, then pick the earliest of those five candidates.
+    let next: Option<Vec<u8>> = db.query_row(
+        "SELECT min(owner) FROM (
+           SELECT (SELECT owner FROM vaults WHERE owner>unhex(?1) ORDER BY owner LIMIT 1) AS owner
+           UNION ALL SELECT (SELECT owner FROM uploads WHERE owner>unhex(?1) ORDER BY owner LIMIT 1)
+           UNION ALL SELECT (SELECT owner FROM upload_outcomes WHERE owner>unhex(?1) ORDER BY owner LIMIT 1)
+           UNION ALL SELECT (SELECT owner FROM operations WHERE owner>unhex(?1) ORDER BY owner LIMIT 1)
+           UNION ALL SELECT (SELECT owner FROM key_flights WHERE owner>unhex(?1) ORDER BY owner LIMIT 1)
+         )", params![cursor], |r| sql::row_get(r, 0),
+    ).map_err(db_error)?;
     let Some(owner) = next else {
         db.execute("INSERT INTO global_settings(key,value) VALUES('gc-owner','') ON CONFLICT(key) DO UPDATE SET value=''",params![]).map_err(db_error)?;
         return Ok(None);

@@ -38,10 +38,9 @@ async function connect(canister: string, host: string, anonymous = false) {
 }
 export async function readback(canister: string, host: string) {
   const { identity, actor } = await connect(canister, host);
-  const [headers, balance, capacity, payments, uploads] = await Promise.all([
+  const [headers, balance, payments, uploads] = await Promise.all([
     actor.list_vaults(),
     actor.account_balance(),
-    actor.global_capacity(),
     actor.list_payments(),
     actor.list_pending_uploads([]),
   ]);
@@ -49,7 +48,6 @@ export async function readback(canister: string, host: string) {
     principal: identity.getPrincipal(),
     headers,
     balance,
-    capacity,
     payments,
     uploads,
   });

@@ -1,8 +1,10 @@
-//! Validate complete, frozen predecessor contracts before migrating either branch to schema 13.
+//! Validate complete, frozen predecessor contracts before migrating to schema 14.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
 
+const CURRENT_VERSION: i64 = 14;
+const CAPACITY: &str = include_str!("capacity-schema-v14.sql");
 const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
 
 // Historical DDL from 3a536a54, dec6eac2 (team) and 41db6180 (grants/subsidies).
@@ -104,14 +106,40 @@ fn initialize_inner(db: &Connection) -> Result<()> {
                 exclude_existing(db)?;
             }
         }
-        13 => {
-            validate(&actual, &latest)?;
-            return execute(db, "PRAGMA max_page_count=262144;");
-        }
+        13 => validate(
+            &actual,
+            &split_ddl(&[ACCOUNTS_V9, COMMON, TEAM, GRANT, SUBSIDY].concat()),
+        )?,
+        CURRENT_VERSION => return validate(&actual, &latest),
         _ => return Err(Error::Storage),
     }
+    if version != 0 {
+        migrate_capacity(db)?;
+    }
     validate(&read_contract(db)?, &latest)?;
-    execute(db, "PRAGMA user_version=13; PRAGMA max_page_count=262144;")
+    execute(db, &format!("PRAGMA user_version={CURRENT_VERSION};"))
+}
+
+fn migrate_capacity(db: &Connection) -> Result<()> {
+    execute(
+        db,
+        "DROP TRIGGER accounting_accounts_count;
+        DROP TRIGGER accounting_payments_count;
+        DROP TRIGGER accounting_vault_cycle_reservations_count;
+        DROP TRIGGER accounting_account_ledger_count;
+        DROP TRIGGER key_pool_count;",
+    )?;
+    execute(db, vault_store::KEY_OWNER_COUNT_TRIGGER)?;
+    execute(db, CAPACITY)?;
+    execute(
+        db,
+        &format!(
+            "INSERT INTO payment_completion_reservations(wallet,operation,spare)
+         SELECT wallet,operation,zeroblob({}) FROM payments
+         WHERE json_extract(record,'$.status') IN ('InFlight','Unknown');",
+            crate::capacity::PAYMENT_COMPLETION_BYTES
+        ),
+    )
 }
 
 fn execute(db: &Connection, script: &str) -> Result<()> {
@@ -158,6 +186,7 @@ fn latest_statements() -> Vec<String> {
             vault_store::EXPIRY_SCHEMA,
             include_str!("accounts.sql"),
             INDEXES,
+            CAPACITY,
         ]
         .concat(),
     );

@@ -148,13 +148,13 @@ fn inline_conflicting_replay_cannot_change_payload_or_target() {
     }
 }
 #[test]
-fn inline_cannot_bypass_full_capacity_or_adopt_existing_upload() {
+fn inline_cannot_bypass_full_owner_capacity_or_adopt_existing_upload() {
     for remaining in [0, ops::CHARGE + 1] {
         let e = Env::new();
         e.create();
         let action = inline(&e, 1);
         e.transaction(|db| {
-            let fill=TOTAL_MAX-store::content::global_usage(db)?-remaining;
+            let fill=TOTAL_MAX-store::content::usage(db)?-remaining;
             db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vault_id(1),vec![99u8;16],vec![0u8;64],fill as i64]).unwrap(); Ok(())
         }).unwrap();
         let before = snapshot(&e);
@@ -228,11 +228,11 @@ fn inline_optimistic_updates_and_old_replay_preserve_committed_revision() {
     assert_eq!(snapshot(&e), before);
 }
 #[test]
-fn inline_respects_shared_receipt_row_capacity() {
+fn inline_respects_owner_receipt_row_capacity() {
     let e = Env::new();
     e.create();
     let action = inline(&e, 1);
-    e.db.borrow().execute_batch("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT X'50',CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',86400,x,0,0 FROM n;").unwrap();
+    e.db.borrow().execute_batch("WITH RECURSIVE n(x) AS(SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT (SELECT owner FROM vaults LIMIT 1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',86400,x,0,0 FROM n;").unwrap();
     let before = snapshot(&e);
     assert!(matches!(e.change(5, action), Err(Error::QuotaExceeded)));
     assert_eq!(snapshot(&e), before);

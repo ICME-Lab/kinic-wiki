@@ -429,7 +429,7 @@ fn foreign_pending_and_terminal_uploads_are_rejected_before_returning_any_status
 }
 
 #[test]
-fn revoking_a_member_releases_admitted_owner_and_global_capacity_at_the_limit() {
+fn revoking_a_member_releases_owner_capacity_at_the_limit() {
     let e = Env::new();
     let v = e.create().id;
     let caller = Principal::from_slice(&[91]);
@@ -459,7 +459,7 @@ fn revoking_a_member_releases_admitted_owner_and_global_capacity_at_the_limit() 
                 v,
                 vec![3u8; 16],
                 vec![0u8; 64],
-                (TOTAL_MAX - global) as i64
+                (TOTAL_MAX - local) as i64
             ],
         )
         .unwrap();
@@ -473,7 +473,7 @@ fn revoking_a_member_releases_admitted_owner_and_global_capacity_at_the_limit() 
     e.transaction(|db| sharing::remove_member(db, e.owner(), &v, caller))
         .unwrap();
     assert_eq!(
-        e.transaction(store::content::global_usage).unwrap(),
+        e.transaction(store::content::usage).unwrap(),
         TOTAL_MAX - 1024
     );
     grant(&e, &v, Principal::from_slice(&[92]), AccessRole::Editor).unwrap();

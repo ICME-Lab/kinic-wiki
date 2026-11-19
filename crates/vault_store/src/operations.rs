@@ -31,16 +31,14 @@ impl AdmissionClass {
             Self::ProtectedKey => capacity::KEY_CONTROL_RESULT,
         }
     }
-    fn count_limits(self) -> Option<(usize, usize)> {
+    fn owner_count_limit(self) -> Option<usize> {
         match self {
-            Self::Cleanup => Some((512, capacity::CLEANUP_RECEIPTS)),
-            Self::ProtectedKey => {
-                Some((capacity::KEY_CONTROL_OWNER_ROWS, capacity::KEY_CONTROL_ROWS))
-            }
+            Self::Cleanup => Some(512),
+            Self::ProtectedKey => Some(capacity::KEY_CONTROL_OWNER_ROWS),
             Self::Ordinary | Self::ResourceCleanup => None,
         }
     }
-    /// Ordinary results release unused reservation; protected pools are prepaid globally.
+    /// Ordinary results release unused reservation. Report protected rows separately in global accounting.
     pub(crate) fn charge_sql(scoped: bool) -> String {
         format!(
             "CASE admission WHEN {} THEN 0 WHEN {} THEN {} WHEN {} THEN {} ELSE CASE WHEN result IS NULL THEN {} ELSE length(result)+4096 END END",
@@ -143,9 +141,9 @@ fn begin_inner(
     }
     if pending.is_none() {
         collect(db, now)?;
-        if let Some((owner_limit, global_limit)) = class.count_limits() {
-            let (mine,all):(i64,i64)=db.query_row("SELECT COALESCE(sum(CASE WHEN owner=(SELECT owner FROM owner_scope WHERE slot=1) THEN 1 ELSE 0 END),0),count(*) FROM operations WHERE admission=?1",params![class as i64],|r|Ok((sql::row_get(r,0)?,sql::row_get(r,1)?))).map_err(|_|Error::Storage)?;
-            if mine as usize >= owner_limit || all as usize >= global_limit {
+        if let Some(owner_limit) = class.owner_count_limit() {
+            let mine:i64=db.query_row("SELECT count(*) FROM operations WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND admission=?1",params![class as i64],|r|sql::row_get(r,0)).map_err(|_|Error::Storage)?;
+            if mine as usize >= owner_limit {
                 return Err(Error::QuotaExceeded);
             }
         }

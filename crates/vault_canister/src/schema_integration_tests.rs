@@ -26,7 +26,7 @@ fn version(db: &Connection) -> i64 {
 }
 
 #[test]
-fn integration_all_frozen_predecessors_migrate_and_reopen_at_thirteen() {
+fn integration_all_frozen_predecessors_migrate_and_reopen_at_fourteen() {
     for (v, extra) in [
         (8, &[][..]),
         (9, &[]),
@@ -35,6 +35,7 @@ fn integration_all_frozen_predecessors_migrate_and_reopen_at_thirteen() {
         (10, &[GRANT]),
         (11, &[GRANT, SUBSIDY]),
         (12, &[GRANT, SUBSIDY]),
+        (13, &[TEAM, GRANT, SUBSIDY]),
     ] {
         let db = predecessor(v, extra);
         db.execute_batch("INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES('before',123,99)").unwrap();
@@ -49,7 +50,7 @@ fn integration_all_frozen_predecessors_migrate_and_reopen_at_thirteen() {
                 .unwrap();
         }
         schema::initialize_vault_schema(&db).unwrap();
-        assert_eq!(version(&db), 13, "predecessor {v}");
+        assert_eq!(version(&db), 14, "predecessor {v}");
         assert_eq!(
             db.query_row(
                 "SELECT balance_cycles FROM accounts WHERE owner='before'",
@@ -78,7 +79,32 @@ fn integration_all_frozen_predecessors_migrate_and_reopen_at_thirteen() {
 }
 
 #[test]
-fn integration_team_provenance_and_journal_survive_schema_thirteen() {
+fn integration_schema_thirteen_reserves_space_only_for_unsettled_payments() {
+    let db = predecessor(13, &[TEAM, GRANT, SUBSIDY]);
+    for (operation, status) in [(1u8, "InFlight"), (2, "Unknown"), (3, "Quoted")] {
+        let record = serde_json::json!({"status": status});
+        db.execute(
+            "INSERT INTO payments VALUES('wallet',?1,?2,?3)",
+            kinic_sqlite_compat::params![&[operation; 16][..], record.to_string(), i64::MAX],
+        )
+        .unwrap();
+    }
+    schema::initialize_vault_schema(&db).unwrap();
+    let stored: String = db.query_row(
+        "SELECT group_concat(hex(operation)) FROM
+         (SELECT operation FROM payment_completion_reservations WHERE length(spare)=1048576 ORDER BY operation)",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(
+        stored,
+        "01010101010101010101010101010101,02020202020202020202020202020202"
+    );
+    assert_eq!(version(&db), 14);
+    schema::initialize_vault_schema(&db).unwrap();
+}
+
+#[test]
+fn integration_team_provenance_and_journal_survive_schema_fourteen() {
     use kinic_sqlite_compat::params;
     use vault_store::{OwnerContext, operations, sharing};
     let db = predecessor(11, &[TEAM]);

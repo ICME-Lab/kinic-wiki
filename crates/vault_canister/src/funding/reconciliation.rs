@@ -139,21 +139,29 @@ pub(super) fn scan_admission(
     if payment.preparing {
         return Ok(ScanAdmission::RecoverQuote);
     }
-    let mut active = 0;
-    for other in all_payments(db)? {
-        let other = other?;
-        if other
-            .reconciliation
-            .as_ref()
-            .is_some_and(|s| s.lease_generation == current && s.lease_until > now)
-        {
-            if other.wallet == payment.wallet {
-                return Err(Error::Busy);
-            }
-            active += 1;
-        }
-    }
-    if active >= 8 {
+    let mut query = db
+        .prepare(
+            "SELECT wallet FROM payments
+         WHERE json_extract(record,'$.reconciliation') IS NOT NULL
+           AND json_extract(record,'$.reconciliation.lease_generation')=?1
+           AND json_extract(record,'$.reconciliation.lease_until')>?2
+         LIMIT 8",
+        )
+        .map_err(|_| Error::Storage)?;
+    let wallets: Vec<String> = sql::query_map(
+        &mut query,
+        params![
+            current,
+            i64::try_from(now).map_err(|_| Error::InvalidInput)?
+        ],
+        |r| sql::row_get(r, 0),
+    )
+    .map_err(|_| Error::Storage)?;
+    if wallets.len() >= 8
+        || wallets
+            .iter()
+            .any(|wallet| *wallet == payment.wallet.to_text())
+    {
         return Err(Error::Busy);
     }
     let scan = payment.reconciliation.as_ref().ok_or(Error::Storage)?;
@@ -180,6 +188,7 @@ fn begin_scan(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> {
                 p.preparing = false;
                 p.status = Status::Quoted;
                 p.uncertain = false;
+                crate::capacity::release_payment_completion(db, p.wallet, &p.request.operation)?;
             }
             ScanAdmission::History {
                 lease,
@@ -448,6 +457,7 @@ pub(super) fn finish_preparation(sent: &Payment) -> Result<Payment> {
         }
         p.status = Status::Quoted;
         p.preparing = false;
+        crate::capacity::release_payment_completion(db, p.wallet, &p.request.operation)?;
         save(db, &p)?;
         Ok(p)
     })

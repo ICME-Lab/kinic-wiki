@@ -38,7 +38,6 @@ import type {
   Header,
   VaultAccess,
   VaultConfig,
-  GlobalCapacity,
   AccountInitialization,
   PendingUploadSummary,
 } from "@kinic/vault-client/contracts";
@@ -49,13 +48,6 @@ import { VaultSettings, VaultSharedUploads } from "./management";
 
 export type VaultWork = (operation: () => Promise<void>) => void;
 const id = (h: Header) => b64(bytes(h.id));
-const storageUnits = ["B", "KB", "MB", "GB", "TB"];
-function formatStorage(value: bigint): string {
-  let amount = Number(value);
-  let unit = 0;
-  while (amount >= 1000 && unit < storageUnits.length - 1) { amount /= 1000; unit++; }
-  return `${unit === 0 ? amount : amount.toFixed(amount < 10 ? 1 : 0)} ${storageUnits[unit]}`;
-}
 type WorkspaceState = {
   selection:
     | { kind: "none" }
@@ -142,7 +134,6 @@ function Workspace({ client }: { client: VaultClient }) {
   const [needsKeyFunding, setNeedsKeyFunding] = useState(false);
   const [selectedKeyCost, setSelectedKeyCost] = useState<bigint>();
   const accountInitialization = useRef<Promise<AccountInitialization> | undefined>(undefined);
-  const [capacity, setCapacity] = useState<GlobalCapacity>();
   const privateDOM = useRef<HTMLDivElement>(null);
   const alive = useRef(true);
   const busyRef = useRef(false);
@@ -343,16 +334,14 @@ function Workspace({ client }: { client: VaultClient }) {
     // refunds settle. Permanent exclusions are idempotent zero-grant responses.
     if (account.grant_cycles === 0n) accountInitialization.current = undefined;
     client.session.check(ticket);
-    const [c, , cap] = await Promise.all([
+    const [c] = await Promise.all([
       client.actor.get_config(),
       refreshBalance(),
-      client.actor.global_capacity(),
     ]);
     client.session.check(ticket);
     if (!alive.current) return;
     setAccountReady(true);
     setConfig(ok(c)[0]);
-    setCapacity(ok(cap));
   }, [client, refreshBalance]);
   useEffect(() => {
     const ticket = client.session.capture();
@@ -459,7 +448,7 @@ function Workspace({ client }: { client: VaultClient }) {
   const canAffordCurrentOperation = opened
     ? eligible
     : selected ? canRetrieveKey : canCreateVault;
-  const inlineFunding = nav.view === "workspace" && !settingsOpen && accountReady && !!config && !!capacity && !opened
+  const inlineFunding = nav.view === "workspace" && !settingsOpen && accountReady && !!config && !opened
     && (selected ? selectedOwner && needsKeyFunding && !canRetrieveKey : keyCost !== undefined && !canCreateVault);
   const retryable = !!error && client.hasPendingMutation;
   const retryButton = (className = "") => (
@@ -509,10 +498,6 @@ function Workspace({ client }: { client: VaultClient }) {
   const settingsIndex = vaults.findIndex(({ header, role }) => "Owner" in role && id(header) === settingsTarget?.id);
   const settingsVault = vaults[settingsIndex]?.header;
   const ownedCount = vaults.filter(({ role }) => "Owner" in role).length;
-  const usedPercent =
-    capacity && capacity.limit > 0n
-      ? Number((capacity.used * 1000n) / capacity.limit) / 10
-      : 0;
   return (
     <div ref={privateDOM} className="vault-workspace">
       <h1 className="sr-only">Private Vault</h1>
@@ -812,48 +797,24 @@ function Workspace({ client }: { client: VaultClient }) {
                 </span>
                 <span className="vault-disclosure-label">
                   Account &amp; storage
-                  <small aria-hidden>Balance, capacity and funding</small>
+                  <small aria-hidden>Balance and funding</small>
                 </span>
                 <ChevronRight size={16} aria-hidden />
               </summary>
               <div className="vault-disclosure-body">
                 <VaultPanel label="Vault account">
-                  <div className="vault-stat-row">
-                    <div className="vault-stat vault-stat--primary">
-                      <span>Prepaid balance</span>
-                      <CycleBalance
-                        cycles={accountReady ? balance : null}
-                        title={accountReady ? `Prepaid balance: ${formatRawCycles(balance)} cycles` : "Prepaid balance unavailable"}
-                        tone={!balanceRequirementKnown ? "neutral" : canAffordCurrentOperation ? "positive" : "warn"}
-                      />
-                    </div>
-                    <div className="vault-stat">
-                      <span aria-hidden>Shared capacity</span>
-                      {capacity ? (
-                        <>
-                          <strong title={`${capacity.used.toLocaleString()} / ${capacity.limit.toLocaleString()} bytes`}>
-                            {formatStorage(capacity.used)} <small>of {formatStorage(capacity.limit)}</small>
-                          </strong>
-                          <div className="vault-meter" aria-hidden>
-                            <span
-                              style={{ width: `${Math.min(100, usedPercent)}%` }}
-                            />
-                          </div>
-                        </>
-                      ) : (
-                        <output>Checking shared storage capacity…</output>
-                      )}
-                    </div>
+                  <div className="vault-stat vault-stat--primary">
+                    <span>Prepaid balance</span>
+                    <CycleBalance
+                      cycles={accountReady ? balance : null}
+                      title={accountReady ? `Prepaid balance: ${formatRawCycles(balance)} cycles` : "Prepaid balance unavailable"}
+                      tone={!balanceRequirementKnown ? "neutral" : canAffordCurrentOperation ? "positive" : "warn"}
+                    />
                   </div>
                   <dl className="vault-account-meta">
                     <dt>Vault principal</dt>
                     <dd><code>{client.identity.getPrincipal().toText()}</code></dd>
                   </dl>
-                  {capacity?.overcommitted ? (
-                    <p className="vault-notice vault-notice--warn">
-                      Capacity is overcommitted; cleanup remains available.
-                    </p>
-                  ) : null}
                   <div className="vault-disclosure-actions">
                     <VaultButton
                       size="sm"
@@ -869,7 +830,7 @@ function Workspace({ client }: { client: VaultClient }) {
                       Browser key storage is unavailable. Your next session will need a paid key retrieval.
                     </p>
                   ) : null}
-                  {capacity && nav.view === "settings" && !inlineFunding ? (
+                  {nav.view === "settings" && !inlineFunding ? (
                     <Funding
                       key={`funding-${generation}`}
                       client={client}

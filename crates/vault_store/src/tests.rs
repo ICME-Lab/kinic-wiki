@@ -155,7 +155,7 @@ fn creation_context_encodes_all_fields_without_ambiguity() {
     assert_ne!(bytes, key_input(p(9), p(1), &changed).unwrap());
 }
 #[test]
-fn vault_plaintext_and_shared_charged_limits_reject_growth() {
+fn vault_plaintext_and_owner_charged_limits_reject_growth() {
     let db = db();
     seed(&db, 1);
     scope(&db, 1, |db| {
@@ -191,12 +191,82 @@ fn vault_plaintext_and_shared_charged_limits_reject_growth() {
     seed(&db, 2);
     scope(&db, 2, |db| {
         assert!(content::usage(db)? < 1024 * 1024);
-        assert!(matches!(
-            content::check_capacity(db, 100 * 1024 * 1024),
-            Err(Error::QuotaExceeded)
-        ));
+        content::check_capacity(db, 100 * 1024 * 1024)?;
         Ok(())
     });
+}
+#[test]
+fn another_owner_can_add_objects_and_revisions_after_ten_thousand_rows() {
+    let db = db();
+    seed(&db, 1);
+    seed(&db, 2);
+    scope(&db, 1, |db| {
+        for n in 0u128..10_000 {
+            let object = n.to_be_bytes();
+            db.execute("INSERT INTO objects(owner,vault,object,head) VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1)",params![vec![1u8;16],object]).unwrap();
+            db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,4096)",params![vec![1u8;16],object,vec![0u8;64]]).unwrap();
+        }
+        assert_eq!(
+            content::check_object_capacity(db, &[1; 16], &10_001u128.to_be_bytes()),
+            Err(Error::QuotaExceeded)
+        );
+        assert_eq!(
+            content::check_revision_capacity(db),
+            Err(Error::QuotaExceeded)
+        );
+        Ok(())
+    });
+    scope(&db, 2, |db| {
+        content::check_object_capacity(db, &[2; 16], &1u128.to_be_bytes())?;
+        content::check_revision_capacity(db)
+    });
+}
+#[test]
+fn another_owner_can_admit_receipts_after_ten_thousand_rows() {
+    let db = db();
+    seed(&db, 1);
+    seed(&db, 2);
+    scope(&db, 1, |db| {
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<10000) INSERT INTO operations(owner,operation,digest,result,expires,token,runtime,admission) SELECT (SELECT owner FROM owner_scope WHERE slot=1),CAST(printf('%016d',x) AS BLOB),zeroblob(32),X'00',86400,x,0,0 FROM n",params![]).unwrap();
+        assert_eq!(
+            content::check_receipt_capacity(db, 0),
+            Err(Error::QuotaExceeded)
+        );
+        Ok(())
+    });
+    scope(&db, 2, |db| content::check_receipt_capacity(db, 0));
+}
+#[test]
+fn global_key_service_day_budget_still_applies_across_owners() {
+    let db = db();
+    seed(&db, 2);
+    db.execute("WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<999) INSERT INTO key_flights(owner,vault,token,day,reserved,actual,created,settled,in_flight) SELECT CAST(printf('old%02d',x/100) AS BLOB),zeroblob(16),x+1,0,30000000000,0,0,0,0 FROM n",params![]).unwrap();
+    scope(&db, 2, |db| {
+        assert_eq!(
+            keys::reserve(db, &[2; 16], 1, 0, 1),
+            Err(Error::QuotaExceeded)
+        );
+        Ok(())
+    });
+    db.execute(
+        "UPDATE key_flights SET settled=?1,actual=30000000000",
+        params![DAY as i64],
+    )
+    .unwrap();
+    scope(&db, 2, |db| {
+        assert_eq!(
+            keys::reserve(db, &[2; 16], 1, DAY, 1),
+            Err(Error::QuotaExceeded)
+        );
+        Ok(())
+    });
+}
+#[test]
+fn another_owner_can_reserve_a_key_after_four_thousand_other_key_rows() {
+    let db = db();
+    seed(&db, 2);
+    db.execute("WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<4095) INSERT INTO key_flights(owner,vault,token,day,reserved,actual,created,settled,in_flight) SELECT CAST(printf('old%02d',x/512) AS BLOB),zeroblob(16),x+1,0,30000000000,0,0,0,0 FROM n",params![]).unwrap();
+    scope(&db, 2, |db| keys::admit_rows(db, 1));
 }
 #[test]
 fn key_row_growth_respects_owner_capacity() {
@@ -234,10 +304,10 @@ fn review_large_result_completion_fits_its_pending_reservation_at_capacity() {
     seed(&db, 1);
     scope(&db, 1, |db| {
         let token = operations::begin(db, &[9; 16], &[3; 32], 1)?;
-        let remaining = TOTAL_MAX - content::global_usage(db)?;
+        let remaining = TOTAL_MAX - content::usage(db)?;
         db.execute("INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",params![vec![1u8;16],vec![3u8;16],vec![0u8;64],remaining as i64]).unwrap();
         operations::complete(db, &[9; 16], token, &vec![1u8; 120000], 1)?;
-        assert!(content::global_usage(db)? <= TOTAL_MAX);
+        assert!(content::usage(db)? <= TOTAL_MAX);
         let replay: Option<Vec<u8>> = operations::replay(db, &[9; 16], &[3; 32], 2)?;
         assert_eq!(replay.unwrap().len(), 120000);
         Ok(())
@@ -249,16 +319,17 @@ fn protected_key_pool_bounds_replay_and_result_without_using_content_headroom() 
     let db = db();
     for owner in 10..=14 {
         seed(&db, owner);
+        scope(&db, owner, |db| {
+            let extra = TOTAL_MAX - 64 * 1024 - content::usage(db)?;
+            db.execute(
+                "INSERT INTO revisions VALUES((SELECT owner FROM owner_scope WHERE slot=1),?1,?2,1,1,NULL,1,?3,'[]',0,?4)",
+                params![vec![owner; 16], vec![3u8; 16], vec![0u8; 64], extra as i64],
+            )
+            .unwrap();
+            Ok(())
+        });
     }
-    scope(&db, 10, |db| {
-        let extra = TOTAL_MAX - content::global_usage(db)?;
-        db.execute(
-            "INSERT INTO revisions VALUES(X'05',?1,?2,1,1,NULL,1,?3,'[]',0,?4)",
-            params![vec![1u8; 16], vec![3u8; 16], vec![0u8; 64], extra as i64],
-        )
-        .unwrap();
-        Ok(())
-    });
+    let prepaid_usage = content::global_usage(&db).unwrap();
     for owner in 10..=13 {
         scope(&db, owner, |db| {
             for n in 0..capacity::KEY_CONTROL_OWNER_ROWS {
@@ -277,7 +348,7 @@ fn protected_key_pool_bounds_replay_and_result_without_using_content_headroom() 
                     operations::replay::<bool>(db, &operation, &[6; 32], 2),
                     Err(Error::Conflict)
                 );
-                assert_eq!(content::global_usage(db)?, TOTAL_MAX);
+                assert!(content::global_usage(db)? > prepaid_usage);
                 assert!(content::usage(db)? <= TOTAL_MAX);
             }
             assert_eq!(
@@ -288,16 +359,13 @@ fn protected_key_pool_bounds_replay_and_result_without_using_content_headroom() 
         });
     }
     scope(&db, 14, |db| {
-        assert_eq!(
-            operations::begin_key(db, &[99; 16], &[5; 32], DAY),
-            Err(Error::QuotaExceeded)
-        );
+        operations::begin_key(db, &[99; 16], &[5; 32], DAY)?;
         Ok(())
     });
     scope(&db, 10, |db| {
         operations::collect(db, DAY + 1)?;
         operations::begin_key(db, &[99; 16], &[5; 32], DAY + 1)?;
-        assert_eq!(content::global_usage(db)?, TOTAL_MAX);
+        assert!(content::global_usage(db)? > prepaid_usage);
         Ok(())
     });
 }
@@ -311,7 +379,10 @@ fn key_target_is_bound_to_current_flight_and_settled_rows_do_not_block_other_own
             let before = content::global_usage(db)?;
             keys::reserve(db, &[1; 16], owner as u64, 1, 20)?;
             assert_eq!(keys::current(db)?, Some((owner as u64, vec![1; 16])));
-            assert_eq!(content::global_usage(db)?, before);
+            assert_eq!(
+                content::global_usage(db)?,
+                before + capacity::KEY_ROW as u64
+            );
             keys::settle(db, owner as u64, 1, 12)?;
             assert_eq!(keys::current(db)?, None);
             Ok(())
@@ -343,7 +414,16 @@ fn admission_class_policy_keeps_cleanup_and_resource_receipts_bounded() {
                 0
             };
             assert_eq!(content::usage(db)?, before_owner + charge);
-            assert_eq!(content::global_usage(db)?, before_shared + charge);
+            assert_eq!(
+                content::global_usage(db)?,
+                before_shared
+                    + charge
+                    + if resource {
+                        0
+                    } else {
+                        capacity::CLEANUP_ROW as u64
+                    }
+            );
         }
         assert!(db.execute("UPDATE operations SET admission=4", []).is_err());
         Ok(())

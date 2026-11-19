@@ -222,7 +222,7 @@ fn fee_admission_precedes_io_and_fences_cleanup_expiry_and_upgrade() {
     ));
 }
 #[test]
-fn pending_fee_reserves_global_payment_capacity_before_dispatch() {
+fn pending_fee_reserves_only_the_wallet_payment_capacity_before_dispatch() {
     state::initialize().unwrap();
     let cfg = FundingConfig {
         ledger: p(90),
@@ -241,17 +241,22 @@ fn pending_fee_reserves_global_payment_capacity_before_dispatch() {
             record_quote(p(owner), req(id), cfg.clone(), 10, 0).unwrap();
         }
     }
-    let last = match admit_quote(p(192), req(1), cfg.clone(), 0).unwrap() {
+    let last = match admit_quote(p(191), req(15), cfg.clone(), 0).unwrap() {
         QuoteAdmission::Fee(f) => f,
         _ => panic!("fee slot expected"),
     };
     assert!(matches!(
-        admit_quote(p(193), req(1), cfg.clone(), 0),
+        admit_quote(p(191), req(16), cfg.clone(), 0),
         Err(vault_types::Error::QuotaExceeded)
     ));
+    let other = match admit_quote(p(192), req(1), cfg.clone(), 0).unwrap() {
+        QuoteAdmission::Fee(f) => f,
+        _ => panic!("another wallet can reserve its fee slot"),
+    };
     finish_quote(&last, Ok(10), 1).unwrap();
+    finish_quote(&other, Ok(10), 1).unwrap();
     assert!(matches!(
-        admit_quote(p(193), req(1), cfg, 2),
+        admit_quote(p(191), req(16), cfg, 2),
         Err(vault_types::Error::QuotaExceeded)
     ));
 }
@@ -393,7 +398,7 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v13_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v14_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
@@ -407,7 +412,7 @@ fn initial_release_creates_v13_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','receipts')",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('vault_cycle_reservations') WHERE name='account_owner'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let before: i64 = db
@@ -501,7 +506,7 @@ fn initial_release_rejects_changed_v9_contract_without_repair() {
 }
 
 #[test]
-fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
+fn initial_release_leaves_sqlite_page_limit_at_its_default_on_reopen() {
     use kinic_sqlite_compat::{Connection, params};
     let path = std::env::temp_dir().join(format!(
         "vault-v9-policy-{}-{}.sqlite",
@@ -521,10 +526,7 @@ fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_ne!(
-        before, 262144,
-        "reopen must really lose connection-local policy"
-    );
+    assert!(before > 262144);
     crate::schema::initialize_vault_schema(&db).unwrap();
     let after: i64 = db
         .query_row("PRAGMA max_page_count", params![], |r| {
@@ -533,7 +535,7 @@ fn initial_release_reapplies_page_policy_after_real_connection_reopen() {
         .unwrap();
     drop(db);
     std::fs::remove_file(path).unwrap();
-    assert_eq!(after, 262144);
+    assert_eq!(after, before);
 }
 
 #[test]
@@ -544,7 +546,7 @@ fn current_schema_initialization_is_idempotent() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(
-        version, 13,
+        version, 14,
         "new installations must use exact storage accounting"
     );
     schema::initialize_vault_schema(&db).unwrap();
@@ -1318,7 +1320,7 @@ fn failed_grant_migration_rolls_back_schema_and_version() {
     );
 }
 #[test]
-fn initial_grant_preserves_new_paid_credit_and_rolls_back_on_account_capacity() {
+fn initial_grant_preserves_new_paid_credit_and_admits_after_former_account_cap() {
     state::initialize().unwrap();
     credit(p(242), 123);
     assert_eq!(
@@ -1337,14 +1339,17 @@ fn initial_grant_preserves_new_paid_credit_and_rolls_back_on_account_capacity() 
     })
     .unwrap();
     assert_eq!(
-        state::State.initialize_account(p(243), 2).unwrap_err(),
-        vault_types::Error::QuotaExceeded
+        state::State
+            .initialize_account(p(243), 2)
+            .unwrap()
+            .grant_cycles,
+        10_000_000_000
     );
     state::transaction(|db| {
         assert_eq!(
             kinic_cycle_grants::recorded(db, kinic_cycle_grants::Scope::Vault, &p(243).to_text())
                 .unwrap(),
-            None
+            Some(10_000_000_000)
         );
         Ok(())
     })
@@ -1695,7 +1700,7 @@ fn insufficient_execution_credit_does_not_consume_the_first_key_subsidy() {
 }
 
 #[test]
-fn bridge_upgrade_accepts_v8_and_initializes_v13() {
+fn bridge_upgrade_accepts_v8_and_initializes_v14() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
     schema::initialize_legacy_v8(&db);
     db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", []).unwrap();
@@ -1703,7 +1708,7 @@ fn bridge_upgrade_accepts_v8_and_initializes_v13() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     let account: (i64, i64) = db
         .query_row(
             "SELECT balance_cycles,storage_charge_remainder FROM accounts WHERE owner='owner'",
@@ -1741,7 +1746,7 @@ fn bridge_upgrade_from_schema_nine_preserves_records_and_fences_old_readers() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        13
+        14
     );
     assert_eq!(snapshot(), before);
     schema::initialize_vault_schema(&db).unwrap();
@@ -1771,7 +1776,7 @@ fn main_schema_ten_bridge_rows_migrate_without_null_beneficiaries_or_lost_state(
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        13
+        14
     );
     assert_eq!(
         db.query_row("SELECT record FROM payments", [], |r| r.get::<_, String>(0))
@@ -1868,7 +1873,7 @@ fn migrated_team_vault_resolves_original_owner_after_reopen() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        13
+        14
     );
     let owner = vault_store::OwnerContext::authenticated(p(8)).unwrap();
     owner

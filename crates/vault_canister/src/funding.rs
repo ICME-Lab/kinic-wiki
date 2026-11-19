@@ -102,8 +102,7 @@ fn load(db: &sql::Connection, w: Principal, id: &[u8]) -> Result<Option<Payment>
     })
     .transpose()
 }
-/// Shared bounded payment scan for admission checks. Decode lazily so callers can
-/// stop at the first capacity/lease conflict without interpreting unrelated rows.
+#[cfg(test)]
 pub(crate) fn all_payments(db: &sql::Connection) -> Result<impl Iterator<Item = Result<Payment>>> {
     let mut statement = db
         .prepare("SELECT record FROM payments")
@@ -117,6 +116,22 @@ pub(crate) fn all_payments(db: &sql::Connection) -> Result<impl Iterator<Item = 
             Err(e) => Some(Err(e)),
             Ok(None) => Some(serde_json::from_str(&raw).map_err(|_| Error::Storage)),
         }))
+}
+/// Starting a transfer may consume headroom only on the matching beneficiary.
+pub(crate) fn pending_for_beneficiary(db: &sql::Connection, owner: &str) -> Result<Vec<Payment>> {
+    let mut query = db
+        .prepare(
+            "SELECT record FROM payments
+         WHERE json_extract(record,'$.request.beneficiary')=?1
+           AND json_extract(record,'$.status') IN ('InFlight','Unknown')",
+        )
+        .map_err(|_| Error::Storage)?;
+    let records: Vec<String> = sql::query_map(&mut query, params![owner], |r| sql::row_get(r, 0))
+        .map_err(|_| Error::Storage)?;
+    records
+        .into_iter()
+        .map(|record| serde_json::from_str(&record).map_err(|_| Error::Storage))
+        .collect()
 }
 fn payment_size(p: &Payment) -> Result<usize> {
     let raw = serde_json::to_string(p).map_err(|_| Error::Storage)?;
@@ -265,16 +280,12 @@ pub fn admit_quote(
             params![generation, nanos],
         )
         .map_err(|_| Error::Storage)?;
-        db.execute(
-            "DELETE FROM payments WHERE expires<?1",
-            params![(now / 1_000_000_000) as i64],
-        )
-        .map_err(|_| Error::Storage)?;
-        let (payments, owned): (i64, i64) = db
+        crate::capacity::collect_expired_payments(db, wallet, (now / 1_000_000_000) as i64)?;
+        let owned: i64 = db
             .query_row(
-                "SELECT count(*),coalesce(sum(wallet=?1),0) FROM payments",
+                "SELECT count(*) FROM payments WHERE wallet=?1",
                 params![wallet.to_text()],
-                |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
+                |r| sql::row_get(r, 0),
             )
             .map_err(|_| Error::Storage)?;
         let (flights, own_flights): (i64, i64) = db
@@ -284,7 +295,7 @@ pub fn admit_quote(
                 |r| Ok((sql::row_get(r, 0)?, sql::row_get(r, 1)?)),
             )
             .map_err(|_| Error::Storage)?;
-        if payments + flights >= 1024 || owned + own_flights >= 16 {
+        if owned + own_flights >= 16 {
             return Err(Error::QuotaExceeded);
         }
         // One caller cannot monopolize all eight physical fee calls. A 120s lease
@@ -455,7 +466,6 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
         let mut p = load(db, wallet, id)?.ok_or(Error::NotFound)?;
         let current = generation(db)?;
         let orphan = payment_eligibility(&p, current, now)?;
-        crate::capacity::admit_beneficiary(db, p.request.beneficiary)?;
         validate_receipts(&p)?;
         crate::capacity::admit_credit(
             db,
@@ -464,6 +474,8 @@ pub fn begin_payment(wallet: Principal, id: &[u8], now: u64) -> Result<Payment> 
             &p.request.operation,
             p.credits,
         )?;
+        crate::capacity::allocate_beneficiary(db, p.request.beneficiary, now)?;
+        crate::capacity::reserve_payment_completion(db, p.wallet, &p.request.operation)?;
         p.uncertain |= (orphan && !p.preparing) || matches!(p.status, Status::Unknown);
         p.status = Status::InFlight;
         p.generation = current;
@@ -479,6 +491,7 @@ pub enum Outcome {
     Rejected(Status),
 }
 fn credit_payment(db: &sql::Connection, p: &Payment) -> Result<()> {
+    crate::capacity::release_payment_completion(db, p.wallet, &p.request.operation)?;
     let owner = p.request.beneficiary.to_text();
     let balance: i64 = db
         .query_row(
@@ -536,6 +549,11 @@ pub fn complete_payment(sent: &Payment, outcome: Outcome) -> Result<Payment> {
                 if p.uncertain {
                     Status::Unknown
                 } else {
+                    crate::capacity::release_payment_completion(
+                        db,
+                        p.wallet,
+                        &p.request.operation,
+                    )?;
                     s
                 }
             }

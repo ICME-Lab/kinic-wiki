@@ -88,6 +88,25 @@ fn exact_credit_once_and_protected_receipt() {
     ack_credit(p(9), o, 1).unwrap();
 }
 #[test]
+fn new_bridge_link_reclaims_at_most_128_expired_other_wallet_payments() {
+    setup();
+    transaction(|db| {
+        db.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<300) INSERT INTO payments(wallet,operation,record,expires) SELECT printf('expired-%05d',x),CAST(printf('%016d',x) AS BLOB),'{}',-1 FROM n",[]).unwrap();
+        Ok(())
+    }).unwrap();
+    begin_link(p(1), vec![8; 16], 0).unwrap();
+    transaction(|db| {
+        let expired: i64 = db
+            .query_row("SELECT count(*) FROM payments WHERE expires=-1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(expired, 172);
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
 fn expired_intent_is_authoritative_not_accepted() {
     setup();
     let o = offer();
@@ -231,7 +250,7 @@ fn owner_pool_bound_is_shared_with_bridge_and_no_account_for_links() {
     .unwrap();
 }
 #[test]
-fn bridge_pending_accounts_reserve_generic_admission() {
+fn bridge_pending_account_does_not_block_another_beneficiary() {
     setup();
     transaction(|db| {
         for n in 0..1023u32 {
@@ -246,17 +265,14 @@ fn bridge_pending_accounts_reserve_generic_admission() {
     .unwrap();
     prepare(p(1), p(9), offer(), 0).unwrap();
     transaction(|db| {
-        assert_eq!(
-            crate::capacity::admit_beneficiary(db, p(3)),
-            Err(Error::QuotaExceeded)
-        );
+        crate::capacity::allocate_beneficiary(db, p(3), 0)?;
         Ok(())
     })
     .unwrap();
     receive(p(9), offer(), 1, 100, |n| n).unwrap();
 }
 #[test]
-fn global_payment_pool_rejects_1025th_bridge_row() {
+fn bridge_link_admits_after_a_thousand_other_payment_rows() {
     setup();
     transaction(|db| {
         for n in 0..1024u32 {
@@ -274,7 +290,7 @@ fn global_payment_pool_rejects_1025th_bridge_row() {
         Ok(())
     })
     .unwrap();
-    assert_eq!(begin_link(p(1), vec![2; 16], 0), Err(Error::QuotaExceeded));
+    begin_link(p(1), vec![2; 16], 0).unwrap();
 }
 #[test]
 fn upgrade_keeps_prepared_and_claimed_records_and_serial() {
@@ -299,7 +315,7 @@ fn legacy_icrc_admission_counts_bridge_even_with_same_operation() {
     prepare(p(1), p(9), o.clone(), 0).unwrap();
     transaction(|db| {
         db.execute(
-            "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES(?1,?2,0,0)",
+            "UPDATE accounts SET balance_cycles=?2 WHERE owner=?1",
             params![p(1).to_text(), i64::MAX - 20_000_050],
         )
         .unwrap();

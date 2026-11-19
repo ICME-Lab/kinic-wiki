@@ -21,7 +21,6 @@ impl crate::state::State {
                 amount
             } else {
                 let cycles = VAULT_INITIAL_CYCLES;
-                crate::capacity::admit_beneficiary(db, owner)?;
                 crate::key_subsidy::initialize_in(db, &principal)?;
                 crate::accounting::settle_storage(db, &principal, now)
                     .map_err(|_| Error::Storage)?;

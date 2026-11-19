@@ -43,14 +43,6 @@ pub(crate) fn schema_statements() -> Vec<String> {
         SMALL_ROW,
         &format!("OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT}"),
     );
-    // Confirmed credits replace a durable pending membership. New accounts cannot bypass transfer admission.
-    count_guard(
-        &mut statements,
-        "accounts",
-        "owner=NEW.owner",
-        ACCOUNTS,
-        "AND NOT EXISTS(SELECT 1 FROM payments WHERE json_extract(record,'$.request.beneficiary')=NEW.owner AND json_extract(record,'$.status') IN ('InFlight','Unknown'))",
-    );
     guard(
         &mut statements,
         "payments",
@@ -58,13 +50,6 @@ pub(crate) fn schema_statements() -> Vec<String> {
         1,
         PAYMENT_ROW,
         "OR length(NEW.operation)<>16 OR length(CAST(NEW.wallet AS BLOB))>63",
-    );
-    count_guard(
-        &mut statements,
-        "payments",
-        "wallet=NEW.wallet AND operation=NEW.operation",
-        PAYMENTS,
-        "",
     );
     guard(
         &mut statements,
@@ -91,13 +76,6 @@ pub(crate) fn schema_statements() -> Vec<String> {
             "OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT} OR length(CAST(NEW.token AS BLOB))>{TOKEN} OR length(NEW.token)=0"
         ),
     );
-    count_guard(
-        &mut statements,
-        "vault_cycle_reservations",
-        "owner=NEW.owner AND token=NEW.token",
-        RESERVATIONS,
-        "",
-    );
     guard(
         &mut statements,
         "account_ledger",
@@ -108,7 +86,6 @@ pub(crate) fn schema_statements() -> Vec<String> {
             "OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT} OR length(CAST(NEW.kind AS BLOB))>{KIND} OR length(NEW.operation)>16"
         ),
     );
-    count_guard(&mut statements, "account_ledger", "id=NEW.id", AUDIT, "");
     // Seven fixed global setting slots plus the billing cursor fit the prepaid pool.
     guard(
         &mut statements,
@@ -135,32 +112,88 @@ pub(crate) fn schema_statements() -> Vec<String> {
     );
     statements
 }
-/// Pending payments reserve the future beneficiary account before debit.
-pub fn admit_beneficiary(db: &Connection, beneficiary: candid::Principal) -> Result<()> {
-    let mut owners = std::collections::BTreeSet::<String>::new();
-    let mut stmt = db
-        .prepare("SELECT owner FROM accounts")
-        .map_err(|_| Error::Storage)?;
-    owners.extend(
-        sql::query_map(&mut stmt, params![], |r| sql::row_get::<String>(r, 0))
-            .map_err(|_| Error::Storage)?,
-    );
-    for payment in crate::funding::all_payments(db)? {
-        let p = payment?;
-        if matches!(
-            p.status,
-            crate::funding::Status::InFlight | crate::funding::Status::Unknown
-        ) {
-            owners.insert(p.request.beneficiary.to_text());
-        }
-    }
-    for (owner, _, _) in crate::bridge::reservations(db)? {
-        owners.insert(owner.to_text());
-    }
-    if !owners.contains(&beneficiary.to_text()) && owners.len() >= ACCOUNTS {
-        return Err(Error::QuotaExceeded);
-    }
+/// Allocate the beneficiary account row in the same transaction as dispatch admission.
+pub(crate) fn allocate_beneficiary(
+    db: &Connection,
+    beneficiary: candid::Principal,
+    now: u64,
+) -> Result<()> {
+    db.execute(
+        "INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms)
+         VALUES(?1,0,0,?2) ON CONFLICT(owner) DO NOTHING",
+        params![beneficiary.to_text(), (now / 1_000_000) as i64],
+    )
+    .map_err(|_| Error::Storage)?;
     Ok(())
+}
+
+pub(crate) const PAYMENT_COMPLETION_BYTES: u64 = 1_048_576;
+
+/// Allocate SQLite pages before a transfer could have been dispatched.
+pub(crate) fn reserve_payment_completion(
+    db: &Connection,
+    wallet: candid::Principal,
+    operation: &[u8],
+) -> Result<()> {
+    db.execute(
+        "INSERT INTO payment_completion_reservations(wallet,operation,spare)
+         VALUES(?1,?2,zeroblob(?3)) ON CONFLICT(wallet,operation) DO NOTHING",
+        params![wallet.to_text(), operation, PAYMENT_COMPLETION_BYTES as i64],
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(())
+}
+
+/// Release this wallet's expired slots, then make bounded progress on global
+/// expiry without turning one new admission into an unbounded delete.
+pub(crate) fn collect_expired_payments(
+    db: &Connection,
+    wallet: candid::Principal,
+    now_seconds: i64,
+) -> Result<()> {
+    db.execute("DELETE FROM payments WHERE rowid IN (SELECT rowid FROM payments WHERE wallet=?1 AND expires<?2 ORDER BY expires LIMIT 16)",params![wallet.to_text(),now_seconds]).map_err(|_|Error::Storage)?;
+    db.execute("DELETE FROM payments WHERE rowid IN (SELECT rowid FROM payments WHERE expires<?1 ORDER BY expires LIMIT 128)",params![now_seconds]).map_err(|_|Error::Storage)?;
+    Ok(())
+}
+pub(crate) fn release_payment_completion(
+    db: &Connection,
+    wallet: candid::Principal,
+    operation: &[u8],
+) -> Result<()> {
+    db.execute(
+        "DELETE FROM payment_completion_reservations WHERE wallet=?1 AND operation=?2",
+        params![wallet.to_text(), operation],
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(())
+}
+
+/// Sum logical reservations for aggregate reporting. Admission never calls this.
+pub(crate) fn accounting_reserved(db: &Connection) -> Result<u64> {
+    let mut total = 0u64;
+    for (table, row) in [
+        ("accounts", SMALL_ROW as u64),
+        ("payments", PAYMENT_ROW as u64),
+        ("quote_fee_flights", PAYMENT_ROW as u64),
+        ("vault_cycle_reservations", SMALL_ROW as u64),
+        ("account_ledger", SMALL_ROW as u64),
+        ("vault_storage_billing_state", BILLING_CURSOR_ROW as u64),
+        ("initial_cycle_grants", GRANT_ROW as u64),
+        ("key_subsidies", SUBSIDY_ROW as u64),
+        ("payment_completion_reservations", PAYMENT_COMPLETION_BYTES),
+    ] {
+        let count: i64 = db
+            .query_row(&format!("SELECT count(*) FROM {table}"), params![], |r| {
+                sql::row_get(r, 0)
+            })
+            .map_err(|_| Error::Storage)?;
+        let bytes = u64::try_from(count)
+            .map_err(|_| Error::Storage)?
+            .checked_mul(row)
+            .ok_or(Error::Storage)?;
+        total = total.checked_add(bytes).ok_or(Error::Storage)?;
+    }
+    Ok(total)
 }
 
 /// Receipts are permanent and independently bounded; old DDL remains immutable
