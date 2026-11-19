@@ -126,6 +126,8 @@ function ledgerFixture(decimals: number, expiration: [] | [bigint] = []) {
 const query = { host: "http://localhost:4943", owner, ledger, spender };
 
 it.each([
+  ["http://[::1]:4943", false, true],
+  ["http://0.0.0.0:4943", false, true],
   ["http://localhost:4943", false, true],
   ["http://replica.localhost:4943", false, true],
   ["http://127.0.0.1:4943", true, true],

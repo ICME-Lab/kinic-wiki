@@ -165,7 +165,7 @@ describe("funding transports", () => {
     expect(wallet.requestPermissions).toHaveBeenCalledWith({ params: { scopes: [{ method: "icrc49_call_canister" }] }, options: { timeoutInMilliseconds: 120000 } });
     await expect(transport.approve(canisterId, approval)).rejects.toMatchObject({ code: "Unknown" });
   });
-  it.each(["http://127.0.0.1:4943", "http://replica.localhost:4943"])("rejects a mainnet OISY signer before opening it for a local ledger %s", async host => {
+  it.each(["http://0.0.0.0:4943", "http://[::1]:4943", "http://127.0.0.1:4943", "http://replica.localhost:4943"])("rejects a mainnet OISY signer before opening it for a local ledger %s", async host => {
     const openSigner = vi.fn(async () => signer() as OisySigner);
     const manager = createWalletSessionManager({ ...config, host, signerUrl: "https://oisy.com/sign", transports: { openSigner } });
     await expect(manager.connect("oisy", scopes)).rejects.toMatchObject({ reason: "unsupported-network" });

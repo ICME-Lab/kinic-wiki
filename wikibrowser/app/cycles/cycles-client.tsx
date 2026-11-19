@@ -48,11 +48,18 @@ export function CyclesClient({canisterId, databaseId, databaseStatus}: Props) {
   const availableTarget = (linkedTarget?.status ?? databaseStatus) !== "deleted";
   const ready = source === "ii" ? !!principal : walletSnapshot.account?.provider === source && walletPaymentReady;
   const generation = walletSnapshot.generation;
+  const {wallet, refreshWalletBalance, refreshIdentityLedgerBalanceFor} = session;
+  const canRefreshCredit = !!principal && !!linkedTarget;
   const create = useCallback(({store, isCurrent}: FlowBinding) =>
     currentData && configured && validTarget && ready && walletSession.getSnapshot().generation === generation ?
       createWikiCyclesPaymentAdapter({store, isCurrent, canisterId, databaseId, authIdentity: principal ? authClient?.getIdentity() : undefined,
-        walletSession, source, billingClient:createWikiBillingClient(currentData.config)}) : null,
-    [authClient, canisterId, currentData, configured, databaseId, generation, principal, ready, source, validTarget, walletSession]);
+        walletSession, source, canRefreshCredit, billingClient:createWikiBillingClient(currentData.config),
+        refreshPayer: async () => {
+          if (!isCurrent()) return;
+          if (source === "ii" && authClient && principal) await refreshIdentityLedgerBalanceFor(authClient.getIdentity(), principal);
+          else if (wallet && wallet.provider === source) await refreshWalletBalance(wallet);
+        }}) : null,
+    [authClient, canisterId, currentData, configured, databaseId, generation, principal, ready, source, validTarget, walletSession, canRefreshCredit, wallet, refreshWalletBalance, refreshIdentityLedgerBalanceFor]);
   const flow = usePaymentFlow(create, walletSession);
   const {state, active} = flow;
   const {summary, status} = paymentPresentation(state, flow.approvalPaid, flow.checked, creditLabel);
@@ -81,7 +88,11 @@ export function CyclesClient({canisterId, databaseId, databaseStatus}: Props) {
   if (state.phase === "unresolved" || state.phase === "failed" || state.phase === "ready"
     || (state.phase === "complete" && state.cleanupPending))
     recoveryActions.push({label: state.phase === "ready" && !flow.approvalPaid ? "Edit payment" : "Check payment status", run:() => { void flow.check(); }});
-  if (state.balanceUnavailable) recoveryActions.push({label:"Refresh credit balance",run:() => { void active.current?.controller.refreshBalance(); }});
+  if (state.canCancelUnsubmitted) {
+    status.message = (status.message ?? "") + " Dismissing this local record keeps the ledger allowance and any approval fee already charged.";
+    recoveryActions.push({label:"Dismiss expired payment", run:() => { void active.current?.controller.cancelUnsubmitted(); }});
+  }
+  if (canRefreshCredit && state.balanceUnavailable) recoveryActions.push({label:"Refresh credit balance",run:() => { void active.current?.controller.refreshBalance(); }});
   if (state.phase === "complete") recoveryActions.push({label:"View database",run:() => {
     const params = new URLSearchParams({funding:"success",database_id:databaseId,provider:source,
       kinic:summary?.amount ?? amount, cycles:state.receipt?.creditedCycles.toLocaleString("en-US") ?? ""});

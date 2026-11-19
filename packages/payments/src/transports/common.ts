@@ -65,10 +65,7 @@ export async function actorReply(actor: WalletActor, request: WalletCall, before
   if (!Array.isArray(values)) throw new PaymentFailure("InvalidReply");
   return IDL.encode(fn.retTypes, values);
 }
-export function configuredLoopback(host: string): boolean {
-  const name = new URL(host).hostname;
-  return name === "localhost" || name.endsWith(".localhost") || name === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(name);
-}
+export { configuredLoopback } from "../network";
 export interface Lifetime {
   assertActive(): void;
   invalidate(reason: WalletIssue): void;

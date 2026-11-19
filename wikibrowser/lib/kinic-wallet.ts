@@ -29,6 +29,7 @@ type CyclesPurchaseResult = {
 };
 
 type MarketPurchaseRequest = {
+  isCurrent?: () => boolean;
   canisterId: string;
   listingId: string;
   priceE8s: bigint;
@@ -274,11 +275,13 @@ export async function purchaseCyclesWithIdentity(request: CyclesPurchaseRequest,
 
 export async function purchaseMarketAccessWithIdentity(request: MarketPurchaseRequest, identity: Identity): Promise<MarketPurchaseResult> {
   const prepared = await prepareMarketPurchase(request, identity.getPrincipal().toText());
+  assertFundingCurrent(request.isCurrent);
   const { value: order, approveBlockIndex } = await runIdentityAllowanceCall(prepared, request.canisterId, identity, async (vfsActor) => {
+    assertFundingCurrent(request.isCurrent);
     const result = await vfsActor.market_purchase_access(rawMarketPurchaseRequest(request));
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
-  });
+  }, request.isCurrent);
   return normalizeMarketOrder(order, "ii", approveBlockIndex, prepared.approvedAllowanceE8s.toString());
 }
 
@@ -315,31 +318,38 @@ export async function purchaseMarketAccessWithPlug(request: MarketPurchaseReques
 async function purchaseExternalMarketAccess(request: MarketPurchaseRequest, wallet: ConnectedKinicWallet): Promise<MarketPurchaseResult> {
   assertDefaultWallet(wallet.connection);
   const prepared = await prepareMarketPurchase(request, connectedWalletPrincipal(wallet));
+  assertFundingCurrent(request.isCurrent);
   const { value: order, approveBlockIndex } = await runExternalAllowanceCall(prepared, request.canisterId, wallet, async transport => {
-    const result = await callWikiWithPayer(transport, request.canisterId, "market_purchase_access", [rawMarketPurchaseRequest(request)]);
+    const result = await callWikiWithPayer(transport, request.canisterId, "market_purchase_access", [rawMarketPurchaseRequest(request)], request.isCurrent);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
-  });
+  }, request.isCurrent);
   return normalizeMarketOrder(order, wallet.provider, approveBlockIndex, prepared.approvedAllowanceE8s.toString());
 }
 
+function assertFundingCurrent(isCurrent?: () => boolean) {
+  if (isCurrent && !isCurrent()) throw new Error("The selected payment has changed.");
+}
+
 async function runExternalAllowanceCall<T>(
-  prepared: PreparedKinicAllowance, canisterId: string, wallet: ConnectedKinicWallet, call: (transport: FundingTransport) => Promise<T>
+  prepared: PreparedKinicAllowance, canisterId: string, wallet: ConnectedKinicWallet, call: (transport: FundingTransport) => Promise<T>,
+  isCurrent?: () => boolean
 ): Promise<AllowanceCallResult<T>> {
   const session = wallet.connection.session;
   const manager = session ?? createWikiWalletSession(true);
   const scopes = wikiPaymentScopes(canisterId, prepared.kinicLedgerCanisterId);
   try {
     const transport = session ? await manager.revalidate(scopes) : await manager.connect(wallet.provider, scopes);
+    assertFundingCurrent(isCurrent);
     if (transport.account.provider !== wallet.provider || transport.account.owner !== connectedWalletPrincipal(wallet)
       || (session && wallet.connection.transport !== transport)) throw new Error("Wallet account changed; reconnect the wallet.");
     let approveBlockIndex: string | null = null;
     if (prepared.approvalRequired) {
       const args = rawApproveArgs(canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt);
-      try { approveBlockIndex = (await transport.approve(prepared.kinicLedgerCanisterId, args)).toString(); }
+      try { approveBlockIndex = (await transport.approve(prepared.kinicLedgerCanisterId, args, {isCurrent})).toString(); }
       catch (error) { throw new Error(`ledger approve failed: ${errorMessage(error)}`); }
     }
-    const value = await callAfterApprove(() => call(transport), { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
+    const value = await callAfterApprove(() => { assertFundingCurrent(isCurrent); return call(transport); }, { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
     return { value, approveBlockIndex };
   } finally {
     if (!session) {
@@ -353,11 +363,13 @@ async function runIdentityAllowanceCall<T>(
   prepared: PreparedKinicAllowance,
   canisterId: string,
   identity: Identity,
-  callCanister: (vfsActor: PlugVfsActor) => Promise<T>
+  callCanister: (vfsActor: PlugVfsActor) => Promise<T>,
+  isCurrent?: () => boolean
 ): Promise<AllowanceCallResult<T>> {
   let approveBlockIndex: string | null = null;
   if (prepared.approvalRequired) {
     const ledgerActor = await createLedgerActor(prepared.kinicLedgerCanisterId, identity);
+    assertFundingCurrent(isCurrent);
     const approve = await ledgerActor.icrc2_approve(
       rawApproveArgs(canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt)
     );

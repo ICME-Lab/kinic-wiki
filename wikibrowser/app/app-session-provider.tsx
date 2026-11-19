@@ -5,12 +5,13 @@
 // Why: funding can move between pages without losing local wallet context.
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { getConnectedWalletKinicBalance, getPrincipalKinicLedgerBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
 import type { HeaderWalletProvider } from "./home-ui";
 
 import type { WalletSessionManager, WalletSessionSnapshot } from "@kinic/payments/wallet-session";
+import { useWikiWalletOwner } from "./wiki-wallet-lifetime";
 import { createWikiWalletSession, wikiPaymentScopes } from "@/lib/wallet-runtime";
 import { getCyclesBillingConfig } from "@/lib/vfs-client";
 
@@ -59,7 +60,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [identityLedgerBalance, setIdentityLedgerBalance] = useState<string | null>(null);
   const [identityLedgerBalanceError, setIdentityLedgerBalanceError] = useState<string | null>(null);
   const [identityLedgerBalanceLoading, setIdentityLedgerBalanceLoading] = useState(false);
-  const [walletSession] = useState(createWikiWalletSession);
+  const owner = useWikiWalletOwner();
+  const [walletSession] = useState(() => owner ? owner(createWikiWalletSession) : createWikiWalletSession());
   const walletSnapshot = useSyncExternalStore(walletSession.subscribe, walletSession.getSnapshot, walletSession.getSnapshot);
   const [ledger, setLedger] = useState<string | null>(null);
   const wallet = useMemo<ConnectedKinicWallet | null>(() => {
@@ -79,6 +81,13 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [walletBusyProvider, setWalletBusyProvider] = useState<HeaderWalletProvider | null>(null);
   const [walletControlsLocked, setWalletControlsLockedState] = useState(false);
   const authLock = useRef(false);
+  const routeActive = useRef(true);
+  useLayoutEffect(() => {
+    routeActive.current = true;
+    return () => {
+      routeActive.current = false;
+    };
+  }, []);
   const [authControlsLocked, setAuthControlsLockedState] = useState(false);
   const [walletSessionReady, setWalletSessionReady] = useState(false);
   const principalRef = useRef(principal);
@@ -176,7 +185,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const connectWallet = useCallback(
     async (provider: HeaderWalletProvider) => {
-      if (walletControlsLocked || walletBusyProvider) return;
+      if (!routeActive.current || walletControlsLocked || walletBusyProvider) return;
       const seq = ++connectSequence.current;
       setWalletBusyProvider(provider);
       setWalletBalanceError(null);
@@ -188,7 +197,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           if (provider === "oisy") await walletSession.connect(provider, []);
           const token = walletSession.capture();
           ledgerId = (await getCyclesBillingConfig(canisterId)).kinicLedgerCanisterId;
-          if (!walletSession.isCurrent(token) || seq !== connectSequence.current) return;
+          if (!routeActive.current || !walletSession.isCurrent(token) || seq !== connectSequence.current) return;
           setLedger(ledgerId);
         }
         await walletSession.connect(provider, wikiPaymentScopes(canisterId, ledgerId));
@@ -206,7 +215,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const disconnectWallet = useCallback(
     (provider: HeaderWalletProvider) => {
-      if (walletControlsLocked || walletSession.getSnapshot().account?.provider !== provider) return;
+      if (!routeActive.current || walletControlsLocked || walletSession.getSnapshot().account?.provider !== provider) return;
       connectSequence.current++;
       setWalletBusyProvider(null);
       void walletSession.disconnect().catch(cause => setWalletBalanceError(errorMessage(cause)));
@@ -216,9 +225,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const syncAuth = useCallback(
     async (client: AuthClient, active: () => boolean = () => true) => {
+      if (!routeActive.current) return;
       const seq = ++authSequence.current;
       const authenticated = await client.isAuthenticated();
-      if (!active() || seq !== authSequence.current) return;
+      if (!routeActive.current || !active() || seq !== authSequence.current) return;
       const identity = authenticated ? client.getIdentity() : undefined;
       walletSession.setIdentity(identity);
       setPrincipal(identity?.getPrincipal().toText() ?? null);
@@ -227,7 +237,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   );
 
   const login = useCallback(async () => {
-    if (!authClient || authLock.current) return;
+    if (!routeActive.current || !authClient || authLock.current) return;
     setAuthLoading(true);
     setAuthError(null);
     await authClient.login({
@@ -243,7 +253,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, [authClient, syncAuth]);
 
   const logout = useCallback(async () => {
-    if (!authClient) return;
+    if (!routeActive.current || !authClient) return;
     setAuthLoading(true);
     setAuthError(null);
     try {
@@ -274,7 +284,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     const suspend = () => {
       connectSequence.current++;
       setWalletBusyProvider(null);
-      walletSession.suspend();
+      if (!owner) walletSession.suspend();
     };
     window.addEventListener("pagehide", suspend);
     window.addEventListener("pageshow", restore);
@@ -304,7 +314,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("pageshow", restore);
       suspend();
     };
-  }, [canisterId, syncAuth, walletSession]);
+  }, [canisterId, syncAuth, walletSession, owner]);
 
   useEffect(() => {
     if (!authClient || !principal) {

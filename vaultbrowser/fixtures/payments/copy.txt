@@ -1,0 +1,7 @@
+Synthetic test funding. No real KINIC is used.
+Payment source
+Internet Identity
+OISY
+Plug
+KINIC amount
+Review payment

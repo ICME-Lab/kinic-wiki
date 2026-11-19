@@ -2,7 +2,7 @@
 
 import { AppLink as Link } from "@/components/app-link";
 import { CheckCircle, Database, FileText, GitBranch, ShoppingCart, Tag, User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "@/components/ui/toast";
 import { useAppSession } from "@/app/app-session-provider";
@@ -65,6 +65,13 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   principalRef.current = principal;
   walletRef.current = wallet;
 
+  const purchaseLifetime = useRef<{ attempt: "unstarted" | "busy" | "settled" } | null>(null);
+  useLayoutEffect(() => {
+    purchaseLifetime.current = {attempt: "unstarted"};
+    setPurchaseState("idle");
+    return () => { purchaseLifetime.current = null; };
+  }, [authClient, principal, canisterId, listingId, fundingChoice.selected, wallet]);
+
   const listingView = detail?.listing ?? null;
   const listing = listingView?.listing ?? null;
   const metadata = listingView?.databaseMetadata ?? null;
@@ -73,33 +80,37 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   const selectedBalance = fundingChoice.selected === "ii" ? identityLedgerBalance : walletBalance;
   const selectedBalanceError = fundingChoice.selected === "ii" ? identityLedgerBalanceError : walletBalanceError;
   const selectedBalanceLoading = fundingChoice.selected === "ii" ? identityLedgerBalanceLoading : walletBalanceLoading;
-  const needsPlugConsent = fundingChoice.selected === "wallet" && wallet?.provider === "plug" && !walletPaymentReady;
+  const needsWalletConsent = fundingChoice.selected === "wallet" && wallet !== null && !walletPaymentReady;
   const selectedSourceAvailable = fundingChoice.selected === "ii" ? Boolean(authClient && principal) : Boolean(wallet);
   const selectedBalanceSufficient = listing !== null && balanceCanFund(selectedBalance, requiredBalanceE8s);
 
+  const activeDetailRequest = useRef<symbol | null>(null);
   const load = useCallback(async () => {
+    const request = Symbol();
+    activeDetailRequest.current = request;
     setState("loading");
     setMessage(null);
     try {
       const nextListing = await marketGetListing(canisterId, listingId);
+      if (activeDetailRequest.current !== request) return;
       setDetail(nextListing);
       setState("idle");
     } catch (cause) {
+      if (activeDetailRequest.current !== request) return;
       setMessage(listingErrorMessage(cause));
       setState("error");
     }
   }, [canisterId, listingId]);
 
   const loadPurchasePreview = useCallback(async () => {
-    if (!authClient || !principal) {
-      setPurchaseState("idle");
-      return;
-    }
+    const lifetime = purchaseLifetime.current;
+    if (!authClient || !principal || !lifetime || lifetime.attempt !== "unstarted") return;
     try {
       const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listingId);
-      setPurchaseState(preview.alreadyEntitled ? "success" : "idle");
+      if (purchaseLifetime.current === lifetime && lifetime.attempt === "unstarted")
+        setPurchaseState(preview.alreadyEntitled ? "success" : "idle");
     } catch {
-      setPurchaseState((current) => (current === "success" ? "success" : "idle"));
+      // A purchase checks entitlement again using the selected identity.
     }
   }, [authClient, canisterId, listingId, principal]);
 
@@ -115,20 +126,20 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     if (!sourceAtSubmit || !selectedBalanceSufficient || selectedBalanceLoading || selectedBalanceError) return;
     const listingAtSubmit = listing;
     const principalAtSubmit = principal;
+    const lifetime = purchaseLifetime.current;
+    if (!lifetime || lifetime.attempt === "busy" || listingAtSubmit.listingId !== listingId) return;
     const sourceIsCurrent = () => {
+      if (purchaseLifetime.current !== lifetime
+        || principalRef.current !== principalAtSubmit || authClient.getIdentity() !== identityAtSubmit) return false;
       if (sourceAtSubmit.provider === "ii") return principalRef.current === principalAtSubmit;
       const currentWallet = walletRef.current;
       return currentWallet !== null && currentWallet.provider === sourceAtSubmit.provider && connectedWalletPrincipal(currentWallet) === connectedWalletPrincipal(sourceAtSubmit);
     };
+    lifetime.attempt = "busy";
     setPurchaseState("loading");
-    let order: Awaited<ReturnType<typeof purchaseMarketAccessWithFundingSource>> | null = null;
-    let purchaseError: unknown = null;
     try {
       const preview = await marketPreviewPurchase(canisterId, identityAtSubmit, listingAtSubmit.listingId);
-      if (principalRef.current !== principalAtSubmit) {
-        setPurchaseState("idle");
-        return;
-      }
+      if (!sourceIsCurrent()) return;
       if (preview.alreadyEntitled) {
         toast.info("Access is already active.");
         setPurchaseState("success");
@@ -140,48 +151,27 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
         await load();
         return;
       }
+      let order: Awaited<ReturnType<typeof purchaseMarketAccessWithFundingSource>>;
       try {
         order = await purchaseMarketAccessWithFundingSource(
-          { canisterId, listingId: listingAtSubmit.listingId, priceE8s: BigInt(listingAtSubmit.priceE8s), accessPrincipal: principalAtSubmit },
+          { canisterId, listingId: listingAtSubmit.listingId, priceE8s: BigInt(listingAtSubmit.priceE8s), accessPrincipal: principalAtSubmit, isCurrent: sourceIsCurrent },
           sourceAtSubmit
         );
-      } catch (cause) {
-        purchaseError = cause;
-      }
-      if (sourceIsCurrent()) {
-        try {
-          if (sourceAtSubmit.provider === "ii") await refreshIdentityLedgerBalanceFor(sourceAtSubmit.identity, principalAtSubmit);
-          else await refreshWalletBalance(sourceAtSubmit);
-        } catch {
-          // Preserve the original purchase error when a balance refresh also fails.
+      } finally {
+        if (sourceIsCurrent()) {
+          try {
+            if (sourceAtSubmit.provider === "ii") await refreshIdentityLedgerBalanceFor(sourceAtSubmit.identity, principalAtSubmit);
+            else await refreshWalletBalance(sourceAtSubmit);
+          } catch {
+            // The purchase response remains authoritative if balance refresh fails.
+          }
         }
       }
-      if (purchaseError !== null) {
-        if (!sourceIsCurrent() || principalRef.current !== principalAtSubmit) {
-          setPurchaseState("idle");
-          return;
-        }
-        const errorText = errorMessage(purchaseError);
-        if (errorText.includes("active entitlement already exists")) {
-          toast.info("Access is already active.");
-          setPurchaseState("success");
-          return;
-        }
-        toast.error(errorText);
-        setPurchaseState("error");
-        return;
-      }
-      if (!order || principalRef.current !== principalAtSubmit || !sourceIsCurrent()) {
-        setPurchaseState("idle");
-        return;
-      }
+      if (!sourceIsCurrent()) return;
       toast.success(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
       setPurchaseState("success");
     } catch (cause) {
-      if (principalRef.current !== principalAtSubmit) {
-        setPurchaseState("idle");
-        return;
-      }
+      if (!sourceIsCurrent()) return;
       const message = errorMessage(cause);
       if (message.includes("active entitlement already exists")) {
         toast.info("Access is already active.");
@@ -190,14 +180,17 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       }
       toast.error(message);
       setPurchaseState("error");
+    } finally {
+      lifetime.attempt = "settled";
     }
   }
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timer);
+  useLayoutEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      activeDetailRequest.current = null;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -205,7 +198,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       void loadPurchasePreview();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadPurchasePreview]);
+  }, [loadPurchasePreview, fundingChoice.selected, wallet]);
 
   useEffect(() => {
     setWalletControlsLocked(purchaseState === "loading");
@@ -278,18 +271,18 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                   <button
                     className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-onAction hover:bg-actionHover disabled:opacity-60"
                     disabled={
-                      !principal ||
+                      !principal || listing.listingId !== listingId ||
                       !selectedSourceAvailable ||
-                      (!needsPlugConsent && (!selectedBalanceSufficient || selectedBalanceLoading || Boolean(selectedBalanceError))) ||
+                      (!needsWalletConsent && (!selectedBalanceSufficient || selectedBalanceLoading || Boolean(selectedBalanceError))) ||
                       (fundingChoice.selected === "wallet" && walletBusyProvider !== null) ||
                       purchaseState === "loading" ||
                       purchaseState === "success"
                     }
                     type="button"
-                    onClick={() => needsPlugConsent ? void connectWallet("plug") : void purchase()}
+                    onClick={() => needsWalletConsent && wallet ? void connectWallet(wallet.provider) : void purchase()}
                   >
                     <ShoppingCart aria-hidden size={17} />
-                    <span>{purchaseState === "success" ? "Purchased" : needsPlugConsent ? "Authorize Plug for purchase" : `Purchase with ${fundingChoice.selected === "ii" ? "Internet Identity" : wallet?.provider === "plug" ? "Plug" : "OISY"}`}</span>
+                    <span>{purchaseState === "success" ? "Purchased" : needsWalletConsent ? `Authorize ${wallet?.provider === "oisy" ? "OISY" : "Plug"} for purchase` : `Purchase with ${fundingChoice.selected === "ii" ? "Internet Identity" : wallet?.provider === "plug" ? "Plug" : "OISY"}`}</span>
                   </button>
                   {purchaseState === "success" ? (
                     <Link

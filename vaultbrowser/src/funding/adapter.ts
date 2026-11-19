@@ -265,7 +265,10 @@ export interface VaultAdapterOptions extends VaultHistoryOptions {
   recoveryLedger?: string;
   ownerClient: {
     identity: PrincipalIdentity; canister: string; session: {capture(): unknown};
-    actor: { account_balance(): ReturnType<_SERVICE["account_balance"]> };
+    actor: {
+      account_balance(): ReturnType<_SERVICE["account_balance"]>;
+      get_funding_config(): ReturnType<_SERVICE["get_funding_config"]>;
+    };
   };
   store: RecoveryStore;
   readTerms?: typeof readLedgerTerms;
@@ -341,7 +344,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       && (t.allowanceExpiresAtNs === null || t.allowanceExpiresAtNs >= p.created_at_time + lifetimeNs);
   }
   function prepareTerms(p: Payment, t: LedgerTerms, approved: boolean) {
-    const approvalRequired = !approved && !enoughAllowance(p, t);
+    const approvalRequired = !approved;
     const allowanceE8s = p.request.amount_e8s + p.fee;
     const context = Object.freeze({payment: p, operation: p.request.operation, expectedAllowance: t.allowanceE8s});
     return freezeTerms({
@@ -419,9 +422,15 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       const p = await status(record);
       if (!p || outcome(p).kind !== "unsubmitted") return "changed";
       allowMoney(p);
+      const live = unwrap(await ownerClient.actor.get_funding_config())[0];
+      checkCurrent(current);
+      if (!live) return unavailable();
+      validateFunding(config, live);
+      if (live.ledger.toText() !== ledger || live.recipient.toText() !== activeRecipient || live.cycles_per_kinic !== activeRate)
+        return "changed";
       const t = await terms(p);
       const needsApproval = prepared.approvalRequired && record.stage !== "approved";
-      if (needsApproval ? (t.allowanceE8s !== prepared.context.expectedAllowance || enoughAllowance(p, t)) : !enoughAllowance(p, t))
+      if (needsApproval ? t.allowanceE8s !== prepared.context.expectedAllowance : !enoughAllowance(p, t))
         return "changed";
       preflight(p, t, needsApproval);
       return "unchanged";

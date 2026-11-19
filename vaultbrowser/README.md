@@ -105,3 +105,11 @@ Unsaved edits require confirmation before manual document/Vault changes, closing
 The startup shell provides loading, noscript and reload recovery. Import/render failures show generic recovery text, and failed initial connections offer retry. Password copying reports success or failure only for the active credential.
 
 With the synthetic fixture server running, `node vaultbrowser/scripts/verify-parity.mjs` checks routes/history, retained drafts, discard cancellation, native reload protection, lock cancellation, help and unknown routes. This uses synthetic encrypted documents and does not perform a real payment or Internet Identity acceptance run.
+
+### Local shared-payment acceptance
+
+Run `node pocketic-tests/scripts/run-vault-browser-acceptance.mjs --payments-only` to build the current frontend into a local-only Vault Wasm and start a disposable Wiki, Vault, Internet Identity and synthetic ledger. The launcher probes the certified local Wiki origins and creates its own controller identity. The shared browser verifier receives the generated project manifest and the four local URLs. It checks the deployed funding configuration before connecting a wallet, then records signed calls, approvals, purchases, reconnects, viewports and artifact digests in the project’s `shared-payment-results.json`.
+
+The Internet Identity path uses the local II service and a virtual passkey. The OISY path uses a local ICRC signer popup at the loopback gateway’s `/sign` path. The Plug path uses a fixture that grants access to selected canisters and exposes an agent bound to the same gateway. Both fixtures sign with disposable keys and use the local replica. Production wallet interfaces require separate connection testing.
+
+For official ledger accounting, set `POCKET_IC_BIN` to the verified PocketIC 16.1.0 binary, run `pnpm --dir pocketic-tests test:vault-funding-ledger`, run `pnpm --dir pocketic-tests build:vault-current` to produce the current `target/vault-ii-acceptance/vault_canister.wasm` (or set `VAULT_WALLET_ACCEPTANCE_WASM` to an explicitly built artifact), and run `node --test pocketic-tests/integration/vault-wallet-funding.test.mjs`. These tests use the pinned DFINITY ICRC ledger with synthetic balances.

@@ -16,7 +16,7 @@ export function VaultFundingProvider({config, identity, manager: supplied, child
     if (!config) return null;
     const manager = supplied ?? createWalletSessionManager({
       origin: location.origin, host: config.host,
-      signerUrl: config.local ? new URL("/sign", location.origin).href : "https://oisy.com/sign",
+      signerUrl: config.local ? new URL("/sign", config.host).href : "https://oisy.com/sign",
     });
     return {config, manager};
   }, [config, supplied]);

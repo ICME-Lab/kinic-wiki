@@ -137,14 +137,14 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
   }, [connected,config,ledger,owner,paymentComplete]);
   // A settled disabled configuration can still authorize history on the Vault.
   // While discovery is pending, its ledger is unknown and a grant would be incomplete.
-  const plugGrantReady = funding !== undefined && !!journal;
+  const grantReady = funding !== undefined && !!journal;
   const sources = fundingSources({identity:beneficiary,external,state:snapshot.state,granted,
     balance:id => id === source ? balance : null, connect:id => {
-      if (id === "plug" && !plugGrantReady) return;
+      if (!grantReady) return;
       const result = manager.connect(id,scopes);
       void result.catch(() => { if (lifecycle.current()) setNotice("Wallet connection failed. Connect the selected wallet to continue."); });
     },disconnect:() => { void manager.disconnect().catch(() => setNotice("Could not disconnect the wallet.")); }}).map(item => ({
-      ...item, connectDisabled: item.id === "plug" && !plugGrantReady,
+      ...item, connectDisabled: item.id !== "ii" && !grantReady,
     }));
   const check = async () => {
     if (storageError && selected && canList && !reading) {

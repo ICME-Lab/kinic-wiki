@@ -1,11 +1,12 @@
 // Actual certified UI + real II + actual canisters/crypto. Local fixture only.
+import { completeLocalLogin } from "./local-ii.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
-import { action, completeLogin, editor, loginButton, settle } from "./acceptance-ui.mjs";
+import { action, editor, loginButton, settle } from "./acceptance-ui.mjs";
 import { idlFactory } from "../../packages/vault-candid/index.js";
 import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 const require = createRequire(import.meta.url);
@@ -50,7 +51,7 @@ async function signIn(
 ) {
   const popup = page.waitForEvent("popup");
   await button.click();
-  return completeLogin(await popup, credentials, create);
+  return completeLocalLogin(iiURL, await popup, credentials, create);
 }
 async function inspector(page) {
   await page.route(
@@ -100,7 +101,7 @@ async function assertCleared(page) {
     { text: "", dom: "", fields: true },
   );
 }
-try {
+async function verifyAcceptance() {
   const vault = await context.newPage();
   vault.on("dialog", (d) => d.accept());
   await vault.addInitScript(() => {
@@ -370,6 +371,10 @@ try {
   );
 
   await vault.getByRole("button", { name: "Back to Vault", exact: true }).click();
+  if (process.argv.includes("--funding-only")) {
+    writeFileSync(out + "funding-only.json", JSON.stringify(results, null, 2));
+    return;
+  }
   const createTrace = startRetryTrace("create_vault");
   dropMethod = "create_vault";
   await action(vault, "Create Vault", true);
@@ -1129,7 +1134,7 @@ try {
   const shortPopup = vault.waitForEvent("popup");
   const shortStarted = Date.now();
   const shortLogin = inspect(vault, "shortLogin", iiURL, vaultURL, 35);
-  ownerCredentials = await completeLogin(await shortPopup, ownerCredentials);
+  ownerCredentials = await completeLocalLogin(iiURL, await shortPopup, ownerCredentials);
   await shortLogin;
   await vault.reload();
   await vault
@@ -1258,6 +1263,9 @@ try {
       2,
     ) + "\n",
   );
+}
+try {
+  await verifyAcceptance();
 } catch (e) {
   writeFileSync(
     out + "partial-results.json",

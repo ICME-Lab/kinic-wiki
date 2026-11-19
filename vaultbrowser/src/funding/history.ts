@@ -1,5 +1,5 @@
 import { PaymentFailure } from "@kinic/payments/errors";
-import { recoveryTargetKey, type RecoveryStore } from "@kinic/payments/recovery-store";
+import { withRecoveryLock, recoveryTargetKey, type RecoveryStore } from "@kinic/payments/recovery-store";
 import type { FundingAccount, PaymentCheck, PaymentScope } from "@kinic/payments/types";
 import type { Payment } from "@kinic/vault-candid";
 import type { BrowserConfig } from "../config";
@@ -38,7 +38,7 @@ export async function inspectVaultHistory(adapter: VaultPaymentAdapter, store: R
   const original = adapter.recordFor(payment);
   const locks = navigator.locks;
   if (!locks) return readOnlyStatusLabel(await adapter.check(original));
-  await locks.request(recoveryTargetKey(adapter.scope), {ifAvailable:true}, lock => {
+  await withRecoveryLock(locks, adapter.scope, async lock => {
     if (!lock || !isCurrent()) throw new PaymentFailure("Unavailable");
     const previous = store.list(adapter.scope)[0];
     if (!previous) store.put(original);

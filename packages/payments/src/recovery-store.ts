@@ -40,6 +40,19 @@ export function recoveryTargetKey(scope: PaymentScope): string {
   return "kinic.payments.v1:" + JSON.stringify([origin, host, ledger, spender, target]);
 }
 
+// Vault can rotate its synthetic ledger while retaining the same credit account.
+export type PaymentLocks = {
+  request(name: string, options: { ifAvailable: true }, run: (lock: object | null) => Promise<void>): Promise<void>;
+};
+
+export function withRecoveryLock(locks: PaymentLocks, scope: PaymentScope, action: (lock: object | null) => Promise<void>) {
+  const ledgerLock = () => locks.request(recoveryTargetKey(scope), {ifAvailable:true}, action);
+  if (scope.target.kind !== "vault") return ledgerLock();
+  const {origin, host, spender, target} = canonicalScope(scope);
+  const targetLock = "kinic.payments.target:" + JSON.stringify([origin, host, spender, target]);
+  return locks.request(targetLock, {ifAvailable:true}, lock => lock ? ledgerLock() : action(null));
+}
+
 export function samePaymentScope(left: PaymentScope, right: PaymentScope): boolean {
   return JSON.stringify(canonicalScope(left)) === JSON.stringify(canonicalScope(right));
 }
@@ -69,7 +82,7 @@ function access<T>(operation: () => T): T {
   }
 }
 
-export function createRecoveryStore(storage: Pick<Storage, "getItem" | "setItem" | "removeItem">) {
+export function createRecoveryStore(storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> & Partial<Pick<Storage, "length" | "key">>) {
   // A single target slot makes the original payer discoverable only to its own
   // adapter while preventing a different funding source from replacing it.
   function read(scope: PaymentScope) {
@@ -80,6 +93,23 @@ export function createRecoveryStore(storage: Pick<Storage, "getItem" | "setItem"
     });
   }
 
+  function rotatedVaultSlot(scope: PaymentScope) {
+    if (scope.target.kind !== "vault" || !storage.key) return false;
+    const {origin, host, spender, ledger, target} = canonicalScope(scope);
+    return access(() => {
+      const prefix = "kinic.payments.v1:";
+      for (let index = 0; index < (storage.length ?? 0); index++) {
+        const key = storage.key!(index);
+        if (!key?.startsWith(prefix)) continue;
+        const [otherOrigin, otherHost, otherLedger, otherSpender, otherTarget] = JSON.parse(key.slice(prefix.length));
+        if (otherOrigin === origin && otherHost === host && otherSpender === spender && otherLedger !== ledger
+          && otherTarget?.kind === "vault" && target.kind === "vault" && otherTarget.beneficiary === target.beneficiary)
+          return true;
+      }
+      return false;
+    });
+  }
+
   return {
     list(scope: PaymentScope): RecoveryRecord[] {
       const record = read(scope);
@@ -87,12 +117,13 @@ export function createRecoveryStore(storage: Pick<Storage, "getItem" | "setItem"
     },
     hasTargetConflict(scope: PaymentScope): boolean {
       const record = read(scope);
-      return record !== null && !samePaymentScope(record.scope, scope);
+      return rotatedVaultSlot(scope) || (record !== null && !samePaymentScope(record.scope, scope));
     },
     put(record: RecoveryRecord, options?: { approvalRejected: true }): void {
       const key = recoveryTargetKey(record.scope);
       const checked = access(() => decode(record, key));
       const existing = read(record.scope);
+      if (!existing && rotatedVaultSlot(record.scope)) throw new PaymentFailure("AccountChanged");
       if (existing && (!samePaymentScope(existing.scope, checked.scope) || existing.id !== checked.id))
         throw new PaymentFailure("AccountChanged");
       if (existing && stages.indexOf(checked.stage) < stages.indexOf(existing.stage)) {

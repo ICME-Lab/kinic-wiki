@@ -199,14 +199,28 @@ describe("AppSessionProvider wallet restoration", () => {
     expect(market).not.toHaveBeenCalled();
     const wallet = observed.wallet!;
     const { purchaseMarketAccessWithFundingSource } = await vi.importActual<typeof import("@/lib/kinic-wallet")>("@/lib/kinic-wallet");
-    const nativeActor = vi.spyOn(Actor, "createActor").mockReturnValueOnce({
+    const nativeActor = vi.spyOn(Actor, "createActor").mockReturnValue({
       icrc2_allowance: async () => ({ allowance: 0n, expires_at: [] })
     } as unknown as ReturnType<typeof Actor.createActor>);
     try {
+      const request = {canisterId:"aaaaa-aa", listingId:"listing", priceE8s:1000000n, accessPrincipal:"aaaaa-aa"};
+      let current = true;
+      plug.createActor.mockImplementationOnce(async () => {
+        current = false;
+        return {market_purchase_access:market, icrc2_approve:approve};
+      });
+      await expect(purchaseMarketAccessWithFundingSource({...request, isCurrent:()=>current}, wallet)).rejects.toThrow();
+      expect(approve).not.toHaveBeenCalled();
+      expect(market).not.toHaveBeenCalled();
+      current = true;
+      approve.mockImplementationOnce(async () => { current = false; return {Ok:10n}; });
+      await expect(purchaseMarketAccessWithFundingSource({...request, isCurrent:()=>current}, wallet)).rejects.toThrow();
+      expect(approve).toHaveBeenCalledTimes(1);
+      expect(market).not.toHaveBeenCalled();
       const order = await purchaseMarketAccessWithFundingSource(
         { canisterId: "aaaaa-aa", listingId: "listing", priceE8s: 1000000n, accessPrincipal: "aaaaa-aa" }, wallet);
       expect(order).toMatchObject({ buyerPrincipal: owner.toText(), approveBlockIndex: "10", ledgerBlockIndex: "19" });
-      expect(approve).toHaveBeenCalledTimes(1);
+      expect(approve).toHaveBeenCalledTimes(2);
       expect(market).toHaveBeenCalledTimes(1);
       expect(plug.requestConnect).toHaveBeenCalledTimes(1);
       expect(plug.disconnect).not.toHaveBeenCalled();
@@ -271,4 +285,73 @@ it("guards a previously captured login callback immediately when payment locks a
   const login=observed.login;
   await act(async()=>{observed.setAuthControlsLocked(true);await login();});
   expect(mocks.authClient.login).not.toHaveBeenCalled();
+});
+
+it("retains the same wallet manager across console route remounts and suspends it on pagehide", async () => {
+  const { WikiWalletLifetime } = await import("./wiki-wallet-lifetime");
+  const managers: ReturnType<typeof useAppSession>["walletSession"][] = [];
+  let previousLogin: (()=>Promise<void>) | undefined;
+  function Capture() {
+    const {walletSession, authReady,login} = useAppSession();
+    if (authReady) { managers.push(walletSession); previousLogin ??= login; }
+    return <span>{String(authReady)}</span>;
+  }
+  const route = (key:string) => <WikiWalletLifetime><AppSessionProvider key={key}><Capture/></AppSessionProvider></WikiWalletLifetime>;
+  const view = render(route("cycles"));
+  await screen.findByText("true");
+  const first = managers.at(-1)!;
+  const suspend = vi.spyOn(first,"suspend");
+  await act(async()=>{ await previousLogin!(); });
+  const oldConfirmation = mocks.authClient.login.mock.calls[0][0].onSuccess;
+  view.rerender(route("dashboard"));
+  await screen.findByText("true");
+  expect(managers.at(-1)).toBe(first);
+  expect(suspend).not.toHaveBeenCalled();
+  const updateIdentity = vi.spyOn(first,"setIdentity");
+  await act(async()=>{oldConfirmation(); await previousLogin!();});
+  expect(updateIdentity).not.toHaveBeenCalled();
+  expect(mocks.authClient.login).toHaveBeenCalledTimes(1);
+  act(()=>window.dispatchEvent(new Event("pagehide")));
+  expect(suspend).toHaveBeenCalledTimes(1);
+});
+
+
+it("retains an unscoped OISY across navigation during ledger discovery and can authorize it again", async () => {
+  const { WikiWalletLifetime } = await import("./wiki-wallet-lifetime");
+  const runtime = await import("@/lib/wallet-runtime");
+  const { getCyclesBillingConfig } = await import("@/lib/vfs-client");
+  const { createWalletSessionManager } = await import("@kinic/payments/wallet-session");
+  const config = deferred<Awaited<ReturnType<typeof getCyclesBillingConfig>>>();
+  const configMock = vi.mocked(getCyclesBillingConfig);
+  configMock.mockReturnValueOnce(config.promise).mockReturnValueOnce(config.promise);
+  const signer = {
+    permissions: async () => [{ scope: { method: "icrc27_accounts" as const }, state: "granted" as const }],
+    requestPermissions: async () => [], accounts: async () => [{ owner: "aaaaa-aa" }],
+    disconnect: async () => {}, callCanister: vi.fn(),
+  };
+  const manager = createWalletSessionManager({ origin: location.origin, host: "https://icp0.io", signerUrl: "https://oisy.com/sign",
+    storage: null, legacyStorage: null, transports: { openSigner: async () => signer } });
+  const factory = vi.spyOn(runtime, "createWikiWalletSession").mockReturnValue(manager);
+  const route = (key: string) => <WikiWalletLifetime><AppSessionProvider key={key}><SessionProbe /></AppSessionProvider></WikiWalletLifetime>;
+  let oldConnect!: Promise<void>;
+  try {
+    const view = render(route("dashboard"));
+    await waitFor(() => expect(observed.authReady).toBe(true));
+    act(() => { oldConnect = observed.connectWallet("oisy"); });
+    await waitFor(() => expect(observed.wallet?.provider).toBe("oisy"));
+    expect(observed.walletPaymentReady).toBe(false);
+    view.rerender(route("listing"));
+    await waitFor(() => expect(observed.authReady).toBe(true));
+    await act(async () => {
+      config.resolve({ kinicLedgerCanisterId: "ryjl3-tyaaa-aaaaa-aaaba-cai" } as Awaited<ReturnType<typeof getCyclesBillingConfig>>);
+      await oldConnect;
+    });
+    expect(observed.walletSession).toBe(manager);
+    expect(observed.wallet?.provider).toBe("oisy");
+    expect(observed.walletPaymentReady).toBe(false);
+    await act(async () => { await observed.connectWallet("oisy"); });
+    expect(observed.walletPaymentReady).toBe(true);
+  } finally {
+    factory.mockRestore();
+  }
 });

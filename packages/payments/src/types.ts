@@ -47,7 +47,7 @@ export type PreparedPayment<C> = Readonly<{
   termsKey: string;
 }>;
 
-export type PaymentReceipt = { reference: string; creditedCycles: bigint };
+export type PaymentReceipt = { reference: string; creditedCycles: bigint; balanceAfterCycles?: bigint };
 
 export type PaymentCheck =
   | { kind: "paid"; receipt: PaymentReceipt; acknowledgedContext?: unknown }
@@ -70,7 +70,7 @@ export type RecoveryRecord = {
 
 export interface PaymentAdapter<C> {
   scope: PaymentScope;
-  capabilities: { silentCheck: boolean; cancelUnsubmitted: boolean; scan: boolean };
+  capabilities: { silentCheck: boolean; cancelUnsubmitted: boolean; scan: boolean; refreshCredit?: boolean };
   prepare(amountE8s: bigint): Promise<PreparedPayment<C>>;
   revalidate(p: PreparedPayment<C>): Promise<"unchanged" | "changed">;
   approve(p: PreparedPayment<C>): Promise<void>;
