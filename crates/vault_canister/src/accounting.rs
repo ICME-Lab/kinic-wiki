@@ -37,17 +37,19 @@ pub(crate) fn admit_credit(
 }
 
 impl State {
-    pub fn vault_require_spending(&self, owner: &str, now: i64) -> Result<(), String> {
-        self.write_index(|tx| {
-            require_account(tx, owner)?;
-            settle_storage(tx, owner, now)?;
-            let balance = load_balance(tx, owner)?;
-            let min = 20_000_000u64;
-            if balance < i64::try_from(min).map_err(|_| "minimum cycle amount overflow")? {
-                return Err("insufficient Vault account balance".into());
+    pub fn vault_spending_available(&self, owner: &str, now: i64) -> vault_types::Result<bool> {
+        // An absent account reads as zero. A denied admission rolls settlement back.
+        match transaction(|tx| {
+            settle_storage_checked(tx, owner, now).map_err(|_| Error::Storage)?;
+            let balance = load_balance_sql(tx, owner).map_err(|_| Error::Storage)?;
+            if balance < 20_000_000 {
+                return Err(Error::QuotaExceeded);
             }
-            Ok(())
-        })
+            Ok(true)
+        }) {
+            Err(Error::QuotaExceeded) => Ok(false),
+            result => result,
+        }
     }
     #[cfg(test)]
     pub fn vault_track_storage(&self, owner: &str, bytes: u64, now: i64) -> Result<(), String> {

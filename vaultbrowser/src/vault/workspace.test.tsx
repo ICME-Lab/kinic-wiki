@@ -1379,6 +1379,188 @@ it.each(["stop", "query", "close", "unmount"])(
     }
   },
 );
+it("unlocks the workspace before the completed operation's balance refresh returns", async () => {
+  const x = await mounted();
+  await x.open();
+  let finish!: (value: { Ok: bigint }) => void;
+  vi.spyOn(x.actor, "account_balance").mockImplementationOnce(
+    () => new Promise((resolve) => { finish = resolve; }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Vaults" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh Vaults" })).toHaveProperty("disabled", false));
+  await act(async () => finish({ Ok: 50_000_000_000n }));
+});
+
+it("keeps newer paid availability when an earlier advisory reply arrives late", async () => {
+  const x = await mounted();
+  await x.open();
+  let finish!: (value: Awaited<ReturnType<typeof x.actor.get_spending_status>>) => void;
+  vi.spyOn(x.actor, "get_spending_status")
+    .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockResolvedValueOnce({ Ok: { ServiceReserveLow: null } });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Vaults" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  const refresh = screen.getByText("Refresh balance");
+  await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
+  fireEvent.click(refresh);
+  await screen.findByText(/service cycles reserve is low/i);
+  await act(async () => finish({ Ok: { Available: null } }));
+  expect(screen.getByText(/service cycles reserve is low/i)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create Vault" })).toHaveProperty("disabled", true);
+});
+
+it("confirms an interrupted committed save after credit runs out", async () => {
+  const x = await mounted();
+  await x.open();
+  const mutate = x.actor.mutate;
+  vi.spyOn(x.actor, "mutate").mockImplementationOnce(async (request) => {
+    x.lose("SaveInline");
+    x.setBalance(0n);
+    return mutate(request);
+  });
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Committed once" } });
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "Recover my save" } });
+  fireEvent.click(screen.getByText("Save document"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+  const resume = screen.getByRole("button", { name: "Resume save" });
+  await waitFor(() => expect(resume).toHaveProperty("disabled", false));
+  fireEvent.click(resume);
+  await screen.findByText("Saved.");
+  expect(x.revisions).toHaveLength(1);
+  expect(x.calls[0]).toEqual(x.calls[1]);
+  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+});
+
+it("recovers a delivered Vault creation receipt without enough credit to derive a key", async () => {
+  const x = await mounted();
+  const create = x.actor.create_vault;
+  vi.spyOn(x.actor, "create_vault").mockImplementationOnce(async (request) => {
+    x.setBalance(0n);
+    x.loseCreate();
+    return create(request);
+  });
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  clickAndDiscard(screen.getByText("Create Vault"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+  const retry = screen.getByRole("button", { name: "Retry Vault creation" });
+  await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+  fireEvent.click(retry);
+  await screen.findByRole("button", { name: "Retry opening Vault" });
+  expect(x.creation).toHaveLength(2);
+  expect(x.creation[0]).toEqual(x.creation[1]);
+  expect(x.headers).toHaveLength(3);
+  expect(derive).not.toHaveBeenCalled();
+});
+
+it.each(["reply", "rejection"] as const)(
+  "recovers the same creation at zero credit after locking before its %s",
+  async (outcome) => {
+    const x = await mounted();
+    const create = x.actor.create_vault;
+    let finish!: () => void;
+    vi.spyOn(x.actor, "create_vault").mockImplementationOnce(async (request) => {
+      const result = await create(request);
+      await new Promise<void>((resolve) => { finish = resolve; });
+      if (outcome === "rejection") throw Error("lost creation reply");
+      return result;
+    });
+    fireEvent.click(screen.getByText("Create Vault"));
+    await waitFor(() => expect(finish).toBeDefined());
+    x.setBalance(0n);
+    await act(async () => x.client.session.lock());
+    await screen.findByLabelText("Prepaid balance: 0 cycles");
+    await act(async () => finish());
+    expect(x.client.header).toBeUndefined();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    const retry = screen.getByRole("button", { name: "Retry Vault creation" });
+    expect(retry).toHaveProperty("disabled", false);
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Retry opening Vault" });
+    expect(x.creation).toHaveLength(2);
+    expect(x.creation[0]).toEqual(x.creation[1]);
+    expect(x.headers).toHaveLength(3);
+  },
+);
+
+it("offers funding after a definitive creation refusal follows a lost reply", async () => {
+  const x = await mounted();
+  const create = vi.spyOn(x.actor, "create_vault")
+    .mockImplementationOnce(async () => {
+      x.setBalance(0n);
+      throw Error("lost creation reply");
+    })
+    .mockResolvedValueOnce({ Err: { QuotaExceeded: null } });
+  fireEvent.click(screen.getByText("Create Vault"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+  const retry = screen.getByRole("button", { name: "Retry Vault creation" });
+  expect(retry).toHaveProperty("disabled", false);
+  fireEvent.click(retry);
+  await screen.findByText(/storage, operation or cycles limit/);
+  expect(retry).toHaveProperty("disabled", true);
+  expect(within(screen.getByRole("region", { name: "Choose a Vault" })).getByLabelText("KINIC amount")).toBeTruthy();
+
+  x.setBalance(50_000_000_000n);
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText("Prepaid balance: 50,000,000,000 cycles");
+  await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+  fireEvent.click(retry);
+  await screen.findByLabelText("Document title");
+  expect(create).toHaveBeenCalledTimes(3);
+  expect(create.mock.calls[0][0]).toEqual(create.mock.calls[1][0]);
+  expect(create.mock.calls[1][0]).toEqual(create.mock.calls[2][0]);
+});
+
+it("offers funding for a sponsored key when server admission is low despite the raw balance", async () => {
+  const x = await mounted();
+  x.setFirstKeyFree(true);
+  x.setBalance(25_000_000n);
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({
+    Ok: { AccountCreditLow: null },
+  });
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  fireEvent.click(screen.getByRole("button", { name: "Vault 1" }));
+  await screen.findByText(/Add prepaid balance here to retrieve/);
+
+  const panel = screen.getByRole("region", { name: "Open Vault" });
+  expect(within(panel).getByRole("button", { name: "Retry opening Vault" })).toHaveProperty("disabled", true);
+  expect(within(panel).getByLabelText("KINIC amount")).toBeTruthy();
+  expect(derive).not.toHaveBeenCalled();
+});
+
+it("retries every remaining deletion batch at zero credit from the workspace action", async () => {
+  const x = await mounted();
+  x.setBalance(0n);
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+  await openVaultSettings("Vault 2");
+  const mutate = vi.spyOn(x.actor, "mutate")
+    .mockRejectedValueOnce(Error("Lost deletion reply"))
+    .mockResolvedValueOnce({ Ok: { Progress: false } });
+  const settings = screen.getByRole("region", { name: "Vault 2 settings" });
+  fireEvent.change(within(settings).getByLabelText("Type Vault 2 to confirm"), { target: { value: "Vault 2" } });
+  fireEvent.click(within(settings).getByText("Permanently delete this Vault"));
+  const alert = await screen.findByRole("alert");
+  fireEvent.click(within(alert).getByRole("button", { name: "Retry interrupted change" }));
+  await waitFor(() => expect(x.headers).toHaveLength(1));
+  expect(mutate.mock.calls[0][0]).toEqual(mutate.mock.calls[1][0]);
+  expect(mutate.mock.calls[2][0].action).toEqual(mutate.mock.calls[1][0].action);
+  expect(mutate.mock.calls[2][0].operation).not.toEqual(mutate.mock.calls[1][0].operation);
+});
+
+it("distinguishes a low service reserve from a need to add owner credit", async () => {
+  const x = await mounted();
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({
+    Ok: { ServiceReserveLow: null },
+  });
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByText(/service cycles reserve is low/i);
+  expect(screen.getByText("Create Vault")).toHaveProperty("disabled", true);
+  expect(screen.queryByRole("button", { name: "Review payment" })).toBeNull();
+  expect(screen.getByText("Refresh Vaults")).toHaveProperty("disabled", false);
+});
+
 it("confirms saved and keeps a clean editable document before a delayed refresh, then reports refresh failure as saved", async () => {
   const x = await mounted();
   await x.open();
@@ -1682,6 +1864,32 @@ it("scopes shared open, document refresh and save to the grant when the member h
   await waitFor(() => expect(sharedReads).toHaveBeenCalledTimes(3));
   expect(ownerUploads).not.toHaveBeenCalled();
   expect(accessList).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{ AccountCreditLow: null }, false],
+  [{ ServiceReserveLow: null }, true],
+  [{ Unconfigured: null }, true],
+] as const)("applies shared Editor save admission for %j", async (status, disabled) => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Editor: null });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  const shared = await screen.findByRole("button", { name: "Vault 2 · Editor" });
+  await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+  fireEvent.click(shared);
+  await screen.findByLabelText("Document title");
+  await waitFor(() => expect(screen.getByText("Refresh balance")).toHaveProperty("disabled", false));
+
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Team note" } });
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "Editor draft" } });
+  expect(screen.getByText("Save document")).toHaveProperty("disabled", false);
+  x.setBalance(0n);
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({ Ok: status });
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+
+  await waitFor(() => expect(screen.getByText("Save document")).toHaveProperty("disabled", disabled));
+  expect(screen.getByRole("button", { name: "Refresh documents" })).toHaveProperty("disabled", false);
 });
 
 it.each(["omitted", "changed in the list", "still listed", "outside the loaded page"])(

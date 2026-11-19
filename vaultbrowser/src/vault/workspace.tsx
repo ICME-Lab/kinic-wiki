@@ -37,7 +37,7 @@ import { bytes, ok, type Item, type VaultClient } from "@kinic/vault-client";
 import type {
   Header,
   VaultAccess,
-  VaultConfig,
+  SpendingStatus,
   AccountInitialization,
   PendingUploadSummary,
 } from "@kinic/vault-client/contracts";
@@ -126,7 +126,7 @@ function Workspace({ client }: { client: VaultClient }) {
   const [generation, setGeneration] = useState(client.session.capture());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [config, setConfig] = useState<VaultConfig>();
+  const [spending, setSpending] = useState<SpendingStatus>();
   const [balance, setBalance] = useState(0n);
   const [accountReady, setAccountReady] = useState(false);
   const [keyCost, setKeyCost] = useState<bigint>();
@@ -138,10 +138,14 @@ function Workspace({ client }: { client: VaultClient }) {
   const alive = useRef(true);
   const busyRef = useRef(false);
   const workId = useRef(0);
+  const configurationRequest = useRef(0);
   const balanceRequest = useRef(0);
   const refreshBalance = useCallback(async () => {
     const request = ++balanceRequest.current;
     const ticket = client.session.capture();
+    // Admission can settle accrued storage before the balance is read.
+    const status = ok(await client.actor.get_spending_status());
+    client.session.check(ticket);
     const [balance, cost] = await Promise.all([
       client.actor.account_balance(), client.actor.vault_key_cost([]),
     ]);
@@ -149,11 +153,12 @@ function Workspace({ client }: { client: VaultClient }) {
     const firstFree = "Ok" in cost && cost.Ok.first_key_free;
     client.session.check(ticket);
     if (alive.current && request === balanceRequest.current) {
+      setSpending(status);
       setBalance(value);
       setKeyCost("Ok" in cost ? cost.Ok.fee : undefined);
       setFirstKeyFree(firstFree);
     }
-    return { balance: value, firstKeyFree: firstFree };
+    return { balance: value, firstKeyFree: firstFree, status };
   }, [client]);
   const refreshId = useRef(0);
   useLayoutEffect(() => {
@@ -231,16 +236,18 @@ function Workspace({ client }: { client: VaultClient }) {
       .catch((cause) => {
         if (current()) setError(vaultError(cause, ownerPays));
       })
-      .finally(async () => {
-        if (current() && !ownerPays) {
-          try { await refreshBalance(); }
-          catch {
-            if (current()) setError((previous) => previous || vaultError(Error("BalanceUnavailable")));
-          }
-        }
+      .finally(() => {
         if (alive.current && workId.current === request) {
           busyRef.current = false;
           setBusy(false);
+        }
+        if (current() && !ownerPays && operation !== refreshConfiguration) {
+          const refresh = refreshBalance();
+          const balanceCheck = balanceRequest.current;
+          void refresh.catch(() => {
+            if (current() && balanceCheck === balanceRequest.current)
+              setError((previous) => previous || vaultError(Error("BalanceUnavailable")));
+          });
         }
       });
   };
@@ -326,22 +333,21 @@ function Workspace({ client }: { client: VaultClient }) {
       await refreshOwnerWorkspace();
   };
   const refreshConfiguration = useCallback(async () => {
+    const request = ++configurationRequest.current;
     const ticket = client.session.capture();
     const initialization = accountInitialization.current ??= client.actor.initialize_vault_account()
       .then(ok).catch((cause) => { accountInitialization.current = undefined; throw cause; });
     const account = await initialization;
     // A deferred, unclaimed grant must be retryable after pending payments or
     // refunds settle. Permanent exclusions are idempotent zero-grant responses.
-    if (account.grant_cycles === 0n) accountInitialization.current = undefined;
+    if (account.grant_cycles === 0n && accountInitialization.current === initialization)
+      accountInitialization.current = undefined;
     client.session.check(ticket);
-    const [c] = await Promise.all([
-      client.actor.get_config(),
-      refreshBalance(),
-    ]);
+    if (request !== configurationRequest.current) return;
+    await refreshBalance();
     client.session.check(ticket);
-    if (!alive.current) return;
+    if (!alive.current || request !== configurationRequest.current) return;
     setAccountReady(true);
-    setConfig(ok(c)[0]);
   }, [client, refreshBalance]);
   useEffect(() => {
     const ticket = client.session.capture();
@@ -352,8 +358,10 @@ function Workspace({ client }: { client: VaultClient }) {
   }, [client, refreshOwnerWorkspace]);
   useEffect(() => {
     const ticket = client.session.capture();
-    void refreshConfiguration().catch((cause) => {
-      if (alive.current && ticket === client.session.capture())
+    const refresh = refreshConfiguration();
+    const request = configurationRequest.current;
+    void refresh.catch((cause) => {
+      if (alive.current && ticket === client.session.capture() && request === configurationRequest.current)
         setError(vaultError(cause));
     });
   }, [client, refreshConfiguration, generation]);
@@ -387,8 +395,11 @@ function Workspace({ client }: { client: VaultClient }) {
         client.session.check(ticket);
         if (!alive.current) throw Error("Locked");
         setSelectedKeyCost(cost.fee);
+        if ("ServiceReserveLow" in available.status) throw Error("ServiceReserveLow");
+        if ("Unconfigured" in available.status) throw Error("VaultDisabled");
         const ownerFee = available.firstKeyFree ? 0n : cost.fee;
-        if (available.balance < ownerFee + 20_000_000n) throw Error("KeyFundingRequired");
+        if ("AccountCreditLow" in available.status || available.balance < ownerFee + 20_000_000n)
+          throw Error("KeyFundingRequired");
       },
     }) : client.openAccess(bytes(header.id));
     // Capture after the synchronous switch; keep the header selectable on key failure.
@@ -428,41 +439,48 @@ function Workspace({ client }: { client: VaultClient }) {
       client.session.check(ticket);
       await open(header, true);
     });
-  // The canister reserve is not owner credit. The server checks exact paid admission.
-  const eligible = accountReady && !!config && balance >= 20_000_000n;
+  const eligible = accountReady && !!spending && "Available" in spending;
+  const ownerCreditLow = !!spending && "AccountCreditLow" in spending;
+  const serviceReserveLow = !!spending && "ServiceReserveLow" in spending;
+  const serviceUnconfigured = !!spending && "Unconfigured" in spending;
   // New Vault creation and initial key retrieval are separate charged updates.
   const ownerKeyCost = firstKeyFree ? 0n : selectedKeyCost;
-  const canRetrieveKey = ownerKeyCost !== undefined && balance >= ownerKeyCost + 20_000_000n;
+  const canRetrieveKey = eligible && ownerKeyCost !== undefined
+    && balance >= ownerKeyCost + 20_000_000n;
   // An unresolved create replays its retained operation instead of charging
   // another creation; keep enough credit for its first key retrieval.
   const creationExecutionBudget = workspace.creation === "unresolved" ? 20_000_000n : 40_000_000n;
   const creationKeyCost = firstKeyFree ? 0n : keyCost;
-  const canCreateVault = eligible && keyCost !== undefined && creationKeyCost !== undefined
+  const canAffordCreation = eligible && creationKeyCost !== undefined
     && balance >= creationKeyCost + creationExecutionBudget;
-  // Use the same admission conditions as the action currently offered by the UI.
-  const balanceRequirementKnown = accountReady && !!config && (
+  const canCreateVault = client.hasUncertainCreation || canAffordCreation;
+  const balanceRequirementKnown = (eligible || ownerCreditLow) && (
     (selected
       ? selectedOwner && (opened || ("Active" in selected.state && ownerKeyCost !== undefined))
       : keyCost !== undefined)
   );
   const canAffordCurrentOperation = opened
     ? eligible
-    : selected ? canRetrieveKey : canCreateVault;
-  const inlineFunding = nav.view === "workspace" && !settingsOpen && accountReady && !!config && !opened
+    : selected ? canRetrieveKey : canAffordCreation;
+  const inlineFunding = nav.view === "workspace" && !settingsOpen && accountReady
+    && (eligible || ownerCreditLow) && !opened
     && (selected ? selectedOwner && needsKeyFunding && !canRetrieveKey : keyCost !== undefined && !canCreateVault);
-  const retryable = !!error && client.hasPendingMutation;
+  const retryable = client.hasInterruptedChange;
   const retryButton = (className = "") => (
     <VaultButton
       size="sm"
       className={className}
-      disabled={busy || client.hasPendingSave}
+      disabled={busy}
       onClick={() =>
         run(async () => {
           const ticket = client.session.capture();
-          await client.retryMutation();
-          client.session.check(ticket);
-          if (client.session.root) await refresh();
-          else await refreshOwnerWorkspace();
+          await client.retryInterruptedChange();
+          if (client.session.root) {
+            client.session.check(ticket);
+            await refresh();
+          } else {
+            await refreshOwnerWorkspace();
+          }
         })
       }
     >
@@ -508,18 +526,30 @@ function Workspace({ client }: { client: VaultClient }) {
           {error ? <VaultButton onClick={() => run(refreshConfiguration)}>Retry account setup</VaultButton> : null}
         </div>
       ) : null}
-      {accountReady && !config ? (
+      {accountReady && serviceUnconfigured ? (
         <p className="vault-notice vault-notice--info">
           <Info size={16} aria-hidden />
           Vault creation is unavailable until the service is configured. Cleanup
           remains available.
         </p>
       ) : null}
+      {serviceReserveLow ? (
+        <output className="vault-notice vault-notice--info">
+          <Info size={16} aria-hidden />
+          New paid operations are paused because the service cycles reserve is low.
+          Cached reads and cleanup are still available.
+        </output>
+      ) : null}
       {error ? (
         <div role="alert" className="vault-notice vault-notice--danger">
           <CircleAlert size={16} aria-hidden />
           <span>{error}</span>
           {retryable ? retryButton("vault-notice-action") : null}
+        </div>
+      ) : retryable ? (
+        <div className="vault-notice vault-notice--warn">
+          <span>An interrupted change is waiting for confirmation.</span>
+          {retryButton("vault-notice-action")}
         </div>
       ) : null}
       <div hidden={nav.view !== "workspace"}>
@@ -629,7 +659,6 @@ function Workspace({ client }: { client: VaultClient }) {
                 was interrupted, retry it before starting another one.
               </p>
               <div className="vault-disclosure-actions">
-                {opened ? retryButton() : null}
                 <VaultButton
                   size="sm"
                   disabled={busy}
@@ -729,7 +758,7 @@ function Workspace({ client }: { client: VaultClient }) {
                   disabled={busy}
                   canEdit={canEdit}
                   canPurge={role === "Owner"}
-                  writesDisabled={role === "Owner" && !eligible}
+                  writesDisabled={serviceReserveLow || serviceUnconfigured || (role === "Owner" && !eligible)}
                   run={runDocument}
                   refresh={refresh}
                 />
@@ -745,7 +774,7 @@ function Workspace({ client }: { client: VaultClient }) {
                 title="Choose or create a Vault"
                 description={canCreateVault
                   ? "Create your Vault to start saving private documents."
-                  : "Add prepaid balance here, then create your Vault."}
+                  : inlineFunding ? "Add prepaid balance here, then create your Vault." : undefined}
                 action={canCreateVault ? (
                   <VaultButton tone="primary" disabled={busy} onClick={()=>guard.protect(createVault)}>
                     <Plus size={16} aria-hidden />
@@ -764,7 +793,7 @@ function Workspace({ client }: { client: VaultClient }) {
           )}
         </div>
       </div>
-      {selectedOwner && config && balance < 20_000_000n ? (
+      {selectedOwner && ownerCreditLow ? (
         <div className="vault-notice vault-notice--info">
           <Info size={16} aria-hidden />
           <span>Creating a Vault requires prepaid balance.</span>

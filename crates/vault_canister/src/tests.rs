@@ -14,6 +14,15 @@ fn funding_discovery_and_consent_are_exported() {
     );
 }
 #[test]
+fn spending_status_is_an_update_in_the_public_interface() {
+    let service = __export_service();
+    let method = service
+        .lines()
+        .find(|line| line.trim_start().starts_with("get_spending_status : () ->"));
+    assert!(method.is_some_and(|line| !line.contains("query")));
+}
+
+#[test]
 fn prepaid_payment_is_caller_bound_idempotent_and_no_read_allocation() {
     state::initialize().unwrap();
     for n in 1..100 {
@@ -563,6 +572,64 @@ fn credit(owner: Principal, amount: u64) {
     })
     .unwrap();
 }
+#[test]
+fn spending_status_settles_storage_only_when_admission_succeeds() {
+    use vault_types::SpendingStatus::*;
+
+    state::initialize().unwrap();
+    let state = state::State;
+    let principal = p(201);
+    let owner = vault_store::OwnerContext::authenticated(principal).unwrap();
+    let status = |cycles, now| api::spending_status(owner, cycles, now);
+    assert_eq!(status(100_000_000_000, 0), Ok(Unconfigured));
+    state
+        .vault_set_config(Some(VaultConfig {
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    assert_eq!(status(99_999_999_999, 0), Ok(ServiceReserveLow));
+    assert_eq!(status(100_000_000_000, 0), Ok(AccountCreditLow));
+    state::transaction(|db| {
+        let count: i64 = db
+            .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        Ok(())
+    })
+    .unwrap();
+
+    credit(principal, 20_127_000);
+    state
+        .vault_track_storage(&principal.to_text(), 1_073_741_824, 0)
+        .unwrap();
+    assert_eq!(status(100_000_000_000, 1000), Ok(Available));
+    assert_eq!(state.balance(&principal.to_text()), Ok(20_000_000));
+    assert_eq!(status(100_000_000_000, 1001), Ok(AccountCreditLow));
+    assert_eq!(state.balance(&principal.to_text()), Ok(20_000_000));
+}
+
+#[test]
+fn spending_status_reports_account_storage_failure() {
+    state::initialize().unwrap();
+    state::State
+        .vault_set_config(Some(VaultConfig {
+            key_name: "test_key_1".into(),
+            minimum_cycles: 100_000_000_000,
+        }))
+        .unwrap();
+    state::transaction(|db| {
+        db.execute("DROP TABLE accounts", []).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let owner = vault_store::OwnerContext::authenticated(p(202)).unwrap();
+    assert_eq!(
+        api::spending_status(owner, 100_000_000_000, 0),
+        Err(Error::Storage)
+    );
+}
+
 #[test]
 fn execution_checkpoints_refunds_and_storage_are_exact() {
     state::initialize().unwrap();
@@ -1370,9 +1437,11 @@ fn a_full_subsidy_faucet_still_initializes_a_funded_account() {
     let initial = state::State.initialize_account(owner, 0).unwrap();
     assert_eq!(initial.balance, 100_000_000_000);
     assert_eq!(initial.grant_cycles, 0);
-    state::State
-        .vault_require_spending(&owner.to_text(), 0)
-        .unwrap();
+    assert!(
+        state::State
+            .vault_spending_available(&owner.to_text(), 0)
+            .unwrap()
+    );
     state::transaction(|db| {
         assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
         assert_eq!(

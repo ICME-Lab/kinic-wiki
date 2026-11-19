@@ -139,14 +139,17 @@ impl Environment for Vault {
     }
 
     fn require_spending(&self) -> Result<()> {
-        let config = with_service(|s| Ok(s.vault_config()))
-            .map_err(|_| Error::Storage)??
-            .ok_or(Error::Unauthorized)?;
-        if ic_cdk::api::canister_cycle_balance() < config.minimum_cycles as u128 {
-            return Err(Error::QuotaExceeded);
+        match spending_status(
+            self.owner,
+            ic_cdk::api::canister_cycle_balance(),
+            now_millis(),
+        )? {
+            SpendingStatus::Available => Ok(()),
+            SpendingStatus::Unconfigured => Err(Error::Unauthorized),
+            SpendingStatus::ServiceReserveLow | SpendingStatus::AccountCreditLow => {
+                Err(Error::QuotaExceeded)
+            }
         }
-        with_service(|s| s.vault_require_spending(&self.owner().to_text(), now_millis()))
-            .map_err(|_| Error::QuotaExceeded)
     }
     fn checkpoint_execution(&self) -> Result<()> {
         let token = self.operation_token().ok_or(Error::Storage)?;
@@ -243,6 +246,31 @@ fn get_config() -> Result<Option<VaultConfig>> {
     OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
     crate::state::State.vault_config()
 }
+pub(crate) fn spending_status(
+    owner: OwnerContext,
+    service_cycles: u128,
+    now: i64,
+) -> Result<SpendingStatus> {
+    let state = crate::state::State;
+    let Some(config) = state.vault_config()? else {
+        return Ok(SpendingStatus::Unconfigured);
+    };
+    if service_cycles < u128::from(config.minimum_cycles) {
+        return Ok(SpendingStatus::ServiceReserveLow);
+    }
+    if state.vault_spending_available(&owner.owner().to_text(), now)? {
+        Ok(SpendingStatus::Available)
+    } else {
+        Ok(SpendingStatus::AccountCreditLow)
+    }
+}
+
+#[ic_cdk::update]
+fn get_spending_status() -> Result<SpendingStatus> {
+    let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
+    spending_status(owner, ic_cdk::api::canister_cycle_balance(), now_millis())
+}
+
 #[ic_cdk::update]
 async fn create_vault(request: CreateVault) -> Result<Header> {
     let env = Vault::capture()?;

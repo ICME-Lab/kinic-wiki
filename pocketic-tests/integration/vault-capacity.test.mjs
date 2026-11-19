@@ -26,8 +26,6 @@ const ok = (r) => {
   );
   return r.Ok;
 };
-const capacityError = (r) =>
-  assert.deepEqual(r, { Err: { QuotaExceeded: null } });
 const server = await startVaultPocketIc(PocketIcServer.getBinPath());
 let pic;
 try {
