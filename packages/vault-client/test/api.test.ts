@@ -1828,3 +1828,36 @@ describe("history response targets", () => {
     await expect(x.client.items()).rejects.toThrow("InvalidReceipt");
   });
 });
+
+
+it.each([
+  { QuotaExceeded: null }, { Unauthorized: null }, { InvalidInput: null },
+] as const)("preserves an in-flight creation across a locked retry refused with %j", async (error) => {
+  const { client, actor } = setup();
+  const create = vi.mocked(actor.create_vault);
+  let finish!: (result: Awaited<ReturnType<VaultActor["create_vault"]>>) => void;
+  create.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const original = client.create();
+  const originalResult = expect(original).rejects.toThrow("Locked");
+  client.session.lock();
+  create.mockResolvedValueOnce({ Err: error });
+  await expect(client.create()).rejects.toThrow(Object.keys(error)[0]);
+  const uncertain = client.hasUncertainCreation;
+  finish({ Ok: header() });
+  await originalResult;
+  expect(uncertain).toBe(true);
+  expect(client.hasUncertainCreation).toBe(true);
+  await expect(client.create()).resolves.toEqual(header());
+  expect(create.mock.calls[1][0].operation).toEqual(create.mock.calls[0][0].operation);
+  expect(create.mock.calls[2][0].operation).toEqual(create.mock.calls[0][0].operation);
+  expect(client.hasUncertainCreation).toBe(false);
+});
+
+it.each([
+  { QuotaExceeded: null }, { Unauthorized: null }, { InvalidInput: null },
+] as const)("clears creation uncertainty after a first definite refusal with %j", async error => {
+  const { client, actor } = setup();
+  vi.mocked(actor.create_vault).mockResolvedValueOnce({ Err: error });
+  await expect(client.create()).rejects.toThrow(Object.keys(error)[0]);
+  expect(client.hasUncertainCreation).toBe(false);
+});

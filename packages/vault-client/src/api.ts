@@ -398,6 +398,7 @@ export class VaultClient {
       this.sharedVault = undefined;
     }
     const t = this.session.capture();
+    const previouslyUncertain = this.hasUncertainCreation;
     const attempt = {
       operation: this.creating?.operation ?? randomBytes(16),
       ambiguous: true,
@@ -410,12 +411,14 @@ export class VaultClient {
     this.session.check(t);
     if (this.creating !== attempt) throw Error("Busy");
     if (
+      !previouslyUncertain &&
       "Err" in result &&
       ("QuotaExceeded" in result.Err ||
         "Unauthorized" in result.Err ||
         "InvalidInput" in result.Err)
     ) {
-      // Restore the admission gate while retaining the original operation ID.
+      // A first refusal is definite; a retry cannot rule out an earlier
+      // in-flight creation. Retain its operation ID and uncertainty.
       attempt.ambiguous = false;
     }
     const h = ok(result);
