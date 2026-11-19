@@ -398,18 +398,26 @@ export class VaultClient {
       this.sharedVault = undefined;
     }
     const t = this.session.capture();
-    const attempt = (this.creating ??= {
-      operation: randomBytes(16),
-      ambiguous: false,
+    const attempt = {
+      operation: this.creating?.operation ?? randomBytes(16),
+      ambiguous: true,
+    };
+    // A lock can prevent this session from consuming even a successful reply.
+    this.creating = attempt;
+    const result = await this.actor.create_vault({
+      operation: bytes(attempt.operation),
     });
-    const result = await this.actor
-      .create_vault({ operation: bytes(attempt.operation) })
-      .catch((error) => {
-        if (this.creating === attempt && this.session.capture() === t)
-          attempt.ambiguous = true;
-        throw error;
-      });
     this.session.check(t);
+    if (this.creating !== attempt) throw Error("Busy");
+    if (
+      "Err" in result &&
+      ("QuotaExceeded" in result.Err ||
+        "Unauthorized" in result.Err ||
+        "InvalidInput" in result.Err)
+    ) {
+      // Restore the admission gate while retaining the original operation ID.
+      attempt.ambiguous = false;
+    }
     const h = ok(result);
     if (bytes(h.id).length !== 16) throw Error("TargetChanged");
     this.header = structuredClone(h);

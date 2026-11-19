@@ -315,6 +315,27 @@ it("clears a failed rootless key attempt when creating and opening another vault
   await expect(client.open(created)).resolves.toBeUndefined();
   expect(client.session.root).toBeDefined();
 });
+it.each([
+  { Busy: null },
+  { Storage: null },
+  { Conflict: null },
+] as const)("retains an uncertain creation after %j", async (error) => {
+  const { client, actor } = setup();
+  const create = vi.mocked(actor.create_vault);
+  create
+    .mockRejectedValueOnce(Error("lost creation reply"))
+    .mockResolvedValueOnce({ Err: error });
+  await expect(client.create()).rejects.toThrow("lost creation reply");
+  await expect(client.create()).rejects.toThrow(Object.keys(error)[0]);
+  expect(client.hasUncertainCreation).toBe(true);
+  await expect(client.create()).resolves.toEqual(header());
+  expect(create.mock.calls.map(([request]) => request)).toEqual([
+    create.mock.calls[0][0],
+    create.mock.calls[0][0],
+    create.mock.calls[0][0],
+  ]);
+});
+
 it("fences an outstanding open when creation selects a different vault", async () => {
   const { client, actor, change } = setup();
   let resolve!: (value: any) => void;

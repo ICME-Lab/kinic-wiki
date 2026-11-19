@@ -1451,6 +1451,82 @@ it("recovers a delivered Vault creation receipt without enough credit to derive 
   expect(derive).not.toHaveBeenCalled();
 });
 
+it.each(["reply", "rejection"] as const)(
+  "recovers the same creation at zero credit after locking before its %s",
+  async (outcome) => {
+    const x = await mounted();
+    const create = x.actor.create_vault;
+    let finish!: () => void;
+    vi.spyOn(x.actor, "create_vault").mockImplementationOnce(async (request) => {
+      const result = await create(request);
+      await new Promise<void>((resolve) => { finish = resolve; });
+      if (outcome === "rejection") throw Error("lost creation reply");
+      return result;
+    });
+    fireEvent.click(screen.getByText("Create Vault"));
+    await waitFor(() => expect(finish).toBeDefined());
+    x.setBalance(0n);
+    await act(async () => x.client.session.lock());
+    await screen.findByLabelText("Prepaid balance: 0 cycles");
+    await act(async () => finish());
+    expect(x.client.header).toBeUndefined();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    const retry = screen.getByRole("button", { name: "Retry Vault creation" });
+    expect(retry).toHaveProperty("disabled", false);
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Retry opening Vault" });
+    expect(x.creation).toHaveLength(2);
+    expect(x.creation[0]).toEqual(x.creation[1]);
+    expect(x.headers).toHaveLength(3);
+  },
+);
+
+it("offers funding after a definitive creation refusal follows a lost reply", async () => {
+  const x = await mounted();
+  const create = vi.spyOn(x.actor, "create_vault")
+    .mockImplementationOnce(async () => {
+      x.setBalance(0n);
+      throw Error("lost creation reply");
+    })
+    .mockResolvedValueOnce({ Err: { QuotaExceeded: null } });
+  fireEvent.click(screen.getByText("Create Vault"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+  const retry = screen.getByRole("button", { name: "Retry Vault creation" });
+  expect(retry).toHaveProperty("disabled", false);
+  fireEvent.click(retry);
+  await screen.findByText(/storage, operation or cycles limit/);
+  expect(retry).toHaveProperty("disabled", true);
+  expect(within(screen.getByRole("region", { name: "Choose a Vault" })).getByLabelText("KINIC amount")).toBeTruthy();
+
+  x.setBalance(50_000_000_000n);
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText("Prepaid balance: 50,000,000,000 cycles");
+  await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+  fireEvent.click(retry);
+  await screen.findByLabelText("Document title");
+  expect(create).toHaveBeenCalledTimes(3);
+  expect(create.mock.calls[0][0]).toEqual(create.mock.calls[1][0]);
+  expect(create.mock.calls[1][0]).toEqual(create.mock.calls[2][0]);
+});
+
+it("offers funding for a sponsored key when server admission is low despite the raw balance", async () => {
+  const x = await mounted();
+  x.setFirstKeyFree(true);
+  x.setBalance(25_000_000n);
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({
+    Ok: { AccountCreditLow: null },
+  });
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  fireEvent.click(screen.getByRole("button", { name: "Vault 1" }));
+  await screen.findByText(/Add prepaid balance here to retrieve/);
+
+  const panel = screen.getByRole("region", { name: "Open Vault" });
+  expect(within(panel).getByRole("button", { name: "Retry opening Vault" })).toHaveProperty("disabled", true);
+  expect(within(panel).getByLabelText("KINIC amount")).toBeTruthy();
+  expect(derive).not.toHaveBeenCalled();
+});
+
 it("retries every remaining deletion batch at zero credit from the workspace action", async () => {
   const x = await mounted();
   x.setBalance(0n);
@@ -1786,6 +1862,32 @@ it("scopes shared open, document refresh and save to the grant when the member h
   await waitFor(() => expect(sharedReads).toHaveBeenCalledTimes(3));
   expect(ownerUploads).not.toHaveBeenCalled();
   expect(accessList).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{ AccountCreditLow: null }, false],
+  [{ ServiceReserveLow: null }, true],
+  [{ Unconfigured: null }, true],
+] as const)("applies shared Editor save admission for %j", async (status, disabled) => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Editor: null });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  const shared = await screen.findByRole("button", { name: "Vault 2 · Editor" });
+  await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+  fireEvent.click(shared);
+  await screen.findByLabelText("Document title");
+  await waitFor(() => expect(screen.getByText("Refresh balance")).toHaveProperty("disabled", false));
+
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Team note" } });
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "Editor draft" } });
+  expect(screen.getByText("Save document")).toHaveProperty("disabled", false);
+  x.setBalance(0n);
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({ Ok: status });
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText("Prepaid balance: 0 cycles");
+
+  await waitFor(() => expect(screen.getByText("Save document")).toHaveProperty("disabled", disabled));
+  expect(screen.getByRole("button", { name: "Refresh documents" })).toHaveProperty("disabled", false);
 });
 
 it.each(["omitted", "changed in the list", "still listed", "outside the loaded page"])(

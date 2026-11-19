@@ -455,9 +455,11 @@ function Workspace({ client }: { client: VaultClient }) {
   const eligible = accountReady && !!spending && "Available" in spending;
   const ownerCreditLow = !!spending && "AccountCreditLow" in spending;
   const serviceReserveLow = !!spending && "ServiceReserveLow" in spending;
+  const serviceUnconfigured = !!spending && "Unconfigured" in spending;
   // New Vault creation and initial key retrieval are separate charged updates.
   const ownerKeyCost = firstKeyFree ? 0n : selectedKeyCost;
-  const canRetrieveKey = ownerKeyCost !== undefined && balance >= ownerKeyCost + 20_000_000n;
+  const canRetrieveKey = eligible && ownerKeyCost !== undefined
+    && balance >= ownerKeyCost + 20_000_000n;
   // An unresolved create replays its retained operation instead of charging
   // another creation; keep enough credit for its first key retrieval.
   const creationExecutionBudget = workspace.creation === "unresolved" ? 20_000_000n : 40_000_000n;
@@ -541,7 +543,7 @@ function Workspace({ client }: { client: VaultClient }) {
           {error ? <VaultButton onClick={() => run(refreshConfiguration)}>Retry account setup</VaultButton> : null}
         </div>
       ) : null}
-      {accountReady && spending && "Unconfigured" in spending ? (
+      {accountReady && serviceUnconfigured ? (
         <p className="vault-notice vault-notice--info">
           <Info size={16} aria-hidden />
           Vault creation is unavailable until the service is configured. Cleanup
@@ -773,7 +775,7 @@ function Workspace({ client }: { client: VaultClient }) {
                   disabled={busy}
                   canEdit={canEdit}
                   canPurge={role === "Owner"}
-                  writesDisabled={role === "Owner" && !eligible}
+                  writesDisabled={serviceReserveLow || serviceUnconfigured || (role === "Owner" && !eligible)}
                   run={runDocument}
                   refresh={refresh}
                 />
