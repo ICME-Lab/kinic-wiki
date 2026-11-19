@@ -2136,3 +2136,35 @@ it.each([
     expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "Keep draft");
   }
 });
+
+
+it("pauses fresh owner saves while the post-operation balance is unresolved", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Document title"), {target:{value:"Fresh draft"}});
+  fireEvent.change(screen.getByLabelText("Private note body"), {target:{value:"Unsaved body"}});
+  let finish!: (value: {Ok: bigint}) => void;
+  vi.spyOn(x.actor, "account_balance").mockImplementationOnce(() => new Promise(resolve => {finish = resolve;}));
+  const mutate = vi.spyOn(x.actor, "mutate");
+  fireEvent.click(screen.getByRole("button", {name:"Refresh Vaults"}));
+  await waitFor(() => expect(finish).toBeDefined());
+  await waitFor(() => expect(screen.getByRole("button", {name:"Refresh Vaults"})).toHaveProperty("disabled", false));
+  const disabledWhileWaiting = (screen.getByText("Save document") as HTMLButtonElement).disabled;
+  if (disabledWhileWaiting) fireEvent.click(screen.getByText("Save document"));
+  const callsWhileWaiting = mutate.mock.calls.length;
+  await act(async () => finish({Ok:15_000_000n}));
+  expect(disabledWhileWaiting).toBe(true);
+  expect(callsWhileWaiting).toBe(0);
+  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+  expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "Unsaved body");
+});
+
+it("offers inline funding when an Available snapshot has insufficient latest balance", async () => {
+  const x = await mounted();
+  x.setBalance(15_000_000n);
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({Ok:{Available:null}});
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText("Prepaid balance: 15,000,000 cycles");
+  expect(screen.getByRole("button", {name:"Create Vault"})).toHaveProperty("disabled", true);
+  expect(within(screen.getByRole("region", {name:"Choose a Vault"})).getByLabelText("KINIC amount")).toBeTruthy();
+});
