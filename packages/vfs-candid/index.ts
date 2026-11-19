@@ -56,7 +56,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     amount_cycles: idl.Nat,
     outcome: BekkoRefillOutcome,
     started_ns: idl.Nat64,
-    finished_ns: idl.Opt(idl.Nat64)
+    finished_ns: idl.Opt(idl.Nat64),
+    target: idl.Opt(idl.Principal)
   });
   const BekkoRefillReservation = idl.Record({ amount_cycles: idl.Nat, sent_ns: idl.Nat64 });
   const BekkoRefillResolution = idl.Variant({ Deposited: idl.Null, NotDeposited: idl.Null });
@@ -69,6 +70,15 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     config: BekkoRefillConfig
   });
   const ResultBekkoRefill = idl.Variant({ Ok: BekkoRefillState, Err: idl.Text });
+  const VaultRefillConfig = idl.Record({
+    target: idl.Principal,
+    target_cycles: idl.Nat,
+    max_transfer_cycles: idl.Nat,
+    enabled: idl.Bool,
+    threshold_cycles: idl.Nat
+  });
+  const VaultRefillStatus = idl.Record({ target: idl.Principal, state: BekkoRefillState });
+  const VaultRefillStateResult = idl.Variant({ Ok: idl.Opt(VaultRefillStatus), Err: idl.Text });
   const EvidenceRebuildControlRequest = idl.Record({
     expected_state_hash: idl.Text,
     database_id: idl.Text,
@@ -687,7 +697,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     configure_bekko_refill: idl.Func([BekkoRefillConfig], [ResultUnit], []),
     check_bekko_refill: idl.Func([], [ResultBekkoRefill], []),
     reconcile_bekko_refill: idl.Func([idl.Nat64, BekkoRefillResolution, idl.Text], [ResultUnit], []),
+    get_vault_refill_state: idl.Func([], [VaultRefillStateResult], ["query"]),
+    configure_vault_refill: idl.Func([VaultRefillConfig], [ResultUnit], []),
+    check_vault_refill: idl.Func([], [VaultRefillStateResult], []),
+    reconcile_vault_refill: idl.Func([idl.Nat64, BekkoRefillResolution, idl.Text], [ResultUnit], []),
     periodic_cycles_refill: idl.Func([], [ResultUnit], []),
+    periodic_bekko_refill: idl.Func([], [ResultUnit], []),
     periodic_storage_billing: idl.Func([], [ResultUnit], []),
     evidence_rebuild_status: idl.Func([DatabaseIdRequest], [ResultEvidenceRebuild], ["query"]),
     evidence_rebuild_begin: idl.Func([EvidenceRebuildRequest], [ResultEvidenceRebuild], []),

@@ -39,6 +39,8 @@ type BekkoRefillAttempt = record {
   id : nat64;
   observed_bekko_cycles : opt nat;
   config_revision : nat64;
+  // Explicit for configurable Vault targets. Legacy Bekko attempts use the fixed ID.
+  target : opt principal;
   amount_cycles : nat;
   outcome : BekkoRefillOutcome;
   started_ns : nat64;
@@ -929,6 +931,21 @@ type UpdateDatabaseMetadataRequest = record {
   database_id : text;
   tags_json : text;
 };
+type VaultRefillConfig = record {
+  target_cycles : nat;
+  max_transfer_cycles : nat;
+  enabled : bool;
+  target : principal;
+  threshold_cycles : nat;
+};
+type VaultRefillStateResult = variant {
+  Ok : opt VaultRefillStatus;
+  Err : text;
+};
+type VaultRefillStatus = record {
+  state : BekkoRefillState;
+  target : principal;
+};
 type VaultTransfer = record {
   requested : TransferAmount;
   offer : CreditOffer;
@@ -1059,7 +1076,9 @@ service : (CyclesBillingConfig) -> {
       SourceCaptureTriggerSessionCheckRequest,
     ) -> (Result_3) query;
   check_source_run_session : (SourceRunSessionCheckRequest) -> (Result_3) query;
+  check_vault_refill : () -> (VaultRefillStateResult);
   configure_bekko_refill : (BekkoRefillConfig) -> (Result_3);
+  configure_vault_refill : (VaultRefillConfig) -> (Result_3);
   configure_voice_rate : (VoiceRate) -> (Result_3);
   create_database : (CreateDatabaseRequest) -> (Result_10);
   current_node_revision : (NodeRevisionRequest) -> (Result_11) query;
@@ -1087,6 +1106,7 @@ service : (CyclesBillingConfig) -> {
   get_node_publication : (PublishNodeRequest) -> (Result_20) query;
   get_pending_vault_transfer : (opt text) -> (Result_21);
   get_vault_link : () -> (Result_5) query;
+  get_vault_refill_state : () -> (VaultRefillStateResult) query;
   get_vault_transfer : (blob) -> (Result_6);
   get_voice_access : (text, text) -> (Result_22) query;
   get_voice_policy : (text, text) -> (Result_23) query;
@@ -1136,6 +1156,7 @@ service : (CyclesBillingConfig) -> {
   mutate_nodes_batch : (MutateNodesBatchRequest) -> (Result_47);
   node_history : (NodeHistoryRequest) -> (Result_48) query;
   outgoing_links : (OutgoingLinksRequest) -> (Result_28) query;
+  periodic_bekko_refill : () -> (Result_3);
   periodic_cycles_refill : () -> (Result_3);
   periodic_storage_billing : () -> (Result_3);
   preview_vault_link : (blob) -> (Result_49);
@@ -1151,6 +1172,7 @@ service : (CyclesBillingConfig) -> {
   read_nodes : (text, vec text) -> (Result_56) query;
   read_public_node : (text) -> (Result_57) query;
   reconcile_bekko_refill : (nat64, BekkoRefillResolution, text) -> (Result_3);
+  reconcile_vault_refill : (nat64, BekkoRefillResolution, text) -> (Result_3);
   reconcile_vault_transfer : (blob) -> (Result_6);
   rename_database : (RenameDatabaseRequest) -> (Result_3);
   reserve_voice : (VoiceReserveRequest) -> (Result_58);

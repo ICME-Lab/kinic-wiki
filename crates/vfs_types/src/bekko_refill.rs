@@ -27,6 +27,15 @@ impl Default for BekkoRefillConfig {
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct VaultRefillConfig {
+    pub target: candid::Principal,
+    pub enabled: bool,
+    pub threshold_cycles: u128,
+    pub target_cycles: u128,
+    pub max_transfer_cycles: u128,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub enum BekkoRefillOutcome {
     Checking,
@@ -47,6 +56,8 @@ pub struct BekkoRefillAttempt {
     pub config_revision: u64,
     pub started_ns: u64,
     pub finished_ns: Option<u64>,
+    /// Explicit for configurable Vault targets. Legacy Bekko attempts use the fixed ID.
+    pub target: Option<candid::Principal>,
     pub observed_bekko_cycles: Option<u128>,
     pub amount_cycles: u128,
     pub outcome: BekkoRefillOutcome,
@@ -70,6 +81,12 @@ pub struct BekkoRefillState {
 pub enum BekkoRefillResolution {
     Deposited,
     NotDeposited,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct VaultRefillStatus {
+    pub target: candid::Principal,
+    pub state: BekkoRefillState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
