@@ -58,6 +58,32 @@ function makeClient(overrides: Partial<VaultClient> = {}) {
 }
 
 describe("VaultDocuments password manager features", () => {
+  it("preserves custom fields when editing an imported credential and clears them for a new login", async () => {
+    const { client, read, save } = makeClient();
+    const metadata: Metadata = { kind: "credential", title: "Imported" };
+    const item = { metadata, revision: { object: new Uint8Array(16).fill(1), revision: 1n, deleted: false } } as Item;
+    const fields = [{ label: "Account", value: "  keep spaces  ", hidden: false }, { label: "Recovery", value: "private-secret", hidden: true }];
+    read.mockImplementation(async () => ({ metadata, plaintext: new TextEncoder().encode(JSON.stringify({ username: "alice", password: "pw", customFields: fields })) }));
+    const saved: unknown[] = [];
+    save.mockImplementation(async (meta, plain) => {
+      saved.push(JSON.parse(new TextDecoder().decode(plain)));
+      return { ...item.revision, revision: 2n, metadata: meta };
+    });
+    render(<VaultDocuments client={client} items={[item]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Imported" }));
+    await waitFor(() => expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("alice"));
+    fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect((saved[0] as { customFields: unknown[] }).customFields).toEqual(fields);
+    fireEvent.click(screen.getByRole("button", { name: "New document" }));
+    fireEvent.change(screen.getByLabelText("Document type"), { target: { value: "credential" } });
+    fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "New login" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect((saved[1] as { customFields?: unknown[] }).customFields).toBeUndefined();
+  });
+
   it("filters by category and instant metadata fields (domain, username, tag) without body reads", () => {
     const items: Item[] = [
       {

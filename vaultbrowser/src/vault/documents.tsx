@@ -21,6 +21,7 @@ import {
 import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
 import { utf8 } from "@kinic/vault-crypto";
 import {
+  type CredentialCustomField,
   buildCredentialMetadata,
   extractDomains,
   matchesMetadataQuery,
@@ -169,6 +170,7 @@ function Documents({
   const [url, setUrl] = useState("");
   const [extraUrls, setExtraUrls] = useState("");
   const [totp, setTotp] = useState("");
+  const [customFields, setCustomFields] = useState<CredentialCustomField[]>([]);
   const [favorite, setFavorite] = useState(false);
   const [tagsText, setTagsText] = useState("");
   const [reveal, setReveal] = useState(false);
@@ -196,6 +198,7 @@ function Documents({
     setUrl("");
     setExtraUrls("");
     setTotp("");
+    setCustomFields([]);
     setFavorite(false);
     setTagsText("");
     setReveal(false);
@@ -240,6 +243,7 @@ function Documents({
         const others = record.urls.filter((entry) => entry !== record.URL);
         setExtraUrls(others.join("\n"));
         setTotp(record.totp);
+        setCustomFields(record.customFields);
         setBody(record.notes);
         setFavorite(record.favorite || doc.metadata.favorite === true);
         setTagsText((record.tags.length ? record.tags : doc.metadata.tags ?? []).join(", "));
@@ -315,6 +319,7 @@ function Documents({
           URL: url,
           urls: [url, ...extraUrlList].filter(Boolean),
           totp: totp.trim(),
+          customFields,
           notes: body,
           favorite,
           tags: parsedTags,
