@@ -5,11 +5,12 @@ import KinicVaultCore
 import Security
 
 public enum VaultNativeError: Error, LocalizedError {
-    case invalidResponse, rejected, accessLost, changedDuringSync, snapshotTooLarge, providerDisabled, cleanupFailed
+    case invalidResponse, rejected, notFound, accessLost, changedDuringSync, snapshotTooLarge, providerDisabled, cleanupFailed
     public var errorDescription: String? {
         switch self {
         case .providerDisabled: "Enable Kinic Vault in iOS AutoFill settings, then return and sync again."
         case .cleanupFailed: "Offline Vault cleanup is incomplete. Try disabling again."
+        case .notFound: "The requested Vault item was not found."
         case .invalidResponse: "The Vault response was invalid."
         case .accessLost: "Access to this Vault was lost. Its offline cache has been removed."
         case .rejected: "The Vault rejected this request. Check access and local operating credit."
@@ -24,12 +25,27 @@ enum VaultWire {
         guard case .variant(let result) = value else { throw VaultNativeError.invalidResponse }
         guard result.tag == Candid.fieldID("Ok") else {
             if case .variant(let error) = result.value,
-               ["Unauthorized", "NotFound", "VaultInactive"].contains(where: { Candid.fieldID($0) == error.tag }) {
+               ["Unauthorized", "VaultInactive"].contains(where: { Candid.fieldID($0) == error.tag }) {
                 throw VaultNativeError.accessLost
+            }
+            if case .variant(let error) = result.value, error.tag == Candid.fieldID("NotFound") {
+                throw VaultNativeError.notFound
             }
             throw VaultNativeError.rejected
         }
         return result.value
+    }
+    /// A missing revision may be a concurrent purge, rather than lost Vault access.
+    static func readSnapshotObject<T: Sendable>(
+        isolation: isolated (any Actor)? = #isolation,
+        read: () async throws -> T,
+        revalidate: () async throws -> Void
+    ) async throws -> T {
+        do { return try await read() }
+        catch VaultNativeError.notFound {
+            try await revalidate()
+            throw VaultNativeError.changedDuringSync
+        }
     }
     static func field<T: CandidConvertible>(_ name: String, _ value: CandidValue, as: T.Type = T.self) throws -> T {
         guard case .record(_, let values) = value, let field = values[Candid.fieldID(name)] else { throw VaultNativeError.invalidResponse }
@@ -98,7 +114,8 @@ public actor VaultNativeClient {
         let reply = try await client.callCandid(method: method, arguments: arguments, identity: identity)
         guard epoch == ticket else { throw CancellationError() }
         guard reply.values.count == 1 else { throw VaultNativeError.invalidResponse }
-        return try VaultWire.unwrap(reply.values[0].value)
+        do { return try VaultWire.unwrap(reply.values[0].value) }
+        catch VaultNativeError.notFound where method != "get_chunk" { throw VaultNativeError.accessLost }
     }
     public func ownedVaults(identity: ICAuthSession) async throws -> [VaultNativeHeader] {
         let values = try VaultWire.array(await call("list_vaults", identity: identity))
@@ -164,7 +181,12 @@ public actor VaultNativeClient {
                 guard hashes.count == parsed.chunkCount else { throw VaultNativeError.invalidResponse }
                 var chunks: [Data] = []
                 for index in 0..<parsed.chunkCount {
-                    chunks.append(try Data(candidValue: await call("get_chunk", VaultWire.arguments(CandidTypedValue(first.id), CandidTypedValue(object), CandidTypedValue(rev), CandidTypedValue(UInt32(index))), identity: identity)))
+                    let chunk = try await VaultWire.readSnapshotObject {
+                        try Data(candidValue: await self.call("get_chunk", VaultWire.arguments(CandidTypedValue(first.id), CandidTypedValue(object), CandidTypedValue(rev), CandidTypedValue(UInt32(index))), identity: identity))
+                    } revalidate: {
+                        _ = try await self.header(first.id, identity: identity)
+                    }
+                    chunks.append(chunk)
                 }
                 // Validate every chunk before publishing a usable offline cache.
                 var plaintext = try VaultDocumentV3.decrypt(rootKey: root, context: context, object: object, revision: rev, manifestBytes: manifest, chunks: chunks, hashes: hashes).plaintext
