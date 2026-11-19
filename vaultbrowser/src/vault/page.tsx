@@ -1,28 +1,16 @@
 "use client";
 
-import { useLayoutEffect, useState } from "react";
+import { useState } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { VaultClient } from "@kinic/vault-client";
 import { useVaultAuth } from "../auth";
 
-import { createPrivateVaultClient } from "./actor";
+import { identityKey, PrivateVaultClient } from "./private-session";
 import { VaultWorkspace } from "./workspace";
 import { FileKey2, FolderLock, KeyRound, ShieldCheck } from "lucide-react";
 import {VaultNavigationScope,useVaultNavigation} from "../navigation";
 import {VaultHelp,VaultNotFound} from "../help";
 import { VaultButton } from "./ui";
 
-// Identity object identity matters even when a refreshed delegation has the same principal.
-const identityIds = new WeakMap<Identity, number>();
-let nextIdentityId = 0;
-function identityKey(identity: Identity) {
-  let id = identityIds.get(identity);
-  if (id === undefined) {
-    id = ++nextIdentityId;
-    identityIds.set(identity, id);
-  }
-  return `${identity.getPrincipal().toText()}:${id}`;
-}
 export function VaultWelcome({
   onSignIn,
   signInDisabled = false,
@@ -93,33 +81,20 @@ function VaultPageContent() {
   );
 }
 function PrivateSession({ identity }: { identity: Identity }) {
-  const [client, setClient] = useState<VaultClient>();
-  const [failed, setFailed] = useState(false);
-  const [attempt,setAttempt]=useState(0);
-  useLayoutEffect(() => {
-    let disposed = false;
-    let current: VaultClient | undefined;
-    void createPrivateVaultClient(identity)
-      .then((value) => {
-        if (disposed) {
-          value.destroy();
-          return;
-        }
-        current = value;
-        setClient(value);
-      })
-      .catch(() => {
-        if (!disposed) setFailed(true);
-      });
-    return () => {
-      disposed = true;
-      current?.destroy();
-    };
-  }, [identity,attempt]);
-  if (!client)
-    return (
-      failed ? <section className="vault-connecting" role="alert"><p>Private Vault could not connect.</p><VaultButton onClick={()=>{setFailed(false);setAttempt(value=>value+1);}}>Retry connection</VaultButton></section>
-      : <output className="vault-connecting">Connecting to Private Vault…</output>
-    );
-  return <VaultWorkspace client={client} />;
+  const [attempt, setAttempt] = useState(0);
+  return (
+    <PrivateVaultClient
+      key={attempt}
+      identity={identity}
+      fallback={<output className="vault-connecting">Connecting to Private Vault…</output>}
+      failed={
+        <section className="vault-connecting" role="alert">
+          <p>Private Vault could not connect.</p>
+          <VaultButton onClick={() => setAttempt((value) => value + 1)}>Retry connection</VaultButton>
+        </section>
+      }
+    >
+      {(client) => <VaultWorkspace client={client} />}
+    </PrivateVaultClient>
+  );
 }

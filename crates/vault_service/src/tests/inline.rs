@@ -350,3 +350,31 @@ fn inline_digest_has_a_frozen_action_specific_domain() {
         ops::digest(b"mutation/v1", &request).unwrap()
     );
 }
+
+#[test]
+fn shared_inline_receipt_preserves_its_original_upload_id_and_replays_without_new_spending() {
+    let e = Env::new();
+    let h = e.create();
+    let member = Principal::from_slice(&[30]);
+    e.transaction(|db| {
+        store::sharing::set_member(db, e.owner(), &h.id, member, AccessRole::Editor)
+    })
+    .unwrap();
+    let change = Mutation {
+        operation: vec![62; 16],
+        action: inline(&e, 1),
+    };
+    let Action::SaveInline(save) = &change.action else {
+        unreachable!()
+    };
+    let wire = save.request.operation.clone();
+    for funded in [true, false] {
+        e.funded.set(funded);
+        assert!(
+            matches!(shared_mutate(&e,member,&h.id,change.clone()),Ok(MutationResult::Revision(r)) if r.revision==1)
+        );
+    }
+    assert!(
+        matches!(e.transaction(|db|store::sharing::upload_status(db,member,&h.id,&wire,100)),Ok(UploadStatus::Committed(c)) if c.vault==h.id && c.revision==1)
+    );
+}

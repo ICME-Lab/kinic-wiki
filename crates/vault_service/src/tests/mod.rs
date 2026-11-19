@@ -208,3 +208,5 @@ mod rename;
 mod uploads;
 
 mod inline;
+
+mod sharing;

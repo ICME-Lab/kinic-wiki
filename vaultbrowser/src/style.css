@@ -1581,3 +1581,17 @@ body {
 .vault-skip-link:focus { top: 8px; }
 
 @media(max-width:560px){.vault-help-label{display:none;}}
+
+.vault-isolated {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 52rem);
+  min-width: 0;
+  margin-inline: auto;
+  padding: clamp(0.875rem, 4vw, 1.5rem);
+  overflow-wrap: anywhere;
+}
+
+.vault-isolated--picker {
+  width: min(100%, 40rem);
+}

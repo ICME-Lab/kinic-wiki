@@ -52,13 +52,16 @@ fn next_sequence(sequence: u64) -> Result<u64> {
     }
     Ok(sequence + 1)
 }
-pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
+fn current_bytes(db: &Connection, v: &[u8]) -> Result<u64> {
     active(db, v)?;
-    let current = num(
+    num(
         db,
         "SELECT COALESCE(sum(r.plain_size),0) FROM (SELECT * FROM revisions WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) r JOIN (SELECT * FROM objects WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)) o ON r.vault=o.vault AND r.object=o.object AND r.revision=o.head WHERE r.vault=?1 AND r.deleted=0 AND o.purged=0",
         v,
-    )?;
+    )
+}
+pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
+    let current = current_bytes(db, v)?;
     let reserved:i64=db.query_row("SELECT COALESCE(sum(reserved),0) FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1)",params![],|r|sql::row_get(r,0)).map_err(db_error)?;
     let reserved = reserved as u64;
     let charged = usage(db)?.saturating_sub(reserved);
@@ -66,6 +69,27 @@ pub fn quota(db: &Connection, v: &[u8]) -> Result<Quota> {
         current,
         charged,
         reserved,
+        limit: TOTAL_MAX,
+    })
+}
+/// Per-vault storage detail for a shared reader. Account-wide journal costs,
+/// key flights, and other vaults' charges stay private to their paying owner.
+pub fn vault_quota(db: &Connection, v: &[u8]) -> Result<Quota> {
+    let current = current_bytes(db, v)?;
+    let reserved = num(
+        db,
+        "SELECT COALESCE(sum(reserved),0) FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND vault=?1",
+        v,
+    )?;
+    let charged=num(db,"SELECT 8192+cleanup_budget*512
+        +(SELECT count(*)*512 FROM vault_members WHERE owner=v.owner AND vault=v.id)
+        +(SELECT COALESCE(sum(charge),0) FROM revisions WHERE owner=v.owner AND vault=v.id)
+        +(SELECT COALESCE(sum(4096+(1-purged)*512),0) FROM objects WHERE owner=v.owner AND vault=v.id)
+        FROM vaults v WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",v)?;
+    Ok(Quota {
+        current,
+        reserved,
+        charged,
         limit: TOTAL_MAX,
     })
 }
@@ -79,6 +103,7 @@ fn measured_usage(db: &Connection, scoped: bool) -> Result<u64> {
     let operation_charge = operations::AdmissionClass::charge_sql(scoped);
     for (table, expression) in [
         ("vaults", "8192+cleanup_budget*512"),
+        ("vault_members", crate::sharing::MEMBER_CHARGE_SQL),
         ("revisions", "charge"),
         ("uploads", "reserved"),
         ("upload_outcomes", "length(result)+length(digest)+4096"),
@@ -168,6 +193,15 @@ fn check_receipt_capacity_for(db: &Connection, now: u64, additional: i64) -> Res
 }
 /// Caller wraps admission, upload, commit, and receipt in one transaction.
 pub fn save_inline(db: &Connection, r: SaveInline, input: &[u8], now: u64) -> Result<Revision> {
+    save_inline_with_origin(db, r, input, now, None)
+}
+pub fn save_inline_with_origin(
+    db: &Connection,
+    r: SaveInline,
+    input: &[u8],
+    now: u64,
+    origin: Option<&sharing::UploadOrigin>,
+) -> Result<Revision> {
     if r.context_hash != Sha256::digest(input).as_slice()
         || r.request.plain_size > NOTE_MAX
         || r.bytes.len() as u64 != r.request.plain_size + 16
@@ -183,11 +217,19 @@ pub fn save_inline(db: &Connection, r: SaveInline, input: &[u8], now: u64) -> Re
     if exists != 0 {
         return Err(Error::Conflict);
     }
-    let upload = begin(db, r.request, now)?;
+    let upload = begin_with_origin(db, r.request, now, origin)?;
     put(db, &upload.id, 0, &r.bytes, now)?;
     commit(db, &upload.id, now)
 }
 pub fn begin(db: &Connection, r: BeginRevision, now: u64) -> Result<Upload> {
+    begin_with_origin(db, r, now, None)
+}
+pub fn begin_with_origin(
+    db: &Connection,
+    r: BeginRevision,
+    now: u64,
+    origin: Option<&sharing::UploadOrigin>,
+) -> Result<Upload> {
     active(db, &r.vault)?;
     id(&r.object)?;
     reject_purged(db, &r.vault, &r.object)?;
@@ -292,6 +334,9 @@ pub fn begin(db: &Connection, r: BeginRevision, now: u64) -> Result<Upload> {
         ],
     )
     .map_err(db_error)?;
+    if let Some(origin) = origin {
+        sharing::remember_upload(db, &r.vault, &r.operation, origin)?;
+    }
     Ok(Upload {
         id: r.operation,
         revision: r.expected_revision + 1,
@@ -426,6 +471,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
     db.execute("UPDATE revisions SET retired=?3 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (vault=?1 AND object=?2 AND revision<=?4 AND retired IS NULL)",params![rev.vault,rev.object,rev.sequence as i64,rev.revision.saturating_sub(10) as i64]).map_err(db_error)?;
     db.execute("DELETE FROM chunks WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (upload=?1)", params![id])
         .map_err(db_error)?;
+    let origin = sharing::pending_origin(db, &r.vault, id)?;
     db.execute(
         "DELETE FROM uploads WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND (id=?1)",
         params![id],
@@ -434,7 +480,7 @@ pub fn commit(db: &Connection, id: &[u8], now: u64) -> Result<Revision> {
 
     add_cleanup_credits(db, &r.vault, cleanup_credits)?;
     put_header(db, &h)?;
-    crate::uploads::record_committed(db, id, &d, &rev, now)?;
+    crate::uploads::record_committed(db, id, &d, &rev, origin, now)?;
     Ok(rev)
 }
 fn row(r: &sql::Row<'_>) -> sql::Result<Revision> {
@@ -717,7 +763,7 @@ pub fn remove_ciphertext_batch(
     Ok(removed)
 }
 
-fn add_cleanup_credits(db: &Connection, vault: &[u8], amount: i64) -> Result<()> {
+pub(crate) fn add_cleanup_credits(db: &Connection, vault: &[u8], amount: i64) -> Result<()> {
     db.execute("UPDATE vaults SET cleanup_budget=cleanup_budget+?2 WHERE owner=(SELECT owner FROM owner_scope WHERE slot=1) AND id=?1",params![vault,amount]).map_err(db_error)?;
     Ok(())
 }

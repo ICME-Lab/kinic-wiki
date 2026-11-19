@@ -22,6 +22,7 @@ import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
 import {CopyPasswordButton} from "../copy-button";
 import { VaultPreview } from "./preview";
+import { parseCredential, VaultReadOnly } from "./read-only";
 import { DocumentActions } from "./document-actions";
 import { DraftGuardProvider, useDirtyDraft, useDraftGuard } from "../draft-guard";
 import { VaultButton, VaultField, VaultPanel, vaultError } from "./ui";
@@ -31,6 +32,8 @@ function Documents({
   items,
   disabled,
   writesDisabled,
+  canEdit = true,
+  canPurge = true,
   run,
   refresh,
 }: {
@@ -38,6 +41,8 @@ function Documents({
   items: Item[];
   disabled: boolean;
   writesDisabled: boolean;
+  canEdit?: boolean;
+  canPurge?: boolean;
   run: VaultWork;
   refresh: () => Promise<void>;
 }) {
@@ -196,11 +201,11 @@ function Documents({
       setKind(doc.metadata.kind);
       const text = new TextDecoder().decode(doc.plaintext);
       if (doc.metadata.kind === "credential") {
-        const value: Record<string, unknown> = JSON.parse(text);
-        setUsername(typeof value.username === "string" ? value.username : "");
-        setPassword(typeof value.password === "string" ? value.password : "");
-        setUrl(typeof value.URL === "string" ? value.URL : "");
-        setBody(typeof value.notes === "string" ? value.notes : "");
+        const value = parseCredential(text);
+        setUsername(value.username);
+        setPassword(value.password);
+        setUrl(value.url);
+        setBody(value.notes);
       } else if (doc.metadata.kind === "note") {
         setBody(text);
         setSavedBody(text);
@@ -248,7 +253,8 @@ function Documents({
         );
     });
   };
-  const save = () =>
+  const save = () => {
+    if (readOnly || !dirty) return;
     run(async () => {
       const g = client.session.capture();
       let plain: Uint8Array;
@@ -286,6 +292,7 @@ function Documents({
         plain.fill(0);
       }
     });
+  };
   const download = async (revision: Revision) => {
     const g = client.session.capture();
     const doc = await client.read(revision);
@@ -308,7 +315,7 @@ function Documents({
   const displayedRevision = viewedRevision ?? current?.revision;
   const historical = !!current && !!viewedRevision && viewedRevision.revision !== current.revision.revision;
   const readOnly =
-    disabled || writesDisabled || pendingSave || !!displayedRevision?.deleted || historical;
+    !canEdit || disabled || writesDisabled || pendingSave || !!displayedRevision?.deleted || historical;
   const byteCount = utf8.encode(body).length;
   const kindLabel = (k: Metadata["kind"]) =>
     k === "credential" ? "Credential" : k === "attachment" ? "Attachment" : "Note";
@@ -337,7 +344,7 @@ function Documents({
           >
             <RefreshCw size={16} aria-hidden />
           </VaultButton>
-          <VaultButton
+          {canEdit ? <VaultButton
             tone="primary"
             className="vault-new-document"
             title="New document"
@@ -346,7 +353,7 @@ function Documents({
           >
             <Plus size={16} aria-hidden />
             New document
-          </VaultButton>
+          </VaultButton> : null}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -374,7 +381,7 @@ function Documents({
         ) : null}
       </div>
       {saveStatus ? <output aria-live="polite">{saveStatus}</output> : null}
-      {pendingSave ? (
+      {canEdit && pendingSave ? (
         <div className="vault-notice vault-notice--warn vault-pending-save">
           <output>
             {disabled
@@ -479,12 +486,13 @@ function Documents({
                   <span aria-hidden>{kindLabel(item.metadata.kind)}</span>
                 </span>
               </VaultButton>
-              <DocumentActions
+              {canEdit && (canPurge || !item.revision.deleted) ? <DocumentActions
                 key={String(item.revision.revision)}
                 item={item}
                 client={client}
                 disabled={disabled || pendingSave}
                 writesDisabled={writesDisabled}
+                canPurge={canPurge}
                 onDelete={(target, permanent) => run(async () => {
                   const ticket = client.session.capture();
                   const epoch = editorEpoch.current;
@@ -494,12 +502,12 @@ function Documents({
                   if (current && b64(bytes(current.revision.object)) === b64(bytes(target.revision.object)) && editorEpoch.current === epoch) reset();
                   await refresh();
                 })}
-              />
+              /> : null}
               </div>
             ))}
             {!items.length ? (
               <p className="vault-document-empty">
-                No documents yet. Create a note, credential or attachment.
+                {canEdit ? "No documents yet. Create a note, credential or attachment." : "No documents yet."}
               </p>
             ) : !visibleItems.length ? (
               <p className="vault-document-empty">
@@ -517,7 +525,7 @@ function Documents({
               </VaultButton>
             </div>
           ) : null}
-          <div className="vault-editor-head">
+          {canEdit ? <div className="vault-editor-head">
             <VaultField
               fieldClassName="vault-editor-title"
               label="Document title"
@@ -560,10 +568,19 @@ function Documents({
                 Save document
               </VaultButton>
             ) : null}
-          </div>
+          </div> : current ? <h3 className="break-words font-medium">{title || "Untitled"}</h3> : null}
           <div className="vault-editor-body">
             {!displayedRevision?.deleted ? (
-              kind === "note" ? (
+              !canEdit ? (
+                current ? (
+                  <VaultReadOnly
+                    key={editorKey}
+                    content={kind === "note" ? { kind, body }
+                      : kind === "credential" ? { kind, username, password, url, notes: body }
+                      : { kind }}
+                  />
+                ) : null
+              ) : kind === "note" ? (
                 <>
                   <div className="vault-editor-frame">
                     <MarkdownEditor
@@ -766,7 +783,7 @@ function Documents({
                   <History size={14} aria-hidden />
                   Show version history
                 </VaultButton>
-                {!displayedRevision?.deleted ? (
+                {!displayedRevision?.deleted && (canEdit || kind !== "credential") ? (
                   <>
                     <VaultButton
                       size="sm"

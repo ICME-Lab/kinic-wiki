@@ -38,6 +38,10 @@ try {
   const title = page.getByLabel("Document title");
   await title.waitFor();
   assert.equal(await page.locator("summary").filter({ hasText: "Account & storage" }).isVisible(), false);
+  await page.getByRole("button", { name: "Actions for Vault 1", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Manage members", exact: true }).click();
+  await page.getByText("No additional members.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Back to Vault", exact: true }).click();
   const search = page.getByLabel("Search this Vault locally");
   const syntheticNote = page.getByRole("button", { name: "Welcome note", exact: true });
   await search.fill("Your private notes belong here.");
@@ -180,7 +184,7 @@ try {
   await page.locator("summary").filter({ hasText: "Account & storage" }).waitFor({ state: "visible" });
   await page.locator("summary").filter({ hasText: "Account & storage" }).click();
   assert.equal(
-    await page.getByText("Get quote", { exact: true }).isDisabled(),
+    await page.getByRole("button", { name: "Review payment", exact: true }).isDisabled(),
     true,
   );
   await page.getByRole("button", { name: "Back to Vault", exact: true }).click();

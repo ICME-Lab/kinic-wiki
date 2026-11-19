@@ -76,3 +76,6 @@ fn candid_contract_matches() {
 mod capacity_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod schema_integration_tests;

@@ -1,4 +1,5 @@
 import { Principal } from '@icp-sdk/core/principal';
+export const CANONICAL_WIKI_ORIGIN = 'https://wiki.kinic.xyz';
 export interface BrowserConfig {
   canister: string;
   host: string;
@@ -6,6 +7,7 @@ export interface BrowserConfig {
   identityProvider: string;
   origin: string;
   local: boolean;
+  wikiOrigin?: string | null;
   fundingMode?: "unavailable" | "synthetic-test-only" | "production";
 }
 export function validateConfig(c: BrowserConfig, origin: string): BrowserConfig {
@@ -16,6 +18,13 @@ export function validateConfig(c: BrowserConfig, origin: string): BrowserConfig 
     page = new URL(origin),
     provider = new URL(c.identityProvider);
   const localHost = (h: string) => h === 'localhost' || h === '127.0.0.1' || h.endsWith('.localhost');
+  if (c.wikiOrigin !== undefined && c.wikiOrigin !== null) {
+    const wiki = new URL(c.wikiOrigin);
+    const valid = c.local
+      ? wiki.origin === c.wikiOrigin && /^https?:$/.test(wiki.protocol) && (localHost(wiki.hostname) || wiki.hostname === '[::1]') && wiki.port !== '0' && wiki.origin !== origin
+      : c.wikiOrigin === CANONICAL_WIKI_ORIGIN;
+    if (!valid) throw Error('InvalidWikiOrigin');
+  }
   if (c.local) {
     if (!localHost(host.hostname) || !localHost(d.hostname) || !localHost(page.hostname) || !localHost(provider.hostname) || c.origin !== origin) throw Error('InvalidLocalConfiguration');
     if (!d.hostname.startsWith(`${id}.`)) throw Error('InvalidDerivationOrigin');

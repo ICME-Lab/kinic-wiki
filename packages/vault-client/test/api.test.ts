@@ -34,7 +34,7 @@ function setup(loseResponse = true) {
   const calls: any[] = [];
   const actor = {
     list_vaults: vi.fn(async () => ({ Ok: [h] })),
-    create_vault: vi.fn(async (req: any) => ({ Ok: h })),
+    create_vault: vi.fn(async (_req: any) => ({ Ok: h })),
     get_vault_header: vi.fn(async () => ({ Ok: h })),
     derive_vault_key: vi.fn(async () => ({
       Ok: { input: [], public_key: [], encrypted_key: [] },
@@ -306,7 +306,7 @@ it("clears a failed rootless key attempt when creating and opening another vault
   const { client, actor, change } = setup();
   vi.mocked(actor.derive_vault_key).mockRejectedValueOnce(Error("key lost"));
   await expect(client.open(header())).rejects.toThrow("key lost");
-  vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (_request) => {
     const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
@@ -326,7 +326,7 @@ it("fences an outstanding open when creation selects a different vault", async (
   );
   const old = client.open(header());
   await vi.waitFor(() => expect(resolve).toBeDefined());
-  vi.mocked(actor.create_vault).mockImplementationOnce(async (request) => {
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (_request) => {
     const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
@@ -372,7 +372,7 @@ it("retries the same creation after switching away from its unresolved attempt",
   });
   await expect(client.create()).rejects.toThrow("lost");
   await client.open(header());
-  vi.mocked(actor.create_vault).mockImplementationOnce(async (r) => {
+  vi.mocked(actor.create_vault).mockImplementationOnce(async (_r) => {
     const h = { ...header(), id: new Uint8Array(16).fill(8) };
     change(h);
     return { Ok: h };
@@ -1475,4 +1475,319 @@ it("reads only previous metadata for a deleted note list entry", async () => {
   expect(items[0].revision.deleted).toBe(true);
   expect(await x.client.searchNotes(items, "needle")).toEqual([]);
   expect(x.actor.get_chunk).not.toHaveBeenCalled();
+});
+
+describe("shared Vault access", () => {
+  const reader = Principal.selfAuthenticating(new Uint8Array([9]));
+  function shared() {
+    const { actor, calls } = setup(false);
+    let role: "Editor" | "Viewer" | undefined = "Editor";
+    const method = <K extends keyof VaultActor>(
+      fn: (...args: Parameters<VaultActor[K]>) => ReturnType<VaultActor[K]>,
+    ) => vi.fn(fn);
+    Object.assign(actor, {
+      get_vault_access: method<"get_vault_access">(async () =>
+        role
+          ? {
+              Ok: {
+                owner,
+                role: role === "Editor" ? { Editor: null } : { Viewer: null },
+                header: header(),
+              },
+            }
+          : { Err: { Unauthorized: null } },
+      ),
+      shared_derive_vault_key: method<"shared_derive_vault_key">((request) =>
+        actor.derive_vault_key(request),
+      ),
+      shared_get_chunk: method<"shared_get_chunk">((...args) =>
+        actor.get_chunk(...args),
+      ),
+      shared_mutate: method<"shared_mutate">((_vault, mutation) =>
+        actor.mutate(mutation),
+      ),
+      shared_get_upload_status: method<"shared_get_upload_status">(
+        async () => ({ Ok: { Absent: null } }),
+      ),
+      shared_get_manifest: method<"shared_get_manifest">((...args) =>
+        actor.get_manifest(...args),
+      ),
+    });
+    const member = new VaultClient({
+      actor,
+      identity: { getPrincipal: () => reader } as any,
+      canister: owner.toText(),
+      local: true,
+    });
+    return {
+      member,
+      actor,
+      calls,
+      role: (next: typeof role) => {
+        role = next;
+      },
+    };
+  }
+
+  it("uses the server-recorded owner to read owner ciphertext and binds every read to its Vault", async () => {
+    const { actor, member, calls } = shared();
+    const ownerClient = new VaultClient({
+      actor,
+      identity: { getPrincipal: () => owner } as any,
+      canister: owner.toText(),
+      local: true,
+    });
+    await ownerClient.open(header());
+    const revision = await ownerClient.save(
+      { kind: "note", title: "Owner note" },
+      new Uint8Array([7]),
+    );
+    await member.openAccess(id);
+    expect(member.accessRole).toBe("Editor");
+    expect(actor.shared_derive_vault_key).toHaveBeenCalledOnce();
+    expect((await member.read(revision)).plaintext).toEqual(
+      new Uint8Array([7]),
+    );
+    expect(actor.shared_get_chunk).toHaveBeenCalledWith(
+      id,
+      revision.object,
+      1n,
+      0,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refreshes role with a cached root and rejects a later revoked open", async () => {
+    const { actor, member, role } = shared();
+    await member.openAccess(id);
+    const root = member.session.root;
+    role("Viewer");
+    await member.refreshHeader();
+    expect(member.accessRole).toBe("Viewer");
+    expect(member.session.root).toBe(root);
+    await expect(
+      member.save({ kind: "note", title: "Stale editor" }, new Uint8Array([7])),
+    ).rejects.toThrow("Unauthorized");
+    expect(actor.shared_mutate).not.toHaveBeenCalled();
+    role(undefined);
+    await expect(member.openAccess(id)).rejects.toThrow("Unauthorized");
+    expect(member.session.root).toBeUndefined();
+  });
+
+  it("reports only confirmed current Vault denial and isolates denial observers", async () => {
+    const { actor, member, role } = shared();
+    await member.openAccess(id);
+    const first = vi.fn((target: Uint8Array) => {
+      target.fill(0);
+      throw Error("Observer failure");
+    });
+    const roots: (CryptoKey | undefined)[] = [];
+    const second = vi.fn(() => roots.push(member.session.root));
+    member.subscribeVaultDenial(first);
+    member.subscribeVaultDenial(second);
+
+    vi.mocked(actor.get_vault_access).mockRejectedValueOnce(Error("Unauthorized"));
+    await expect(member.refreshHeader()).rejects.toThrow("Unauthorized");
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
+    expect(member.session.root).toBeTruthy();
+
+    role(undefined);
+    await expect(member.refreshHeader()).rejects.toThrow("Unauthorized");
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledExactlyOnceWith(id);
+    expect(roots).toEqual([undefined]);
+    expect(member.session.root).toBeUndefined();
+  });
+
+  it("does not report Vault denial when shared key retrieval is paused and the grant is valid", async () => {
+    const { actor, member } = shared();
+    const denied = vi.fn();
+    member.subscribeVaultDenial(denied);
+    vi.mocked(actor.shared_derive_vault_key).mockResolvedValueOnce({ Err: { Unauthorized: null } });
+
+    await expect(member.openAccess(id)).rejects.toThrow("Unauthorized");
+    expect(actor.get_vault_access).toHaveBeenCalledWith(id);
+    expect(actor.shared_derive_vault_key).toHaveBeenCalledOnce();
+    expect(member.session.root).toBeUndefined();
+    expect(denied).not.toHaveBeenCalled();
+
+    await member.openAccess(id);
+    expect(member.session.root).toBeTruthy();
+    expect(denied).not.toHaveBeenCalled();
+  });
+
+  it("discards a delayed shared key reply when access changes during derivation", async () => {
+    const { member, actor, role } = shared();
+    const key = deferred<Awaited<ReturnType<VaultActor["shared_derive_vault_key"]>>>();
+    vi.mocked(actor.shared_derive_vault_key).mockReturnValueOnce(key.promise);
+    const pending = member.openAccess(id);
+    const denied = expect(pending).rejects.toThrow("Unauthorized");
+    await vi.waitFor(() => expect(actor.shared_derive_vault_key).toHaveBeenCalledOnce());
+    role(undefined);
+    key.resolve({ Ok: { input: [], public_key: [], encrypted_key: [] } });
+    await denied;
+    expect(member.session.root).toBeUndefined();
+    expect(member.accessRole).toBeUndefined();
+  });
+
+  it("uses shared operation handles for the entire interrupted upload cancel sequence", async () => {
+    const { actor, member, calls } = shared();
+    vi.mocked(actor.shared_mutate).mockRejectedValueOnce(Error("network"));
+    await member.openAccess(id);
+    await expect(
+      member.save(
+        { kind: "attachment", title: "Large file" },
+        new Uint8Array(262145),
+      ),
+    ).rejects.toThrow("network");
+    const begin = vi.mocked(actor.shared_mutate).mock.calls[0][1];
+    if (!("BeginRevision" in begin.action)) throw Error("expected upload");
+    const request = begin.action.BeginRevision;
+    vi.mocked(actor.shared_get_upload_status).mockResolvedValueOnce({
+      Ok: { Pending: { request, received: [], expires: 0n, cancel_job: [] } },
+    });
+    await member.cancelSave();
+    expect(actor.shared_get_upload_status).toHaveBeenCalledWith(
+      id,
+      request.operation,
+    );
+    expect(actor.shared_mutate).toHaveBeenNthCalledWith(2, id, begin);
+    const cancelled = calls.at(-1)?.action;
+    expect(cancelled.CancelUpload.upload).toEqual(request.operation);
+    expect(actor.get_upload_status).not.toHaveBeenCalled();
+  });
+});
+
+describe("encrypted upload reconciliation targets", () => {
+  it.each(["vault", "object", "revision"] as const)(
+    "retains the encrypted save after a committed status with a different %s",
+    async (field) => {
+      const { client, actor, calls } = setup();
+      await client.open(header());
+      await expect(
+        client.save(
+          { kind: "attachment", title: "Pending" },
+          new Uint8Array(262145),
+        ),
+      ).rejects.toThrow("network");
+      const begin = calls[0].action.BeginRevision;
+      const committed = {
+        vault: begin.vault,
+        object: begin.object,
+        revision: 1n,
+        sequence: 1n,
+      };
+      const mismatched = {
+        ...committed,
+        [field]: field === "revision" ? 2n : new Uint8Array(16).fill(99),
+      };
+      vi.mocked(actor.get_upload_status)
+        .mockResolvedValueOnce({ Ok: { Committed: mismatched } })
+        .mockResolvedValueOnce({ Ok: { Committed: committed } });
+      await expect(client.cancelSave()).rejects.toThrow("InvalidReceipt");
+      expect(client.hasPendingSave).toBe(true);
+      await expect(client.cancelSave()).resolves.toEqual({
+        Committed: committed,
+      });
+      expect(client.hasPendingSave).toBe(false);
+    },
+  );
+
+  it.each(["object", "operation", "expected_revision", "manifest"] as const)(
+    "does not cancel a pending upload with a different %s",
+    async (field) => {
+      const { client, actor, calls } = setup();
+      await client.open(header());
+      await expect(
+        client.save(
+          { kind: "attachment", title: "Pending" },
+          new Uint8Array(262145),
+        ),
+      ).rejects.toThrow("network");
+      const request = calls[0].action.BeginRevision;
+      const mismatch = field === "expected_revision" ? 9n : [99];
+      const decodedRequest = {
+        ...request,
+        vault: Array.from(request.vault),
+        object: Array.from(request.object),
+        operation: Array.from(request.operation),
+        manifest: Array.from(request.manifest),
+        chunk_hashes: request.chunk_hashes.map((hash: Uint8Array) =>
+          Array.from(hash),
+        ),
+      };
+      vi.mocked(actor.get_upload_status).mockResolvedValueOnce({
+        Ok: {
+          Pending: {
+            request: { ...request, [field]: mismatch },
+            received: [],
+            expires: 0n,
+            cancel_job: [],
+          },
+        },
+      });
+      await expect(client.cancelSave()).rejects.toThrow("InvalidReceipt");
+      expect(client.hasPendingSave).toBe(true);
+      expect(calls.some((m) => "CancelUpload" in m.action)).toBe(false);
+      vi.mocked(actor.get_upload_status).mockResolvedValueOnce({
+        Ok: {
+          Pending: {
+            request: decodedRequest,
+            received: [],
+            expires: 0n,
+            cancel_job: [],
+          },
+        },
+      });
+      await expect(client.cancelSave()).resolves.toHaveProperty("Pending");
+      expect(client.hasPendingSave).toBe(false);
+    },
+  );
+});
+
+describe("history response targets", () => {
+  it.each(["vault", "object", "revision", "cursor"] as const)(
+    "rejects a history page with a mismatched %s",
+    async (field) => {
+      const { client, actor } = setup(false);
+      await client.open(header());
+      const revision = await client.save(
+        { kind: "note", title: "Original" },
+        new Uint8Array([1]),
+      );
+      const entry = { ...revision };
+      if (field === "vault" || field === "object")
+        entry[field] = new Uint8Array(16).fill(99);
+      if (field === "revision") entry.revision = 2n;
+      vi.mocked(actor.list_history).mockResolvedValueOnce({
+        Ok: { entries: [entry], next: field === "cursor" ? [2n] : [] },
+      });
+      await expect(client.history(revision, 2n)).rejects.toThrow(
+        "InvalidReceipt",
+      );
+    },
+  );
+
+  it("does not use another document's decrypted metadata as a deleted document title", async () => {
+    const x = setup(false);
+    await x.client.open(header());
+    const privateRevision = await x.client.save(
+      { kind: "note", title: "Other private title" },
+      new Uint8Array([1]),
+    );
+    const deleted = {
+      ...privateRevision,
+      object: new Uint8Array(16).fill(99),
+      deleted: true,
+      revision: 2n,
+    };
+    vi.mocked(x.actor.list_objects).mockResolvedValueOnce({
+      Ok: { entries: [deleted], next: [] },
+    });
+    vi.mocked(x.actor.list_history).mockResolvedValueOnce({
+      Ok: { entries: [privateRevision], next: [] },
+    });
+    await expect(x.client.items()).rejects.toThrow("InvalidReceipt");
+  });
 });

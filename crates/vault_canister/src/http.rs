@@ -42,7 +42,22 @@ pub(crate) fn security_headers() -> Vec<(String, String)> {
     }
     headers
 }
-fn entry(path: HttpCertificationPath<'static>, body: Vec<u8>, mime: &str) -> Entry {
+const WIKI_ORIGIN: &str = "https://wiki.kinic.xyz";
+const EMBED_PREFIX: &str = "/embed/";
+const PICK_PATH: &str = "/pick";
+
+enum HtmlPolicy<'a> {
+    Default,
+    Embed(&'a str),
+    Picker,
+}
+
+fn entry(
+    path: HttpCertificationPath<'static>,
+    body: Vec<u8>,
+    mime: &str,
+    policy: HtmlPolicy<'_>,
+) -> Entry {
     let cel = DefaultCelBuilder::response_only_certification()
         .with_response_certification(DefaultResponseCertification::certified_response_headers(
             vec![
@@ -58,6 +73,29 @@ fn entry(path: HttpCertificationPath<'static>, body: Vec<u8>, mime: &str) -> Ent
         ))
         .build();
     let mut headers = security_headers();
+    match policy {
+        HtmlPolicy::Default => {}
+        HtmlPolicy::Embed(origin) => {
+            let csp = &mut headers
+                .iter_mut()
+                .find(|(name, _)| name == "Content-Security-Policy")
+                .unwrap()
+                .1;
+            *csp = csp.replace(
+                "frame-ancestors 'none'",
+                &format!("frame-ancestors {origin}"),
+            );
+            headers.retain(|(name, _)| name != "X-Frame-Options");
+        }
+        HtmlPolicy::Picker => {
+            let coop = &mut headers
+                .iter_mut()
+                .find(|(name, _)| name == "Cross-Origin-Opener-Policy")
+                .unwrap()
+                .1;
+            *coop = "unsafe-none".into();
+        }
+    }
     headers.push(("Content-Type".into(), mime.into()));
     headers.push((CERTIFICATE_EXPRESSION_HEADER_NAME.into(), cel.to_string()));
     let response = Response::ok(body, headers).with_upgrade(false).build();
@@ -66,6 +104,61 @@ fn entry(path: HttpCertificationPath<'static>, body: Vec<u8>, mime: &str) -> Ent
     let e = HttpCertificationTreeEntry::new(path.clone(), cert);
     (path, e, response)
 }
+fn html_fallbacks(index: &[u8], mime: &str, wiki_origin: Option<&str>) -> Vec<Entry> {
+    let mut routes = vec![
+        entry(
+            HttpCertificationPath::wildcard(""),
+            index.to_vec(),
+            mime,
+            HtmlPolicy::Default,
+        ),
+        entry(
+            HttpCertificationPath::exact(PICK_PATH),
+            index.to_vec(),
+            mime,
+            HtmlPolicy::Picker,
+        ),
+    ];
+    if let Some(origin) = wiki_origin {
+        // The certification tree treats a trailing slash as its own segment.
+        // A separate exact route preserves the deny policy at /embed.
+        routes.extend([
+            entry(
+                HttpCertificationPath::exact("/embed"),
+                index.to_vec(),
+                mime,
+                HtmlPolicy::Default,
+            ),
+            entry(
+                HttpCertificationPath::wildcard("/embed"),
+                index.to_vec(),
+                mime,
+                HtmlPolicy::Embed(origin),
+            ),
+        ]);
+    }
+    routes
+}
+
+fn select_entry<'a>(entries: &'a [Entry], path: &str) -> Option<&'a Entry> {
+    let exact = HttpCertificationPath::exact(path);
+    entries.iter().find(|(p, _, _)| *p == exact).or_else(|| {
+        if path.starts_with(EMBED_PREFIX) {
+            return entries
+                .iter()
+                .find(|(p, _, _)| *p == HttpCertificationPath::wildcard("/embed"))
+                .or_else(|| {
+                    entries
+                        .iter()
+                        .find(|(p, _, _)| *p == HttpCertificationPath::wildcard(""))
+                });
+        }
+        entries
+            .iter()
+            .find(|(p, _, _)| *p == HttpCertificationPath::wildcard(""))
+    })
+}
+
 pub fn initialize() {
     let id = ic_cdk::api::canister_self().to_text();
     let local = option_env!("VAULT_LOCAL_ORIGIN");
@@ -101,31 +194,35 @@ pub fn initialize() {
             "https://id.ai".into(),
         )
     };
-    let config = serde_json::json!({"canister":id,"host":host,"derivationOrigin":derivation,"identityProvider":provider,"origin":origin,"local":local.is_some(),"fundingMode":crate::funding::FUNDING_MODE});
+    let wiki_origin = if local.is_some() {
+        option_env!("VAULT_LOCAL_WIKI_ORIGIN")
+    } else {
+        Some(WIKI_ORIGIN)
+    };
+    let config = serde_json::json!({"canister":id,"host":host,"derivationOrigin":derivation,"identityProvider":provider,"origin":origin,"wikiOrigin":wiki_origin,"local":local.is_some(),"fundingMode":crate::funding::FUNDING_MODE});
     let mut entries = vec![];
     for (path, mime, bytes) in ASSETS {
         entries.push(entry(
             HttpCertificationPath::exact((*path).to_string()),
             bytes.to_vec(),
             mime,
+            HtmlPolicy::Default,
         ));
         if *path == "/index.html" {
-            entries.push(entry(
-                HttpCertificationPath::wildcard("".to_string()),
-                bytes.to_vec(),
-                mime,
-            ));
+            entries.extend(html_fallbacks(bytes, mime, wiki_origin));
         }
     }
     entries.push(entry(
         HttpCertificationPath::exact("/config.json".to_string()),
         serde_json::to_vec(&config).unwrap(),
         "application/json",
+        HtmlPolicy::Default,
     ));
     entries.push(entry(
         HttpCertificationPath::exact("/.well-known/ii-alternative-origins".to_string()),
         serde_json::to_vec(&serde_json::json!({"alternativeOrigins":[origin]})).unwrap(),
         "application/json",
+        HtmlPolicy::Default,
     ));
     entries.push(entry(
         HttpCertificationPath::exact("/.well-known/ic-domains".to_string()),
@@ -135,6 +232,7 @@ pub fn initialize() {
             vec![]
         },
         "text/plain",
+        HtmlPolicy::Default,
     ));
     let mut tree = HttpCertificationTree::default();
     for (_, entry, _) in &entries {
@@ -149,15 +247,7 @@ fn http_request(request: HttpRequest) -> HttpResponse {
     let path = request.url.split('?').next().unwrap_or("/");
     ENTRIES.with(|entries| {
         let entries = entries.borrow();
-        let candidate = entries
-            .iter()
-            .find(|(p, _, _)| *p == HttpCertificationPath::exact(path.to_string()))
-            .or_else(|| {
-                entries
-                    .iter()
-                    .find(|(p, _, _)| *p == HttpCertificationPath::wildcard("".to_string()))
-            });
-        let Some((p, e, r)) = candidate else {
+        let Some((p, e, r)) = select_entry(&entries, path) else {
             return HttpResponse {
                 status_code: 404,
                 headers: security_headers(),
@@ -179,4 +269,54 @@ fn http_request(request: HttpRequest) -> HttpResponse {
             upgrade: Some(false),
         }
     })
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn certified_html_routes_scope_framing_and_opener_headers() {
+        let entries = html_fallbacks(b"index", "text/html", Some("https://wiki.kinic.xyz"));
+        let mut tree = HttpCertificationTree::default();
+        for (_, entry, _) in &entries {
+            tree.insert(entry);
+        }
+        for (path, ancestor, xfo, coop) in [
+            ("/", "'none'", true, "same-origin-allow-popups"),
+            ("/pick", "'none'", true, "unsafe-none"),
+            ("/pick/extra", "'none'", true, "same-origin-allow-popups"),
+            (
+                "/embedded/object",
+                "'none'",
+                true,
+                "same-origin-allow-popups",
+            ),
+            ("/embed", "'none'", true, "same-origin-allow-popups"),
+            (
+                "/embed/01010101010101010101010101010101/02020202020202020202020202020202",
+                "https://wiki.kinic.xyz",
+                false,
+                "same-origin-allow-popups",
+            ),
+        ] {
+            let (_, entry, response) = select_entry(&entries, path).unwrap();
+            let headers = response.headers();
+            let get = |name| {
+                headers
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert!(
+                get("Content-Security-Policy")
+                    .unwrap()
+                    .contains(&format!("frame-ancestors {ancestor};")),
+                "{path}"
+            );
+            assert_eq!(get("X-Frame-Options"), xfo.then_some("DENY"), "{path}");
+            assert_eq!(get("Cross-Origin-Opener-Policy"), Some(coop), "{path}");
+            assert!(tree.witness(entry, path).is_ok(), "{path}");
+        }
+    }
 }

@@ -7,7 +7,12 @@ pub const SCHEMA: &str = concat!(
     include_str!("schema.sql"),
     include_str!("key-capacity-schema.sql")
 );
-pub const CONTENT_SCHEMA: &str = include_str!("content-schema.sql");
+pub const SHARING_SCHEMA: &str = include_str!("sharing-schema.sql");
+pub const CONTENT_SCHEMA: &str = concat!(
+    include_str!("content-schema.sql"),
+    include_str!("sharing-schema.sql")
+);
+pub mod sharing;
 pub const EXPIRY_SCHEMA: &str = include_str!("expiry-schema.sql");
 pub mod content;
 pub mod keys;

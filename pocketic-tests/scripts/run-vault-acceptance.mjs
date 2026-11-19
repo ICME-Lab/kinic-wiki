@@ -18,6 +18,7 @@ if (version !== "pocket-ic-server 16.1.0")
 const cases = [
   "initial-grant",
   "lifecycle",
+  "sharing",
   "state",
   "capacity",
   "isolation",

@@ -1,4 +1,4 @@
-//! Dedicated Vault API. The authenticated caller is always the data owner.
+//! Owner endpoints bind storage to the caller. Team endpoints resolve a specific vault first.
 use super::{now_millis, with_service};
 use candid::Principal;
 use ic_cdk_management_canister as management;
@@ -18,14 +18,26 @@ struct Vault {
 impl Vault {
     fn capture() -> Result<Self> {
         let owner = OwnerContext::authenticated(ic_cdk::api::msg_caller())?;
-        Ok(Self {
+        Ok(Self::new(owner, meter()))
+    }
+    fn new(owner: OwnerContext, started: u64) -> Self {
+        Self {
             owner,
-            started: meter(),
+            started,
             maintenance: true,
             readonly: false,
             derive_payment: std::cell::Cell::new(None),
             operation: std::cell::Cell::new(None),
-        })
+        }
+    }
+    fn scoped(caller: Principal, vault: &[u8], readonly: bool) -> Result<(Self, VaultAccess)> {
+        let started = meter();
+        let access =
+            crate::state::transaction(|db| vault_store::sharing::access(db, caller, vault))?;
+        let mut env = Self::new(OwnerContext::authenticated(access.owner)?, started);
+        env.readonly = readonly;
+        env.maintenance = false;
+        Ok((env, access))
     }
     fn capture_read() -> Result<Self> {
         let mut env = Self::capture_cleanup()?;
@@ -319,6 +331,130 @@ fn get_upload_status(upload: Id) -> Result<UploadStatus> {
     })
 }
 
+// All shared endpoints are updates so revocation is ordered with subsequent
+// reads. Clients must recheck access even when they already hold a cached root.
+#[ic_cdk::update]
+fn get_vault_access(vault: Id) -> Result<VaultAccess> {
+    let (env, access) = Vault::scoped(ic_cdk::api::msg_caller(), &vault, true)?;
+    env.finish(Ok(access))
+}
+#[ic_cdk::update]
+fn list_accessible_vaults(after: Id) -> Result<VaultAccessPage> {
+    let env = Vault::capture_read()?;
+    let page =
+        crate::state::transaction(|db| vault_store::sharing::accessible(db, env.owner(), &after))?;
+    charge_access_page(&page, env.execution_cycles(), now_millis())?;
+    Ok(page)
+}
+// Each returned vault pays its share, including when a member has no account.
+// Empty pages neither expose another principal nor create account records.
+fn charge_access_page(page: &VaultAccessPage, amount: u64, now: i64) -> Result<()> {
+    let n = page.entries.len() as u64;
+    if n == 0 {
+        return Ok(());
+    }
+    let mut charges = std::collections::BTreeMap::new();
+    for (index, access) in page.entries.iter().enumerate() {
+        *charges.entry(access.owner).or_insert(0) +=
+            amount / n + u64::from((index as u64) < amount % n);
+    }
+    crate::state::transaction(|db| {
+        for (owner, charge) in charges {
+            crate::accounting::charge_read_in(db, &owner.to_text(), charge, now)?;
+        }
+        Ok(())
+    })
+}
+fn scoped_read<T>(
+    vault: &[u8],
+    read: impl FnOnce(&Connection, Principal, &[u8]) -> Result<T>,
+) -> Result<T> {
+    let caller = ic_cdk::api::msg_caller();
+    let (env, _) = Vault::scoped(caller, vault, true)?;
+    env.read(now_millis(), |db| read(db, caller, vault))
+}
+#[ic_cdk::update]
+fn shared_list_objects(vault: Id, after: Id) -> Result<ObjectPage> {
+    scoped_read(&vault, |db, _, v| {
+        vault_store::content::objects(db, v, &after)
+    })
+}
+#[ic_cdk::update]
+fn shared_get_manifest(vault: Id, object: Id, revision: u64) -> Result<Revision> {
+    scoped_read(&vault, |db, _, v| {
+        vault_store::content::manifest(db, v, &object, revision)
+    })
+}
+#[ic_cdk::update]
+fn shared_get_chunk(vault: Id, object: Id, revision: u64, index: u32) -> Result<Vec<u8>> {
+    scoped_read(&vault, |db, _, v| {
+        vault_store::content::chunk(db, v, &object, revision, index)
+    })
+}
+#[ic_cdk::update]
+fn shared_list_history(vault: Id, object: Id, before: u64) -> Result<RevisionPage> {
+    scoped_read(&vault, |db, _, v| {
+        vault_store::content::history(db, v, &object, before)
+    })
+}
+#[ic_cdk::update]
+fn shared_get_quota(vault: Id) -> Result<Quota> {
+    scoped_read(&vault, |db, _, v| vault_store::content::vault_quota(db, v))
+}
+#[ic_cdk::update]
+fn shared_list_pending_uploads(vault: Id, after: Id) -> Result<PendingUploads> {
+    scoped_read(&vault, |db, caller, v| {
+        vault_store::sharing::pending_uploads(db, caller, v, &after)
+    })
+}
+#[ic_cdk::update]
+fn shared_get_upload_status(vault: Id, upload: Id) -> Result<UploadStatus> {
+    scoped_read(&vault, |db, caller, v| {
+        vault_store::sharing::upload_status(
+            db,
+            caller,
+            v,
+            &upload,
+            super::now_nanos() / 1_000_000_000,
+        )
+    })
+}
+#[ic_cdk::update]
+fn shared_mutate(vault: Id, request: Mutation) -> Result<MutationResult> {
+    let caller = ic_cdk::api::msg_caller();
+    let (env, _) = Vault::scoped(caller, &vault, false)?;
+    env.finish(vault_service::shared_mutate(&env, caller, &vault, request))
+}
+#[ic_cdk::update]
+async fn shared_derive_vault_key(request: DeriveKey) -> Result<KeyReply> {
+    let caller = ic_cdk::api::msg_caller();
+    let (env, _) = Vault::scoped(caller, &request.vault, false)?;
+    env.finish(vault_service::shared_derive_vault_key(&env, caller, request).await)
+}
+#[ic_cdk::update]
+fn list_vault_members(vault: Id) -> Result<Vec<VaultMember>> {
+    scoped_read(&vault, vault_store::sharing::members)
+}
+#[ic_cdk::update]
+fn set_vault_member(vault: Id, member: Principal, role: AccessRole) -> Result<()> {
+    let caller = ic_cdk::api::msg_caller();
+    let (env, access) = Vault::scoped(caller, &vault, false)?;
+    if access.role != AccessRole::Owner {
+        return Err(Error::Unauthorized);
+    }
+    let result = env.require_spending().and_then(|_| {
+        env.transaction(|db| vault_store::sharing::set_member(db, caller, &vault, member, role))
+    });
+    env.finish(result)
+}
+#[ic_cdk::update]
+fn remove_vault_member(vault: Id, member: Principal) -> Result<()> {
+    let caller = ic_cdk::api::msg_caller();
+    let (env, _) = Vault::scoped(caller, &vault, false)?;
+    env.finish(
+        env.transaction(|db| vault_store::sharing::remove_member(db, caller, &vault, member)),
+    )
+}
 #[cfg(test)]
 mod read_accounting_tests {
     use super::*;
@@ -359,6 +495,144 @@ mod read_accounting_tests {
                 db.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
                 1
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod team_billing_tests {
+    use super::*;
+    #[test]
+    fn scoped_reads_charge_the_recorded_owner_and_deny_other_vaults() {
+        crate::state::initialize().unwrap();
+        let owner = Principal::from_slice(&[45]);
+        let member = Principal::from_slice(&[46]);
+        let h = Header {
+            name: None,
+            id: vec![42; 16],
+            nonce: vec![2; 32],
+            state: VaultState::Active,
+            sequence: 0,
+            key_name: "k".into(),
+            public_key: vec![],
+        };
+        crate::state::transaction(|db|{
+            for principal in [owner,member]{db.execute("INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,100000000,0)",kinic_sqlite_compat::params![principal.to_text()]).unwrap();}
+            db.execute("INSERT INTO vaults(owner,id,operation,header) VALUES(?1,?2,?3,?4)",kinic_sqlite_compat::params![owner.as_slice(),h.id,vec![3u8;16],serde_json::to_string(&h).unwrap()]).unwrap();
+            OwnerContext::authenticated(owner)?.run(db,|db|vault_store::sharing::set_member(db,owner,&h.id,member,AccessRole::Viewer))
+        }).unwrap();
+        let (env, access) = Vault::scoped(member, &h.id, true).unwrap();
+        assert_eq!(access.owner, owner);
+        env.read(1, |db| vault_store::content::objects(db, &h.id, &[]))
+            .unwrap();
+        assert!(matches!(
+            Vault::scoped(member, &[41; 16], true),
+            Err(Error::Unauthorized)
+        ));
+        assert_eq!(
+            crate::state::State.balance(&owner.to_text()).unwrap(),
+            80_000_000
+        );
+        assert_eq!(
+            crate::state::State.balance(&member.to_text()).unwrap(),
+            100_000_000
+        );
+        let page =
+            crate::state::transaction(|db| vault_store::sharing::accessible(db, member, &[]))
+                .unwrap();
+        charge_access_page(&page, 20_000_000, 2).unwrap();
+        assert_eq!(
+            crate::state::State.balance(&owner.to_text()).unwrap(),
+            60_000_000
+        );
+        assert_eq!(
+            crate::state::State.balance(&member.to_text()).unwrap(),
+            100_000_000
+        );
+    }
+
+    #[test]
+    fn shared_key_settles_recorded_owner_subsidy_after_member_revocation() {
+        use crate::state::{self, State};
+        use kinic_sqlite_compat::params;
+        state::initialize().unwrap();
+        let owner = Principal::from_slice(&[45]);
+        let member = Principal::from_slice(&[46]);
+        let account = State.initialize_account(owner, 0).unwrap();
+        let h = Header {
+            id: vec![42; 16],
+            name: None,
+            nonce: vec![2; 32],
+            state: VaultState::Active,
+            sequence: 0,
+            key_name: "k".into(),
+            public_key: vec![],
+        };
+        state::transaction(|db| {
+            db.execute(
+                "INSERT INTO vaults(owner,id,operation,header) VALUES(?1,?2,?3,?4)",
+                params![
+                    owner.as_slice(),
+                    h.id,
+                    vec![3u8; 16],
+                    serde_json::to_string(&h).unwrap()
+                ],
+            )
+            .unwrap();
+            OwnerContext::authenticated(owner)?.run(db, |db| {
+                vault_store::sharing::set_member(db, owner, &h.id, member, AccessRole::Viewer)
+            })
+        })
+        .unwrap();
+        let (env, _) = Vault::scoped(member, &h.id, false).unwrap();
+        let fee = 26_153_846_153;
+        let execution = 20_000_000;
+        state::transaction(|db| {
+            env.owner
+                .run(db, |db| vault_store::keys::reserve(db, &h.id, 1, 1, fee))
+        })
+        .unwrap();
+        State
+            .vault_reserve_cycles(&env.owner().to_text(), "derive:1", fee + execution, 1000)
+            .unwrap();
+        state::transaction(|db| {
+            env.owner.run(db, |db| {
+                vault_store::keys::mark_sent(db, 1, fee)?;
+                vault_store::sharing::remove_member(db, owner, &h.id, member)
+            })
+        })
+        .unwrap();
+
+        settle_key_reservation_for_owner(env.owner, 1, 2, fee).unwrap();
+        State
+            .vault_reconcile_refunded_cycles(&env.owner().to_text(), "derive:1", fee, 2000)
+            .unwrap();
+        env.operation.set(Some(1));
+        assert_eq!(
+            env.finish_at::<()>(Err(Error::Unauthorized), 2000),
+            Err(Error::Unauthorized)
+        );
+        assert!(matches!(
+            Vault::scoped(member, &h.id, true),
+            Err(Error::Unauthorized)
+        ));
+        assert_eq!(
+            State.balance(&owner.to_text()).unwrap(),
+            account.balance - execution
+        );
+        state::transaction(|db| {
+            assert!(!crate::key_subsidy::available_in(db, &owner.to_text())?);
+            assert_eq!(
+                db.query_row(
+                    "SELECT count(*) FROM accounts WHERE owner=?1",
+                    [member.to_text()],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                0
             );
             Ok(())
         })

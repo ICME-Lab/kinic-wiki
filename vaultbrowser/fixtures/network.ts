@@ -7,7 +7,11 @@ import type {
   MutationResult,
   PendingUploadSummary,
   VaultActor,
+  AccessRole,
+  VaultAccess,
+  VaultMember,
 } from "@kinic/vault-client/contracts";
+import { Principal } from "@icp-sdk/core/principal";
 import { hash } from "@kinic/vault-crypto/documents";
 export const fixtureHeader = (value = 1): Header => ({
   id: new Uint8Array(16).fill(value),
@@ -24,7 +28,12 @@ type NetworkMethods = {
     ...args: Parameters<VaultActor[K]>
   ) => ReturnType<VaultActor[K]>;
 };
-export function fixtureNetwork() {
+export function fixtureNetwork(
+  owner = Principal.selfAuthenticating(new Uint8Array([1])),
+  sharedOwner = Principal.selfAuthenticating(new Uint8Array([2])),
+) {
+  const roles = new Map<string, AccessRole | null>();
+  const membership = new Map<string, VaultMember[]>();
   const headers = [fixtureHeader(), fixtureHeader(2)];
   const revisions: Revision[] = [];
   const chunks = new Map<string, Uint8Array[]>();
@@ -57,7 +66,7 @@ export function fixtureNetwork() {
       },
     }),
     list_payments: async () => ({ Ok: [] }),
-    list_vaults: async () => ({ Ok: structuredClone(headers) }),
+    list_vaults: async () => ({ Ok: structuredClone(headers.filter((header) => !roles.has(key(header.id)))) }),
     create_vault: async (
       request: Parameters<VaultActor["create_vault"]>[0],
     ) => {
@@ -137,12 +146,14 @@ export function fixtureNetwork() {
       },
     }),
     get_manifest: async (vault, object, revision) => {
-      const found = revisions.find(
-        (r) =>
-          key(r.vault) === key(vault) &&
-          key(r.object) === key(object) &&
-          r.revision === revision,
-      );
+      const found = revisions
+        .filter(
+          (r) =>
+            key(r.vault) === key(vault) &&
+            key(r.object) === key(object) &&
+            (revision === 0n || r.revision === revision),
+        )
+        .at(-1);
       return found
         ? { Ok: structuredClone(found) }
         : { Err: { NotFound: null } };
@@ -296,8 +307,134 @@ export function fixtureNetwork() {
       return result(value);
     },
   } satisfies NetworkMethods;
+  const access = (vault: Header["id"]): VaultAccess | undefined => {
+    const h = headers.find((h) => key(h.id) === key(vault));
+    const role = roles.get(key(vault));
+    if (!h || role === null || (role && !("Active" in h.state))) return;
+    return {
+      header: structuredClone(h),
+      owner: role ? sharedOwner : owner,
+      role: role ?? { Owner: null },
+    };
+  };
+  const denied = { Err: { Unauthorized: null } } as const;
+  const shared = {
+    get_vault_access: async (vault) => {
+      const a = access(vault);
+      return a && "Active" in a.header.state ? { Ok: a } : denied;
+    },
+    list_accessible_vaults: async (after) => {
+      const entries = headers
+        .map((h) => access(h.id))
+        .filter((a) => a !== undefined);
+      const offset = after.length
+        ? entries.findIndex((a) => key(a.header.id) === key(after)) + 1
+        : 0;
+      const page = entries.slice(offset, offset + 20);
+      return {
+        Ok: {
+          entries: page,
+          next: offset + 20 < entries.length ? [page.at(-1)!.header.id] : [],
+        },
+      };
+    },
+    list_vault_members: async (vault) => {
+      const a = access(vault);
+      return a && "Owner" in a.role
+        ? { Ok: membership.get(key(vault)) ?? [] }
+        : denied;
+    },
+    set_vault_member: async (vault, principal, role) => {
+      const a = access(vault);
+      if (!a || !("Owner" in a.role) || "Owner" in role) return denied;
+      const members = (membership.get(key(vault)) ?? []).filter(
+        (m) => m.principal.toText() !== principal.toText(),
+      );
+      membership.set(key(vault), [...members, { principal, role }]);
+      return { Ok: null };
+    },
+    remove_vault_member: async (vault, principal) => {
+      const a = access(vault);
+      if (!a || !("Owner" in a.role)) return denied;
+      membership.set(
+        key(vault),
+        (membership.get(key(vault)) ?? []).filter(
+          (m) => m.principal.toText() !== principal.toText(),
+        ),
+      );
+      return { Ok: null };
+    },
+    shared_derive_vault_key: (request) =>
+      access(request.vault)
+        ? actor.derive_vault_key()
+        : Promise.resolve(denied),
+    shared_list_objects: (vault) =>
+      access(vault) ? actor.list_objects(vault) : Promise.resolve(denied),
+    shared_get_manifest: (vault, object, revision) =>
+      access(vault)
+        ? actor.get_manifest(vault, object, revision)
+        : Promise.resolve(denied),
+    shared_get_chunk: (vault, object, revision, index) =>
+      access(vault)
+        ? actor.get_chunk(vault, object, revision, index)
+        : Promise.resolve(denied),
+    shared_list_history: (vault, object, before) =>
+      access(vault)
+        ? actor.list_history(vault, object, before)
+        : Promise.resolve(denied),
+    shared_get_quota: (vault) =>
+      access(vault) ? actor.get_quota() : Promise.resolve(denied),
+    shared_get_upload_status: async (vault, upload) => {
+      if (!access(vault)) return denied;
+      const status = await actor.get_upload_status(upload);
+      if (
+        "Pending" in status.Ok &&
+        key(status.Ok.Pending!.request.vault) !== key(vault)
+      )
+        return denied;
+      return status;
+    },
+    shared_list_pending_uploads: async (vault) => {
+      if (!access(vault)) return denied;
+      const { Ok } = await actor.list_pending_uploads();
+      return {
+        Ok: {
+          ...Ok,
+          entries: Ok.entries.filter(
+            (entry) => key(entry.vault) === key(vault),
+          ),
+        },
+      };
+    },
+    shared_mutate: async (vault, mutation) => {
+      const a = access(vault);
+      if (!a || "Viewer" in a.role) return denied;
+      const action = mutation.action;
+      const target =
+        "SaveInline" in action
+          ? action.SaveInline.request.vault
+          : "BeginRevision" in action
+            ? action.BeginRevision.vault
+            : "PutChunk" in action
+              ? uploads.get(key(action.PutChunk.upload))?.vault
+              : "CommitRevision" in action
+                ? uploads.get(key(action.CommitRevision.upload))?.vault
+                : "CancelUpload" in action
+                  ? action.CancelUpload.vault
+                  : "DeleteObject" in action
+                    ? action.DeleteObject.vault
+                    : undefined;
+      return target && key(target) === key(vault)
+        ? actor.mutate(mutation)
+        : denied;
+    },
+  } satisfies NetworkMethods;
   return {
-    actor: actor as unknown as VaultActor,
+    actor: { ...actor, ...shared } as unknown as VaultActor,
+    sharedOwner,
+    setRole: (vault: Header["id"], role: AccessRole | null) => {
+      roles.set(key(vault), role);
+    },
     headers,
     revisions,
     calls,

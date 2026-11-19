@@ -1,10 +1,18 @@
-//! Validate predecessor contracts before atomic migration to schema12.
-//! Version12 fences bridge-unaware grant/subsidy binaries as well as schema9 readers.
+//! Validate complete, frozen predecessor contracts before migrating either branch to schema 13.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
 
 const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
+
+// Historical DDL from 3a536a54, dec6eac2 (team) and 41db6180 (grants/subsidies).
+// Keep these snapshots independent of current schema generators and quota constants.
+const COMMON: &str = include_str!("schema_contracts/common.sql");
+const ACCOUNTS_V8: &str = include_str!("schema_contracts/accounts_v8.sql");
+const ACCOUNTS_V9: &str = include_str!("schema_contracts/accounts_v9.sql");
+const TEAM: &str = include_str!("schema_contracts/team_v11.sql");
+const GRANT: &str = include_str!("schema_contracts/grant_v10.sql");
+const SUBSIDY: &str = include_str!("schema_contracts/subsidy_v11.sql");
 
 pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
     db.execute_batch("SAVEPOINT vault_schema_upgrade")
@@ -19,11 +27,19 @@ pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
     }
     result
 }
-fn validate(db: &Connection, statements: &[String]) -> Result<()> {
+type Contract = BTreeMap<(String, String), String>;
+fn validate(actual: &Contract, statements: &[String]) -> Result<()> {
     let expected: BTreeMap<_, _> = statements
         .iter()
         .map(|s| contract(s))
         .collect::<Result<_>>()?;
+    if *actual == expected {
+        Ok(())
+    } else {
+        Err(Error::Storage)
+    }
+}
+fn read_contract(db: &Connection) -> Result<Contract> {
     let mut query = db
         .prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'")
         .map_err(|_| Error::Storage)?;
@@ -35,86 +51,71 @@ fn validate(db: &Connection, statements: &[String]) -> Result<()> {
         ))
     })
     .map_err(|_| Error::Storage)?;
-    let actual: BTreeMap<_, _> = rows
+    Ok(rows
         .into_iter()
         .map(|(kind, name, ddl)| ((kind, name), normalize(&ddl)))
-        .collect();
-    if actual != expected {
-        return Err(Error::Storage);
-    }
-    Ok(())
+        .collect())
 }
 fn initialize_inner(db: &Connection) -> Result<()> {
     let version: i64 = db
         .query_row("PRAGMA user_version", params![], |r| sql::row_get(r, 0))
         .map_err(|_| Error::Storage)?;
-    let count: i64 = db
-        .query_row(
-            "SELECT count(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'",
-            params![],
-            |r| sql::row_get(r, 0),
-        )
-        .map_err(|_| Error::Storage)?;
-    let old = schema_statements();
-    let additions = crate::capacity::grant_schema_statements();
-    let mut latest = old.clone();
-    latest.extend(additions.clone());
-    let v10 = latest.clone();
-    let subsidy = crate::capacity::subsidy_schema_statements();
-    latest.extend(subsidy.clone());
+    let actual = read_contract(db)?;
+    let latest = latest_statements();
     match version {
-        0 if count == 0 => {
-            db.execute_batch(&latest.join("\n"))
-                .map_err(|_| Error::Storage)?;
-        }
-        8 | 9 => {
-            if version == 8 {
-                validate(db, &legacy_schema_statements(old.clone()))?;
-                let guards = old
-                    .iter()
-                    .filter(|ddl| {
-                        ddl.starts_with("CREATE TRIGGER IF NOT EXISTS accounting_accounts_")
-                            && ddl.contains("_size ")
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                db.execute_batch(&format!(
-                    "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000); DROP TRIGGER accounting_accounts_INSERT_size; DROP TRIGGER accounting_accounts_UPDATE_size; {guards}"
-                )).map_err(|_| Error::Storage)?;
-            }
-            validate(db, &old)?;
-            db.execute_batch(&additions.join("\n"))
-                .map_err(|_| Error::Storage)?;
-            db.execute_batch(&subsidy.join("\n"))
-                .map_err(|_| Error::Storage)?;
-            exclude_existing(db)?;
-        }
-        10 => {
-            // Main's bridge release and the earlier grant release both used10,
-            // with distinct exact DDL contracts. Never repair either by guessing.
-            if validate(db, &old).is_ok() {
-                db.execute_batch(&additions.join("\n"))
-                    .map_err(|_| Error::Storage)?;
+        0 if actual.is_empty() => execute(db, &latest.join("\n"))?,
+        8..=12 => {
+            // The branch markers only select the expected contract. Validate every
+            // table, index and trigger before touching any predecessor data.
+            let team =
+                version == 11 && actual.contains_key(&("table".into(), "vault_members".into()));
+            let subsidy = matches!(version, 11 | 12) && !team;
+            let grant = subsidy
+                || (version == 10
+                    && actual.contains_key(&("table".into(), "initial_cycle_grants".into())));
+            let accounts = if version == 8 {
+                ACCOUNTS_V8
             } else {
-                validate(db, &v10)?;
+                ACCOUNTS_V9
+            };
+            let mut old = split_ddl(&[accounts, COMMON].concat());
+            for (present, script) in [(team, TEAM), (grant, GRANT), (subsidy, SUBSIDY)] {
+                if present {
+                    old.extend(split_ddl(script));
+                }
             }
-            db.execute_batch(&subsidy.join("\n"))
-                .map_err(|_| Error::Storage)?;
-            exclude_existing(db)?;
+            validate(&actual, &old)?;
+
+            if version == 8 {
+                execute(db, "ALTER TABLE accounts ADD COLUMN storage_charge_remainder INTEGER NOT NULL DEFAULT 0 CHECK(storage_charge_remainder>=0 AND storage_charge_remainder<1073741824000);
+                    DROP TRIGGER accounting_accounts_INSERT_size;
+                    DROP TRIGGER accounting_accounts_UPDATE_size;")?;
+                // The CREATE TABLE IF NOT EXISTS leaves the altered table intact.
+                execute(db, ACCOUNTS_V9)?;
+            }
+            if !team {
+                execute(db, TEAM)?;
+            }
+            if !grant {
+                execute(db, GRANT)?;
+            }
+            if !subsidy {
+                execute(db, SUBSIDY)?;
+                exclude_existing(db)?;
+            }
         }
-        11 | 12 => {
-            // The first subsidy release already established eligibility. Do not
-            // exclude accounts funded after that release but not yet initialized.
-            validate(db, &latest)?;
+        13 => {
+            validate(&actual, &latest)?;
+            return execute(db, "PRAGMA max_page_count=262144;");
         }
         _ => return Err(Error::Storage),
     }
-    validate(db, &latest)?;
-    db.execute_batch("PRAGMA user_version=12;")
-        .map_err(|_| Error::Storage)?;
-    db.execute_batch("PRAGMA max_page_count=262144;")
-        .map_err(|_| Error::Storage)
+    validate(&read_contract(db)?, &latest)?;
+    execute(db, "PRAGMA user_version=13; PRAGMA max_page_count=262144;")
+}
+
+fn execute(db: &Connection, script: &str) -> Result<()> {
+    db.execute_batch(script).map_err(|_| Error::Storage)
 }
 
 fn exclude_existing(db: &Connection) -> Result<()> {
@@ -149,40 +150,24 @@ fn exclude_existing(db: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn legacy_schema_statements(mut statements: Vec<String>) -> Vec<String> {
-    let account = statements
-        .iter_mut()
-        .find(|ddl| ddl.starts_with("CREATE TABLE IF NOT EXISTS accounts("))
-        .expect("compiled accounts table");
-    *account = "CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY NOT NULL,balance_cycles INTEGER NOT NULL CHECK(balance_cycles>=0),storage_bytes INTEGER NOT NULL DEFAULT 0,storage_charged_at_ms INTEGER NOT NULL);".into();
-    for ddl in &mut statements {
-        if ddl.starts_with("CREATE TRIGGER IF NOT EXISTS accounting_accounts_")
-            && ddl.contains("_size ")
-        {
-            *ddl = ddl.replacen("+32)>", "+24)>", 1);
-        }
-    }
+fn latest_statements() -> Vec<String> {
+    let mut statements = split_ddl(
+        &[
+            vault_store::SCHEMA,
+            vault_store::CONTENT_SCHEMA,
+            vault_store::EXPIRY_SCHEMA,
+            include_str!("accounts.sql"),
+            INDEXES,
+        ]
+        .concat(),
+    );
+    statements.extend(crate::capacity::schema_statements());
+    statements.extend(crate::capacity::grant_schema_statements());
+    statements.extend(crate::capacity::subsidy_schema_statements());
     statements
 }
 
-#[cfg(test)]
-pub(crate) fn initialize_legacy_v8(db: &Connection) {
-    db.execute_batch(&legacy_schema_statements(schema_statements()).join("\n"))
-        .unwrap();
-    db.execute_batch("PRAGMA user_version=8;").unwrap();
-}
-
-fn schema_statements() -> Vec<String> {
-    // These are trusted compiled DDL scripts, not user SQL. Split ordinary DDL at
-    // ';' and keep each trigger body through END;. No duplicated schema manifest.
-    let script = [
-        vault_store::SCHEMA,
-        vault_store::CONTENT_SCHEMA,
-        vault_store::EXPIRY_SCHEMA,
-        include_str!("accounts.sql"),
-        INDEXES,
-    ]
-    .concat();
+fn split_ddl(script: &str) -> Vec<String> {
     let script = script
         .lines()
         .filter(|line| !line.trim_start().starts_with("--"))
@@ -202,7 +187,6 @@ fn schema_statements() -> Vec<String> {
         statements.push(ddl.to_owned());
         pending.clear();
     }
-    statements.extend(crate::capacity::schema_statements());
     statements
 }
 
@@ -232,38 +216,46 @@ fn contract(ddl: &str) -> Result<((String, String), String)> {
 }
 
 fn normalize(ddl: &str) -> String {
-    // Preserve quoted literal bytes: whitespace inside a JSON path or state name
-    // must not make a different guard compare equal. Ignore only outside spacing
-    // and SQLite's omitted IF NOT EXISTS prefix in persisted CREATE statements.
-    let mut quoted = false;
-    let mut normalized = String::new();
-    for ch in ddl.trim().trim_end_matches(';').chars() {
-        if ch == '\'' {
-            quoted = !quoted;
-        }
-        if quoted || !ch.is_ascii_whitespace() {
-            normalized.push(ch);
-        }
+    // SQLite removes IF NOT EXISTS when it stores CREATE statements. ALTER
+    // TABLE inserts a space before the last account column on migrated v8.
+    // Keep other bytes, including SQL token boundaries and quoted literals.
+    let ddl = ddl.trim().trim_end_matches(';');
+    let mut ddl = ["TABLE", "INDEX", "UNIQUE INDEX", "TRIGGER"]
+        .iter()
+        .find_map(|kind| {
+            ddl.strip_prefix(&format!("CREATE {kind} IF NOT EXISTS "))
+                .map(|rest| format!("CREATE {kind} {rest}"))
+        })
+        .unwrap_or_else(|| ddl.to_owned());
+    if ddl.starts_with("CREATE TABLE accounts(") {
+        ddl = ddl.replacen(
+            "storage_charged_at_ms INTEGER NOT NULL, storage_charge_remainder",
+            "storage_charged_at_ms INTEGER NOT NULL,storage_charge_remainder",
+            1,
+        );
     }
-    for kind in ["TABLE", "INDEX", "UNIQUEINDEX", "TRIGGER"] {
-        let prefix = format!("CREATE{kind}IFNOTEXISTS");
-        if normalized.starts_with(&prefix) {
-            return normalized.replacen(&prefix, &format!("CREATE{kind}"), 1);
-        }
-    }
-    normalized
+    ddl
 }
 
 #[cfg(test)]
-pub(crate) fn legacy_v9_for_test(db: &Connection) {
-    db.execute_batch(&schema_statements().join("\n")).unwrap();
-    db.execute_batch("PRAGMA user_version=9;").unwrap();
+pub(crate) fn initialize_legacy_v8(db: &Connection) {
+    db.execute_batch(&[ACCOUNTS_V8, COMMON, "PRAGMA user_version=8;"].concat())
+        .unwrap();
 }
-
+#[cfg(test)]
+pub(crate) fn legacy_v9_for_test(db: &Connection) {
+    db.execute_batch(&[ACCOUNTS_V9, COMMON, "PRAGMA user_version=9;"].concat())
+        .unwrap();
+}
 #[cfg(test)]
 pub(crate) fn legacy_v10_for_test(db: &Connection) {
     legacy_v9_for_test(db);
-    db.execute_batch(&crate::capacity::grant_schema_statements().join("\n"))
+    db.execute_batch(&[GRANT, "PRAGMA user_version=10;"].concat())
         .unwrap();
-    db.execute_batch("PRAGMA user_version=10;").unwrap();
+}
+#[cfg(test)]
+pub(crate) fn subsidy_v11_for_test(db: &Connection) {
+    legacy_v10_for_test(db);
+    db.execute_batch(&[SUBSIDY, "PRAGMA user_version=11;"].concat())
+        .unwrap();
 }

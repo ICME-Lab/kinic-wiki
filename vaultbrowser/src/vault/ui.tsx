@@ -78,7 +78,8 @@ const errors: Record<string, string> = {
     "Retry the pending request before starting another change.",
   NoPendingMutation: "There is no request waiting for a retry.",
   Unauthorized:
-    "This action requires the Vault owner. Check your Internet Identity sign-in.",
+    "Your Internet Identity does not have access to this Vault or action.",
+  InvalidMemberPrincipal: "Enter the Vault principal of the person you want to add.",
   Conflict:
     "Another update changed this document or operation. Refresh and open the current version before retrying.",
   NotFound:
@@ -101,7 +102,9 @@ const errors: Record<string, string> = {
   KeyService:
     "The key service is unavailable. Select this Vault to retry opening it.",
 };
-export function vaultError(error: unknown) {
+export function vaultError(error: unknown, ownerPays = false) {
+  if (ownerPays && error instanceof Error && error.message === "QuotaExceeded")
+    return "This Vault reached a storage, operation or credit limit. The Vault owner's prepaid balance covers shared access.";
   // Never display serialized server payloads, exception text, titles or plaintext.
   return (
     errors[error instanceof Error ? error.message : ""] ??

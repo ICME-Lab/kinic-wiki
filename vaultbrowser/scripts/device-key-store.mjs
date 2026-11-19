@@ -18,6 +18,7 @@ export async function readDeviceKeyStore() {
     });
     return { stores, records: records.map(record => ({
       fields: Object.keys(record).sort(), id: record.id, scope: record.scope, epoch: record.epoch,
+      writeId: record.writeId,
       key: record.key instanceof CryptoKey ? {
         type: record.key.type, extractable: record.key.extractable,
         algorithm: record.key.algorithm.name, length: record.key.algorithm.length,
@@ -36,7 +37,11 @@ export function assertDeviceKeyStore(store, scope) {
       assert.deepEqual(record.fields, ["epoch", "id", "scope"]);
       assert.ok(Number.isSafeInteger(record.epoch) && record.epoch >= 0);
     } else {
-      assert.deepEqual(record.fields, ["id", "key", "scope"]);
+      const versioned = record.fields.includes("writeId");
+      assert.deepEqual(record.fields, versioned
+        ? ["id", "key", "scope", "writeId"] : ["id", "key", "scope"]);
+      if (versioned) assert.match(record.writeId,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
       assert.ok(record.id.startsWith(`key:${scope}:`));
       const binding = JSON.parse(record.id.slice(`key:${scope}:`.length));
       assert.equal(binding.length, 3);

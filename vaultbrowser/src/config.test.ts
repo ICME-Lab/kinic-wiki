@@ -41,3 +41,20 @@ it('accepts production funding and rejects unrecognized capability values', () =
   expect(validateConfig({...config, fundingMode:'production'}, config.origin).fundingMode).toBe('production');
   expect(() => validateConfig({...config, fundingMode:'enabled' as any}, config.origin)).toThrow();
 });
+
+it("rejects arbitrary Wiki origins and accepts an explicit canonical loopback origin for local builds", () => {
+  expect(() => validateConfig({ ...config, wikiOrigin: 'https://other.example' }, config.origin)).toThrow();
+  const c = {
+    ...config,
+    host: 'http://127.0.0.1:8024',
+    derivationOrigin: 'http://rrkah-fqaaa-aaaaa-aaaaq-cai.localhost:8024',
+    identityProvider: 'http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:8024',
+    origin: 'http://vault.localhost:3024',
+    local: true,
+    wikiOrigin: 'http://wiki.localhost:3025'
+  };
+  expect(validateConfig(c, c.origin).wikiOrigin).toEqual(c.wikiOrigin);
+  for (const wikiOrigin of ['https://wiki.kinic.xyz', 'http://wiki.localhost.evil.test', 'http://user@wiki.localhost:3025', 'http://localhost:3025/#x', 'http://localhost:3025/']) {
+    expect(() => validateConfig({ ...c, wikiOrigin }, c.origin)).toThrow();
+  }
+});

@@ -5,10 +5,14 @@ import { useEffect } from "react";
 import { VaultChrome } from "../src/chrome";
 import { VaultButton } from "../src/vault/ui";
 import { createRoot } from "react-dom/client";
+import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
+import { Principal } from "@icp-sdk/core/principal";
 import { VaultClient, ok, bytes } from "@kinic/vault-client";
 import { importKey } from "@kinic/vault-crypto";
 import { Funding } from "../src/funding";
+import { VaultFundingProvider } from "../src/funding/session";
+import { loadConfig } from "../src/config";
 import type { Payment, VaultActor } from "@kinic/vault-client/contracts";
 import type { Header } from "@kinic/vault-client/contracts";
 import { VaultWorkspace } from "../src/vault/workspace";
@@ -16,14 +20,15 @@ import { VaultWelcome } from "../src/vault/page";
 import { fixtureNetwork } from "./network";
 import { EditorView } from "../../packages/ui/node_modules/@codemirror/view";
 import "../src/style.css";
-const network = fixtureNetwork();
-if (new URLSearchParams(location.search).get("state") === "setup") {
+const fixtureIdentity = Ed25519KeyIdentity.generate();
+const fixtureState = new URLSearchParams(location.search).get("state");
+const network = fixtureNetwork(fixtureIdentity.getPrincipal());
+if (fixtureState === "setup") {
   network.setBalance(0n);
 }
 class UIFixtureClient extends VaultClient {
   override async open(h: Header, options: Parameters<VaultClient["open"]>[1] = {}) {
-    if (!this.header || String(this.header.id) !== String(h.id))
-      this.session.lock();
+    this.selectOwnedVault(h);
     const ticket = this.session.capture();
     await options.beforeDerive?.(h);
     this.session.check(ticket);
@@ -57,7 +62,7 @@ class UIFixtureClient extends VaultClient {
 }
 const client = new UIFixtureClient({
   actor: network.actor,
-  identity: Ed25519KeyIdentity.generate(),
+  identity: fixtureIdentity,
   canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
   local: true,
 });
@@ -75,7 +80,7 @@ Object.assign(window, {
 });
 // Keep the ordinary workspace fixture's funding policy unavailable. Only this
 // explicit synthetic surface requests the fixture-only funding configuration.
-if (new URLSearchParams(location.search).get("state") === "funding") {
+if (fixtureState === "funding") {
   const fetch = window.fetch.bind(window);
   window.fetch = (input, init) =>
     fetch(
@@ -83,6 +88,7 @@ if (new URLSearchParams(location.search).get("state") === "funding") {
       init,
     );
 }
+const config = await loadConfig();
 const fundingState = { calls: 0, funded: 0 };
 const fundingIdentity = Ed25519KeyIdentity.generate();
 let fundingPayment: Payment = {
@@ -118,6 +124,7 @@ const fundingClient = new VaultClient({
   local: true,
   actor: {
     list_payments: async () => ({ Ok: [fundingPayment] }),
+    account_balance: async () => ({ Ok: fundingNext >= 1500n ? fundingPayment.credits : 0n }),
     payment_status: async () => ({ Ok: [fundingPayment] }),
     pay_purchase: async () => ({ Ok: fundingPayment }),
     reconcile_purchase: async () => {
@@ -131,13 +138,14 @@ const fundingClient = new VaultClient({
             start: 0n,
             next: fundingNext,
             end: 1500n,
-            spender: fundingIdentity.getPrincipal(),
+            spender: Principal.fromText(config.canister),
             lease: 0n,
             lease_until: 0n,
             lease_generation: 0n,
           },
         ],
         status: fundingNext >= 1500n ? { Paid: 15n } : { Unknown: null },
+        uncertain: fundingNext < 1500n,
       };
       return {
         Ok: {
@@ -151,6 +159,23 @@ const fundingClient = new VaultClient({
     },
   } as unknown as VaultActor,
 });
+// The shared payment transport and Candid encoding run against test actors.
+HttpAgent.prototype.fetchRootKey = async () => new Uint8Array();
+const fundingActors = {
+  ...fundingClient.actor,
+  get_funding_config: async () => ({ Ok: [fundingPayment.config] }),
+  icrc1_decimals: async () => 8,
+  icrc1_fee: async () => 10n,
+  icrc1_balance_of: async () => 100_000_010n,
+  icrc2_allowance: async () => ({ allowance: 0n, expires_at: [] }),
+};
+Actor.createActor = (_factory, { canisterId }) => {
+  const target = typeof canisterId === "string" ? canisterId : canisterId.toText();
+  if (fixtureState === "funding" && (target === config.canister || target === fundingPayment.config.ledger.toText()))
+    return fundingActors as never;
+  if (target === config.canister) return network.actor as never;
+  throw Error("UnknownSyntheticActor");
+};
 Object.assign(window, { syntheticFunding: fundingState });
 function FundingFixture() {
   return (
@@ -199,7 +224,6 @@ function Fixture() {
     </>
   );
 }
-const fixtureState = new URLSearchParams(location.search).get("state");
 if (fixtureState === "key-funding" || fixtureState === "key-funding-preview") network.setBalance(23_000_000_000n);
 if (fixtureState === "fresh") {
   network.headers.length = 0;
@@ -210,7 +234,10 @@ if (fixtureState === "fresh") {
   });
 }
 createRoot(document.getElementById("root")!).render(
-  <VaultRouter><DraftGuardProvider>{
+  <VaultRouter><DraftGuardProvider><VaultFundingProvider
+    config={config}
+    identity={fixtureState === "funding" ? fundingIdentity : fixtureIdentity}
+  >{
   fixtureState === "welcome" ? (
     <>
       <VaultChrome />
@@ -222,5 +249,5 @@ createRoot(document.getElementById("root")!).render(
     <FundingFixture />
   ) : (
     <Fixture />
-  )}</DraftGuardProvider></VaultRouter>,
+  )}</VaultFundingProvider></DraftGuardProvider></VaultRouter>,
 );

@@ -84,8 +84,8 @@ overrides:
 
 # Temporary exception until braces publishes a fix for CVE-2026-93687.
 # Only Tailwind's dev-only glob tooling uses it; both tailwind.config.ts files
-# contain fixed repository globs, with no user-provided patterns. Production
-# audit has no findings. Remove this exception when a patched release exists.
+# contain fixed repository globs, with no user-provided patterns.
+# Remove this exception when a patched release exists.
 # https://github.com/advisories/GHSA-vfj7-8cjw-p6xm
 auditConfig:
   ignoreGhsas:

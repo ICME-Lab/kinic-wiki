@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Ellipsis, Pencil, Settings } from "lucide-react";
+import { Ellipsis, Pencil, Settings, Users } from "lucide-react";
 import { isValidVaultName, type VaultClient } from "@kinic/vault-client";
 import type { Header } from "@kinic/vault-client/contracts";
 import { useModalDialog } from "@kinic/ui/use-modal-dialog";
@@ -15,7 +15,7 @@ export function VaultActions({ header, fallback, client, disabled, canRename, on
   disabled: boolean;
   canRename: boolean;
   onRename: (name: string) => void;
-  onSettings: () => void;
+  onSettings: (members: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(false);
@@ -45,9 +45,14 @@ export function VaultActions({ header, fallback, client, disabled, canRename, on
           if (openingSettings.current) requestAnimationFrame(() => document.getElementById("vault-settings-title")?.focus());
           openingSettings.current = false;
         }}>
-          <DropdownMenu.Item className="vault-document-menu-item" disabled={disabled} onSelect={() => { openingSettings.current = true; onSettings(); }}>
+          <DropdownMenu.Item className="vault-document-menu-item" disabled={disabled} onSelect={() => { openingSettings.current = true; onSettings(false); }}>
             <Settings size={14} aria-hidden />Vault settings
           </DropdownMenu.Item>
+          {"Active" in header.state ? (
+            <DropdownMenu.Item className="vault-document-menu-item" disabled={disabled} onSelect={() => { openingSettings.current = true; onSettings(true); }}>
+              <Users size={14} aria-hidden />Manage members
+            </DropdownMenu.Item>
+          ) : null}
           <DropdownMenu.Item className="vault-document-menu-item vault-rename-item" disabled={disabled || !canRename || !("Active" in header.state)} onSelect={() => { editingRef.current = true; setEditing(true); }}>
             <Pencil size={14} aria-hidden />Rename Vault
           </DropdownMenu.Item>

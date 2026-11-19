@@ -4,6 +4,7 @@ import type { Header } from "@kinic/vault-client/contracts";
 import { ArrowLeft, Eraser, Flame, KeyRound } from "lucide-react";
 import { VaultButton, VaultField, VaultPanel } from "./ui";
 import { StatusPill } from "@kinic/ui/status-pill";
+import { VaultMembers } from "./members";
 import type { VaultWork } from "./workspace";
 
 export function VaultSettings({
@@ -13,6 +14,7 @@ export function VaultSettings({
   client,
   selected,
   vaultName,
+  showMembers = false,
   disabled,
   run,
   onChanged,
@@ -25,6 +27,7 @@ export function VaultSettings({
   client: VaultClient;
   selected?: Header;
   vaultName: string;
+  showMembers?: boolean;
   disabled: boolean;
   run: VaultWork;
   onChanged: () => Promise<void>;
@@ -34,6 +37,7 @@ export function VaultSettings({
   const heading = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => { if (active) heading.current?.focus(); }, [active]);
   const vaultKey = selected ? Array.from(bytes(selected.id)).join(",") : "";
+  const maintenanceDisabled = disabled || client.hasPendingSave;
   return (
     <section hidden={!active} className="vault-settings" aria-labelledby="vault-settings-title">
       <div className="vault-settings-header">
@@ -51,20 +55,25 @@ export function VaultSettings({
             title="Saved browser keys"
             description="Removing saved keys closes any open Vault on this browser. Opening your Vaults again may require a paid key retrieval. Your documents are kept."
             action={
-              <VaultButton size="sm" disabled={disabled} onClick={onForgetKeys ?? (() => run(() => client.forgetDeviceKeys()))}>
+              <VaultButton size="sm" disabled={maintenanceDisabled} onClick={onForgetKeys ?? (() => run(() => client.forgetDeviceKeys()))}>
                 Delete saved keys from this browser
               </VaultButton>
             }
           />
-          <StorageMaintenance client={client} disabled={disabled} run={run} onChanged={onChanged} />
+          <StorageMaintenance client={client} disabled={maintenanceDisabled} run={run} onChanged={onChanged} />
         </VaultPanel>
       </SettingsGroup> : null}
       {scope === "vault" && selected ? (
-        <SettingsGroup title="Danger zone" danger>
-          <VaultPanel label="Danger zone" className="vault-settings-list vault-danger-zone">
-            <VaultDeletion key={vaultKey} client={client} selected={selected} vaultName={vaultName} disabled={disabled} run={run} onChanged={onChanged} />
-          </VaultPanel>
-        </SettingsGroup>
+        <>
+          {"Active" in selected.state ? (
+            <VaultMembers key={vaultKey} client={client} vault={selected.id} initiallyOpen={showMembers} disabled={disabled} run={run} />
+          ) : null}
+          <SettingsGroup title="Danger zone" danger>
+            <VaultPanel label="Danger zone" className="vault-settings-list vault-danger-zone">
+              <VaultDeletion key={vaultKey} client={client} selected={selected} vaultName={vaultName} disabled={maintenanceDisabled} run={run} onChanged={onChanged} />
+            </VaultPanel>
+          </SettingsGroup>
+        </>
       ) : scope === "vault" ? <p className="vault-setting-empty">Choose a Vault from its actions menu to manage it.</p> : null}
       </> : null}
     </section>
@@ -169,5 +178,62 @@ function VaultDeletion({ client, selected, vaultName, disabled, run, onChanged }
         </VaultButton>
       </div>
     </SettingRow>
+  );
+}
+
+export function VaultSharedUploads({
+  client,
+  disabled,
+  run,
+}: {
+  client: VaultClient;
+  disabled: boolean;
+  run: VaultWork;
+}) {
+  const [uploads, setUploads] =
+    useState<Awaited<ReturnType<VaultClient["pendingUploads"]>>["entries"]>();
+  const refresh = async () => {
+    const ticket = client.session.capture();
+    const page = await client.pendingUploads();
+    client.session.check(ticket);
+    setUploads(page.entries);
+  };
+  return (
+    <details
+      className="vault-disclosure [&:not([open])>div]:hidden"
+      onToggle={(e) => {
+        if (e.currentTarget.open && !uploads) run(refresh);
+      }}
+    >
+      <summary>My interrupted uploads in this Vault</summary>
+      <div className="vault-disclosure-body">
+        <VaultButton disabled={disabled} onClick={() => run(refresh)}>
+          Refresh my uploads
+        </VaultButton>
+        {uploads?.map((upload, index) => (
+          <VaultButton
+            key={index}
+            disabled={disabled}
+            onClick={() =>
+              run(async () => {
+                const ticket = client.session.capture();
+                await client.cancelUpload(
+                  bytes(upload.vault),
+                  bytes(upload.upload),
+                  upload.cancel_job[0]
+                    ? bytes(upload.cancel_job[0])
+                    : undefined,
+                );
+                client.session.check(ticket);
+                await refresh();
+              })
+            }
+          >
+            Cancel my interrupted upload {index + 1}
+          </VaultButton>
+        ))}
+        {uploads?.length === 0 ? <p>No interrupted uploads.</p> : null}
+      </div>
+    </details>
   );
 }

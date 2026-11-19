@@ -5,11 +5,12 @@ import type { Item, VaultClient } from "@kinic/vault-client";
 import { useModalDialog } from "@kinic/ui/use-modal-dialog";
 import { VaultButton, VaultField } from "./ui";
 
-export function DocumentActions({ item, client, disabled, writesDisabled, onDelete }: {
+export function DocumentActions({ item, client, disabled, writesDisabled, canPurge, onDelete }: {
   item: Item;
   client: VaultClient;
   disabled: boolean;
   writesDisabled: boolean;
+  canPurge: boolean;
   onDelete: (item: Item, permanent: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -46,14 +47,16 @@ export function DocumentActions({ item, client, disabled, writesDisabled, onDele
           <DropdownMenu.Item className="vault-document-menu-item" disabled={disabled || writesDisabled || item.revision.deleted} onSelect={() => request(false)}>
             <Trash2 size={14} aria-hidden />Delete document
           </DropdownMenu.Item>
-          <DropdownMenu.Separator className="vault-document-menu-separator" />
-          <DropdownMenu.Item className="vault-document-menu-item" disabled={disabled} onSelect={() => request(true)}>
-            <Flame size={14} aria-hidden />Permanently delete document and history
-          </DropdownMenu.Item>
+          {canPurge ? <>
+            <DropdownMenu.Separator className="vault-document-menu-separator" />
+            <DropdownMenu.Item className="vault-document-menu-item" disabled={disabled} onSelect={() => request(true)}>
+              <Flame size={14} aria-hidden />Permanently delete document and history
+            </DropdownMenu.Item>
+          </> : null}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
-    {mode ? <DocumentDeletionDialog key={mode} item={item} client={client} permanent={mode === "purge"} disabled={disabled} onCancel={cancel} onDelete={() => { if (!confirming.current) return; cancel(); onDelete(item, mode === "purge"); }} /> : null}
+    {mode && (mode !== "purge" || canPurge) ? <DocumentDeletionDialog key={mode} item={item} client={client} permanent={mode === "purge"} disabled={disabled || (mode === "delete" && writesDisabled)} onCancel={cancel} onDelete={() => { if (!confirming.current) return; cancel(); onDelete(item, mode === "purge"); }} /> : null}
   </>;
 }
 

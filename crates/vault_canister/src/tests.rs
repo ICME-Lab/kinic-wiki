@@ -393,7 +393,7 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v10_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v13_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
@@ -407,7 +407,7 @@ fn initial_release_creates_v10_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','receipts')",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('vault_cycle_reservations') WHERE name='account_owner'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let before: i64 = db
@@ -544,7 +544,7 @@ fn current_schema_initialization_is_idempotent() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(
-        version, 12,
+        version, 13,
         "new installations must use exact storage accounting"
     );
     schema::initialize_vault_schema(&db).unwrap();
@@ -1695,7 +1695,7 @@ fn insufficient_execution_credit_does_not_consume_the_first_key_subsidy() {
 }
 
 #[test]
-fn bridge_upgrade_accepts_v8_and_initializes_v12() {
+fn bridge_upgrade_accepts_v8_and_initializes_v13() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
     schema::initialize_legacy_v8(&db);
     db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", []).unwrap();
@@ -1703,7 +1703,7 @@ fn bridge_upgrade_accepts_v8_and_initializes_v12() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     let account: (i64, i64) = db
         .query_row(
             "SELECT balance_cycles,storage_charge_remainder FROM accounts WHERE owner='owner'",
@@ -1741,7 +1741,7 @@ fn bridge_upgrade_from_schema_nine_preserves_records_and_fences_old_readers() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        12
+        13
     );
     assert_eq!(snapshot(), before);
     schema::initialize_vault_schema(&db).unwrap();
@@ -1771,7 +1771,7 @@ fn main_schema_ten_bridge_rows_migrate_without_null_beneficiaries_or_lost_state(
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        12
+        13
     );
     assert_eq!(
         db.query_row("SELECT record FROM payments", [], |r| r.get::<_, String>(0))
@@ -1789,11 +1789,14 @@ fn main_schema_ten_bridge_rows_migrate_without_null_beneficiaries_or_lost_state(
 
 #[test]
 fn schema_eleven_upgrade_preserves_unclaimed_post_policy_grant_eligibility() {
-    state::initialize().unwrap();
     let owner = p(250);
-    credit(owner, 123);
     state::transaction(|db| {
-        db.execute_batch("PRAGMA user_version=11;").unwrap();
+        schema::subsidy_v11_for_test(db);
+        db.execute(
+            "INSERT INTO accounts(owner,balance_cycles,storage_charged_at_ms) VALUES(?1,123,0)",
+            [owner.to_text()],
+        )
+        .unwrap();
         Ok(())
     })
     .unwrap();
@@ -1835,4 +1838,46 @@ fn initial_grant_preserves_prepared_bridge_credit_arithmetic_headroom() {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+fn migrated_team_vault_resolves_original_owner_after_reopen() {
+    let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
+    schema::legacy_v9_for_test(&db);
+    db.execute_batch("PRAGMA user_version=10;").unwrap();
+    let h = Header {
+        id: vec![9; 16],
+        nonce: vec![42; 32],
+        key_name: "test_key_1".into(),
+        public_key: vec![3; 96],
+        state: VaultState::Active,
+        sequence: 8,
+        name: None,
+    };
+    db.execute(
+        "INSERT INTO vaults(owner,id,operation,header) VALUES(?1,?2,?3,?4)",
+        kinic_sqlite_compat::params![
+            p(8).as_slice(),
+            h.id,
+            vec![11u8; 16],
+            serde_json::to_string(&h).unwrap()
+        ],
+    )
+    .unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        13
+    );
+    let owner = vault_store::OwnerContext::authenticated(p(8)).unwrap();
+    owner
+        .run(&db, |db| {
+            vault_store::sharing::set_member(db, p(8), &h.id, p(9), AccessRole::Viewer)
+        })
+        .unwrap();
+    schema::initialize_vault_schema(&db).unwrap();
+    let access = vault_store::sharing::access(&db, p(9), &h.id).unwrap();
+    assert_eq!(access.owner, p(8));
+    assert_eq!(access.header, h);
 }

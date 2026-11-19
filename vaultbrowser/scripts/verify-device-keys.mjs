@@ -54,6 +54,21 @@ try {
   await page.evaluate(async()=>{
     const {client,store,binding}=window.deviceTest;
     const epoch=await store.epoch();
+    const oldWrite=crypto.randomUUID(), newWrite=crypto.randomUUID();
+    if(!await store.put(binding,client.session.root,epoch,undefined,oldWrite))
+      throw Error("older write was not stored");
+    if(!await store.put(binding,client.session.root,epoch,undefined,newWrite))
+      throw Error("replacement write was not stored");
+    await store.rollback(binding,oldWrite);
+    if(!await store.get(binding,epoch))throw Error("stale rollback deleted replacement");
+  });
+  const replacement = await page.evaluate(readDeviceKeyStore);
+  assertDeviceKeyStore(replacement, scope);
+  assert.ok(replacement.records.some(record => record.key && record.writeId),
+    "new writes carry a conditional rollback identity");
+  await page.evaluate(async()=>{
+    const {client,store,binding}=window.deviceTest;
+    const epoch=await store.epoch();
     const key=client.session.root;
     await client.forgetDeviceKeys();
     if(await store.put(binding,key,epoch))throw Error("forgotten generation resurrected");
@@ -63,5 +78,5 @@ try {
   const forgotten = await page.evaluate(readDeviceKeyStore);
   assertDeviceKeyStore(forgotten, scope);
   assert.equal(forgotten.records.filter(record => record.key).length, 0);
-  console.log("PASS: non-extractable key persistence, real client cache hit after reload, no derive call, stale-write rejection and cross-tab forget. Synthetic actor only.");
+  console.log("PASS: non-extractable key persistence, real client cache hit after reload, no derive call, conditional stale rollback, stale-write rejection and cross-tab forget. Synthetic actor only.");
 }finally{await browser.close();}

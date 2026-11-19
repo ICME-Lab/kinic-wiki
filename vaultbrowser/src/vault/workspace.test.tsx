@@ -80,10 +80,12 @@ function clickAndDiscard(element:HTMLElement){
  if(dialog) fireEvent.click(within(dialog).getByRole("button",{name:"Discard changes"}));
 }
 async function mounted() {
-  const network = fixtureNetwork();
+  const identity = Ed25519KeyIdentity.generate();
+  const sharedOwner = Ed25519KeyIdentity.generate();
+  const network = fixtureNetwork(identity.getPrincipal(), sharedOwner.getPrincipal());
   const client = new VaultClient({
     actor: network.actor,
-    identity: Ed25519KeyIdentity.generate(),
+    identity,
     canister: "rrkah-fqaaa-aaaaa-aaaaq-cai",
     local: true,
   });
@@ -98,11 +100,13 @@ async function mounted() {
       ).toBe(false),
     );
   };
-  return { ...network, client, view, open };
+  return { ...network, client, sharedOwner, view, open };
 }
-async function openVaultSettings(name = "Vault 1") {
-  fireEvent.keyDown(screen.getByRole("button", { name: `Actions for ${name}` }), { key: "ArrowDown" });
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Vault settings" }));
+async function openVaultSettings(name = "Vault 1", manageMembers = false) {
+  const actions = screen.getByRole("button", { name: `Actions for ${name}` });
+  await waitFor(() => expect(actions).toHaveProperty("disabled", false));
+  fireEvent.keyDown(actions, { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: manageMembers ? "Manage members" : "Vault settings" }));
   await screen.findByRole("region", { name: `${name} settings` });
 }
 it("keeps account settings separate and deletes a different Vault without switching the open draft", async () => {
@@ -115,8 +119,14 @@ it("keeps account settings separate and deletes a different Vault without switch
   expect(within(account).queryByText("Permanently delete this Vault")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Back to Vault" }));
   const secondId = x.headers[1].id;
-  await openVaultSettings("Vault 2");
+  const guest = Ed25519KeyIdentity.generate().getPrincipal();
+  await x.actor.set_vault_member(secondId, guest, { Viewer: null });
+  await openVaultSettings("Vault 2", true);
   const settings = screen.getByRole("region", { name: "Vault 2 settings" });
+  const member = (await within(settings).findByText(guest.toText())).closest("li")!;
+  fireEvent.click(within(member).getByRole("button", { name: "Remove member" }));
+  await within(settings).findByText("No additional members.");
+  expect(await x.actor.list_vault_members(secondId)).toEqual({ Ok: [] });
   expect(within(settings).queryByText("Saved browser keys")).toBeNull();
   fireEvent.change(within(settings).getByLabelText("Type Vault 2 to confirm"), { target: { value: "Vault 1" } });
   expect(within(settings).getByText("Permanently delete this Vault")).toHaveProperty("disabled", true);
@@ -127,6 +137,40 @@ it("keeps account settings separate and deletes a different Vault without switch
   expect(x.client.session.root).toBe(root);
   fireEvent.click(screen.getByRole("button", { name: "Back to Vault" }));
   expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "keep my draft");
+});
+it("removes a member from another Vault while preserving an interrupted save", async () => {
+  const x = await mounted();
+  await x.open();
+  const target = x.headers[1].id;
+  const guest = Ed25519KeyIdentity.generate().getPrincipal();
+  await x.actor.set_vault_member(target, guest, { Viewer: null });
+  const root = x.client.session.root;
+  const ticket = x.client.session.capture();
+  x.lose("SaveInline");
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Interrupted note" } });
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "retained save" } });
+  fireEvent.click(screen.getByText("Save document"));
+  await screen.findByText("Resume save");
+  expect(x.client.hasPendingSave).toBe(true);
+
+  await openVaultSettings("Vault 2", true);
+  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
+  await screen.findByText("No additional members.");
+  expect(await x.actor.list_vault_members(target)).toEqual({ Ok: [] });
+  expect(x.client.session.root).toBe(root);
+  expect(x.client.session.capture()).toBe(ticket);
+  expect(x.client.hasPendingSave).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Back to Vault" }));
+  const resume = screen.getByRole("button", { name: "Resume save" });
+  await waitFor(() => expect(resume).toHaveProperty("disabled", false));
+  fireEvent.click(resume);
+  await screen.findByText("Saved.");
+  await waitFor(() => expect(x.client.hasPendingSave).toBe(false));
+  const saves = x.calls.filter(({ action }) => "SaveInline" in action);
+  expect(saves).toHaveLength(2);
+  expect(saves[0]).toEqual(saves[1]);
 });
 async function save(title = "Secret note", body = "private words") {
   fireEvent.change(screen.getByLabelText("Document title"), {
@@ -1501,3 +1545,358 @@ it.each([false, true])(
     expect(popup.close).toHaveBeenCalledTimes(1);
   },
 );
+
+it("shows only live role capabilities for shared Vaults and closes on revocation", async () => {
+  const x = await mounted();
+  x.headers[1].name = ["Shared team Vault"];
+  x.setRole(x.headers[1].id, { Editor: null });
+  x.setBalance(0n);
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  fireEvent.click(await screen.findByRole("button", { name: "Shared team Vault · Editor" }));
+  await screen.findByLabelText("Document title");
+  expect(screen.queryByText("Add balance to create a Vault")).toBeNull();
+  await save("Shared note");
+  fireEvent.keyDown(screen.getByRole("button", { name: "Actions for Shared note" }), { key: "ArrowDown" });
+  await screen.findByRole("menuitem", { name: "Delete document" });
+  expect(
+    screen.queryByRole("menuitem", { name: "Permanently delete document and history" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Actions for Shared team Vault" })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Delete document" }), { key: "Escape" });
+  x.setRole(x.headers[1].id, { Viewer: null });
+  fireEvent(window, new Event("focus"));
+  await waitFor(() => expect(screen.queryByText("Save document")).toBeNull());
+  expect(screen.queryByText("New document")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Shared note" }));
+  await screen.findByText("private words");
+  expect(screen.queryByText("Delete document")).toBeNull();
+  expect(screen.getByRole("button", { name: "Shared team Vault · Viewer" })).toBeTruthy();
+  x.setRole(x.headers[1].id, null);
+  fireEvent(window, new Event("focus"));
+  await screen.findByText("Choose or create a Vault");
+  expect(screen.queryByText("private words")).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("button", { name: /Shared team Vault/ })).toBeNull());
+});
+
+it.each(["open", "Refresh documents", "Refresh Vaults", "document page"])(
+  "removes the exact denied shared Vault from the roster on %s",
+  async (action) => {
+    const x = await mounted();
+    const header = x.headers[1];
+    header.name = ["Shared team Vault"];
+    x.setRole(header.id, { Editor: null });
+    fireEvent.click(screen.getByText("Refresh Vaults"));
+    const shared = await screen.findByRole("button", { name: "Shared team Vault · Editor" });
+    await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+    if (action !== "open") {
+      fireEvent.click(shared);
+      await screen.findByLabelText("Document title");
+    }
+    const staleRoster = await x.actor.list_accessible_vaults(new Uint8Array());
+    if (action === "Refresh Vaults")
+      vi.spyOn(x.actor, "list_accessible_vaults").mockResolvedValueOnce(staleRoster);
+    if (action === "document page")
+      vi.spyOn(x.actor, "shared_list_objects").mockResolvedValueOnce({ Err: { Unauthorized: null } });
+    else x.setRole(header.id, null);
+    const control = action === "open" ? shared : screen.getByRole("button", {
+      name: action === "document page" ? "Refresh documents" : action,
+    });
+    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    fireEvent.click(control);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Shared team Vault/ })).toBeNull());
+    expect(screen.getByRole("button", { name: "Vault 1" })).toBeTruthy();
+    expect(x.client.session.root).toBeUndefined();
+  },
+);
+
+it("ignores a late denial after opening a different Vault", async () => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Editor: null });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  const shared = await screen.findByRole("button", { name: "Vault 2 · Editor" });
+  await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+  fireEvent.click(shared);
+  await screen.findByLabelText("Document title");
+  const refresh = screen.getByRole("button", { name: "Refresh Vaults" });
+  await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
+  let deny!: () => void;
+  vi.spyOn(x.actor, "get_vault_access").mockImplementationOnce(() =>
+    new Promise((resolve) => { deny = () => resolve({ Err: { Unauthorized: null } }); }),
+  );
+  fireEvent(window, new Event("focus"));
+  await waitFor(() => expect(deny).toBeTypeOf("function"));
+  await x.open();
+  const root = x.client.session.root;
+  const ticket = x.client.session.capture();
+  await act(async () => deny());
+  expect(x.client.session.root).toBe(root);
+  expect(x.client.session.capture()).toBe(ticket);
+  expect(screen.getByRole("button", { name: "Vault 2 · Editor" })).toBeTruthy();
+});
+
+it("keeps an authorized shared Vault available to retry when key retrieval is paused", async () => {
+  const x = await mounted();
+  const header = x.headers[1];
+  header.name = ["Shared team Vault"];
+  x.setRole(header.id, { Viewer: null });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  const name = "Shared team Vault · Viewer";
+  const shared = await screen.findByRole("button", { name });
+  await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+  let pauseKey!: () => void;
+  const derive = vi.spyOn(x.actor, "shared_derive_vault_key").mockImplementationOnce(() =>
+    new Promise((resolve) => { pauseKey = () => resolve({ Err: { Unauthorized: null } }); }),
+  );
+  const roster = vi.spyOn(x.actor, "list_accessible_vaults");
+  fireEvent.click(shared);
+  await waitFor(() => expect(pauseKey).toBeTypeOf("function"));
+  await act(async () => pauseKey());
+  await screen.findByText("Choose or create a Vault");
+  expect(x.client.session.root).toBeUndefined();
+  const retry = screen.getByRole("button", { name });
+  await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+  fireEvent.click(retry);
+  await screen.findByText("No documents yet.");
+  expect(derive).toHaveBeenCalledTimes(2);
+  expect(roster).not.toHaveBeenCalled();
+});
+
+it("scopes shared open, document refresh and save to the grant when the member has prepaid balance", async () => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Editor: null });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  const shared = await screen.findByRole("button", { name: "Vault 2 · Editor" });
+  await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+  expect(await x.actor.account_balance()).toEqual({ Ok: 50_000_000_000n });
+  const ownerUploads = vi.spyOn(x.actor, "list_pending_uploads");
+  const accessList = vi.spyOn(x.actor, "list_accessible_vaults");
+  const sharedReads = vi.spyOn(x.actor, "shared_list_objects");
+  fireEvent.click(shared);
+  const refresh = await screen.findByRole("button", { name: "Refresh documents" });
+  await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
+  fireEvent.click(refresh);
+  await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
+  await save("Shared funded note");
+  await waitFor(() => expect(sharedReads).toHaveBeenCalledTimes(3));
+  expect(ownerUploads).not.toHaveBeenCalled();
+  expect(accessList).not.toHaveBeenCalled();
+});
+
+it.each(["omitted", "changed in the list", "still listed", "outside the loaded page"])(
+  "handles an exact access transport error when the open shared Vault is %s",
+  async (state) => {
+    const x = await mounted();
+    const header = x.headers[1];
+    x.setRole(header.id, { Editor: null });
+    fireEvent.click(screen.getByText("Refresh Vaults"));
+    const shared = await screen.findByRole("button", { name: "Vault 2 · Editor" });
+    await waitFor(() => expect(shared).toHaveProperty("disabled", false));
+    fireEvent.click(shared);
+    const draft = await screen.findByLabelText("Private note body");
+    const refresh = screen.getByRole("button", { name: "Refresh Vaults" });
+    await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
+    fireEvent.change(draft, { target: { value: "sensitive draft" } });
+    const root = x.client.session.root;
+    if (state === "omitted") x.setRole(header.id, null);
+    if (state === "changed in the list") header.nonce = new Uint8Array(32).fill(9);
+    if (state === "outside the loaded page") {
+      const added = Array.from({ length: 20 }, (_, index) => ({
+        ...header,
+        id: new Uint8Array(16).fill(index + 3),
+      }));
+      x.headers.splice(1, 0, ...added);
+      for (const entry of added) x.setRole(entry.id, { Viewer: null });
+    }
+    const access = vi.spyOn(x.actor, "get_vault_access").mockRejectedValueOnce(Error("NetworkUnavailable"));
+    fireEvent.click(refresh);
+    await waitFor(() => expect(access).toHaveBeenCalledWith(new Uint8Array(header.id)));
+    if (state === "still listed" || state === "outside the loaded page") {
+      await screen.findByRole("alert");
+      expect(x.client.session.root).toBe(root);
+      expect(draft).toHaveProperty("value", "sensitive draft");
+      if (state === "still listed") expect(screen.getByRole("button", { name: "Vault 2 · Editor" })).toBeTruthy();
+    } else {
+      await screen.findByText("Choose or create a Vault");
+      expect(x.client.session.root).toBeUndefined();
+      expect(draft).toHaveProperty("value", "");
+    }
+  },
+);
+
+it("shows owner credit guidance after shared key admission fails without offering caller funding", async () => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Viewer: null });
+  x.setBalance(0n);
+  const derive = vi.spyOn(x.actor, "shared_derive_vault_key").mockResolvedValue({ Err: { QuotaExceeded: null } });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  fireEvent.click(await screen.findByRole("button", { name: "Vault 2 · Viewer" }));
+  await screen.findByText(/Vault owner.*prepaid balance/i);
+  expect(derive).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Retry opening Vault" })).toHaveProperty("disabled", false);
+  expect(screen.queryByText("Add balance to create a Vault")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Get quote" })).toBeNull();
+});
+
+it("requires a fresh explicit credential reveal when a Viewer opens an older revision", async () => {
+  const x = await mounted();
+  const header = x.headers[1];
+  const writer = new VaultClient({ actor: x.actor, identity: x.sharedOwner, canister: x.client.canister, local: true });
+  const metadata = { kind: "credential", title: "Shared credential" } as const;
+  const credential = (password: string) => new TextEncoder().encode(JSON.stringify({ password }));
+  await writer.open(header);
+  const revision = await writer.save(metadata, credential("old private password"));
+  await writer.save(metadata, credential("new private password"), { revision, metadata });
+  writer.destroy();
+
+  x.setRole(header.id, { Viewer: null });
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  fireEvent.click(await screen.findByRole("button", { name: "Vault 2 · Viewer" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Shared credential" }));
+  const reveal = () => screen.findByRole("button", { name: "Show credential" });
+  await reveal();
+  expect(screen.queryByText("new private password")).toBeNull();
+  fireEvent.click(await reveal());
+  await screen.findByText("new private password");
+  fireEvent.click(screen.getByRole("button", { name: "Show version history" }));
+  fireEvent.click(await screen.findByRole("button", { name: "View revision 1" }));
+  await reveal();
+  expect(screen.queryByText("new private password")).toBeNull();
+  expect(screen.queryByText("old private password")).toBeNull();
+  expect(screen.queryByText("Save document")).toBeNull();
+  fireEvent.click(await reveal());
+  await screen.findByText("old private password");
+});
+
+it("lets only the owner add, update, and remove members by Vault principal", async () => {
+  const x = await mounted();
+  await x.open();
+  await openVaultSettings(undefined, true);
+  await screen.findByText("No additional members.");
+  const guest = Ed25519KeyIdentity.generate().getPrincipal().toText();
+  fireEvent.change(screen.getByLabelText("Member Vault principal"), {
+    target: { value: guest },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+  const member = await screen.findByText(guest);
+  const row = within(member.closest("li")!);
+  fireEvent.change(row.getByLabelText("Member role"), {
+    target: { value: "Editor" },
+  });
+  await waitFor(async () => {
+    const result = await x.actor.list_vault_members(x.headers[0].id);
+    expect("Ok" in result && result.Ok[0].role).toEqual({ Editor: null });
+  });
+  await waitFor(() =>
+    expect(
+      (row.getByRole("button", { name: "Remove member" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  fireEvent.click(row.getByRole("button", { name: "Remove member" }));
+  await waitFor(() => expect(screen.queryByText(guest)).toBeNull());
+});
+
+it("loads subsequent accessible Vault pages and fences a revoked cached context", async () => {
+  const x = await mounted();
+  for (let count = 3; count <= 21; count++) {
+    const extra = { ...x.headers[0], id: new Uint8Array(16).fill(count) };
+    x.headers.push(extra);
+    x.setRole(extra.id, { Viewer: null });
+  }
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  await waitFor(() =>
+    expect(
+      (screen.getByText("Refresh Vaults") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  expect(screen.queryByText("Vault 21 · Viewer")).toBeNull();
+  fireEvent.click(screen.getByText("Load more Vaults"));
+  fireEvent.click(await screen.findByText("Vault 21 · Viewer"));
+  await waitFor(() => expect(x.client.session.root).toBeTruthy());
+  await screen.findByText("No documents yet.");
+  x.setRole(x.headers[20].id, null);
+  fireEvent(window, new Event("focus"));
+  await screen.findByText("Choose or create a Vault");
+  expect(x.client.session.root).toBeUndefined();
+});
+
+it("lets a cold owner remove a member at zero credit after key service failure without another key request", async () => {
+  const x = await mounted();
+  const guest = Ed25519KeyIdentity.generate().getPrincipal();
+  await x.actor.set_vault_member(x.headers[0].id, guest, { Viewer: null });
+  x.failKey(true);
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  fireEvent.click(screen.getByText("Vault 1"));
+  await screen.findByText(/key service is unavailable/);
+  expect(screen.queryByLabelText("Document title")).toBeNull();
+  x.setBalance(0n);
+  await openVaultSettings(undefined, true);
+  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
+  await screen.findByText("No additional members.");
+  expect(await x.actor.list_vault_members(x.headers[0].id)).toEqual({ Ok: [] });
+  expect(derive).toHaveBeenCalledTimes(1);
+  expect(x.client.session.root).toBeUndefined();
+});
+
+it("discards a late member list when the owner selects a different Vault without opening either root", async () => {
+  const x = await mounted();
+  const [a, b] = [
+    Ed25519KeyIdentity.generate().getPrincipal(),
+    Ed25519KeyIdentity.generate().getPrincipal(),
+  ];
+  await x.actor.set_vault_member(x.headers[0].id, a, { Viewer: null });
+  await x.actor.set_vault_member(x.headers[1].id, b, { Editor: null });
+  const list = x.actor.list_vault_members;
+  let release!: () => void;
+  vi.spyOn(x.actor, "list_vault_members").mockImplementationOnce(async (id) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return list(id);
+  });
+  const derive = vi.spyOn(x.actor, "derive_vault_key");
+  await openVaultSettings("Vault 1", true);
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  act(() => x.client.session.lock());
+  fireEvent.click(screen.getByRole("button", { name: "Back to Vault" }));
+  await openVaultSettings("Vault 2", true);
+  await screen.findByText(b.toText());
+  await act(async () => release());
+  expect(screen.queryByText(a.toText())).toBeNull();
+  expect(screen.getByText(b.toText())).toBeTruthy();
+  expect(derive).not.toHaveBeenCalled();
+});
+
+it("refuses member administration for a shared Vault while its key service is unavailable", async () => {
+  const x = await mounted();
+  x.setRole(x.headers[1].id, { Viewer: null });
+  x.failKey(true);
+  fireEvent.click(screen.getByText("Refresh Vaults"));
+  fireEvent.click(await screen.findByText("Vault 2 · Viewer"));
+  await screen.findByText(/key service is unavailable/);
+  expect(
+    screen.queryByRole("button", { name: "Actions for Vault 2" }),
+  ).toBeNull();
+  expect(screen.queryByText("Vault members")).toBeNull();
+  const guest = Ed25519KeyIdentity.generate().getPrincipal();
+  await expect(x.client.listMembers()).rejects.toThrow("Unauthorized");
+  await expect(x.client.removeMember(guest)).rejects.toThrow("Unauthorized");
+});
+
+it("closes the previous private view when reopening its selected owner header fails", async () => {
+  const x = await mounted();
+  await x.open();
+  const input = screen.getByLabelText("Document title") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "unsaved private title" } });
+  vi.spyOn(x.actor, "get_vault_header").mockRejectedValueOnce(
+    Error("NetworkUnavailable"),
+  );
+  clickAndDiscard(screen.getByText("Vault 1"));
+  await screen.findByText("Retry opening Vault");
+  expect(input.value).toBe("");
+  expect(screen.queryByLabelText("Document title")).toBeNull();
+  expect(x.client.session.root).toBeUndefined();
+  await openVaultSettings(undefined, true);
+  expect(screen.getByText("Vault members")).toBeTruthy();
+});

@@ -1,14 +1,36 @@
 import { createRoot } from "react-dom/client";
 import { VaultAuthProvider } from "./auth";
-import "./style.css";
+import { VaultEmbedPage } from "./vault/embed";
+import { VaultPickerPage } from "./vault/picker";
+import { parseVaultRoute } from "./vault/routes";
 import { AuthenticatedFundingRoot } from "./funding/session";
-import {App} from "./app";
-import {VaultErrorBoundary} from "./error-boundary";
-import {VaultRouter} from "./navigation";
-import {DraftGuardProvider} from "./draft-guard";
-createRoot(document.getElementById("root")!,{onCaughtError:()=>{}}).render(
+import { App } from "./app";
+import { VaultErrorBoundary } from "./error-boundary";
+import { VaultRouter } from "./navigation";
+import { DraftGuardProvider } from "./draft-guard";
+import "./style.css";
+
+const route = parseVaultRoute(location.pathname);
+createRoot(document.getElementById("root")!, { onCaughtError: () => {} }).render(
   <VaultErrorBoundary>
-  <VaultRouter><DraftGuardProvider><VaultAuthProvider>
-    <AuthenticatedFundingRoot><App /></AuthenticatedFundingRoot>
-  </VaultAuthProvider></DraftGuardProvider></VaultRouter></VaultErrorBoundary>,
+    {route.kind === "workspace" ? (
+      <VaultRouter>
+        <DraftGuardProvider>
+          <VaultAuthProvider>
+            <AuthenticatedFundingRoot>
+              <App />
+            </AuthenticatedFundingRoot>
+          </VaultAuthProvider>
+        </DraftGuardProvider>
+      </VaultRouter>
+    ) : (
+      <VaultAuthProvider>
+        {route.kind === "embed" ? (
+          <VaultEmbedPage ids={route.ids} />
+        ) : (
+          <VaultPickerPage />
+        )}
+      </VaultAuthProvider>
+    )}
+  </VaultErrorBoundary>,
 );

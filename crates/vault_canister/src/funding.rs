@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use vault_types::{Error, Result};
 const QUOTE_LIFETIME_NS: u64 = 300_000_000_000;
 /// Certified build provenance, independent of controller configuration and origin selection.
+#[cfg(any(feature = "embedded-assets", not(target_arch = "wasm32")))]
 pub const FUNDING_MODE: &str = if cfg!(feature = "synthetic-funding-test-only") {
     "synthetic-test-only"
 } else {

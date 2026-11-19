@@ -32,16 +32,15 @@ export class Session {
     this.binding = copyVaultContext(context);
     this.root = root;
   }
+  matchesContext(context: VaultContext) {
+    return !!this.root && !!this.binding && equal(contextInput(this.binding), contextInput(context));
+  }
   requireContext(context: VaultContext) {
-    if (
-      !this.root ||
-      !this.binding ||
-      !equal(contextInput(this.binding), contextInput(context))
-    ) {
+    if (!this.matchesContext(context)) {
       this.lock();
       throw Error("TargetChanged");
     }
-    return copyVaultContext(this.binding);
+    return copyVaultContext(this.binding!);
   }
   lock() {
     this.generation++;

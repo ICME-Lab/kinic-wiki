@@ -1,5 +1,9 @@
 # Vault PR dependencies
 
+The current follow-up dependency is [#190](https://github.com/ICME-Lab/kinic-wiki/pull/190) before [#189](https://github.com/ICME-Lab/kinic-wiki/pull/189). PR189 integrates the public PR190 head `41db6180d74a6cb34db0892cb65f4bd131a5ca55` through an additive merge, preserving both histories. Merge PR190 first, then synchronize PR189 against the resulting main commit and rerun its required checks if that changes the integrated tree. A squash merge of PR190 needs particular care because its commits will not be ancestors of main. The prepared integration does not itself merge either PR into main.
+
+The combined backend initializes schema13 and migrates both preceding team and subsidy layouts. Publish that backend before the Wiki/Vault clients; rollback requires a validated schema13-compatible binary. Do not downgrade to either parent store version. All workspace, picker and embed views use 30-minute idle expiry and retain validated nonextractable browser device keys across local close/sign-out.
+
 |PR|Purpose|Base|
 |---|---|---|
 |[#181](https://github.com/ICME-Lab/kinic-wiki/pull/181)|Local workflow state and generated store assets|main|
