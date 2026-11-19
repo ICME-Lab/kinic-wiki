@@ -452,7 +452,8 @@ function Workspace({ client }: { client: VaultClient }) {
       client.session.check(ticket);
       await open(header, true);
     });
-  const eligible = accountReady && !!spending && "Available" in spending;
+  const eligible = accountReady && !!spending && "Available" in spending
+    && balance >= 20_000_000n;
   const ownerCreditLow = !!spending && "AccountCreditLow" in spending;
   const serviceReserveLow = !!spending && "ServiceReserveLow" in spending;
   const serviceUnconfigured = !!spending && "Unconfigured" in spending;

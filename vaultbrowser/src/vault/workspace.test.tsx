@@ -1482,7 +1482,7 @@ it.each(["reply", "rejection"] as const)(
   },
 );
 
-it("offers funding after a definitive creation refusal follows a lost reply", async () => {
+it("keeps exact creation recovery available after a refusal follows a lost reply", async () => {
   const x = await mounted();
   const create = vi.spyOn(x.actor, "create_vault")
     .mockImplementationOnce(async () => {
@@ -1496,8 +1496,8 @@ it("offers funding after a definitive creation refusal follows a lost reply", as
   expect(retry).toHaveProperty("disabled", false);
   fireEvent.click(retry);
   await screen.findByText(/storage, operation or cycles limit/);
-  expect(retry).toHaveProperty("disabled", true);
-  expect(within(screen.getByRole("region", { name: "Choose a Vault" })).getByLabelText("KINIC amount")).toBeTruthy();
+  expect(retry).toHaveProperty("disabled", false);
+  expect(within(screen.getByRole("region", { name: "Choose a Vault" })).queryByLabelText("KINIC amount")).toBeNull();
 
   x.setBalance(50_000_000_000n);
   fireEvent.click(screen.getByText("Refresh balance"));
@@ -2107,4 +2107,30 @@ it("closes the previous private view when reopening its selected owner header fa
   expect(x.client.session.root).toBeUndefined();
   await openVaultSettings(undefined, true);
   expect(screen.getByText("Vault members")).toBeTruthy();
+});
+
+
+it.each([
+  [15_000_000n, { Available: null }, true],
+  [19_999_999n, { Available: null }, true],
+  [20_000_000n, { Available: null }, false],
+  [50_000_000n, { AccountCreditLow: null }, true],
+] as const)("gates fresh owner saves on the latest balance %s and status %j", async (balance, status, disabled) => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "New note" } });
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "Keep draft" } });
+  x.setBalance(balance);
+  vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({ Ok: status });
+  const mutate = vi.spyOn(x.actor, "mutate");
+  fireEvent.click(screen.getByText("Refresh balance"));
+  await screen.findByLabelText(`Prepaid balance: ${balance.toLocaleString("en-US")} cycles`);
+  await waitFor(() => expect(screen.getByText("Refresh balance")).toHaveProperty("disabled", false));
+  const saveButton = screen.getByText("Save document");
+  expect(saveButton).toHaveProperty("disabled", disabled);
+  if (disabled) {
+    fireEvent.click(saveButton);
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "Keep draft");
+  }
 });
