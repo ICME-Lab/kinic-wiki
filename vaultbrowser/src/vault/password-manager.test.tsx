@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Item, VaultClient } from "@kinic/vault-client";
 import type { Metadata } from "@kinic/vault-crypto/documents";
 import { VaultDocuments } from "./documents";
+import { PasswordGeneratorPanel } from "./credential-tools";
 
 vi.mock("@kinic/ui/editor", () => ({ MarkdownEditor: () => <div /> }));
 
@@ -309,4 +310,16 @@ describe("VaultDocuments password manager features", () => {
     // Verify decrypted plaintext buffer was zeroed in finally!
     expect(decryptedBuffers[0].every((b) => b === 0)).toBe(true);
   });
+});
+
+it("shows the entropy of generated word choices in the passphrase preview", () => {
+  const { client } = makeClient();
+  render(<PasswordGeneratorPanel client={client} disabled={false} onUse={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Generate password" }));
+  fireEvent.click(screen.getByRole("button", { name: "Passphrase" }));
+  fireEvent.change(screen.getByRole("slider"), { target: { value: "3" } });
+  fireEvent.click(screen.getByLabelText("Include number"));
+  expect(screen.getByTitle("Estimated 24 bits of entropy").textContent).toBe("Weak");
+  fireEvent.click(screen.getByLabelText("Capitalize"));
+  expect(screen.getByTitle("Estimated 24 bits of entropy").textContent).toBe("Weak");
 });

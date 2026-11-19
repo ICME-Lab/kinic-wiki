@@ -5,6 +5,7 @@ import {
   DEFAULT_PASSPHRASE_OPTIONS,
   DEFAULT_PASSWORD_OPTIONS,
   estimatePasswordStrength,
+  estimatePassphraseStrength,
   generatePassphrase,
   generatePassword,
   type PassphraseOptions,
@@ -87,13 +88,13 @@ const STRENGTH_LABELS: Record<
   "very-strong": "Very strong",
 };
 
-export function PasswordStrengthBadge({ password }: { password: string }) {
+export function PasswordStrengthBadge({ password, strength }: { password: string; strength?: ReturnType<typeof estimatePasswordStrength> }) {
   if (!password) return null;
-  const { level, entropyBits } = estimatePasswordStrength(password);
+  const { level, entropyBits } = strength ?? estimatePasswordStrength(password);
   return (
     <span
       className={`vault-strength vault-strength--${level}`}
-      title={`Estimated ${entropyBits} bits of entropy`}
+      title={`Estimated ${Math.round(entropyBits)} bits of entropy`}
     >
       <ShieldCheck size={12} aria-hidden />
       {STRENGTH_LABELS[level]}
@@ -197,7 +198,7 @@ export function PasswordGeneratorPanel({
             <code className="vault-generator-code" data-vault-sensitive="true">
               {preview}
             </code>
-            <PasswordStrengthBadge password={preview} />
+            <PasswordStrengthBadge password={preview} strength={mode === "passphrase" ? estimatePassphraseStrength(phraseOpts) : undefined} />
           </div>
           {mode === "random" ? (
             <div className="vault-generator-options">

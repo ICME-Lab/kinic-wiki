@@ -157,8 +157,29 @@ export function generatePassphrase(
   return picked.join(opts.separator);
 }
 
+function strengthFromEntropy(entropyBits: number): PasswordStrength {
+  const level = entropyBits < 40 ? "weak" : entropyBits < 60 ? "fair" : entropyBits < 85 ? "strong" : "very-strong";
+  return { level, entropyBits };
+}
+
+/** Entropy of the generator's random choices. Formatting adds no randomness. */
+export function estimatePassphraseStrength(partial: Partial<PassphraseOptions> = {}): PasswordStrength {
+  const opts = { ...DEFAULT_PASSPHRASE_OPTIONS, ...partial };
+  const count = Math.max(3, Math.min(10, Math.floor(opts.words)));
+  return strengthFromEntropy(count * Math.log2(WORDLIST.length) + (opts.includeNumber ? Math.log2(count * 100) : 0));
+}
+
 export function estimatePasswordStrength(password: string): PasswordStrength {
   if (!password) return { level: "weak", entropyBits: 0 };
+  // Recognize phrases produced by the UI even after applying/saving them.
+  const parts = password.split("-");
+  if (parts.length >= 3 && parts.length <= 10) {
+    const words = parts.map(part => /^([a-z]+)([0-9]{1,2})?$/i.exec(part));
+    const numbered = words.filter(word => word?.[2] !== undefined).length;
+    if (numbered <= 1 && words.every(word => word && WORDLIST.includes(word[1].toLowerCase()))) {
+      return estimatePassphraseStrength({ words: parts.length, includeNumber: numbered === 1 });
+    }
+  }
   let poolSize = 0;
   if (/[a-z]/.test(password)) poolSize += 26;
   if (/[A-Z]/.test(password)) poolSize += 26;
@@ -170,15 +191,6 @@ export function estimatePasswordStrength(password: string): PasswordStrength {
   const effectiveLength = password.length * (0.5 + 0.5 * uniqueRatio);
   const entropyBits = Math.round(effectiveLength * Math.log2(poolSize));
 
-  let level: PasswordStrengthLevel;
-  if (entropyBits < 40 || password.length < 8) {
-    level = "weak";
-  } else if (entropyBits < 60) {
-    level = "fair";
-  } else if (entropyBits < 85) {
-    level = "strong";
-  } else {
-    level = "very-strong";
-  }
-  return { level, entropyBits };
+  const strength = strengthFromEntropy(entropyBits);
+  return password.length < 8 ? { ...strength, level: "weak" } : strength;
 }
