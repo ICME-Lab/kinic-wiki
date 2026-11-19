@@ -33,15 +33,15 @@ export interface LinkStatus {
 }
 export type Result_1 = { 'Ok' : LinkStatus } |
   { 'Err' : BridgeError };
-export type Result_19 = { 'Ok' : [] | [VaultTransfer] } |
+export type Result_21 = { 'Ok' : [] | [VaultTransfer] } |
   { 'Err' : BridgeError };
-export type Result_4 = { 'Ok' : [] | [LinkStatus] } |
+export type Result_49 = { 'Ok' : LinkChallenge } |
   { 'Err' : BridgeError };
-export type Result_47 = { 'Ok' : LinkChallenge } |
+export type Result_5 = { 'Ok' : [] | [LinkStatus] } |
   { 'Err' : BridgeError };
-export type Result_5 = { 'Ok' : VaultTransfer } |
+export type Result_59 = { 'Ok' : null } |
   { 'Err' : BridgeError };
-export type Result_57 = { 'Ok' : null } |
+export type Result_6 = { 'Ok' : VaultTransfer } |
   { 'Err' : BridgeError };
 export type TransferAmount = { 'All' : null } |
   { 'Exact' : bigint };
@@ -64,21 +64,21 @@ export interface VaultTransfer {
 }
 export interface _SERVICE {
   'approve_vault_link' : ActorMethod<[Uint8Array | number[]], Result_1>,
-  'cancel_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_5>,
+  'cancel_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_6>,
   'execute_vault_transfer' : ActorMethod<
     [Uint8Array | number[], TransferApproval],
-    Result_5
+    Result_6
   >,
-  'get_pending_vault_transfer' : ActorMethod<[[] | [string]], Result_19>,
-  'get_vault_link' : ActorMethod<[], Result_4>,
-  'get_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_5>,
-  'preview_vault_link' : ActorMethod<[Uint8Array | number[]], Result_47>,
+  'get_pending_vault_transfer' : ActorMethod<[[] | [string]], Result_21>,
+  'get_vault_link' : ActorMethod<[], Result_5>,
+  'get_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_6>,
+  'preview_vault_link' : ActorMethod<[Uint8Array | number[]], Result_49>,
   'quote_vault_transfer' : ActorMethod<
     [string, TransferAmount, Uint8Array | number[]],
-    Result_5
+    Result_6
   >,
-  'reconcile_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_5>,
-  'revoke_vault_link' : ActorMethod<[], Result_57>,
+  'reconcile_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_6>,
+  'revoke_vault_link' : ActorMethod<[], Result_59>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];
