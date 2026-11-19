@@ -72,3 +72,19 @@ describe("RFC 6238 TOTP generator", () => {
     ).toThrow("InvalidTotpDigits");
   });
 });
+
+describe("ambiguous and malformed TOTP parameters", () => {
+  const uri = "otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP";
+  it.each(["&secret=JBSWY3DPEHPK3PXP", "&SECRET=JBSWY3DPEHPK3PXP", "&issuer=A&ISSUER=B"])("rejects duplicate known parameters %s", suffix => {
+    expect(() => parseTotpInput(uri + suffix)).toThrow("InvalidTotpUri");
+  });
+  it("ignores repeated unknown parameters", () => {
+    expect(parseTotpInput(uri + "&extra=one&extra=two").secret).toBe("JBSWY3DPEHPK3PXP");
+  });
+  it.each(["&digits=", "&digits=abc", "&period=", "&period=abc"])("rejects invalid numeric values %s", suffix => {
+    expect(() => parseTotpInput(uri + suffix)).toThrow();
+  });
+  it.each([{ period: 0, digits: 6 }, { period: 301, digits: 6 }, { period: 30, digits: 99 }])("validates direct configuration %j", async options => {
+    await expect(generateTotp({ secret: "JBSWY3DPEHPK3PXP", algorithm: "SHA-1", ...options })).rejects.toThrow(/InvalidTotp/);
+  });
+});

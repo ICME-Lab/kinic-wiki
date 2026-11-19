@@ -217,4 +217,44 @@ struct KinicVaultCoreTests {
         #expect(!pw.contains("l"))
         #expect(!pw.contains("I"))
     }
+    @Test("Rejects duplicate known TOTP parameters instead of trapping")
+    func rejectsAmbiguousTotpUris() throws {
+        let uri = "otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP"
+        for suffix in ["&secret=JBSWY3DPEHPK3PXP", "&SECRET=JBSWY3DPEHPK3PXP", "&issuer=A&ISSUER=B"] {
+            #expect(throws: VaultCryptoError.invalidTotpUri) { _ = try VaultTOTP.parse(uri + suffix) }
+        }
+        #expect(try VaultTOTP.parse(uri + "&extra=one&extra=two").secret == "JBSWY3DPEHPK3PXP")
+    }
+
+    @Test("Rejects malformed numeric parameters and direct invalid configurations")
+    func rejectsInvalidTotpNumbers() throws {
+        let uri = "otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP"
+        for suffix in ["&digits=", "&digits=abc", "&period=", "&period=abc"] {
+            #expect(throws: (any Error).self) { _ = try VaultTOTP.parse(uri + suffix) }
+        }
+        #expect(throws: VaultCryptoError.invalidTotpPeriod) {
+            _ = try VaultTOTP.generate(config: VaultTOTPConfig(secret: "JBSWY3DPEHPK3PXP", period: 0))
+        }
+        #expect(throws: VaultCryptoError.invalidTotpDigits) {
+            _ = try VaultTOTP.generate(config: VaultTOTPConfig(secret: "JBSWY3DPEHPK3PXP", digits: 99))
+        }
+    }
+
+    @Test("Malformed TOTP does not prevent filling the saved password")
+    func fillsPasswordWithInvalidTotp() throws {
+        let context = try makeTestContext()
+        let key = SymmetricKey(data: Data(repeating: 9, count: 32))
+        let object = Data(repeating: 6, count: 16)
+        let record = VaultCredentialRecord(username: "alice", password: "keep-password", totp: "otpauth://totp/X?secret=JBSWY3DPEHPK3PXP&SECRET=duplicate")
+        let encrypted = try VaultDocumentV3.encrypt(rootKey: key, context: context, object: object, revision: 1, metadata: VaultCredentialCodec.buildMetadata(title: "Login", record: record), plaintext: VaultCredentialCodec.serialize(record))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = VaultAutoFillSnapshotStore(fileURL: url)
+        try store.save(VaultAutoFillSnapshot(context: context, records: [VaultAutoFillRecordSnapshot(objectIdBase64URL: Base64URL.encode(object), revision: 1, manifestBase64URL: Base64URL.encode(encrypted.manifest), chunksBase64URL: encrypted.chunks.map(Base64URL.encode), hashesBase64URL: encrypted.hashes.map(Base64URL.encode))]))
+        let filled = try store.decryptCredential(recordIdentifier: Base64URL.encode(object), rootKey: key)
+        #expect(filled?.username == "alice")
+        #expect(filled?.password == "keep-password")
+        #expect(filled?.totpCode == nil)
+    }
+
 }

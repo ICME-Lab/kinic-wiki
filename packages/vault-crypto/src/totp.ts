@@ -62,22 +62,32 @@ export function parseTotpInput(input: string): TotpConfig {
     if (url.hostname.toLowerCase() !== "totp") {
       throw new Error("UnsupportedOtpType");
     }
-    const secret = url.searchParams.get("secret")?.trim() ?? "";
+    const known = new Set(["secret", "algorithm", "digits", "period", "issuer"]);
+    const params = new Map<string, string>();
+    for (const [rawName, value] of url.searchParams) {
+      const name = rawName.toLowerCase();
+      if (!known.has(name)) continue;
+      if (params.has(name)) throw new Error("InvalidTotpUri");
+      params.set(name, value);
+    }
+    const secret = params.get("secret")?.trim() ?? "";
     decodeBase32(secret);
 
-    const algorithm = parseAlgorithm(url.searchParams.get("algorithm"));
-    const digitsRaw = url.searchParams.get("digits");
-    const digits = digitsRaw ? Number(digitsRaw) : 6;
+    const algorithm = parseAlgorithm(params.get("algorithm") ?? null);
+    const digitsRaw = params.get("digits");
+    if (digitsRaw !== undefined && !/^[0-9]+$/.test(digitsRaw)) throw new Error("InvalidTotpDigits");
+    const digits = digitsRaw === undefined ? 6 : Number(digitsRaw);
     if (!Number.isInteger(digits) || digits < 6 || digits > 8) {
       throw new Error("InvalidTotpDigits");
     }
-    const periodRaw = url.searchParams.get("period");
-    const period = periodRaw ? Number(periodRaw) : 30;
+    const periodRaw = params.get("period");
+    if (periodRaw !== undefined && !/^[0-9]+$/.test(periodRaw)) throw new Error("InvalidTotpPeriod");
+    const period = periodRaw === undefined ? 30 : Number(periodRaw);
     if (!Number.isInteger(period) || period < 1 || period > 300) {
       throw new Error("InvalidTotpPeriod");
     }
     const label = decodeURIComponent(url.pathname.replace(/^\/+/, "")).trim();
-    const issuer = url.searchParams.get("issuer")?.trim();
+    const issuer = params.get("issuer")?.trim();
 
     return {
       secret,
@@ -103,6 +113,8 @@ export async function generateTotp(
   nowMs: number = Date.now(),
 ): Promise<TotpCode> {
   const config = typeof input === "string" ? parseTotpInput(input) : input;
+  if (!Number.isInteger(config.digits) || config.digits < 6 || config.digits > 8) throw new Error("InvalidTotpDigits");
+  if (!Number.isInteger(config.period) || config.period < 1 || config.period > 300) throw new Error("InvalidTotpPeriod");
   const keyBytes = decodeBase32(config.secret);
 
   const epochSeconds = Math.floor(nowMs / 1000);

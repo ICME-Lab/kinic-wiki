@@ -76,11 +76,14 @@ public enum VaultTOTP {
             guard components.host?.lowercased() == "totp" else {
                 throw VaultCryptoError.unsupportedOtpType
             }
-            let query = Dictionary(
-                uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
-                    item.value.map { (item.name.lowercased(), $0) }
-                }
-            )
+            let known: Set<String> = ["secret", "algorithm", "digits", "period", "issuer"]
+            var query: [String: String] = [:]
+            for item in components.queryItems ?? [] {
+                let name = item.name.lowercased()
+                guard known.contains(name) else { continue }
+                guard query[name] == nil else { throw VaultCryptoError.invalidTotpUri }
+                query[name] = item.value ?? ""
+            }
             let secret = query["secret"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             _ = try decodeBase32(secret)
 
@@ -96,10 +99,10 @@ public enum VaultTOTP {
                 algorithm = .sha1
             }
 
-            let digits = query["digits"].flatMap(Int.init) ?? 6
+            let digits = try parseNumber(query["digits"], defaultValue: 6, error: .invalidTotpDigits)
             guard (6...8).contains(digits) else { throw VaultCryptoError.invalidTotpDigits }
 
-            let period = query["period"].flatMap(Int.init) ?? 30
+            let period = try parseNumber(query["period"], defaultValue: 30, error: .invalidTotpPeriod)
             guard (1...300).contains(period) else { throw VaultCryptoError.invalidTotpPeriod }
 
             let label = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -117,6 +120,12 @@ public enum VaultTOTP {
         return VaultTOTPConfig(secret: trimmed)
     }
 
+    private static func parseNumber(_ raw: String?, defaultValue: Int, error: VaultCryptoError) throws -> Int {
+        guard let raw else { return defaultValue }
+        guard !raw.isEmpty, raw.utf8.allSatisfy({ (48...57).contains($0) }), let value = Int(raw) else { throw error }
+        return value
+    }
+
     public static func generate(
         input: String,
         now: Date = Date()
@@ -128,6 +137,8 @@ public enum VaultTOTP {
         config: VaultTOTPConfig,
         now: Date = Date()
     ) throws -> VaultTOTPCode {
+        guard (6...8).contains(config.digits) else { throw VaultCryptoError.invalidTotpDigits }
+        guard (1...300).contains(config.period) else { throw VaultCryptoError.invalidTotpPeriod }
         let keyData = try decodeBase32(config.secret)
         let key = SymmetricKey(data: keyData)
         let epochSeconds = Int64(floor(now.timeIntervalSince1970))
