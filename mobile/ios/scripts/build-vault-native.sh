@@ -10,16 +10,18 @@ target_dir="$repo_root/.local/vault-native-target-macos15-ios18"
 mkdir -p "$artifacts"
 mode="${1:-all}"
 [[ "$mode" == all || "$mode" == --macos-only ]] || { echo "usage: $0 [--macos-only]" >&2; exit 2; }
-fingerprint="$mode-$(cat "$native_dir/Cargo.toml" "$native_dir/Cargo.lock" "$native_dir/src/lib.rs" "$native_dir/include/VaultVetKeys.h" "$native_dir/include/module.modulemap" "$0" | shasum -a 256 | cut -d' ' -f1)"
+mac_target="$(rustc -vV | sed -n 's/^host: //p')"
+case "$mac_target" in aarch64-apple-darwin|x86_64-apple-darwin) ;; *) echo "A macOS Rust host is required" >&2; exit 1;; esac
+fingerprint="$mode-$mac_target-$(cat "$native_dir/Cargo.toml" "$native_dir/Cargo.lock" "$native_dir/src/lib.rs" "$native_dir/include/VaultVetKeys.h" "$native_dir/include/module.modulemap" "$0" | shasum -a 256 | cut -d' ' -f1)"
 if [[ -d "$artifacts/KinicVetKeys.xcframework" && -f "$artifacts/fingerprint" && "$(cat "$artifacts/fingerprint")" == "$fingerprint" ]]; then exit 0; fi
-targets=(aarch64-apple-darwin)
+targets=("$mac_target")
 if [[ "$mode" == all ]]; then targets+=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios); fi
 for target in "${targets[@]}"; do
   CARGO_TARGET_DIR="$target_dir" cargo build --locked --manifest-path "$native_dir/Cargo.toml" --release --target "$target"
 done
 work_dir=$(mktemp -d "$artifacts/.xcframework-XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT
-args=(-library "$target_dir/aarch64-apple-darwin/release/libkinic_vault_vetkeys.a" -headers "$native_dir/include")
+args=(-library "$target_dir/$mac_target/release/libkinic_vault_vetkeys.a" -headers "$native_dir/include")
 if [[ "$mode" == all ]]; then
   lipo -create "$target_dir/aarch64-apple-ios-sim/release/libkinic_vault_vetkeys.a" "$target_dir/x86_64-apple-ios/release/libkinic_vault_vetkeys.a" -output "$work_dir/libkinic_vault_vetkeys_sim.a"
   args+=(-library "$target_dir/aarch64-apple-ios/release/libkinic_vault_vetkeys.a" -headers "$native_dir/include" -library "$work_dir/libkinic_vault_vetkeys_sim.a" -headers "$native_dir/include")
