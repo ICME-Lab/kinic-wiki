@@ -36,6 +36,10 @@ body {
   padding: 24px 28px 40px;
 }
 
+#vault-main:focus-visible {
+  outline: none;
+}
+
 .vault-chrome {
   position: sticky;
   top: 0;
