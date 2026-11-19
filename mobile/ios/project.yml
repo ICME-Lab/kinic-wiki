@@ -30,6 +30,8 @@ packages:
     exactVersion: 0.5.0
   KinicVaultCore:
     path: Packages/KinicVaultCore
+  KinicVaultNative:
+    path: Packages/KinicVaultNative
 targets:
   Kinic:
     type: application
@@ -44,6 +46,7 @@ targets:
       - package: ICNativeClient
       - package: Textual
       - package: KinicVaultCore
+      - package: KinicVaultNative
       - target: KinicShareExtension
         embed: true
       - target: KinicWorkItemsWidget
@@ -152,6 +155,7 @@ targets:
       - KinicVaultAutoFill
     dependencies:
       - package: KinicVaultCore
+      - package: KinicVaultNative
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_AUTOFILL_EXTENSION_BUNDLE_ID)"

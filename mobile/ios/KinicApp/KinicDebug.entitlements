@@ -18,6 +18,7 @@
 		<string>webcredentials:$(KINIC_ASSOCIATED_DOMAIN)</string>
 		<string>applinks:$(KINIC_ASSOCIATED_DOMAIN)?mode=developer</string>
 		<string>webcredentials:$(KINIC_ASSOCIATED_DOMAIN)?mode=developer</string>
+		<string>webcredentials:vault.localhost?mode=developer</string>
 	</array>
 </dict>
 </plist>

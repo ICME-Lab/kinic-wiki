@@ -2,6 +2,7 @@ import AuthenticationServices
 import CryptoKit
 import Foundation
 import KinicVaultCore
+import KinicVaultNative
 import LocalAuthentication
 import SwiftUI
 import UIKit
@@ -32,8 +33,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         return VaultAutoFillSnapshotStore(fileURL: fileURL)
     }
 
-    private func makeKeyStore() -> VaultKeychainRootStore {
-        VaultKeychainRootStore(accessGroup: keychainAccessGroup)
+    private func loadRootKey(store: VaultAutoFillSnapshotStore) throws -> SymmetricKey? {
+        guard let snapshot = try store.load() else { return nil }
+        return try VaultKeychainRootStore(accessGroup: keychainAccessGroup, context: snapshot.context).load()
     }
 
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
@@ -102,7 +104,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             embedError("Vault storage group is not available.")
             return
         }
-        guard let rootKey = try? makeKeyStore().load() else {
+        guard let rootKey = try? loadRootKey(store: store) else {
             embed(
                 AutoFillRootView(
                     state: .configurationNeeded,
@@ -144,7 +146,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     @MainActor
     private func completeWithCredential(recordIdentifier: String) {
         guard let store = makeSnapshotStore(),
-              let rootKey = try? makeKeyStore().load(),
+              let rootKey = try? loadRootKey(store: store),
               let decrypted = try? store.decryptCredential(
                   recordIdentifier: recordIdentifier,
                   rootKey: rootKey
@@ -220,33 +222,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(
             withError: NSError(domain: ASExtensionErrorDomain, code: code.rawValue)
         )
-    }
-}
-
-/// Syncs `ASCredentialIdentityStore` so iOS QuickType keyboard bar shows matching logins immediately.
-public enum VaultAutoFillIdentityRegistrar {
-    public static func replaceAll(candidates: [VaultAutoFillCandidate]) async throws {
-        let store = ASCredentialIdentityStore.shared
-        let state = await store.state()
-        guard state.isEnabled else { return }
-
-        var identities: [any ASCredentialIdentity] = []
-        for candidate in candidates {
-            for domain in candidate.domains {
-                let service = ASCredentialServiceIdentifier(identifier: domain, type: .domain)
-                let identity = ASPasswordCredentialIdentity(
-                    serviceIdentifier: service,
-                    user: candidate.username.isEmpty ? candidate.title : candidate.username,
-                    recordIdentifier: candidate.recordIdentifier
-                )
-                identities.append(identity)
-            }
-        }
-        try await store.replaceCredentialIdentities(identities)
-    }
-
-    public static func removeAll() async {
-        try? await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
     }
 }
 

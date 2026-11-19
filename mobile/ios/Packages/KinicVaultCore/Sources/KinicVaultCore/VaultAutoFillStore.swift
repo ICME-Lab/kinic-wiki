@@ -97,6 +97,7 @@ public final class VaultAutoFillSnapshotStore: Sendable {
         matchingHost: String? = nil
     ) throws -> [VaultAutoFillCandidate] {
         guard let snapshot = try load() else { return [] }
+        let binding = Base64URL.encode(Data(SHA256.hash(data: try snapshot.context.contextInput())))
         var results: [VaultAutoFillCandidate] = []
         for record in snapshot.records {
             let object = try Base64URL.decode(record.objectIdBase64URL)
@@ -116,7 +117,7 @@ public final class VaultAutoFillSnapshotStore: Sendable {
             }
             results.append(
                 VaultAutoFillCandidate(
-                    recordIdentifier: record.objectIdBase64URL,
+                    recordIdentifier: binding + "." + record.objectIdBase64URL,
                     title: parsed.metadata.title,
                     username: parsed.metadata.username ?? "",
                     domains: parsed.metadata.domains ?? [],
@@ -133,11 +134,11 @@ public final class VaultAutoFillSnapshotStore: Sendable {
         rootKey: SymmetricKey,
         now: Date = Date()
     ) throws -> VaultAutoFillDecryptedCredential? {
-        guard let snapshot = try load(),
-              let record = snapshot.records.first(where: { $0.objectIdBase64URL == recordIdentifier })
-        else {
-            return nil
-        }
+        guard let snapshot = try load() else { return nil }
+        let prefix = Base64URL.encode(Data(SHA256.hash(data: try snapshot.context.contextInput()))) + "."
+        guard recordIdentifier.hasPrefix(prefix) else { return nil }
+        let objectID = String(recordIdentifier.dropFirst(prefix.count))
+        guard let record = snapshot.records.first(where: { $0.objectIdBase64URL == objectID }) else { return nil }
         let object = try Base64URL.decode(record.objectIdBase64URL)
         let manifest = try Base64URL.decode(record.manifestBase64URL)
         let chunks = try record.chunksBase64URL.map(Base64URL.decode)

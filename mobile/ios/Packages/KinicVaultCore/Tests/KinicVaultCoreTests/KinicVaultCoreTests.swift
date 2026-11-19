@@ -187,6 +187,8 @@ struct KinicVaultCoreTests {
         // Domain matching via manifest metadata only.
         let matched = try store.listCandidates(rootKey: rootKey, matchingHost: "api.github.com")
         #expect(matched.count == 1)
+        #expect(matched[0].recordIdentifier != objectId)
+        #expect(try store.decryptCredential(recordIdentifier: objectId, rootKey: rootKey) == nil)
         #expect(matched[0].title == "GitHub")
         #expect(matched[0].username == "alice@example.com")
         #expect(matched[0].hasTotp == true)
@@ -196,7 +198,7 @@ struct KinicVaultCoreTests {
 
         // On-demand decryption returns password + live TOTP code.
         let decrypted = try store.decryptCredential(
-            recordIdentifier: objectId,
+            recordIdentifier: matched[0].recordIdentifier,
             rootKey: rootKey,
             now: Date(timeIntervalSince1970: 59)
         )
@@ -251,7 +253,8 @@ struct KinicVaultCoreTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let store = VaultAutoFillSnapshotStore(fileURL: url)
         try store.save(VaultAutoFillSnapshot(context: context, records: [VaultAutoFillRecordSnapshot(objectIdBase64URL: Base64URL.encode(object), revision: 1, manifestBase64URL: Base64URL.encode(encrypted.manifest), chunksBase64URL: encrypted.chunks.map(Base64URL.encode), hashesBase64URL: encrypted.hashes.map(Base64URL.encode))]))
-        let filled = try store.decryptCredential(recordIdentifier: Base64URL.encode(object), rootKey: key)
+        let candidate = try #require(store.listCandidates(rootKey: key).first)
+        let filled = try store.decryptCredential(recordIdentifier: candidate.recordIdentifier, rootKey: key)
         #expect(filled?.username == "alice")
         #expect(filled?.password == "keep-password")
         #expect(filled?.totpCode == nil)

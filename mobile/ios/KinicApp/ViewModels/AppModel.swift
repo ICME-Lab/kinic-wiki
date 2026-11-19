@@ -365,6 +365,7 @@ final class AppModel {
     private var pendingWorkItemSelection: PendingWorkItemSelection?
 
     let assistantConversation: AssistantConversationModel
+    @ObservationIgnored lazy var vaultAutoFill = VaultAutoFillSettingsModel(configuration: configuration)
     let configuration: AppConfiguration
     var selectedDatabaseId: String
     var selectedBrowseDatabaseId: String {
@@ -1542,6 +1543,7 @@ final class AppModel {
     }
 
     func signOut() {
+        vaultAutoFill.signOut()
         pendingWorkItemSelection = nil
         requestedWorkItemDetail = nil
         requestedWorkItemCompose = nil
