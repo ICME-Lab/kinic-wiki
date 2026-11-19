@@ -125,9 +125,11 @@ export function createWikiCyclesPaymentAdapter({
     assertLedgerFee(terms.feeE8s, KINIC_LEDGER_FEE_E8S);
     return { ...terms, rate: BigInt(config.cyclesPerKinic) };
   }
-  async function history(after: string | null, match?: (entry: DatabaseCycleEntry) => boolean) {
+  async function history(after: string | null, match?: (entry: DatabaseCycleEntry) => boolean,
+    revisit?: (entry: DatabaseCycleEntry) => boolean) {
     if (!authIdentity) throw new PaymentFailure("Unavailable");
     let cursor = after;
+    let revisitCursor: string | null | undefined;
     for (let pageNumber = 0; pageNumber < 4; pageNumber++) {
       assertCurrent();
       const page = await billingClient.history(canisterId, databaseId, cursor, 100, authIdentity);
@@ -139,13 +141,20 @@ export function createWikiCyclesPaymentAdapter({
         last = row.entryId;
       }
       if (page.nextCursor !== null && (page.nextCursor !== last || last === cursor)) throw new PaymentFailure("InvalidReply");
+      let previous = cursor;
+      for (const row of page.entries) {
+        // A manager may gain permission to see this caller on a later check.
+        // Continue this bounded scan, but do not permanently skip the candidate.
+        if (revisitCursor === undefined && revisit?.(row)) revisitCursor = previous;
+        previous = row.entryId;
+      }
       const entry = match && page.entries.find(match);
-      if (entry || page.nextCursor === null) return { cursor: last, entry };
+      if (entry || page.nextCursor === null) return { cursor: revisitCursor === undefined ? last : revisitCursor, entry };
       cursor = page.nextCursor;
     }
     // A partial baseline is a lower bound. A credit still needs its original
     // certified operation/block and matching database ledger entry.
-    return {cursor, entry:undefined};
+    return {cursor: revisitCursor === undefined ? cursor : revisitCursor, entry:undefined};
   }
   function snapshot(s: Saved) {
     if (s.databaseId !== databaseId || s.managerPrincipal !== managerPrincipal || s.ledger !== ledger
@@ -346,9 +355,12 @@ export function createWikiCyclesPaymentAdapter({
           historyOperation = record.id;
           historyCursor = saved.baseline;
         }
-        const { entry, cursor } = await history(historyCursor, e => e.kind === "cycles_purchase" && e.method === "purchase_database_cycles"
-          && e.databaseId === databaseId && e.caller === scope.payer.owner && e.ledgerBlockIndex === saved.block
-          && e.paymentAmountE8s === saved.amount && BigInt(e.amountCycles) >= payment.credits);
+        const matchesPayment = (e: DatabaseCycleEntry) => e.kind === "cycles_purchase" && e.method === "purchase_database_cycles"
+          && e.databaseId === databaseId && e.ledgerBlockIndex === saved.block
+          && e.paymentAmountE8s === saved.amount && BigInt(e.amountCycles) >= payment.credits;
+        const { entry, cursor } = await history(historyCursor,
+          e => matchesPayment(e) && e.caller === scope.payer.owner,
+          e => matchesPayment(e) && e.caller === "redacted");
         historyCursor = cursor;
         if (entry) refreshPayerBalance();
         return entry ? acknowledge(payment, evidence.dispatchedAtNs, saved.block, BigInt(entry.amountCycles), BigInt(entry.balanceAfterCycles)) : pendingReview(evidence.operation);

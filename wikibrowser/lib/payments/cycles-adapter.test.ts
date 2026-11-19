@@ -21,7 +21,7 @@ beforeEach(() => vi.stubEnv("VITE_KINIC_WIKI_CANISTER_ID", canisterId));
 async function setup() {
   const facts = { decimals: 8, feeE8s: 100000n, balanceE8s: 1200000n, allowanceE8s: 0n, allowanceExpiresAtNs: null as bigint | null };
   const billingClient = { config, getConfig: vi.fn(async () => config), ledgerTerms: vi.fn(async () => facts),
-    pending: vi.fn(async (): Promise<unknown[]> => []), history: vi.fn(async (): Promise<DatabaseCycleEntryPage> => ({ entries: [], nextCursor: null })),
+    pending: vi.fn(async (): Promise<unknown[]> => []), history: vi.fn(async (_canister: string, _db: string, _cursor: string | null, _limit: number, _identity: unknown): Promise<DatabaseCycleEntryPage> => ({ entries: [], nextCursor: null })),
     credit: vi.fn(async () => 1n) };
   const purchase = vi.fn(async (): Promise<{ Err: string } | { Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } }> => ({ Ok: { block_index: 7n, amount_cycles: 2000001n, balance_cycles: 2000001n } }));
   const status = vi.fn(async (): Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }> => ({ Ok: [] }));
@@ -469,4 +469,61 @@ it.each(["", "sqlite error 1: "])("uses authorized management history after the 
   expect(await f.adapter.check(record)).toMatchObject({kind:"paid", receipt:{reference:"17", creditedCycles:2000001n, balanceAfterCycles:3000000n}});
   expect(f.purchase).toHaveBeenCalledOnce();
   expect(f.approve).not.toHaveBeenCalled();
+});
+
+
+it.each(["redacted", "different payer", "different block", "different amount"])(
+  "revisits only a payer-redacted matching history candidate: %s", async mismatch => {
+    const f = await setup();
+    f.facts.allowanceE8s = 1100000n;
+    const p = await f.adapter.prepare(1000000n);
+    f.store.put({version:1, stage:"purchase-dispatched", scope:p.scope, id:p.id, context:f.adapter.encode(p)});
+    f.purchase.mockResolvedValueOnce({Err:"cycles purchase payment completed at ledger block 17 but local cycles application failed; pending operation 9 remains completed for billing authority review: failure"});
+    await f.adapter.submit(p);
+    const record = f.store.list(p.scope)[0];
+    let visible = false;
+    const entry = {entryId:"12", databaseId:"db", kind:"cycles_purchase", method:"purchase_database_cycles", caller:"redacted", ledgerBlockIndex:"17", amountCycles:"2000001", paymentAmountE8s:"1000000", balanceAfterCycles:"3000000", cyclesPerKinic:null, cyclesDelta:null, createdAtMs:String(Date.now())};
+    const unrelated = {...entry, entryId:"11", kind:"other"};
+    const rows = [unrelated, entry, {...unrelated, entryId:"13"}];
+    f.billingClient.history.mockImplementation(async (_canister, _db, cursor) => ({ nextCursor:null,
+      entries: rows.filter(row => BigInt(row.entryId) > BigInt(cursor ?? 0)).map(row => row.entryId !== "12" ? row : {
+        ...row, caller: visible ? owner.toText() : mismatch === "different payer" ? canisterId : "redacted",
+        ledgerBlockIndex: mismatch === "different block" ? "18" : "17",
+        paymentAmountE8s: mismatch === "different amount" ? "999999" : "1000000",
+      }),
+    }));
+    expect(await f.adapter.check(record)).toMatchObject({kind:"pending"});
+    visible = true; // Same manager identity is promoted to Owner and can now read callers.
+    if (mismatch === "redacted") {
+      expect(await f.adapter.check(record)).toMatchObject({kind:"paid", receipt:{reference:"17", creditedCycles:2000001n}});
+    } else {
+      expect(await f.adapter.check(record)).toMatchObject({kind:"pending"});
+    }
+    expect(f.purchase).toHaveBeenCalledOnce();
+    expect(f.approve).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])("keeps the four-page budget while a redacted candidate precedes a visible match: %s", async laterMatch => {
+  const f = await setup();
+  f.facts.allowanceE8s = 1100000n;
+  const p = await f.adapter.prepare(1000000n);
+  f.store.put({version:1, stage:"purchase-dispatched", scope:p.scope, id:p.id, context:f.adapter.encode(p)});
+  f.purchase.mockResolvedValueOnce({Err:"cycles purchase payment completed at ledger block 17 but local cycles application failed; pending operation 9 remains completed for billing authority review: failure"});
+  await f.adapter.submit(p);
+  const entry = {databaseId:"db", kind:"cycles_purchase", method:"purchase_database_cycles", caller:"redacted", ledgerBlockIndex:"17", amountCycles:"2000001", paymentAmountE8s:"1000000", balanceAfterCycles:"3000000", cyclesPerKinic:null, cyclesDelta:null, createdAtMs:String(Date.now())};
+  f.billingClient.history.mockClear().mockImplementation(async (_canister, _db, cursor) => {
+    const id = BigInt(cursor ?? 0) + 1n;
+    return {entries:[{...entry, entryId:String(id), caller:laterMatch && id === 3n ? owner.toText() : "redacted"}], nextCursor:String(id)};
+  });
+  const record = f.store.list(p.scope)[0];
+  expect(await f.adapter.check(record)).toMatchObject({kind:laterMatch ? "paid" : "pending"});
+  expect(f.billingClient.history).toHaveBeenCalledTimes(laterMatch ? 3 : 4);
+  if (!laterMatch) {
+    f.billingClient.history.mockClear();
+    expect(await f.adapter.check(record)).toMatchObject({kind:"pending"});
+    expect(f.billingClient.history).toHaveBeenCalledTimes(4);
+    expect(f.billingClient.history.mock.calls[0][2]).toBeNull();
+  }
+  expect(f.purchase).toHaveBeenCalledOnce();
 });
