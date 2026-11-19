@@ -5,6 +5,7 @@
 // Search keeps ranking and preview generation separate.
 // That prevents SQLite `snippet()` cost from scaling with all matched rows.
 // Only returned hits pay preview generation cost.
+mod archive;
 mod context;
 pub(crate) mod evidence;
 mod marketplace;

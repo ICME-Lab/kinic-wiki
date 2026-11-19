@@ -338,3 +338,32 @@ fn persist(
     }
     Ok(())
 }
+
+impl VfsService {
+    pub fn database_storage_stats(
+        &self,
+        db: &str,
+    ) -> Result<vfs_types::DatabaseStorageStats, String> {
+        let meta = self.database_meta(db)?;
+        Ok(vfs_types::DatabaseStorageStats {
+            mount_id: meta.mount_id,
+            pages: self.database_store(&meta)?.storage_page_stats()?,
+        })
+    }
+    /// Entry point must enforce controller authorization. No role-based user API.
+    pub fn archive_intermediate_source(
+        &self,
+        r: vfs_types::ArchiveIntermediateSourceRequest,
+    ) -> Result<vfs_types::ArchiveIntermediateSourceResult, String> {
+        self.require_maintenance_open(&r.database_id)?;
+        let meta = self.database_meta(&r.database_id)?;
+        if meta.mount_id != r.expected_mount {
+            return Err("archive source mount changed".into());
+        }
+        self.read_index(|c| {
+            let protected:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM node_publications WHERE database_id=?1 AND path=?2) OR EXISTS(SELECT 1 FROM publication_mutation_recovery_batches WHERE database_id=?1)",params![r.database_id,r.path],|row|crate::sqlite::row_bool(row,0)).map_err(|e|e.to_string())?;
+            if protected {Err("published source or pending publication recovery blocks archive".into())} else {Ok(())}
+        })?;
+        self.database_store(&meta)?.archive_intermediate_source(r)
+    }
+}

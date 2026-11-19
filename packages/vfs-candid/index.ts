@@ -6,6 +6,27 @@ import { IDL } from "@icp-sdk/core/candid";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
+  const ArchiveIntermediateSourceRequest = idl.Record({
+    database_id: idl.Text,
+    expected_mount: idl.Nat16,
+    path: idl.Text,
+    expected_etag: idl.Text,
+    expected_node_id: idl.Text,
+    expected_revision: idl.Nat64,
+    expected_content_hash: idl.Text,
+    expected_snapshot_revision: idl.Text,
+    backup_manifest_sha256: idl.Text
+  });
+  const StoragePageStats = idl.Record({ page_size: idl.Nat64, page_count: idl.Nat64, freelist_pages: idl.Nat64 });
+  const DatabaseStorageStats = idl.Record({ mount_id: idl.Nat16, pages: StoragePageStats });
+  const ArchiveIntermediateSourceResult = idl.Record({
+    path: idl.Text,
+    snapshot_revision: idl.Text,
+    before: StoragePageStats,
+    after: StoragePageStats
+  });
+  const ResultArchiveIntermediateSource = idl.Variant({ Ok: ArchiveIntermediateSourceResult, Err: idl.Text });
+  const ResultDatabaseStorageStats = idl.Variant({ Ok: DatabaseStorageStats, Err: idl.Text });
   const BekkoRefillConfig = idl.Record({
     target_cycles: idl.Nat,
     max_transfer_cycles: idl.Nat,
@@ -660,6 +681,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
+    database_storage_stats: idl.Func([DatabaseIdRequest], [ResultDatabaseStorageStats], ["query"]),
+    archive_intermediate_source: idl.Func([ArchiveIntermediateSourceRequest], [ResultArchiveIntermediateSource], []),
     get_bekko_refill_state: idl.Func([], [ResultBekkoRefill], ["query"]),
     configure_bekko_refill: idl.Func([BekkoRefillConfig], [ResultUnit], []),
     check_bekko_refill: idl.Func([], [ResultBekkoRefill], []),
