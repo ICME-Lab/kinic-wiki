@@ -1,5 +1,6 @@
 import { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
+  ArrowLeftRight,
   ChevronRight,
   Download,
   Eye,
@@ -7,26 +8,45 @@ import {
   FileKey2,
   FileText,
   History,
+  KeyRound,
   Paperclip,
   Plus,
   RefreshCw,
   Save,
   Search,
+  Star,
   TextSearch,
   Upload,
 } from "lucide-react";
 import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
 import { utf8 } from "@kinic/vault-crypto";
+import {
+  buildCredentialMetadata,
+  extractDomains,
+  matchesMetadataQuery,
+  parseCredential,
+  parseTagsInput,
+  serializeCredential,
+} from "@kinic/vault-crypto/credential";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
-import {CopyPasswordButton} from "../copy-button";
+import { CopyPasswordButton } from "../copy-button";
+import {
+  CopyValueButton,
+  PasswordGeneratorPanel,
+  PasswordStrengthBadge,
+  TotpLiveDisplay,
+} from "./credential-tools";
+import { VaultPortabilityPanel } from "./portability";
 import { VaultPreview } from "./preview";
-import { parseCredential, VaultReadOnly } from "./read-only";
+import { VaultReadOnly } from "./read-only";
 import { DocumentActions } from "./document-actions";
 import { DraftGuardProvider, useDirtyDraft, useDraftGuard } from "../draft-guard";
 import { VaultButton, VaultField, VaultPanel, vaultError } from "./ui";
 import type { VaultWork } from "./workspace";
+
+type CategoryFilter = "all" | "favorites" | "credential" | "note" | "attachment";
 function Documents({
   client,
   items,
@@ -51,6 +71,8 @@ function Documents({
     [client],
   );
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<CategoryFilter>("all");
+  const [portabilityOpen, setPortabilityOpen] = useState(false);
   const search = useRef<AbortController | undefined>(undefined);
   const [bodyMatches, setBodyMatches] = useState<Item[]>();
   const [searchStatus, setSearchStatus] = useState("");
@@ -72,6 +94,8 @@ function Documents({
     const detach = client.session.addLockCleanup(() => {
       cancelSearch();
       setQuery("");
+      setCategory("all");
+      setPortabilityOpen(false);
       setSearchStatus("");
       setSaveStatus("");
     });
@@ -143,6 +167,10 @@ function Documents({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [url, setUrl] = useState("");
+  const [extraUrls, setExtraUrls] = useState("");
+  const [totp, setTotp] = useState("");
+  const [favorite, setFavorite] = useState(false);
+  const [tagsText, setTagsText] = useState("");
   const [reveal, setReveal] = useState(false);
   const [file, setFile] = useState<File>();
   const [editorKey, setEditorKey] = useState(0);
@@ -166,6 +194,10 @@ function Documents({
     setUsername("");
     setPassword("");
     setUrl("");
+    setExtraUrls("");
+    setTotp("");
+    setFavorite(false);
+    setTagsText("");
     setReveal(false);
     setFile(undefined);
     setHistory([]);
@@ -201,14 +233,21 @@ function Documents({
       setKind(doc.metadata.kind);
       const text = new TextDecoder().decode(doc.plaintext);
       if (doc.metadata.kind === "credential") {
-        const value = parseCredential(text);
-        setUsername(value.username);
-        setPassword(value.password);
-        setUrl(value.url);
-        setBody(value.notes);
+        const record = parseCredential(text);
+        setUsername(record.username);
+        setPassword(record.password);
+        setUrl(record.URL);
+        const others = record.urls.filter((entry) => entry !== record.URL);
+        setExtraUrls(others.join("\n"));
+        setTotp(record.totp);
+        setBody(record.notes);
+        setFavorite(record.favorite || doc.metadata.favorite === true);
+        setTagsText((record.tags.length ? record.tags : doc.metadata.tags ?? []).join(", "));
       } else if (doc.metadata.kind === "note") {
         setBody(text);
         setSavedBody(text);
+        setFavorite(doc.metadata.favorite === true);
+        setTagsText((doc.metadata.tags ?? []).join(", "));
       }
     } finally {
       doc.plaintext.fill(0);
@@ -259,22 +298,41 @@ function Documents({
       const g = client.session.capture();
       let plain: Uint8Array;
       let metadata: Metadata = { kind, title };
+      const parsedTags = parseTagsInput(tagsText);
       if (kind === "attachment") {
         if (!file || file.size > 10 * 1024 * 1024) throw Error("SizeLimit");
         plain = new Uint8Array(await file.arrayBuffer());
         metadata = { ...metadata, filename: file.name, mime: file.type };
+      } else if (kind === "credential") {
+        const extraUrlList = extraUrls
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        const credentialPayload = {
+          label: title,
+          username,
+          password,
+          URL: url,
+          urls: [url, ...extraUrlList].filter(Boolean),
+          totp: totp.trim(),
+          notes: body,
+          favorite,
+          tags: parsedTags,
+        };
+        metadata = buildCredentialMetadata(title, credentialPayload);
+        plain = utf8.encode(serializeCredential(credentialPayload));
+        if (plain.length > 256 * 1024) {
+          plain.fill(0);
+          throw Error("SizeLimit");
+        }
       } else {
-        plain = utf8.encode(
-          kind === "credential"
-            ? JSON.stringify({
-                label: title,
-                username,
-                password,
-                URL: url,
-                notes: body,
-              })
-            : body,
-        );
+        metadata = {
+          kind: "note",
+          title,
+          ...(favorite ? { favorite: true } : {}),
+          ...(parsedTags.length > 0 ? { tags: parsedTags } : {}),
+        };
+        plain = utf8.encode(body);
         if (plain.length > 256 * 1024) {
           plain.fill(0);
           throw Error("SizeLimit");
@@ -318,14 +376,25 @@ function Documents({
     !canEdit || disabled || writesDisabled || pendingSave || !!displayedRevision?.deleted || historical;
   const byteCount = utf8.encode(body).length;
   const kindLabel = (k: Metadata["kind"]) =>
-    k === "credential" ? "Credential" : k === "attachment" ? "Attachment" : "Note";
+    k === "credential" ? "Login" : k === "attachment" ? "Attachment" : "Note";
+  const matchesCategory = (item: Item) => {
+    if (category === "all") return true;
+    if (category === "favorites") return item.metadata.favorite === true;
+    return item.metadata.kind === category;
+  };
   const visibleItems = items.filter(
     (item) =>
-      item.metadata.title
-        .toLocaleLowerCase()
-        .includes(query.toLocaleLowerCase()) ||
-      bodyMatches?.some(match => b64(bytes(match.revision.object)) === b64(bytes(item.revision.object))),
+      matchesCategory(item) &&
+      (matchesMetadataQuery(item.metadata, query) ||
+        bodyMatches?.some(
+          (match) =>
+            b64(bytes(match.revision.object)) === b64(bytes(item.revision.object)),
+        )),
   );
+  const extractedDomains = extractDomains([
+    url,
+    ...extraUrls.split(/\r?\n/),
+  ]);
   return (
     <VaultPanel label="Private documents" sensitive className="vault-documents">
       <div className="vault-documents-header">
@@ -334,6 +403,16 @@ function Documents({
           <span className="vault-count">{items.length}</span>
         </div>
         <div className="vault-documents-tools">
+          {canEdit ? <VaultButton
+            tone="ghost"
+            size="sm"
+            aria-expanded={portabilityOpen}
+            disabled={disabled || pendingSave}
+            onClick={() => setPortabilityOpen((v) => !v)}
+          >
+            <ArrowLeftRight size={15} aria-hidden />
+            Import / Export
+          </VaultButton> : null}
           <VaultButton
             tone="ghost"
             size="icon"
@@ -356,6 +435,16 @@ function Documents({
           </VaultButton> : null}
         </div>
       </div>
+      {canEdit && portabilityOpen ? (
+        <VaultPortabilityPanel
+          client={client}
+          items={items}
+          disabled={disabled || pendingSave}
+          writesDisabled={writesDisabled}
+          onClose={() => setPortabilityOpen(false)}
+          refresh={refresh}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-muted">
           Titles filter immediately. Body search reads notes only.
@@ -437,7 +526,7 @@ function Documents({
                 label="Search this Vault locally"
                 labelHidden
                 type="search"
-                placeholder="Search titles…"
+                placeholder="Search titles, domains, usernames, tags…"
                 value={query}
                 disabled={disabled}
                 onChange={(e) => { cancelSearch(); setSearchStatus(""); setQuery(e.target.value); }}
@@ -445,6 +534,32 @@ function Documents({
                   if (e.key === "Enter") void searchBodies();
                 }}
               />
+            </div>
+            <div
+              className="vault-category-filters"
+              role="group"
+              aria-label="Filter by category"
+            >
+              {(
+                [
+                  ["all", "All"],
+                  ["favorites", "Favorites"],
+                  ["credential", "Logins"],
+                  ["note", "Notes"],
+                  ["attachment", "Files"],
+                ] as const
+              ).map(([value, label]) => (
+                <VaultButton
+                  key={value}
+                  size="sm"
+                  tone={category === value ? "primary" : "ghost"}
+                  aria-pressed={category === value}
+                  disabled={disabled}
+                  onClick={() => setCategory(value)}
+                >
+                  {label}
+                </VaultButton>
+              ))}
             </div>
             <VaultButton
               tone="ghost"
@@ -483,7 +598,17 @@ function Documents({
                     {item.metadata.title || "Untitled"}
                     {item.revision.deleted ? " (deleted)" : ""}
                   </span>
-                  <span aria-hidden>{kindLabel(item.metadata.kind)}</span>
+                  <span aria-hidden className="vault-document-meta">
+                    {item.metadata.favorite ? (
+                      <Star size={11} className="vault-meta-star" />
+                    ) : null}
+                    {item.metadata.username ||
+                      item.metadata.domains?.[0] ||
+                      kindLabel(item.metadata.kind)}
+                    {item.metadata.hasTotp ? (
+                      <KeyRound size={11} className="vault-meta-totp" />
+                    ) : null}
+                  </span>
                 </span>
               </VaultButton>
               {canEdit && (canPurge || !item.revision.deleted) ? <DocumentActions
@@ -623,26 +748,51 @@ function Documents({
                 </>
               ) : kind === "credential" ? (
                 <div className="vault-credential">
-                  <VaultField
-                    label="Username"
-                    value={username}
-                    disabled={readOnly}
-                    onChange={(e) => {
-                      setUsername(e.target.value);
-                      changed();
-                    }}
-                  />
-                  <div className="vault-password">
+                  <div className="vault-credential-row">
                     <VaultField
-                      label="Password"
-                      type={reveal ? "text" : "password"}
-                      value={password}
+                      label="Username"
+                      value={username}
                       disabled={readOnly}
                       onChange={(e) => {
-                        setPassword(e.target.value);
+                        setUsername(e.target.value);
                         changed();
                       }}
                     />
+                    <div className="vault-inline-actions">
+                      <CopyValueButton
+                        key={`user-${editorKey}`}
+                        value={username}
+                        label="Copy username"
+                        disabled={disabled}
+                      />
+                      <VaultButton
+                        size="sm"
+                        tone={favorite ? "primary" : "default"}
+                        aria-pressed={favorite}
+                        disabled={readOnly}
+                        onClick={() => {
+                          setFavorite((prev) => !prev);
+                          changed();
+                        }}
+                      >
+                        <Star size={14} aria-hidden />
+                        {favorite ? "Favorited" : "Favorite"}
+                      </VaultButton>
+                    </div>
+                  </div>
+                  <div className="vault-password">
+                    <div className="vault-password-label-row">
+                      <VaultField
+                        label="Password"
+                        type={reveal ? "text" : "password"}
+                        value={password}
+                        disabled={readOnly}
+                        onChange={(e) => {
+                          setPassword(e.target.value);
+                          changed();
+                        }}
+                      />
+                    </div>
                     <div className="vault-password-actions">
                       <VaultButton
                         size="sm"
@@ -657,19 +807,86 @@ function Documents({
                         )}
                         {reveal ? "Hide password" : "Show password"}
                       </VaultButton>
-                      <CopyPasswordButton key={editorKey} value={password} disabled={disabled}/>
+                      <CopyPasswordButton
+                        key={editorKey}
+                        value={password}
+                        disabled={disabled}
+                      />
+                      <PasswordStrengthBadge password={password} />
                     </div>
+                    <PasswordGeneratorPanel
+                      client={client}
+                      disabled={readOnly}
+                      onUse={(generated) => {
+                        setPassword(generated);
+                        changed();
+                      }}
+                    />
                     <p className="vault-field-hint">
                       The clipboard is not cleared automatically.
                     </p>
                   </div>
+                  <div className="vault-credential-wide vault-totp-section">
+                    <VaultField
+                      label="Authenticator key (TOTP)"
+                      placeholder="Base32 secret or otpauth://totp/..."
+                      value={totp}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        setTotp(e.target.value);
+                        changed();
+                      }}
+                    />
+                    <TotpLiveDisplay
+                      client={client}
+                      secret={totp}
+                      disabled={disabled}
+                    />
+                  </div>
                   <VaultField
                     fieldClassName="vault-credential-wide"
                     label="URL (stored as text)"
+                    placeholder="https://example.com"
                     value={url}
                     disabled={readOnly}
                     onChange={(e) => {
                       setUrl(e.target.value);
+                      changed();
+                    }}
+                  />
+                  <label className="vault-field vault-credential-wide">
+                    <span>Additional URLs (one per line)</span>
+                    <textarea
+                      className="vault-textarea vault-textarea--compact"
+                      placeholder="https://app.example.com"
+                      value={extraUrls}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        setExtraUrls(e.target.value);
+                        changed();
+                      }}
+                    />
+                  </label>
+                  {extractedDomains.length > 0 ? (
+                    <div
+                      className="vault-credential-wide vault-domain-pills"
+                      aria-label="Indexed AutoFill domains"
+                    >
+                      {extractedDomains.map((domain) => (
+                        <span key={domain} className="vault-domain-pill">
+                          {domain}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <VaultField
+                    fieldClassName="vault-credential-wide"
+                    label="Tags (comma-separated)"
+                    placeholder="work, finance, dev"
+                    value={tagsText}
+                    disabled={readOnly}
+                    onChange={(e) => {
+                      setTagsText(e.target.value);
                       changed();
                     }}
                   />

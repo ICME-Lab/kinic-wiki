@@ -42,6 +42,11 @@ export type Metadata = {
   title: string;
   filename?: string;
   mime?: string;
+  username?: string;
+  domains?: string[];
+  hasTotp?: boolean;
+  favorite?: boolean;
+  tags?: string[];
 };
 export type Manifest = {
   version: 3;
@@ -51,6 +56,20 @@ export type Manifest = {
 };
 const CHUNK_SIZE = 1048576;
 const MAX_METADATA = 8192;
+function validStringList(
+  value: unknown,
+  maxItems: number,
+  maxItemLength: number,
+): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > maxItems) return false;
+  return value.every(
+    (entry) =>
+      typeof entry === "string" &&
+      entry.length > 0 &&
+      entry.length <= maxItemLength,
+  );
+}
 function validMetadata(value: unknown): value is Metadata {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const m = value as Metadata;
@@ -59,7 +78,13 @@ function validMetadata(value: unknown): value is Metadata {
     typeof m.title === "string" &&
     m.title.length <= 512 &&
     (m.filename === undefined || typeof m.filename === "string") &&
-    (m.mime === undefined || typeof m.mime === "string")
+    (m.mime === undefined || typeof m.mime === "string") &&
+    (m.username === undefined ||
+      (typeof m.username === "string" && m.username.length <= 256)) &&
+    validStringList(m.domains, 32, 255) &&
+    (m.hasTotp === undefined || typeof m.hasTotp === "boolean") &&
+    (m.favorite === undefined || typeof m.favorite === "boolean") &&
+    validStringList(m.tags, 32, 64)
   );
 }
 function validLength(metadata: Metadata, length: number) {
