@@ -93,10 +93,9 @@ async function identity() {
   await action(page, "Account settings");
   await page.locator("summary").filter({ hasText: "Account & storage" }).click();
   const principal = await page
-    .getByText(/^Vault principal /)
-    .locator("code")
+    .getByRole("region", { name: "Vault account", exact: true })
+    .locator('dl > dt:text-is("Vault principal") + dd > code')
     .textContent();
-  await action(page, "Back to Vault");
   return { context, page, credentials, principal };
 }
 async function manageMembers(page) {
@@ -123,8 +122,13 @@ try {
     "PASS two distinct Vault principals from separate real II registrations",
   );
 
-  // PR190 supplies initial operating credit and first-key subsidy.
-  // Manual funding and recovery remain covered by the full browser suite.
+  // The first-key subsidy covers the owner. The member's cold key also
+  // draws on the owner's account, funded here through the synthetic ledger.
+  await action(owner.page, "Review payment");
+  await action(owner.page, "Pay 1 KINIC");
+  await owner.page.getByText("Payment complete", { exact: true }).waitFor();
+  await action(owner.page, "Back to Vault");
+  await action(member.page, "Back to Vault");
   await action(owner.page, "Create Vault");
   await owner.page.getByLabel("Document title").fill(title);
   await editor(owner.page).fill(body);

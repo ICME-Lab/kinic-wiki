@@ -929,3 +929,78 @@ it("keeps an explicit login in memory when the browser cannot coordinate persist
   expect(mock.disk.has("identity")).toBe(false);
   expect(mock.disk.has("delegation")).toBe(false);
 });
+
+it.each(["succeeds", "fails"] as const)(
+  "permits a fresh memory-only login while an old shared deletion is pending and later %s",
+  async (outcome) => {
+    const sdk = persistentSDK();
+    const stale = new Map([
+      ["identity", "prior"],
+      ["delegation", "prior"],
+    ]);
+    for (const [key, value] of stale) mock.disk.set(key, value);
+    const reads = vi.spyOn(mock.disk, "get");
+    const writes = vi.spyOn(mock.disk, "set");
+    if (outcome === "fails")
+      vi.spyOn(mock.disk, "delete").mockImplementation(() => {
+        throw Error("Shared storage cannot be cleared");
+      });
+    let finish!: () => void;
+    sdk.pause(() => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    try {
+      const sender = privateView();
+      await sender.findByText("ready");
+      fireEvent.click(sender.getByText("login"));
+      await act(async () => sdk.saves[0]("sender"));
+      await sender.findByText("signed");
+      const popup = privateView();
+      await popup.findByText("ready");
+      fireEvent.click(popup.getByText("login"));
+      fireEvent.click(sender.getByText("logout"));
+      const marker = localStorage.getItem("kinic-vault-logout");
+      expect(marker).toMatch(/^pending:/);
+
+      const fresh = privateView();
+      await fresh.findByText("ready");
+      expect(fresh.getByText("unsigned")).toBeTruthy();
+      fireEvent.click(fresh.getByText("login"));
+      await act(async () => sdk.saves[2]("fresh"));
+      await fresh.findByText("signed");
+      expect(localStorage.getItem("kinic-vault-logout")).toBe(marker);
+      await act(async () => sdk.saves[1]("obsolete"));
+      expect(popup.getByText("unsigned")).toBeTruthy();
+      expect(mock.disk).toEqual(stale);
+
+      await act(async () => finish());
+      await sender.findByText("ready");
+      expect(fresh.getByText("signed")).toBeTruthy();
+      expect(reads).not.toHaveBeenCalled();
+      expect(writes).not.toHaveBeenCalled();
+      if (outcome === "succeeds") {
+        expect(mock.disk.size).toBe(0);
+        expect(localStorage.getItem("kinic-vault-logout")).toBe(
+          marker!.slice("pending:".length),
+        );
+      } else {
+        expect(sender.getByText(/Sign-out did not complete/)).toBeTruthy();
+        expect(mock.disk).toEqual(stale);
+        expect(localStorage.getItem("kinic-vault-logout")).toBe(marker);
+        cleanup();
+        // A later browser with Web Locks must still fence the stale credentials.
+        const { locks } = await import("node:worker_threads");
+        Object.defineProperty(navigator, "locks", { configurable: true, value: locks });
+        const coordinated = privateView();
+        await coordinated.findByText("ready");
+        expect(coordinated.getByText("unsigned")).toBeTruthy();
+        expect(reads).not.toHaveBeenCalled();
+      }
+    } finally {
+      finish?.();
+      cleanup();
+      Reflect.deleteProperty(navigator, "locks");
+      vi.restoreAllMocks();
+    }
+  },
+);
