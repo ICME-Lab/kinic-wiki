@@ -6,6 +6,7 @@ import type {
   Mutation,
   MutationResult,
   PendingUploadSummary,
+  SpendingStatus,
   VaultActor,
   AccessRole,
   VaultAccess,
@@ -52,6 +53,9 @@ export function fixtureNetwork(
   const actor = {
     get_config: async () => ({
       Ok: [{ minimum_cycles: 100_000_000_000n, key_name: "test_key_1" }],
+    }),
+    get_spending_status: async (): Promise<{ Ok: SpendingStatus }> => ({
+      Ok: balance >= 20_000_000n ? { Available: null } : { AccountCreditLow: null },
     }),
     account_balance: async () => ({ Ok: balance }),
     initialize_vault_account: async () => ({ Ok: { balance, grant_cycles: 0n } }),

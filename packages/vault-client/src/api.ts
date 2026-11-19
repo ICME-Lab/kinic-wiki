@@ -100,7 +100,7 @@ export class VaultClient {
   private vaultDenialListeners = new Set<(vault: Uint8Array) => void>();
   private pinnedPublicKey?: Uint8Array;
   private rootEpoch?: number;
-  private creating?: { operation: Uint8Array };
+  private creating?: { operation: Uint8Array; ambiguous: boolean };
   private keyAttempt?: {
     binding: string;
     vault: Uint8Array;
@@ -387,6 +387,9 @@ export class VaultClient {
     this.session.check(t);
     return list;
   }
+  get hasUncertainCreation() {
+    return this.creating?.ambiguous ?? false;
+  }
   async create() {
     this.checkLive();
     if (!this.creating || this.header || this.sharedVault) {
@@ -395,13 +398,30 @@ export class VaultClient {
       this.sharedVault = undefined;
     }
     const t = this.session.capture();
-    const attempt = (this.creating ??= {
-      operation: randomBytes(16),
+    const previouslyUncertain = this.hasUncertainCreation;
+    const attempt = {
+      operation: this.creating?.operation ?? randomBytes(16),
+      ambiguous: true,
+    };
+    // A lock can prevent this session from consuming even a successful reply.
+    this.creating = attempt;
+    const result = await this.actor.create_vault({
+      operation: bytes(attempt.operation),
     });
-    const h = ok(
-      await this.actor.create_vault({ operation: bytes(attempt.operation) }),
-    );
     this.session.check(t);
+    if (this.creating !== attempt) throw Error("Busy");
+    if (
+      !previouslyUncertain &&
+      "Err" in result &&
+      ("QuotaExceeded" in result.Err ||
+        "Unauthorized" in result.Err ||
+        "InvalidInput" in result.Err)
+    ) {
+      // A first refusal is definite; a retry cannot rule out an earlier
+      // in-flight creation. Retain its operation ID and uncertainty.
+      attempt.ambiguous = false;
+    }
+    const h = ok(result);
     if (bytes(h.id).length !== 16) throw Error("TargetChanged");
     this.header = structuredClone(h);
     this.creating = undefined;
@@ -767,6 +787,33 @@ export class VaultClient {
   }
   get hasPendingMutation() {
     return this.request.kind !== "idle";
+  }
+  get hasInterruptedChange() {
+    return (
+      !this.hasPendingSave &&
+      (this.request.kind === "ambiguous" || this.cleanupState.kind !== "idle")
+    );
+  }
+  async retryInterruptedChange() {
+    if (this.hasPendingSave) throw Error("SavePending");
+    const cleanup = this.cleanupState;
+    const request = this.request;
+    // A cleanup can be queued behind an older request with an unknown result.
+    if (
+      cleanup.kind === "idle" ||
+      (request.kind !== "idle" &&
+        !equal(cleanup.operation, bytes(request.mutation.operation)))
+    ) {
+      await this.retryMutation();
+      return;
+    }
+    if (cleanup.kind === "delete") return this.deleteVault(cleanup.vault);
+    return this.cancelUploadWith(
+      cleanup.vault,
+      cleanup.upload,
+      cleanup.job,
+      cleanup.shared,
+    );
   }
   async renameVault(header: Header, name: string) {
     if (this.hasPendingSave) throw Error("SavePending");

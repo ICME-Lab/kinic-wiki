@@ -24,6 +24,15 @@ pub enum Error {
     Storage,
     KeyService,
 }
+/// Advisory admission for new paid work. Request-specific costs and limits still apply.
+#[derive(CandidType, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum SpendingStatus {
+    Available,
+    Unconfigured,
+    ServiceReserveLow,
+    AccountCreditLow,
+}
+
 #[derive(CandidType, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct VaultConfig {
     pub key_name: String,

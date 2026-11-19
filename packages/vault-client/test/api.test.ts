@@ -315,6 +315,27 @@ it("clears a failed rootless key attempt when creating and opening another vault
   await expect(client.open(created)).resolves.toBeUndefined();
   expect(client.session.root).toBeDefined();
 });
+it.each([
+  { Busy: null },
+  { Storage: null },
+  { Conflict: null },
+] as const)("retains an uncertain creation after %j", async (error) => {
+  const { client, actor } = setup();
+  const create = vi.mocked(actor.create_vault);
+  create
+    .mockRejectedValueOnce(Error("lost creation reply"))
+    .mockResolvedValueOnce({ Err: error });
+  await expect(client.create()).rejects.toThrow("lost creation reply");
+  await expect(client.create()).rejects.toThrow(Object.keys(error)[0]);
+  expect(client.hasUncertainCreation).toBe(true);
+  await expect(client.create()).resolves.toEqual(header());
+  expect(create.mock.calls.map(([request]) => request)).toEqual([
+    create.mock.calls[0][0],
+    create.mock.calls[0][0],
+    create.mock.calls[0][0],
+  ]);
+});
+
 it("fences an outstanding open when creation selects a different vault", async () => {
   const { client, actor, change } = setup();
   let resolve!: (value: any) => void;
@@ -664,6 +685,22 @@ it("retries delete progress exactly and clears delivered cleanup errors", async 
   await expect(
     client.cancelUpload(id, new Uint8Array(16)),
   ).resolves.toBeUndefined();
+});
+
+it("replays the older interrupted mutation before a retained deletion job", async () => {
+  const { client, actor } = setup();
+  const mutate = vi.mocked(actor.mutate);
+  mutate
+    .mockRejectedValueOnce(Error("lost collection reply"))
+    .mockResolvedValueOnce({ Ok: { Collected: 1n } })
+    .mockResolvedValueOnce({ Ok: { Progress: true } });
+  await expect(client.collect()).rejects.toThrow("lost collection reply");
+  await expect(client.deleteVault(id)).rejects.toThrow("ResolvePendingMutation");
+  await client.retryInterruptedChange();
+  expect(mutate.mock.calls[0][0]).toEqual(mutate.mock.calls[1][0]);
+  await client.retryInterruptedChange();
+  expect(mutate.mock.calls[2][0].action).toEqual({ DeleteVault: { vault: id } });
+  expect(client.hasInterruptedChange).toBe(false);
 });
 
 it("reconciliation uses the exact operation once and fences locked replies", async () => {
@@ -1790,4 +1827,37 @@ describe("history response targets", () => {
     });
     await expect(x.client.items()).rejects.toThrow("InvalidReceipt");
   });
+});
+
+
+it.each([
+  { QuotaExceeded: null }, { Unauthorized: null }, { InvalidInput: null },
+] as const)("preserves an in-flight creation across a locked retry refused with %j", async (error) => {
+  const { client, actor } = setup();
+  const create = vi.mocked(actor.create_vault);
+  let finish!: (result: Awaited<ReturnType<VaultActor["create_vault"]>>) => void;
+  create.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const original = client.create();
+  const originalResult = expect(original).rejects.toThrow("Locked");
+  client.session.lock();
+  create.mockResolvedValueOnce({ Err: error });
+  await expect(client.create()).rejects.toThrow(Object.keys(error)[0]);
+  const uncertain = client.hasUncertainCreation;
+  finish({ Ok: header() });
+  await originalResult;
+  expect(uncertain).toBe(true);
+  expect(client.hasUncertainCreation).toBe(true);
+  await expect(client.create()).resolves.toEqual(header());
+  expect(create.mock.calls[1][0].operation).toEqual(create.mock.calls[0][0].operation);
+  expect(create.mock.calls[2][0].operation).toEqual(create.mock.calls[0][0].operation);
+  expect(client.hasUncertainCreation).toBe(false);
+});
+
+it.each([
+  { QuotaExceeded: null }, { Unauthorized: null }, { InvalidInput: null },
+] as const)("clears creation uncertainty after a first definite refusal with %j", async error => {
+  const { client, actor } = setup();
+  vi.mocked(actor.create_vault).mockResolvedValueOnce({ Err: error });
+  await expect(client.create()).rejects.toThrow(Object.keys(error)[0]);
+  expect(client.hasUncertainCreation).toBe(false);
 });

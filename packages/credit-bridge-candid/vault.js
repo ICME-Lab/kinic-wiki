@@ -34,12 +34,12 @@ export const idlFactory = ({ IDL }) => {
     'status' : CreditStatus,
     'offer' : CreditOffer,
   });
-  const Result_25 = IDL.Variant({ 'Ok' : CreditReceipt, 'Err' : BridgeError });
+  const Result_26 = IDL.Variant({ 'Ok' : CreditReceipt, 'Err' : BridgeError });
   const BridgeRevocation = IDL.Record({
     'through_generation' : IDL.Nat64,
     'vault_owner' : IDL.Principal,
   });
-  const Result_28 = IDL.Variant({
+  const Result_29 = IDL.Variant({
     'Ok' : BridgeRevocation,
     'Err' : BridgeError,
   });
@@ -49,15 +49,15 @@ export const idlFactory = ({ IDL }) => {
     'generation' : IDL.Nat64,
     'vault_owner' : IDL.Principal,
   });
-  const Result_30 = IDL.Variant({
+  const Result_31 = IDL.Variant({
     'Ok' : IDL.Opt(LinkStatus),
     'Err' : BridgeError,
   });
   return IDL.Service({
     'begin_wiki_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_2], []),
-    'prepare_wiki_credit' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_25], []),
-    'revoke_wiki_link' : IDL.Func([], [Result_28], []),
-    'wiki_link_status' : IDL.Func([], [Result_30], []),
+    'prepare_wiki_credit' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_26], []),
+    'revoke_wiki_link' : IDL.Func([], [Result_29], []),
+    'wiki_link_status' : IDL.Func([], [Result_31], []),
   });
 };
 export const init = ({ IDL }) => { return []; };
