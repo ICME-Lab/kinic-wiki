@@ -16,6 +16,9 @@ pub struct LearningJob {
     pub error: Option<String>,
     #[serde(default)]
     pub config_hash: Option<String>,
+    /// Claude terminal-observation generation used for this candidate/attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_evidence: Option<String>,
     #[serde(default)]
     pub retry_policy: Option<RetryPolicy>,
     #[serde(default)]
@@ -177,6 +180,11 @@ impl JobQueue {
                 "completed or held proposal cannot be paused"
             );
             job.pause("operator_paused");
+            // An explicit operator pause supersedes an existing automatic pause
+            // without losing the state needed for a later explicit resume.
+            if let Some(paused) = job.pause.as_mut() {
+                paused.reason = "operator_paused".into();
+            }
         } else {
             ensure!(job.state == "paused", "only paused jobs can be resumed");
             ensure!(
@@ -239,6 +247,7 @@ impl JobQueue {
             evaluation_path: None,
             error: None,
             config_hash: None,
+            terminal_evidence: None,
             retry_policy: Some(RetryPolicy::default()),
             pause: None,
         };

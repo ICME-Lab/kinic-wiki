@@ -116,7 +116,10 @@ test("renders the Clipper guide, requirements, and docs navigation", async ({ pa
   await expect(page.getByRole("heading", { level: 1, name: "Save browser context with Wiki Clipper" })).toBeVisible();
   await expectExternalLink(page.getByRole("link", { name: "Add to Chrome" }), CLIPPER_STORE_URL);
   for (const requirement of [
-    "ChatGPT or Claude session",
+    "ChatGPT, Claude, or Gemini session",
+    "Set generation folders",
+    "Web pages default to /Knowledge/web and AI conversations to /Knowledge/conversations",
+    "Source saved, generation queued, and page generated are separate states",
     "Clipper Internet Identity session",
     "Dashboard Internet Identity session",
     "same Internet Identity",

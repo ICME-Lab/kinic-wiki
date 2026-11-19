@@ -98,9 +98,11 @@ export async function callVfs<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+export class DecodedCanisterError extends ApiError {}
+
 export function throwCanisterError(message: string): never {
   const error = classifyCanisterError(message);
-  throw new ApiError(error.error, error.status ?? 400, error.hint, error.code);
+  throw new DecodedCanisterError(error.error, error.status ?? 400, error.hint, error.code);
 }
 
 export function throwNodeMutationError(error: RawNodeMutationError): never {

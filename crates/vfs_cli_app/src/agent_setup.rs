@@ -2,7 +2,7 @@
 use crate::{
     agent_config::AgentConfig,
     learning::cli::SetupArgs,
-    plugin_payload::{CODEX_PLUGIN_FILES, RUNTIME_FILES},
+    plugin_payload::{CLAUDE_PLUGIN_FILES, CODEX_PLUGIN_FILES, RUNTIME_FILES},
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -172,8 +172,8 @@ fn emit(args: &SetupArgs, value: &Value) -> Result<()> {
 }
 pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
     ensure!(
-        ["codex", "dsh"].contains(&args.engine.as_str()),
-        "select codex or dsh"
+        ["codex", "dsh", "claude"].contains(&args.engine.as_str()),
+        "select codex, dsh or claude"
     );
     let config = AgentConfig::load(cwd, home)?;
     let candidates = path_candidates(Path::new(&args.engine));
@@ -197,7 +197,7 @@ pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
         );
         candidates[0].clone()
     } else {
-        PathBuf::from("codex")
+        PathBuf::from(&args.engine)
     };
     // New setup paths are absolute when a path was given; bare names retain PATH lookup.
     let executable = if executable.components().count() > 1 && executable.is_relative() {
@@ -277,6 +277,21 @@ pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
         )?;
         marketplace_name = Some(marketplace(home, &dir, &mut files)?);
         dir
+    } else if args.engine == "claude" {
+        let dir = crate::claude::plugin_directory(home);
+        for payload in [CLAUDE_PLUGIN_FILES, RUNTIME_FILES] {
+            for file in payload {
+                plan(
+                    &mut files,
+                    dir.join(file.path),
+                    file.content.as_bytes().to_vec(),
+                    file.executable,
+                )?;
+            }
+        }
+        let (path, bytes) = crate::claude::marketplace_payload(home)?;
+        plan(&mut files, path, bytes, false)?;
+        dir
     } else {
         let dir = args
             .output
@@ -345,7 +360,7 @@ pub fn prepare(args: &SetupArgs, cwd: &Path, home: &Path) -> Result<Value> {
         }
     }
     Ok(
-        json!({"status":status,"engine":args.engine,"plugin_directory":plugin_dir,"marketplace_name":marketplace_name,"executable":executable,"executable_candidates":candidates,"executable_settings_path":target,"changes":changes,"configuration_changes":{"executable":{"before":previous_executable,"after":executable,"source":target},"new_learning_budget_tokens":if new_learning{Some(4096)}else{None}},"activation":"unknown","observed_operation":"unknown","notes":["Existing replacements require --apply; --dry-run writes nothing.",if args.engine=="codex" {"Plugin placement and marketplace registration do not establish activation. Review installation, hook enablement and trust in Codex, then restart if required."}else{"Install the prepared package into the selected DSH profile and load its overlay. No active profile was modified."}],"next_argv":["kinic-vfs-cli","agent","doctor","--engine",args.engine,"--cwd",config.root],"next":format!("kinic-vfs-cli agent doctor --engine {} --cwd '{}'",args.engine,config.root.to_string_lossy().replace('\'', "'\"'\"'"))}),
+        json!({"status":status,"engine":args.engine,"plugin_directory":plugin_dir,"marketplace_name":marketplace_name,"executable":executable,"executable_candidates":candidates,"executable_settings_path":target,"changes":changes,"configuration_changes":{"executable":{"before":previous_executable,"after":executable,"source":target},"new_learning_budget_tokens":if new_learning{Some(4096)}else{None}},"activation":"unknown","observed_operation":"unknown","notes":["Existing replacements require --apply; --dry-run writes nothing.",if args.engine=="codex" {"Plugin placement and marketplace registration do not establish activation. Review installation, hook enablement and trust in Codex, then restart if required."}else if args.engine=="claude" {"Plugin files are prepared only. Register the displayed local Kinic marketplace in Claude Code, install kinic-skill-recorder@kinic, review /hooks and restart if required. Owned runs require Claude Code >=2.1.286 and API/provider credentials; bare mode does not use subscription login."}else{"Install the prepared package into the selected DSH profile and load its overlay. No active profile was modified."}],"next_argv":["kinic-vfs-cli","agent","doctor","--engine",args.engine,"--cwd",config.root],"next":format!("kinic-vfs-cli agent doctor --engine {} --cwd '{}'",args.engine,config.root.to_string_lossy().replace('\'', "'\"'\"'"))}),
     )
 }
 
@@ -406,9 +421,10 @@ pub async fn run_connected(
                 install_plugin(Path::new(executable), marketplace).await?;
         }
     }
-    value["next"] = json!(
-        "Check /hooks in Codex, then run kinic-vfs-cli agent doctor; automatic learning requires learn setup."
-    );
+    value["next"] = json!(format!(
+        "Review {} plugin/profile and /hooks settings, then run kinic-vfs-cli agent doctor --engine {}; automatic learning requires learn setup --runner-file <runner.json>.",
+        args.engine, args.engine
+    ));
     emit(args, &value)
 }
 async fn codex_json(executable: &Path, args: &[&str]) -> Result<Value> {

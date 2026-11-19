@@ -83,6 +83,7 @@ export type WikiDraft = {
 export type OutputLanguage = "en" | "ja" | "zh-Hans" | "ko" | "es" | "fr" | "de" | "pt";
 
 export type SourceQueueMessage = {
+  targetRoot?: string;
   kind: "source";
   databaseId: string;
   sourcePath: string;
@@ -117,6 +118,7 @@ export type PublicDatabaseSummary = {
 };
 
 export type ManualRunInput = {
+  targetRoot?: string;
   databaseId: string;
   sourcePath: string;
   sourceEtag: string;
@@ -143,6 +145,7 @@ export type WorkerConfig = {
 export type JobStatus = "queued" | "processing" | "generated" | "completed" | "failed";
 
 export type SourceJob = {
+  requested_target_root?: string | null;
   database_id: string;
   source_path: string;
   source_etag: string;

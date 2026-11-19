@@ -1,12 +1,16 @@
 "use client";
 
 import type { Identity } from "@icp-sdk/core/agent";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast";
 import type { WikiNode } from "@/lib/types";
+import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
+import { unclosedTopLevelFenceOffset } from "@/lib/markdown-renderer";
+import { renderWikilinksAsMarkdownWithSourceOffsets } from "@/lib/markdown-wikilinks";
 import { errorMessage } from "@/lib/wiki-helpers";
 import { writeNodeAuthenticated } from "@/lib/vfs-client";
 import { MarkdownEditor, type EditorSaveState } from "@/components/markdown-editor";
+import { VaultPickerButton } from "@/components/vault-picker-button";
 
 type EditStateChange = {
   dirty: boolean;
@@ -14,8 +18,6 @@ type EditStateChange = {
 };
 
 type StoredEditorState = {
-  key: string;
-  path: string;
   baseEtag: string;
   baseContent: string;
   draft: string;
@@ -24,16 +26,7 @@ type StoredEditorState = {
   saveWarning: string | null;
 };
 
-export function MarkdownEditDocument({
-  canisterId,
-  databaseId,
-  node,
-  isLargeContent,
-  contentBytes,
-  writeIdentity,
-  onNodeSaved,
-  onEditStateChange
-}: {
+type MarkdownEditDocumentProps = {
   canisterId: string;
   databaseId: string;
   node: WikiNode;
@@ -42,10 +35,32 @@ export function MarkdownEditDocument({
   writeIdentity: Identity;
   onNodeSaved: () => Promise<WikiNode>;
   onEditStateChange?: (state: EditStateChange) => void;
-}) {
-  const currentKey = `${node.path}\n${node.etag}`;
-  const [storedEditor, setStoredEditor] = useState<StoredEditorState>(() => newStoredEditorState(currentKey, node.path, node.etag, node.content));
-  const editor = shouldUseStoredEditor(storedEditor, currentKey, node.path) ? storedEditor : newStoredEditorState(currentKey, node.path, node.etag, node.content);
+};
+
+export function MarkdownEditDocument(props: MarkdownEditDocumentProps) {
+  const documentKey = JSON.stringify([props.canisterId, props.databaseId, props.node.path]);
+  return <DocumentEditor key={documentKey} {...props} />;
+}
+
+function DocumentEditor({
+  canisterId,
+  databaseId,
+  node,
+  isLargeContent,
+  contentBytes,
+  writeIdentity,
+  onNodeSaved,
+  onEditStateChange
+}: MarkdownEditDocumentProps) {
+  const [storedEditor, setStoredEditor] = useState<StoredEditorState>(() => newStoredEditorState(node.etag, node.content));
+  const editor = shouldUseStoredEditor(storedEditor, node.etag) ? storedEditor : newStoredEditorState(node.etag, node.content);
+  const saveScope = useRef<{ pending: boolean }>(undefined);
+
+  useLayoutEffect(() => {
+    saveScope.current = { pending: false };
+    return () => { saveScope.current = undefined; };
+  }, []);
+
   const dirty = editor.draft !== editor.baseContent;
   const visibleSaveState: EditorSaveState = editor.saveState === "saving" || editor.saveState === "saved" || editor.saveState === "error" ? editor.saveState : dirty ? "dirty" : "idle";
 
@@ -68,8 +83,27 @@ export function MarkdownEditDocument({
   const lineCount = useMemo(() => countLines(editor.draft), [editor.draft]);
   const draftBytes = useMemo(() => new TextEncoder().encode(editor.draft).length, [editor.draft]);
 
+  function updateDraft(change: (draft: string) => string) {
+    setStoredEditor((stored) => {
+      const current = shouldUseStoredEditor(stored, node.etag) ? stored : editor;
+      if (current.saveState === "saving") return stored;
+      return {
+        ...current,
+        draft: change(current.draft),
+        saveState: current.saveState === "saved" || current.saveState === "error" ? "idle" : current.saveState,
+        saveError: current.saveState === "error" ? null : current.saveError,
+        saveWarning: null
+      };
+    });
+  }
+
   async function save() {
+    const scope = saveScope.current;
+    if (!scope || scope.pending) return;
+    scope.pending = true;
     setStoredEditor({ ...editor, saveState: "saving", saveError: null, saveWarning: null });
+
+    let savedEditor: StoredEditorState | undefined;
     try {
       const result = await writeNodeAuthenticated(canisterId, writeIdentity, {
         databaseId,
@@ -79,26 +113,27 @@ export function MarkdownEditDocument({
         metadataJson: node.metadataJson,
         expectedEtag: editor.baseEtag
       });
-      const savedEditor = newSavedEditorState(`${node.path}\n${result.node.etag}`, node.path, result.node.etag, editor.draft);
-      setStoredEditor(savedEditor);
-      let savedNode: WikiNode;
-      try {
-        savedNode = await onNodeSaved();
-      } catch (refreshError) {
-        const warning = `Saved, but refresh failed: ${errorMessage(refreshError)}`;
-        toast.error(warning);
-        setStoredEditor({
-          ...savedEditor,
-          saveWarning: warning
-        });
-        return;
-      }
-      setStoredEditor(newSavedEditorState(`${savedNode.path}\n${savedNode.etag}`, savedNode.path, savedNode.etag, savedNode.content));
+      savedEditor = newSavedEditorState(result.node.etag, editor.draft);
+
+      // The refresh invalidates the saved article's cache even if the user navigated away.
+      const savedNode = await onNodeSaved();
+      if (saveScope.current !== scope) return;
+      if (savedNode.path !== node.path) throw new Error("The refresh returned a different article.");
+      setStoredEditor(newSavedEditorState(savedNode.etag, savedNode.content));
       toast.success("Saved");
     } catch (cause) {
+      if (saveScope.current !== scope) return;
       const message = errorMessage(cause);
-      toast.error(message);
-      setStoredEditor({ ...editor, saveState: "error", saveError: message, saveWarning: null });
+      if (savedEditor) {
+        const warning = `Saved, but refresh failed: ${message}`;
+        toast.error(warning);
+        setStoredEditor({ ...savedEditor, saveWarning: warning });
+      } else {
+        toast.error(message);
+        setStoredEditor({ ...editor, saveState: "error", saveError: message, saveWarning: null });
+      }
+    } finally {
+      scope.pending = false;
     }
   }
 
@@ -117,15 +152,14 @@ export function MarkdownEditDocument({
         lineCount={lineCount}
         saveState={visibleSaveState}
         warning={editor.saveWarning}
-        onChange={(nextContent) => {
-          setStoredEditor({
-            ...editor,
-            draft: nextContent,
-            saveState: editor.saveState === "saved" || editor.saveState === "error" ? "idle" : editor.saveState,
-            saveError: editor.saveState === "error" ? null : editor.saveError,
-            saveWarning: null
-          });
-        }}
+        toolbarActions={(
+          <VaultPickerButton
+            key={node.etag}
+            disabled={editor.saveState === "saving"}
+            onInsert={(reference) => updateDraft((draft) => insertReference(draft, reference))}
+          />
+        )}
+        onChange={(nextContent) => updateDraft(() => nextContent)}
         onRevert={() => {
           setStoredEditor({ ...editor, draft: editor.baseContent, saveState: "idle", saveError: null, saveWarning: null });
         }}
@@ -133,6 +167,31 @@ export function MarkdownEditDocument({
       />
     </article>
   );
+}
+
+function insertReference(draft: string, reference: string): string {
+  const body = splitMarkdownFrontmatter(draft)?.body ?? draft;
+  const rendered = renderWikilinksAsMarkdownWithSourceOffsets(body);
+  const fenceOffset = unclosedTopLevelFenceOffset(rendered.markdown);
+  if (fenceOffset === undefined) {
+    const gap = !draft || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+    return `${draft}${gap}${reference}\n`;
+  }
+
+  // Use the body start when a generated opener has no safe authored boundary.
+  // For an authored opener, keep any indentation on its original line.
+  const markerOffset = rendered.sourceOffsetAt(fenceOffset) ?? 0;
+  const lineStart = markerOffset === 0 ? 0 : 1 + Math.max(
+    body.lastIndexOf("\n", markerOffset - 1), body.lastIndexOf("\r", markerOffset - 1)
+  );
+  const offset = draft.length - body.length + lineStart;
+  const before = draft.slice(0, offset);
+  // The parser ignores a leading BOM. Keep it ahead of the inserted paragraph.
+  const bom = lineStart === 0 && body.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const fence = draft.slice(offset + bom.length);
+  const ending = before.match(/(?:\r\n|[\r\n])$/)?.[0] ?? fence.match(/\r\n|[\r\n]/)?.[0] ?? "\n";
+  const gap = !before || before.endsWith(ending.repeat(2)) ? "" : ending;
+  return `${before}${bom}${gap}${reference}${ending}${ending}${fence}`;
 }
 
 function useSaveShortcut(onSave: () => void) {
@@ -152,10 +211,8 @@ function countLines(content: string): number {
   return content.split("\n").length;
 }
 
-function newStoredEditorState(key: string, path: string, etag: string, content: string): StoredEditorState {
+function newStoredEditorState(etag: string, content: string): StoredEditorState {
   return {
-    key,
-    path,
     baseEtag: etag,
     baseContent: content,
     draft: content,
@@ -165,22 +222,12 @@ function newStoredEditorState(key: string, path: string, etag: string, content: 
   };
 }
 
-function shouldUseStoredEditor(editor: StoredEditorState, currentKey: string, path: string): boolean {
-  if (editor.path !== path) return false;
-  if (editor.key === currentKey) return true;
+function shouldUseStoredEditor(editor: StoredEditorState, etag: string): boolean {
+  if (editor.baseEtag === etag) return true;
   if (editor.draft !== editor.baseContent) return true;
   return editor.saveState === "saved" || editor.saveState === "saving" || editor.saveState === "error" || editor.saveWarning !== null;
 }
 
-function newSavedEditorState(key: string, path: string, etag: string, content: string): StoredEditorState {
-  return {
-    key,
-    path,
-    baseEtag: etag,
-    baseContent: content,
-    draft: content,
-    saveState: "saved",
-    saveError: null,
-    saveWarning: null
-  };
+function newSavedEditorState(etag: string, content: string): StoredEditorState {
+  return { ...newStoredEditorState(etag, content), saveState: "saved" };
 }

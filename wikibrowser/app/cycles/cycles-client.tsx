@@ -1,385 +1,126 @@
-// Where: /cycles client UI.
-// What: collects a KINIC amount locally, then submits wallet approval and cycles purchase.
-// Why: the final purchase amount belongs to wallet-facing UI state.
 "use client";
 
-import { useAppNavigate } from "@/lib/app-router";
-import { LogIn, PlugZap, Wallet } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { formatKinicExact, parseKinic } from "@kinic/payments/amounts";
+import { fundingSources, paymentPresentation, useFundingProvider, usePaymentFlow, type FlowBinding } from "@kinic/payments/use-payment-flow";
+import { PaymentForm } from "@kinic/ui/payment-form";
+import { formatCycles } from "@kinic/ui/cycles";
 import { useAppSession } from "@/app/app-session-provider";
-import { connectedWalletPrincipal } from "@/app/app-session-provider";
-import { balanceCanFund, KinicFundingSourceSelector, useFundingSourceChoice } from "@/app/kinic-funding-source-selector";
 import { AdminContent } from "@/components/admin-shell";
-import { AdminField, AdminNotice, AdminPanel } from "@/components/admin-ui";
-import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
+import { AdminNotice, AdminPanel } from "@/components/admin-ui";
+import { useAppNavigate } from "@/lib/app-router";
 import { databaseCyclesHref, databaseCyclesView } from "@/lib/cycles-state";
-import { requiredKinicBalanceE8s } from "@/lib/cycles";
-import { purchaseCyclesWithFundingSource, type FundingProvider, type KinicFundingSource } from "@/lib/kinic-wallet";
-import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
-import { errorMessage } from "@/lib/wiki-helpers";
+import { parseCyclesTarget } from "@/lib/cycles-url";
+import { createWikiBillingClient, createWikiCyclesPaymentAdapter } from "@/lib/payments/cycles-adapter";
 import type { CyclesBillingConfig, DatabaseStatus, DatabaseSummary } from "@/lib/types";
+import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
 
-type CyclesStatus = "idle" | "running" | "success" | "notice" | "error";
-type DatabaseLoadState = "idle" | "loading" | "ready" | "error";
-
-type CyclesClientProps = {
-  canisterId: string;
-  databaseId: string;
-  databaseStatus: DatabaseStatus | null;
-};
-
-export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesClientProps) {
+const creditLabel = (value: bigint) => formatCycles(value) + " cycles";
+type Props = {canisterId: string; databaseId: string; databaseStatus: DatabaseStatus | null};
+export function CyclesClient({canisterId, databaseId, databaseStatus}: Props) {
   const router = useAppNavigate();
-  const {
-    authClient,
-    authError,
-    authLoading,
-    authReady,
-    setAuthControlsLocked,
-    identityLedgerBalance,
-    identityLedgerBalanceError,
-    identityLedgerBalanceLoading,
-    login,
-    principal,
-    refreshIdentityLedgerBalanceFor,
-    refreshIdentityLedgerBalance,
-    refreshWalletBalance,
-    setWalletControlsLocked,
-    wallet,
-    walletBalance,
-    walletBalanceError,
-    walletBalanceLoading,
-    walletBusyProvider,
-    walletSessionReady
-  } = useAppSession();
-  const [status, setStatus] = useState<CyclesStatus>("idle");
-  const [message, setMessage] = useState<string | null>(null);
+  const session = useAppSession();
+  const {authClient, principal, walletSession, walletSnapshot, walletPaymentReady, setAuthControlsLocked, setWalletControlsLocked} = session;
+  const {source, select} = useFundingProvider("kinic.wiki.payment-source", walletSnapshot.account?.provider);
   const [amount, setAmount] = useState("1");
-  const [databaseLoadState, setDatabaseLoadState] = useState<DatabaseLoadState>("idle");
-  const [databaseLoadError, setDatabaseLoadError] = useState<string | null>(null);
-  const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
-  const [cyclesConfig, setCyclesConfig] = useState<CyclesBillingConfig | null>(null);
-  const fundingChoice = useFundingSourceChoice(wallet !== null, walletSessionReady);
-  const principalRef = useRef(principal);
-  const walletRef = useRef(wallet);
-  principalRef.current = principal;
-  walletRef.current = wallet;
-  const configuredCanisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
-  const parsedTarget = useMemo(() => {
-    const params = new URLSearchParams();
-    params.set("database_id", databaseId);
-    return parseCyclesTarget(params);
-  }, [databaseId]);
-  const selectedDatabase = useMemo(() => databases.find((database) => database.databaseId === databaseId) ?? null, [databaseId, databases]);
-  const fundableDatabases = useMemo(() => databases.filter((database) => databaseCyclesView(database, cyclesConfig).purchaseAvailable), [cyclesConfig, databases]);
-  const resolvedDatabaseStatus = selectedDatabase?.status ?? databaseStatus;
-  const parsedAmount = useMemo(() => parseKinicAmountE8sInput(amount), [amount]);
-  const hasNoFundableDatabases = principal !== null && databaseLoadState === "ready" && fundableDatabases.length === 0;
-  const targetError = typeof parsedTarget === "string" && !hasNoFundableDatabases ? parsedTarget : null;
-  const error =
-    targetError ??
-    (!configuredCanisterId
-        ? "VITE_KINIC_WIKI_CANISTER_ID is not configured"
-        : null);
-  const amountError = typeof parsedAmount === "string" ? parsedAmount : null;
-  const requiredBalanceE8s = typeof parsedAmount === "bigint" ? requiredKinicBalanceE8s(parsedAmount) : 0n;
-  const selectedProvider: FundingProvider = fundingChoice.selected === "ii" ? "ii" : wallet?.provider ?? "oisy";
-  const selectedBalance = fundingChoice.selected === "ii" ? identityLedgerBalance : walletBalance;
-  const selectedBalanceError = fundingChoice.selected === "ii" ? identityLedgerBalanceError : walletBalanceError;
-  const selectedBalanceLoading = fundingChoice.selected === "ii" ? identityLedgerBalanceLoading : walletBalanceLoading;
-  const selectedSourceAvailable = fundingChoice.selected === "ii" ? Boolean(authClient && principal) : Boolean(wallet);
-  const selectedBalanceSufficient = typeof parsedAmount === "bigint" && balanceCanFund(selectedBalance, requiredBalanceE8s);
-  const busy = status === "running" || (fundingChoice.selected === "wallet" && walletBusyProvider !== null);
-  const purchaseDisabled =
-    parsedTarget === null ||
-    typeof parsedTarget === "string" ||
-    Boolean(error) ||
-    Boolean(amountError) ||
-    busy ||
-    !selectedSourceAvailable ||
-    selectedBalanceLoading ||
-    Boolean(selectedBalanceError) ||
-    !selectedBalanceSufficient;
-
-  const loadDatabases = useCallback(async () => {
-    if (!authClient || !principal || !canisterId) {
-      setDatabases([]);
-      setCyclesConfig(null);
-      setDatabaseLoadState("idle");
-      setDatabaseLoadError(null);
-      return;
-    }
-    setDatabaseLoadState("loading");
-    setDatabaseLoadError(null);
-    try {
-      const identity = authClient.getIdentity();
-      const [nextDatabases, nextCyclesConfig] = await Promise.all([
-        listDatabasesAuthenticated(canisterId, identity),
-        getCyclesBillingConfig(canisterId)
-      ]);
-      setDatabases(nextDatabases);
-      setCyclesConfig(nextCyclesConfig);
-      setDatabaseLoadState("ready");
-    } catch (cause) {
-      setDatabases([]);
-      setCyclesConfig(null);
-      setDatabaseLoadError(errorMessage(cause));
-      setDatabaseLoadState("error");
-    }
-  }, [authClient, canisterId, principal]);
-
+  const [data, setData] = useState<{auth: typeof authClient; principal: string | null; canisterId: string; databases: DatabaseSummary[]; config: CyclesBillingConfig}>();
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      void loadDatabases();
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadDatabases]);
-
-  useEffect(() => {
-    setWalletControlsLocked(status === "running");
-    return () => setWalletControlsLocked(false);
-  }, [setWalletControlsLocked, status]);
-
-  useEffect(() => {
-    setAuthControlsLocked(status === "running");
-    return () => setAuthControlsLocked(false);
-  }, [setAuthControlsLocked, status]);
-
-  function selectDatabase(nextDatabaseId: string) {
-    const nextDatabase = fundableDatabases.find((database) => database.databaseId === nextDatabaseId);
-    if (!nextDatabase) return;
-    router.replace(databaseCyclesHref(nextDatabase));
+    let current = true;
+    setLoadError("");
+    if (canisterId) {
+      const databases = authClient && principal ? listDatabasesAuthenticated(canisterId, authClient.getIdentity()) : Promise.resolve([]);
+      void Promise.all([databases, getCyclesBillingConfig(canisterId)])
+        .then(([databases, config]) => { if (current) setData({auth:authClient, principal, canisterId, databases, config}); })
+        .catch(() => { if (current) setLoadError("Could not load linked databases and billing terms."); });
+    }
+    return () => { current = false; };
+  }, [authClient, principal, canisterId]);
+  const currentData = data?.auth === authClient && data?.principal === principal && data?.canisterId === canisterId ? data : undefined;
+  const configured = !!canisterId && canisterId === import.meta.env.VITE_KINIC_WIKI_CANISTER_ID;
+  const target = parseCyclesTarget(new URLSearchParams({database_id:databaseId}));
+  const validTarget = !!target && typeof target !== "string";
+  const fundable = currentData?.databases.filter(db => databaseCyclesView(db, currentData.config).purchaseAvailable) ?? [];
+  const selected = fundable.find(db => db.databaseId === databaseId);
+  const linkedTarget = currentData?.databases.find(db => db.databaseId === databaseId);
+  // URL funding also supports unlinked databases. Block known deleted targets
+  // from new dispatches while retaining their existing recovery controller.
+  const availableTarget = (linkedTarget?.status ?? databaseStatus) !== "deleted";
+  const ready = source === "ii" ? !!principal : walletSnapshot.account?.provider === source && walletPaymentReady;
+  const generation = walletSnapshot.generation;
+  const {wallet, refreshWalletBalance, refreshIdentityLedgerBalanceFor} = session;
+  const canRefreshCredit = !!principal && !!linkedTarget;
+  const create = useCallback(({store, isCurrent}: FlowBinding) =>
+    currentData && configured && validTarget && ready && walletSession.getSnapshot().generation === generation ?
+      createWikiCyclesPaymentAdapter({store, isCurrent, canisterId, databaseId, authIdentity: principal ? authClient?.getIdentity() : undefined,
+        walletSession, source, canRefreshCredit, billingClient:createWikiBillingClient(currentData.config),
+        refreshPayer: async () => {
+          if (!isCurrent()) return;
+          if (source === "ii" && authClient && principal) await refreshIdentityLedgerBalanceFor(authClient.getIdentity(), principal);
+          else if (wallet && wallet.provider === source) await refreshWalletBalance(wallet);
+        }}) : null,
+    [authClient, canisterId, currentData, configured, databaseId, generation, principal, ready, source, validTarget, walletSession, canRefreshCredit, wallet, refreshWalletBalance, refreshIdentityLedgerBalanceFor]);
+  const flow = usePaymentFlow(create, walletSession);
+  const {state, active} = flow;
+  const {summary, status} = paymentPresentation(state, flow.approvalPaid, flow.checked, creditLabel);
+  if (state.phase === "unresolved" && state.requiredAction === "review") {
+    const reference = state.reference && /^\d+$/.test(state.reference) ? ` (operation ${state.reference})` : "";
+    const authority = currentData?.config.billingAuthorityId;
+    status.message = [flow.checked ? "Status checked." : "", state.error && state.error.code !== "Unknown" ? status.message : "",
+      `Contact the Wiki billing authority${authority ? " " + authority : ""} to review the original payment${reference}.`].filter(Boolean).join(" ");
   }
-
-  async function purchase() {
-    if (parsedTarget === null || typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
-    const principalAtSubmit = principal;
-    const sourceAtSubmit: KinicFundingSource | null =
-      fundingChoice.selected === "ii"
-        ? authClient && principal
-          ? { provider: "ii", identity: authClient.getIdentity() }
-          : null
-        : wallet;
-    if (!sourceAtSubmit || !selectedBalanceSufficient || selectedBalanceLoading || selectedBalanceError) return;
-    const sourceIsCurrent = () => {
-      if (sourceAtSubmit.provider === "ii") return principalRef.current === principalAtSubmit;
-      const currentWallet = walletRef.current;
-      return currentWallet !== null && currentWallet.provider === sourceAtSubmit.provider && connectedWalletPrincipal(currentWallet) === connectedWalletPrincipal(sourceAtSubmit);
-    };
-    setStatus("running");
-    setMessage(null);
-    let result: Awaited<ReturnType<typeof purchaseCyclesWithFundingSource>> | null = null;
-    let purchaseError: unknown = null;
-    try {
-      const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
-      result = await purchaseCyclesWithFundingSource(request, sourceAtSubmit);
-    } catch (cause) {
-      purchaseError = cause;
-    }
-    if (sourceIsCurrent()) {
-      try {
-        if (sourceAtSubmit.provider === "ii") {
-          if (principalAtSubmit) await refreshIdentityLedgerBalanceFor(sourceAtSubmit.identity, principalAtSubmit);
-        } else {
-          await refreshWalletBalance(sourceAtSubmit);
-        }
-      } catch {
-        // Preserve the purchase result when a balance refresh also fails.
-      }
-    }
-    if (purchaseError !== null) {
-      if (!sourceIsCurrent()) {
-        setStatus("idle");
-        return;
-      }
-      setMessage("Cycles purchase did not complete. Review the payment request or try again from Cycles.");
-      setStatus("notice");
-      return;
-    }
-    if (!result || !sourceIsCurrent()) {
-      setStatus("idle");
-      return;
-    }
-    const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
-    setMessage(
-      `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
-    );
-    setStatus("success");
-    router.replace(cyclesPurchaseSuccessHref({
-      cycles: result.purchasedCycles,
-      databaseId: parsedTarget.databaseId,
-      kinic: formatTokenAmountFromE8s(result.paymentAmountE8s),
-      provider: result.provider
-    }));
+  const busy = ["preparing","approving","paying","checking","refreshing"].includes(state.phase);
+  const locked = busy || state.phase === "ready";
+  useLayoutEffect(() => {
+    setAuthControlsLocked(locked);
+    setWalletControlsLocked(locked);
+    return () => { setAuthControlsLocked(false); setWalletControlsLocked(false); };
+  }, [locked, setAuthControlsLocked, setWalletControlsLocked]);
+  const external = walletSnapshot.account?.provider !== "ii" ? walletSnapshot.account : null;
+  const sources = fundingSources({identity:principal, external, state:walletSnapshot.state, granted:walletPaymentReady,
+    balance: id => {
+      const raw = id === "ii" ? session.identityLedgerBalance : id === external?.provider ? session.walletBalance : null;
+      return raw && /^\d+$/.test(raw) ? formatKinicExact(BigInt(raw)) + " KINIC" : null;
+    }, connect:session.connectWallet, disconnect:session.disconnectWallet});
+  let amountE8s: bigint | undefined;
+  try { amountE8s = parseKinic(amount); } catch { /* Display the input correction below. */ }
+  const recoveryActions = [];
+  if (state.phase === "unresolved" || state.phase === "failed" || state.phase === "ready"
+    || (state.phase === "complete" && state.cleanupPending))
+    recoveryActions.push({label: state.phase === "ready" && !flow.approvalPaid ? "Edit payment" : "Check payment status", run:() => { void flow.check(); }});
+  if (state.canCancelUnsubmitted) {
+    status.message = (status.message ?? "") + " Dismissing this local record keeps the ledger allowance and any approval fee already charged.";
+    recoveryActions.push({label:"Dismiss expired payment", run:() => { void active.current?.controller.cancelUnsubmitted(); }});
   }
-
-  return (
-    <AdminContent>
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 text-ink">
-        <header className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-ink">Top up cycles</h1>
-          <p className="mt-1 text-sm leading-6 text-muted">Pay with KINIC to keep a database writable. Cycles are credited to the database you choose.</p>
-        </header>
-        <AdminPanel className="grid gap-4 bg-white" padding="md">
-          <label className="grid gap-2">
-            <span className="text-xs font-semibold uppercase text-muted">Database</span>
-            <select
-              className="min-h-12 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-              disabled={!principal || databaseLoadState === "loading" || fundableDatabases.length === 0}
-              value={fundableDatabases.some((database) => database.databaseId === databaseId) ? databaseId : ""}
-              onChange={(event) => selectDatabase(event.target.value)}
-            >
-              <option value="">Select a database</option>
-              {fundableDatabases.map((database) => (
-                <option key={database.databaseId} value={database.databaseId}>
-                  {database.metadata.name} · {database.status} · {databaseCyclesView(database, cyclesConfig).summary}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-semibold uppercase text-muted">KINIC amount</span>
-            <input
-              className="min-h-12 rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-              inputMode="decimal"
-              type="text"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-            />
-            {amountError ? <span className="text-xs text-dangerText">{amountError}</span> : null}
-          </label>
-          {/* Identifiers are for verification, not decision-making, so they stay one click away. */}
-          <details className="group text-sm">
-            <summary className="cursor-pointer list-none text-xs font-medium text-muted hover:text-ink">Show identifiers</summary>
-            <div className="mt-3 grid gap-3">
-              <Field label="Database" value={databaseId || "-"} />
-              <Field label="Canister" value={canisterId || "-"} />
-            </div>
-          </details>
-        </AdminPanel>
-
-        {!principal ? (
-          <div className="grid gap-3">
-            <button
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-onAction hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
-              data-tid="cycles-login-button"
-              disabled={!authReady || authLoading || status === "running"}
-              type="button"
-              onClick={() => void login()}
-            >
-              <LogIn aria-hidden size={18} />
-              <span>{authLoading ? "Preparing Internet Identity" : "Sign in with Internet Identity"}</span>
-            </button>
-            {authError ? <Notice tone="error" text={authError} /> : null}
-          </div>
-        ) : null}
-        {principal && databaseLoadState === "loading" ? <Notice tone="info" text="Loading linked databases." /> : null}
-        {databaseLoadError ? <Notice tone="error" text={databaseLoadError} /> : null}
-        {hasNoFundableDatabases ? <Notice tone="info" text="No fundable databases linked to this principal." /> : null}
-        {databaseId && principal && databaseLoadState === "ready" && !selectedDatabase ? <Notice tone="info" text="The selected database is not linked to this principal. The URL target is still shown below." /> : null}
-        {resolvedDatabaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
-
-        {typeof parsedAmount === "bigint" ? (
-          <KinicFundingSourceSelector
-            identityAccount={{
-              available: Boolean(authClient && principal),
-              balance: identityLedgerBalance,
-              balanceError: identityLedgerBalanceError,
-              balanceLoading: identityLedgerBalanceLoading,
-              label: "Internet Identity",
-              principal,
-              refreshDisabled: !principal || identityLedgerBalanceLoading || status === "running",
-              onRefresh: () => void refreshIdentityLedgerBalance()
-            }}
-            onSelect={fundingChoice.select}
-            requiredBalanceE8s={requiredBalanceE8s}
-            selected={fundingChoice.selected}
-            selectionDisabled={status === "running"}
-            walletAccount={{
-              available: Boolean(wallet),
-              balance: walletBalance,
-              balanceError: walletBalanceError,
-              balanceLoading: walletBalanceLoading,
-              label: wallet ? providerLabel(wallet.provider) : "OISY / Plug",
-              principal: wallet ? connectedWalletPrincipal(wallet) : null,
-              refreshDisabled: !wallet || walletBalanceLoading || walletBusyProvider !== null || status === "running",
-              onRefresh: () => {
-                if (wallet) void refreshWalletBalance(wallet);
-              }
-            }}
-          />
-        ) : null}
-
-        {/* Visitors with no funding source get one primary action (Sign in), not a dead purchase button. */}
-        {principal || wallet ? (
-        <div className="grid gap-3">
-          <button
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-onAction hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={purchaseDisabled}
-            type="button"
-            onClick={() => void purchase()}
-          >
-            {selectedProvider === "plug" ? <PlugZap aria-hidden size={18} /> : <Wallet aria-hidden size={18} />}
-            <span>{purchaseButtonLabel(selectedProvider, status)}</span>
-          </button>
-        </div>
-        ) : null}
-
-        {error ? <Notice tone="error" text={error} /> : null}
-        {selectedBalanceError ? <Notice tone="error" text={selectedBalanceError} /> : null}
-        {status === "success" && message ? <Notice tone="success" text={message} /> : null}
-        {status === "notice" && message ? <Notice tone="info" text={message} /> : null}
-        {status === "error" && message ? <Notice tone="error" text={message} /> : null}
-      </div>
-    </AdminContent>
-  );
-}
-
-function purchaseButtonLabel(selectedProvider: FundingProvider, status: CyclesStatus): string {
-  if (status === "running") {
-    if (selectedProvider === "ii") return "Processing Internet Identity";
-    if (selectedProvider === "oisy") return "Processing OISY";
-    if (selectedProvider === "plug") return "Processing Plug";
-  }
-  if (selectedProvider === "ii") return "Purchase cycles with Internet Identity";
-  if (selectedProvider === "oisy") return "Purchase cycles with OISY";
-  if (selectedProvider === "plug") return "Purchase cycles with Plug";
-  return "Purchase cycles";
-}
-
-function providerLabel(provider: Exclude<FundingProvider, "ii">): string {
-  return provider === "oisy" ? "OISY" : "Plug";
-}
-
-function cyclesPurchaseSuccessHref({
-  cycles,
-  databaseId,
-  kinic,
-  provider
-}: {
-  cycles: string;
-  databaseId: string;
-  kinic: string;
-  provider: FundingProvider;
-}): string {
-  const params = new URLSearchParams();
-  params.set("funding", "success");
-  params.set("database_id", databaseId);
-  params.set("provider", provider);
-  params.set("kinic", kinic);
-  params.set("cycles", cycles);
-  return `/dashboard?${params.toString()}`;
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return <AdminField breakAll mono label={label} value={value} />;
-}
-
-function Notice({ tone, text }: { tone: "success" | "error" | "info" | "warning"; text: string }) {
-  return <AdminNotice tone={tone} message={text} />;
+  if (canRefreshCredit && state.balanceUnavailable) recoveryActions.push({label:"Refresh credit balance",run:() => { void active.current?.controller.refreshBalance(); }});
+  if (state.phase === "complete") recoveryActions.push({label:"View database",run:() => {
+    const params = new URLSearchParams({funding:"success",database_id:databaseId,provider:source,
+      kinic:summary?.amount ?? amount, cycles:state.receipt?.creditedCycles.toLocaleString("en-US") ?? ""});
+    router.replace("/dashboard?" + params.toString());
+  }});
+  const balanceError = source === "ii" ? session.identityLedgerBalanceError : session.walletBalanceError;
+  return <AdminContent><div className="mx-auto grid w-full max-w-2xl gap-5 text-ink">
+    <header><h1 className="text-2xl font-semibold">Top up cycles</h1>
+      <p className="mt-1 text-sm text-muted">Pay with KINIC to keep a database writable.</p></header>
+    {!principal ? <button data-tid="cycles-login-button" disabled={locked || !session.authReady || session.authLoading} type="button" onClick={session.login}>Sign in with Internet Identity</button> : null}
+    {session.authError && <AdminNotice tone="error" message={session.authError}/>}
+    <AdminPanel className="grid gap-4 bg-white" padding="md">
+      <label className="grid gap-2 text-sm">Database<select className="min-h-10 rounded-lg border border-line px-3"
+        disabled={locked || !fundable.length} value={selected?.databaseId ?? ""} onChange={event => {
+          const db = fundable.find(item => item.databaseId === event.target.value);
+          if (db) router.replace(databaseCyclesHref(db));
+        }}><option value="">Select a database</option>{fundable.map(db => <option value={db.databaseId} key={db.databaseId}>
+          {db.metadata.name} · {db.status} · {databaseCyclesView(db,currentData?.config ?? null).summary}</option>)}</select></label>
+      {loadError && <AdminNotice tone="error" message={loadError}/>}
+      {principal && currentData && !fundable.length && <AdminNotice tone="info" message="No fundable databases linked to this principal."/>}
+      {(selected?.status ?? databaseStatus) === "pending" && <AdminNotice tone="info" message="This database becomes active after its first cycles purchase."/>}
+      {!configured && <AdminNotice tone="error" message="Wiki billing is unavailable for this canister."/>}
+      {balanceError && <AdminNotice tone="error" message={balanceError}/>}
+      <PaymentForm sources={sources} selectedSource={source} targetLabel={selected?.metadata.name ?? (databaseId || "Select a database")}
+        amount={amount} summary={summary} status={{...status,recoveryActions}} actions={{onSource:select,onAmount:setAmount,locked,
+          canPay:!!active.current && availableTarget && ready && state.phase === "ready", onPay:() => { if (availableTarget && state.summary) void active.current?.controller.pay(state.summary.termsKey); },
+          canReview:!!active.current && availableTarget && ready && !!amountE8s && !busy, onReview:() => { if (availableTarget && amountE8s) void active.current?.controller.prepare(amountE8s); },
+          amountError:!amountE8s ? "Enter a positive KINIC amount with up to 8 decimal places." : undefined}} />
+    </AdminPanel>
+  </div></AdminContent>;
 }

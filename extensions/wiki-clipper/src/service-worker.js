@@ -1,3 +1,4 @@
+import { normalizeKnowledgeTargetRoot } from "@kinic/source-contracts";
 // Where: extensions/wiki-clipper/src/service-worker.js
 // What: MV3 background workflow for canister persistence.
 // Why: Content scripts fetch AI conversation data while the worker owns canister writes.
@@ -15,7 +16,9 @@ const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
   host: DEFAULT_IC_HOST,
-  showSaveControls: true
+  showSaveControls: true,
+  webTargetRoot: "/Knowledge/web",
+  conversationTargetRoot: "/Knowledge/conversations"
 };
 const PROVIDERS = {
   chatgpt: {
@@ -53,6 +56,7 @@ let lastSettingsOpenedAt = 0;
 const activeSourceCaptures = new Map();
 const activeBadgeRefreshes = new Map();
 let nextBadgeRefreshGeneration = 0;
+let configSaveQueue = Promise.resolve();
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -124,9 +128,19 @@ export async function handleMessage(message, sender) {
     return { ok: true, config: await loadConfig() };
   }
   if (message?.type === "save-config") {
-    await saveConfig(message.config);
+    const save = configSaveQueue.then(() => saveConfig(message.config));
+    configSaveQueue = save.catch(() => {});
+    await save;
     await invalidateAndClearTabBadges();
     return { ok: true };
+  }
+  if (message?.type === "list-generation-folders") {
+    const response = await offscreenBridge({
+      target: "offscreen", type: "list-generation-folders",
+      config: withFixedRuntimeConfig(await loadConfig())
+    });
+    if (!response?.ok) throw new Error(response?.error || "Folder lookup failed.");
+    return { ok: true, result: response.result };
   }
   if (message?.type === "auth-status") {
     return { ok: true, result: await authStatus() };
@@ -228,6 +242,7 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       evidenceSource,
       config,
       queueGeneration,
+      targetRoot: normalizeKnowledgeTargetRoot(config.webTargetRoot ?? DEFAULT_CONFIG.webTargetRoot),
       sourceAlreadyExists
     });
     if (!taskResponse?.ok || taskResponse.result?.accepted !== true) {
@@ -358,6 +373,7 @@ async function saveSource(capture, overrideConfig, sender) {
     triggerResponse = await offscreenBridge({
       target: "offscreen",
       type: "trigger-source-generation",
+      targetRoot: normalizeKnowledgeTargetRoot(config.conversationTargetRoot ?? DEFAULT_CONFIG.conversationTargetRoot),
       sourcePath: result.result.path,
       sourceEtag: result.result.etag,
       sessionNonce: result.result.sourceRunSessionNonce,
@@ -918,7 +934,9 @@ async function loadConfig() {
     canisterId: DEFAULT_CONFIG.canisterId,
     databaseId: String(stored.databaseId || DEFAULT_CONFIG.databaseId),
     host: DEFAULT_CONFIG.host,
-    showSaveControls: asBoolean(stored.showSaveControls)
+    showSaveControls: asBoolean(stored.showSaveControls),
+    webTargetRoot: normalizeKnowledgeTargetRoot(stored.webTargetRoot ?? DEFAULT_CONFIG.webTargetRoot),
+    conversationTargetRoot: normalizeKnowledgeTargetRoot(stored.conversationTargetRoot ?? DEFAULT_CONFIG.conversationTargetRoot)
   };
 }
 
@@ -930,7 +948,9 @@ async function saveConfig(config) {
   const showSaveControls = hasShowSaveControls
     ? asBoolean(config.showSaveControls)
     : asBoolean(stored.showSaveControls);
-  await chrome.storage.sync.set({ databaseId, showSaveControls });
+  const webTargetRoot = normalizeKnowledgeTargetRoot(config?.webTargetRoot === undefined ? stored.webTargetRoot : config.webTargetRoot);
+  const conversationTargetRoot = normalizeKnowledgeTargetRoot(config?.conversationTargetRoot === undefined ? stored.conversationTargetRoot : config.conversationTargetRoot);
+  await chrome.storage.sync.set({ databaseId, showSaveControls, webTargetRoot, conversationTargetRoot });
   await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl", "recallEnabled"]);
 }
 

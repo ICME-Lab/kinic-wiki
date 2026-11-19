@@ -7,7 +7,7 @@ const CLIPPER_STORE_URL = "https://chromewebstore.google.com/detail/kinic-wiki-c
 
 export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Clipper",
-  description: "Save ChatGPT and Claude conversations or active web pages into a Kinic Wiki database, and understand how Clipper and Dashboard sign-in work.",
+  description: "Save ChatGPT, Claude, and Gemini conversations or active web pages into a Kinic Wiki database, and understand how Clipper and Dashboard sign-in work.",
   openGraph: {
     title: "Kinic Wiki Clipper",
     description: "Save browser context under /Sources and open it from the Kinic Wiki Dashboard."
@@ -19,6 +19,7 @@ export const metadata: Record<string, unknown> = {
 };
 
 const captureSources = [
+  { icon: MessageSquareText, title: "Gemini conversations", path: "/Sources/gemini", text: "Export the current rendered conversation as inspectable evidence." },
   {
     icon: MessageSquareText,
     title: "ChatGPT conversations",
@@ -42,14 +43,16 @@ const captureSources = [
 const workflow = [
   { title: "Connect Clipper", text: "Open the extension settings and sign in with Internet Identity." },
   { title: "Choose a database", text: "Select an active database where your principal has writer access." },
-  { title: "Capture a source", text: "Start an export in ChatGPT or Claude, or use the extension action on a web page." },
+  { title: "Set generation folders", text: "In Clipper settings, choose folders below /Knowledge/. Web pages default to /Knowledge/web and AI conversations to /Knowledge/conversations. Changes apply to future requests." },
+  { title: "Capture a source", text: "Start an export in ChatGPT, Claude, or Gemini, or use the extension action on a web page." },
+  { title: "Check generation", text: "Source saved, generation queued, and page generated are separate states. If queueing fails, the source may still be saved. The IN badge does not mean the generated page is complete. Check the destination folder in the Dashboard. Generation sends source material and related Wiki excerpts to TypeSafe and DeepSeek as described in the privacy policy." },
   { title: "Open the Dashboard", text: "Sign in to wiki.kinic.xyz with the same Internet Identity to find and manage that database." }
 ];
 
 const sessions = [
   {
     label: "READ",
-    title: "ChatGPT or Claude session",
+    title: "ChatGPT, Claude, or Gemini session",
     text: "Your existing provider session lets Clipper read only the conversations you ask it to export."
   },
   {
@@ -77,7 +80,7 @@ export default function ClipperPage() {
               </div>
               <h1 className="mt-3 text-3xl font-semibold leading-tight text-ink">Save browser context with Wiki Clipper</h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
-                Kinic Wiki Clipper is a Chrome extension that saves selected ChatGPT and Claude conversations or the active web page into a writable Kinic Wiki database. Raw captures stay under <code>/Sources</code> so you can inspect their origin before turning them into maintained knowledge.
+                Kinic Wiki Clipper is a Chrome extension that saves selected ChatGPT, Claude, and Gemini conversations or the active web page into a writable Kinic Wiki database. Raw captures stay under <code>/Sources</code>. Conversation exports and the toolbar action also request Wiki page generation in your configured folder. Use “Save source only” in the toolbar menu for Web evidence without generation.
               </p>
               <a
                 className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"

@@ -7,7 +7,7 @@ import { bestEffortAppendWorkerLog, deepSeekRetryDelaySeconds, parseManualRunInp
 import { DeepSeekRequestError } from "../src/openai.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, SourceJob, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
-import { testEnv, TestQueue, TestR2Bucket, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
+import { queuedJobFromInsert, testEnv, TestQueue, TestR2Bucket, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
 
 test("manual source run queues the validated source etag", async () => {
   const queue = new TestQueue();
@@ -19,7 +19,8 @@ test("manual source run queues the validated source etag", async () => {
     sourcePath: "/Sources/web/abc.md",
     sourceEtag: "etag-authorized",
     sessionNonce: "session-1",
-    dryRun: false
+    dryRun: false,
+    targetRoot: "/Knowledge/articles/"
   }, { vfs });
 
   assert.equal(response.status, 202);
@@ -29,6 +30,7 @@ test("manual source run queues the validated source etag", async () => {
   if (message?.kind !== "source") throw new Error("source queue message expected");
   assert.equal(message.sourceEtag, "etag-authorized");
   assert.equal(message.sessionNonce, "session-1");
+  assert.equal(message.targetRoot, "/Knowledge/articles");
 });
 
 test("manual source run rejects etag mismatch without queueing", async () => {
@@ -438,7 +440,7 @@ test("source queue uses source run session before DeepSeek", async () => {
   const sourceSessionChecks: SourceSessionCheck[] = [];
   const writtenPages: WriteNodeRequest[] = [];
   const db = new RecordingD1();
-  const targetPath = "/Knowledge/conversations/project-notes.md";
+  const targetPath = "/Knowledge/articles/project-notes.md";
   let deepSeekCalls = 0;
   globalThis.fetch = async (): Promise<Response> => {
     deepSeekCalls += 1;
@@ -447,7 +449,7 @@ test("source queue uses source run session before DeepSeek", async () => {
   try {
     await processSourceQueueMessageForTest(
       { ...testEnv(new TestQueue()), DB: db },
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1", targetRoot: "/Knowledge/articles" },
       {
         config: workerConfig(),
         vfs: sourceVfs({
@@ -718,7 +720,7 @@ test("target read failure after DeepSeek resumes the saved checkpoint without an
   try {
     const firstDisposition = await processSourceQueueMessageForTest(
       { ...testEnv(new TestQueue()), DB: firstDb },
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source", targetRoot: "/Knowledge/articles" },
       { config: workerConfig(), vfs: sourceVfs({ failTargetReads: 1 }) }
     );
 
@@ -726,15 +728,18 @@ test("target read failure after DeepSeek resumes the saved checkpoint without an
     assert.equal(deepSeekCalls, 1);
     assert.ok(firstDb.runs.some((run) => run.query.includes("SET status = 'generated'") && run.query.includes("generated_target_observed = 0")));
 
-    const resumedDb = generatedJobD1("# Project Notes\n\ncheckpointed", "/Knowledge/conversations/project-notes.md", null, false);
+    const resumedDb = generatedJobD1("# Project Notes\n\ncheckpointed", "/Knowledge/articles/project-notes.md", null, false);
+    const resumedWrites: WriteNodeRequest[] = [];
     const secondDisposition = await processSourceQueueMessageForTest(
       { ...testEnv(new TestQueue()), DB: resumedDb },
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
-      { config: workerConfig(), vfs: sourceVfs() },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source", targetRoot: "/Knowledge/articles" },
+      { config: { ...workerConfig(), targetRoot: "/Knowledge/new-default" }, vfs: sourceVfs({ writtenPages: resumedWrites }) },
       { leaseOwner: "retry-owner", attempts: 2 }
     );
 
     assert.equal(secondDisposition.kind, "ack");
+    assert.equal(resumedWrites[0]?.path, "/Knowledge/articles/project-notes.md");
+    assert.ok(resumedWrites.every(write => !write.path.startsWith("/Knowledge/new-default/")));
     assert.equal(deepSeekCalls, 1);
   } finally {
     globalThis.fetch = originalFetch;
@@ -1213,7 +1218,7 @@ function sourceVfs(
         };
       }
       if (path === options.requestNode?.path) return options.requestNode;
-      if (path.startsWith("/Knowledge/conversations/") && remainingTargetReadFailures > 0) {
+      if (path.startsWith("/Knowledge/") && remainingTargetReadFailures > 0) {
         remainingTargetReadFailures -= 1;
         throw new Error("target read failed after DeepSeek");
       }
@@ -1335,6 +1340,7 @@ class RecordingD1Statement implements D1PreparedStatement {
 
   async first<T = unknown>(): Promise<T | null> {
     this.runs.push({ query: this.query, values: this.values });
+    if (this.query.includes("INSERT INTO source_jobs")) return queuedJobFromInsert(this.values) as T;
     if (this.query.includes("UPDATE source_jobs") && this.query.includes("ELSE 'processing'")) {
       return claimedJob(this.values) as T;
     }
@@ -1564,3 +1570,17 @@ function contextHit(path: string): SearchNodeHit {
     snippet: null
   };
 }
+
+test("manual and queue parsers preserve only valid Knowledge generation destinations", () => {
+  const input = { databaseId: "db_1", sourcePath: "/Sources/web/a.md", sourceEtag: "etag-1", targetRoot: "/Knowledge/articles/" };
+  const parsed = parseManualRunInput(input);
+  assert.notEqual(typeof parsed, "string");
+  assert.equal((parsed as unknown as Record<string, unknown>).targetRoot, "/Knowledge/articles");
+  const queue = parseQueueMessageEnvelope({ ...input, kind: "source" });
+  if (queue.kind !== "valid") throw new Error("expected valid queue message");
+  assert.equal((queue.message as unknown as Record<string, unknown>)?.targetRoot, "/Knowledge/articles");
+  for (const targetRoot of ["", "/Sources/web", "/Knowledge/../private", 3, null]) {
+    assert.equal(typeof parseManualRunInput({ ...input, targetRoot }), "string");
+    assert.equal(parseQueueMessageEnvelope({ ...input, kind: "source", targetRoot }).kind, "invalid");
+  }
+});

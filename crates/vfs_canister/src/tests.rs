@@ -1380,6 +1380,43 @@ fn purchase_database_cycles_allows_non_owner_payer() {
 }
 
 #[test]
+fn icrc21_pending_purchase_read_is_bounded_and_read_only() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Consent read".into(),
+    })
+    .unwrap();
+    let id = database.database_id;
+    let before = list_databases().unwrap();
+    let method = "list_database_cycles_pending_purchases";
+    let response =
+        icrc21_canister_call_consent_message(consent_request(method, Encode!(&id).unwrap()));
+    let Icrc21ConsentMessageResponse::Ok(info) = response else {
+        panic!("missing read consent");
+    };
+    let Icrc21ConsentMessage::GenericDisplayMessage(message) = info.consent_message;
+    assert!(message.contains("Read") && message.contains(&id));
+    for arg in [
+        vec![],
+        Encode!(&42u64).unwrap(),
+        Encode!(&id, &id).unwrap(),
+        vec![0; 4097],
+    ] {
+        assert!(matches!(
+            icrc21_canister_call_consent_message(consent_request(method, arg)),
+            Icrc21ConsentMessageResponse::Err(_)
+        ));
+    }
+    assert_eq!(list_databases().unwrap(), before);
+    assert!(
+        list_database_cycles_pending_purchases(id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn icrc21_purchase_database_cycles_returns_consent_message() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
@@ -3448,4 +3485,24 @@ fn controller_gate_does_not_charge_rejected_writer_update() {
         .is_err()
     );
     assert_eq!(balance(), before);
+}
+
+#[test]
+fn bekko_refill_endpoints_require_controller_and_start_disabled() {
+    use super::bekko_refill::{check_bekko_refill, configure_bekko_refill, get_bekko_refill_state};
+    use vfs_types::BekkoRefillConfig;
+    install_test_service();
+    super::with_service(|svc| svc.initialize_bekko_refill(0)).unwrap();
+    set_test_caller_principal_for_test(Principal::anonymous());
+    assert!(get_bekko_refill_state().is_err());
+    assert!(configure_bekko_refill(BekkoRefillConfig::default()).is_err());
+    assert!(block_on_ready(check_bekko_refill()).is_err());
+    set_test_caller_principal_for_test(Principal::management_canister());
+    assert!(!get_bekko_refill_state().unwrap().config.enabled);
+    assert!(
+        block_on_ready(check_bekko_refill())
+            .unwrap()
+            .active
+            .is_none()
+    );
 }

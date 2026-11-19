@@ -131,6 +131,10 @@ impl VfsService {
             complete_pending_database_activation(tx, database_id, now)?;
             let db_balance = database_balance_for_update(tx, database_id)?;
             let next_database = checked_balance_add(db_balance, cycles_i64)?;
+            checked_balance_add(
+                next_database,
+                credit_bridge::refund_headroom(tx, database_id)?,
+            )?;
             update_database_cycles_balance(tx, database_id, next_database, &config, now)?;
             insert_database_ledger(
                 tx,
@@ -203,6 +207,21 @@ impl VfsService {
             }
             let db_balance = database_balance_for_update(tx, &request.database_id)?;
             let next_database = checked_balance_add(db_balance, amount_cycles)?;
+            let pending: i64 = tx
+                .query_row(
+                    "SELECT COALESCE(SUM(cycles),0) FROM database_cycle_pending_operations
+                 WHERE database_id=?1 AND kind='cycles_purchase'",
+                    params![request.database_id],
+                    |r| crate::sqlite::row_get(r, 0),
+                )
+                .map_err(|e| e.to_string())?;
+            checked_balance_add(
+                checked_balance_add(
+                    next_database,
+                    credit_bridge::refund_headroom(tx, &request.database_id)?,
+                )?,
+                pending,
+            )?;
             update_database_cycles_balance(tx, &request.database_id, next_database, &config, now)?;
             insert_database_ledger(
                 tx,

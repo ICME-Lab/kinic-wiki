@@ -39,6 +39,8 @@ const removedMethods = [...liveMethods].filter((method) => !candidateMethods.has
 const addedMethods = [...candidateMethods].filter((method) => !liveMethods.has(method));
 const expectedAddedMethods = [
   "archive_intermediate_source",
+  "check_bekko_refill",
+  "configure_bekko_refill",
   "configure_voice_rate",
   "current_node_revision",
   "database_storage_stats",
@@ -50,6 +52,7 @@ const expectedAddedMethods = [
   "evidence_rebuild_step",
   "evidence_rebuild_verify",
   "get_api_doc",
+  "get_bekko_refill_state",
   "get_voice_access",
   "get_voice_policy",
   "get_voice_rate",
@@ -58,8 +61,11 @@ const expectedAddedMethods = [
   "http_request_update",
   "initialize_voice_policy",
   "node_history",
+  "periodic_cycles_refill",
+  "periodic_storage_billing",
   "publish_learning",
   "read_nodes",
+  "reconcile_bekko_refill",
   "reserve_voice",
   "scope_revision",
   "search_nodes_for_retrieval",

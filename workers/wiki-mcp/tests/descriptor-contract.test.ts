@@ -5,6 +5,27 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { expect, it } from "vitest";
 import { createServer } from "../src/index.js";
 
+it("advertises the Kinic brand icon in initialized server metadata", async () => {
+  const server = createServer({});
+  const client = new Client({ name: "brand-icon", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const info = client.getServerVersion();
+    expect(info?.title).toBe("Kinic Wiki");
+    const icon = info?.icons?.[0];
+    expect(icon?.mimeType).toBe("image/png");
+    expect(icon?.sizes).toEqual(["128x128"]);
+    expect(icon?.src).toMatch(/^data:image\/png;base64,/u);
+    const bytes = Buffer.from(icon!.src.split(",", 2)[1], "base64");
+    expect(bytes).toEqual(readFileSync(new URL("../../../wikibrowser/app/icon.png", import.meta.url)));
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") {

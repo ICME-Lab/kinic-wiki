@@ -1,3 +1,4 @@
+import { normalizeKnowledgeTargetRoot } from "@kinic/source-contracts";
 // Where: wikibrowser/app/api/source/run/route.ts
 // What: Server-side authenticated trigger for source generation jobs.
 // Why: Extensions must not receive the worker bearer token.
@@ -8,6 +9,7 @@ type SourceRunRequest = {
   sourcePath: string;
   sourceEtag: string;
   sessionNonce: string;
+  targetRoot?: string;
 };
 
 type CheckSession = (canisterId: string, input: { databaseId: string; sourcePath: string; sourceEtag: string; sessionNonce: string }) => Promise<void>;
@@ -89,10 +91,14 @@ export async function POST(request: Request, runtimeEnv: SourceRunEnv = process.
         sourcePath: input.sourcePath,
         sourceEtag: input.sourceEtag,
         sessionNonce: input.sessionNonce,
+        targetRoot: input.targetRoot,
         dryRun: false
       })
     });
-    if (response.status === 409) return jsonError("source etag mismatch", 409, origin);
+    if (response.status === 409) {
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      return jsonError(body?.error === "source_target_conflict" ? "source_target_conflict" : "source etag mismatch", 409, origin);
+    }
     if (!response.ok) return jsonError(`worker trigger failed: HTTP ${response.status}`, 502, origin);
     return Response.json({ accepted: true }, { status: 202, headers: corsHeaders(origin) });
   } catch {
@@ -113,7 +119,12 @@ function parseSourceRunRequest(value: unknown): SourceRunRequest | string {
   if (typeof sourceEtag !== "string" || !sourceEtag) return "sourceEtag is required";
   if (typeof sessionNonce !== "string" || !sessionNonce) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
-  return { canisterId, databaseId, sourcePath, sourceEtag, sessionNonce };
+  let targetRoot: string | undefined;
+  if (value.targetRoot !== undefined) {
+    try { targetRoot = normalizeKnowledgeTargetRoot(value.targetRoot); }
+    catch { return "targetRoot must be a folder below /Knowledge/"; }
+  }
+  return { canisterId, databaseId, sourcePath, sourceEtag, sessionNonce, targetRoot };
 }
 
 function allowedOrigin(request: Request, runtimeEnv: SourceRunEnv): string | null {

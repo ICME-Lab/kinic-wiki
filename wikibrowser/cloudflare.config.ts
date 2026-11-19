@@ -47,6 +47,7 @@ export default defineConfig((ctx) => {
 		}
 		case undefined:
 		case "development":
+		case "bridge-local-test":
 		case "production": {
 			return defineConfig({
 				accountId: "9029b5f9de5b2e820eaf4ed562bcb0e7",

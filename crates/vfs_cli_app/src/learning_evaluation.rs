@@ -1436,11 +1436,24 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn full_four_mode_run_rejects_scope_violation_and_tracks_missing_cost() {
+        full_four_mode_for_engine(crate::learning_runner::AgentEngine::Codex, "learning_evaluation::tests::full_four_mode_run_rejects_scope_violation_and_tracks_missing_cost").await;
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_coding_evaluation_uses_writable_export_and_preserves_guards() {
+        full_four_mode_for_engine(crate::learning_runner::AgentEngine::Claude, "learning_evaluation::tests::claude_coding_evaluation_uses_writable_export_and_preserves_guards").await;
+    }
+    #[cfg(unix)]
+    async fn full_four_mode_for_engine(
+        engine: crate::learning_runner::AgentEngine,
+        test_name: &str,
+    ) {
         if std::env::var_os("KINIC_TEST_EVAL_CREDENTIAL").is_none() {
             let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "learning_evaluation::tests::full_four_mode_run_rejects_scope_violation_and_tracks_missing_cost", "--nocapture"])
+                .args(["--exact", test_name, "--nocapture"])
                 .env("KINIC_TEST_EVAL_CREDENTIAL", "fixture-secret-do-not-save")
-                .status().unwrap();
+                .status()
+                .unwrap();
             assert!(status.success());
             return;
         }
@@ -1469,7 +1482,24 @@ mod tests {
         .await
         .unwrap();
         let executable = temporary.path().join("fake-agent.py");
-        std::fs::write(&executable,"#!/usr/bin/env python3\nimport sys,json,pathlib,os\nprompt=sys.stdin.read()\nprint(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':os.environ['KINIC_TEST_EVAL_CREDENTIAL']+os.environ['OPENAI_API_KEY']}}))\npathlib.Path('file').write_text('fixed')\nif 'bad-context' in prompt: pathlib.Path('outside').write_text('bad')\nprint(json.dumps({'type':'turn.completed','usage':{'input_tokens':2,'output_tokens':3}}))\n").unwrap();
+        std::fs::write(&executable, r#"#!/usr/bin/env python3
+import sys,json,pathlib,os
+if sys.argv[1:] == ['--version']:
+    print('2.1.286 (Claude Code)');sys.exit()
+claude = '--bare' in sys.argv
+if claude:
+    assert sys.argv[sys.argv.index('--tools')+1] == 'Read,Glob,Grep,Edit,Write,Bash'
+    assert os.environ['KINIC_LEARNING_OWNED_RUN'] == '1'
+prompt=sys.stdin.read()
+answer=os.environ['KINIC_TEST_EVAL_CREDENTIAL']+os.environ['OPENAI_API_KEY']
+pathlib.Path('file').write_text('fixed')
+if 'bad-context' in prompt: pathlib.Path('outside').write_text('bad')
+if claude:
+    print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':answer,'usage':{'input_tokens':2,'output_tokens':3}}))
+else:
+    print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':answer}}))
+    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':2,'output_tokens':3}}))
+"#).unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         let task = EvaluationTask {
             id: "test".into(),
@@ -1510,6 +1540,7 @@ mod tests {
                 .collect(),
         )]);
         let config: RunnerConfig = serde_json::from_value(serde_json::json!({
+            "engine": engine,
             "executable": executable,
             "inherited_environment": ["KINIC_TEST_EVAL_CREDENTIAL"],
             "environment": {"OPENAI_API_KEY":"legacy-fixture-secret"}

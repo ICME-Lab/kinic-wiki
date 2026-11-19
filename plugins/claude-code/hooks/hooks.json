@@ -1,5 +1,5 @@
 {
-  "description": "Persist completed Claude Code sessions to Kinic raw sources.",
+  "description": "Recall project context and retain Claude Code turn, skill and session evidence through the CLI.",
   "hooks": {
     "SessionEnd": [
       {
@@ -9,6 +9,39 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/record-session.sh",
             "args": [],
             "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/learning-hook.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/learning-hook.sh\"",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/learning-hook.sh\"",
+            "timeout": 8
           }
         ]
       }

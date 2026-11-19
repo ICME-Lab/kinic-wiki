@@ -8,7 +8,7 @@ import { AppLink as Link } from "@/components/app-link";
 import { useAppPathname } from "@/lib/app-router";
 import { type ReactNode, useState } from "react";
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { BookOpen, ChevronDown, FileText, LayoutDashboard, PanelLeft, PowerOff, Store, type LucideIcon, UserRound, Wallet } from "lucide-react";
+import { BookOpen, ChevronDown, FileText, LayoutDashboard, LockKeyhole, PanelLeft, PowerOff, Store, type LucideIcon, UserRound, Wallet } from "lucide-react";
 import { useAppSession } from "@/app/app-session-provider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
@@ -20,10 +20,13 @@ type AdminNavChild = {
 
 type AdminNavItem = AdminNavChild & {
   children?: readonly AdminNavChild[];
+  external?: boolean;
 };
 
+const vaultURL = import.meta.env.VITE_PRIVATE_VAULT_URL?.trim();
 const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  ...(vaultURL ? [{ href: vaultURL, label: "Private Vault", icon: LockKeyhole, external: true }] : []),
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/cycles", label: "Cycles", icon: Wallet },
   { href: "/profile", label: "My Profile", icon: UserRound },
@@ -134,19 +137,21 @@ function AdminSidebar({ pathname }: { pathname: string }) {
               </Collapsible.Root>
             );
           }
-          const active = isActiveAdminPath(pathname, item.href);
+          const active = !item.external && isActiveAdminPath(pathname, item.href);
+          const NavigationLink = item.external ? "a" : Link;
           return (
             <div className="grid gap-1" key={item.href}>
-              <Link
+              <NavigationLink
                 aria-current={active && pathname === item.href ? "page" : undefined}
                 className={`flex min-h-10 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-semibold no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${
                   active ? "bg-accentSoft text-ink" : "text-muted hover:bg-accentSoft hover:text-accentText"
                 }`}
                 href={item.href}
+                referrerPolicy={item.external ? "no-referrer" : undefined}
               >
                 <Icon aria-hidden className="shrink-0" size={17} />
                 <span className="min-w-0 truncate">{item.label}</span>
-              </Link>
+              </NavigationLink>
             </div>
           );
         })}

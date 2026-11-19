@@ -1,10 +1,11 @@
+import { normalizeKnowledgeTargetRoot } from "@kinic/source-contracts";
 // Where: workers/wiki-generator/src/processing.ts
 // What: Manual and queued generation workflows.
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
 import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 import { JevError, rerankWithJev } from "@kinic/jev-reranker";
 import { isDatabaseAllowed, loadConfig } from "./config.js";
-import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
+import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, SourceTargetConflictError, type GeneratedArtifact } from "./jobs.js";
 import {
   databaseLinkPreviewImageKey,
   generateDatabaseLinkPreviewImage,
@@ -55,7 +56,8 @@ type ExternalCostGateInput = {
 };
 
 export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
-  const config = loadConfig(env);
+  const baseConfig = loadConfig(env);
+  const config = { ...baseConfig, targetRoot: input.targetRoot === undefined ? baseConfig.targetRoot : normalizeKnowledgeTargetRoot(input.targetRoot) };
   if (!isDatabaseAllowed(config, input.databaseId)) {
     return jsonResponse({ error: "database_not_allowed" }, 403);
   }
@@ -67,13 +69,20 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
   }
 
   if (!input.dryRun) {
-    const enqueued = await enqueueSourceJob(env, {
-      kind: "source",
-      databaseId: input.databaseId,
-      sourcePath: input.sourcePath,
-      sourceEtag: input.sourceEtag,
-      sessionNonce: input.sessionNonce
-    });
+    let enqueued: boolean;
+    try {
+      enqueued = await enqueueSourceJob(env, {
+        kind: "source",
+        databaseId: input.databaseId,
+        sourcePath: input.sourcePath,
+        sourceEtag: input.sourceEtag,
+        sessionNonce: input.sessionNonce,
+        ...(input.targetRoot === undefined ? {} : { targetRoot: config.targetRoot })
+      });
+    } catch (error) {
+      if (error instanceof SourceTargetConflictError) return jsonResponse({ error: "source_target_conflict" }, 409);
+      throw error;
+    }
     return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: input.sourceEtag }, 202);
   }
 
@@ -147,10 +156,14 @@ async function processSourceQueueMessage(
   execution: QueueExecution,
   context?: QueueProcessContext
 ): Promise<QueueDisposition> {
-  const config = context?.config ?? loadConfig(env);
+  const baseConfig = context?.config ?? loadConfig(env);
+  const config = { ...baseConfig, targetRoot: message.targetRoot === undefined ? baseConfig.targetRoot : normalizeKnowledgeTargetRoot(message.targetRoot) };
   validateSourceRootPath(message.sourcePath, config.sourcePrefix);
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const claim = await claimSourceJob(env.DB, message, execution.leaseOwner);
+  if (claim.kind === "destination_conflict") {
+    return { kind: "dead_letter", code: "source_target_conflict", message: "source version has a different generation destination" };
+  }
   if (claim.kind === "superseded") {
     if (!claim.job) {
       return retryDisposition("source_job_missing", "source generation job is missing", execution.attempts);
@@ -395,7 +408,13 @@ export function parseManualRunInput(value: unknown): ManualRunInput | string {
   }
   if (typeof sessionNonce === "string" && sessionNonce.length > 128) return "sessionNonce is too long";
   if (dryRun !== undefined && typeof dryRun !== "boolean") return "dryRun must be a boolean";
+  let targetRoot: string | undefined;
+  if (value.targetRoot !== undefined) {
+    try { targetRoot = normalizeKnowledgeTargetRoot(value.targetRoot); }
+    catch { return "targetRoot must be a folder below /Knowledge/"; }
+  }
   return {
+    ...(targetRoot === undefined ? {} : { targetRoot }),
     databaseId,
     sourcePath,
     sourceEtag,
@@ -415,7 +434,13 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if ("sessionNonce" in value && value.sessionNonce !== undefined && !nonEmptyString(value.sessionNonce)) return null;
     const outputLanguage = value.outputLanguage == null ? undefined : parseOutputLanguage(value.outputLanguage);
     if (outputLanguage === null) return null;
+    let targetRoot: string | undefined;
+    if (value.targetRoot !== undefined) {
+      try { targetRoot = normalizeKnowledgeTargetRoot(value.targetRoot); }
+      catch { return null; }
+    }
     return {
+      ...(targetRoot === undefined ? {} : { targetRoot }),
       kind: "source",
       databaseId: value.databaseId,
       sourcePath: value.sourcePath,

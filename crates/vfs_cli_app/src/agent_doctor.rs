@@ -282,6 +282,8 @@ pub(crate) fn readiness(
     let engines: Vec<_> = engines.iter().map(|engine| {
         let payload = if engine == "codex" {
             codex_home.as_ref().map(|h| h.join("plugins/kinic-skill-recorder/hooks/hooks.json"))
+        } else if engine == "claude" {
+            home.map(|h| crate::claude::plugin_directory(h).join("hooks/hooks.json"))
         } else {
             config.map(|c| c.root.join(".kinic/plugins/dsh/kinic-learning.patch.yml"))
         };
@@ -366,7 +368,9 @@ pub(crate) fn keyring_check(
             crate::identity_policy::project_root(cwd)
                 .and_then(|root| crate::identity_policy::lookup(home, &root, connection))
         });
-    let remedy = if engine == Some("dsh") {
+    let remedy = if engine == Some("claude") {
+        "Run kinic-vfs-cli agent setup --engine claude --authorize-keyring --apply to authorize this project and destination explicitly."
+    } else if engine == Some("dsh") {
         "Run kinic-vfs-cli agent setup --engine dsh --authorize-keyring --apply to authorize this project and destination explicitly."
     } else {
         "Run kinic-vfs-cli agent setup --engine codex --authorize-keyring --apply to authorize this project and destination explicitly."
@@ -453,7 +457,7 @@ fn local_checks(config: &AgentConfig, args: &DoctorArgs, home: &Path) -> Vec<Che
             "warning",
             "engine_unconfigured",
             "No engine was selected or configured.",
-            "Run agent setup --engine codex or dsh.",
+            "Run agent setup --engine codex, dsh or claude.",
         ));
     }
     for engine in engines {
@@ -492,6 +496,8 @@ fn local_checks(config: &AgentConfig, args: &DoctorArgs, home: &Path) -> Vec<Che
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home.join(".codex"))
                 .join("plugins/kinic-skill-recorder/hooks/hooks.json")
+        } else if engine == "claude" {
+            crate::claude::plugin_directory(home).join("hooks/hooks.json")
         } else {
             config
                 .root

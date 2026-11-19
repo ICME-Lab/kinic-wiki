@@ -1,0 +1,6 @@
+[package]
+name = "kinic-cycle-grants"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }

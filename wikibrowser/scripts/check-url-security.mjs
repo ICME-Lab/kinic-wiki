@@ -553,7 +553,7 @@ async function importTs(relativePath) {
     "const { isSourceCaptureRequestPath } = globalThis.__kinicSourceContracts;"
   );
   globalThis.__kinicSourceContracts = { isSourceCaptureRequestPath };
-  return importStrippedTsForTest(source.replaceAll('"@kinic/deepseek-client"', JSON.stringify(import.meta.resolve("@kinic/deepseek-client"))));
+  return importStrippedTsForTest(source.replaceAll('"@kinic/source-contracts"', JSON.stringify(import.meta.resolve("@kinic/source-contracts"))).replaceAll('"@kinic/deepseek-client"', JSON.stringify(import.meta.resolve("@kinic/deepseek-client"))));
 }
 
 async function withMockFetch(handler, run) {

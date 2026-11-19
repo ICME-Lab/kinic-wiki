@@ -1,0 +1,89 @@
+{
+  "suite_id": "my-project-validation-v1",
+  "tasks": [
+    {
+      "id": "error-mapping-1",
+      "family": "error-mapping",
+      "split": "validation",
+      "repo": "/absolute/path/to/your/project",
+      "start_commit": "REPLACE_WITH_A_COMMIT_WHERE_THE_TASK_IS_UNSOLVED",
+      "prompt": "Make the API return a structured NotFound error for missing records instead of a generic 500. Limit changes to src/api/errors.rs.",
+      "verification": [["bash", "{suite_dir}/verifiers/error_mapping.sh", "{workspace}"]],
+      "allowed_paths": ["src/api/errors.rs"],
+      "environment": {
+        "required_programs": ["bash", "cargo"],
+        "verification_timeout_seconds": 300
+      }
+    },
+    {
+      "id": "error-mapping-2",
+      "family": "error-mapping",
+      "split": "validation",
+      "repo": "/absolute/path/to/your/project",
+      "start_commit": "REPLACE_WITH_A_COMMIT_WHERE_THE_TASK_IS_UNSOLVED",
+      "prompt": "Preserve the original error message when a database timeout is mapped to an API error. Limit changes to src/api/errors.rs.",
+      "verification": [["bash", "{suite_dir}/verifiers/error_mapping.sh", "{workspace}"]],
+      "allowed_paths": ["src/api/errors.rs"],
+      "environment": {
+        "required_programs": ["bash", "cargo"],
+        "verification_timeout_seconds": 300
+      }
+    },
+    {
+      "id": "config-parsing-1",
+      "family": "config-parsing",
+      "split": "validation",
+      "repo": "/absolute/path/to/your/project",
+      "start_commit": "REPLACE_WITH_A_COMMIT_WHERE_THE_TASK_IS_UNSOLVED",
+      "prompt": "Accept durations such as \"30s\" and \"5m\" in the timeout setting. Limit changes to src/config.rs.",
+      "verification": [["bash", "{suite_dir}/verifiers/config_parsing.sh", "{workspace}"]],
+      "allowed_paths": ["src/config.rs"],
+      "environment": {
+        "required_programs": ["bash", "cargo"],
+        "verification_timeout_seconds": 300
+      }
+    },
+    {
+      "id": "config-parsing-2",
+      "family": "config-parsing",
+      "split": "validation",
+      "repo": "/absolute/path/to/your/project",
+      "start_commit": "REPLACE_WITH_A_COMMIT_WHERE_THE_TASK_IS_UNSOLVED",
+      "prompt": "Reject unknown keys in the [server] table with an error naming the key. Limit changes to src/config.rs.",
+      "verification": [["bash", "{suite_dir}/verifiers/config_parsing.sh", "{workspace}"]],
+      "allowed_paths": ["src/config.rs"],
+      "environment": {
+        "required_programs": ["bash", "cargo"],
+        "verification_timeout_seconds": 300
+      }
+    },
+    {
+      "id": "pagination-1",
+      "family": "pagination",
+      "split": "validation",
+      "repo": "/absolute/path/to/your/project",
+      "start_commit": "REPLACE_WITH_A_COMMIT_WHERE_THE_TASK_IS_UNSOLVED",
+      "prompt": "Return a stable next-page cursor when two records share a timestamp. Limit changes to src/list.rs.",
+      "verification": [["bash", "{suite_dir}/verifiers/pagination.sh", "{workspace}"]],
+      "allowed_paths": ["src/list.rs"],
+      "environment": {
+        "required_programs": ["bash", "cargo"],
+        "verification_timeout_seconds": 300
+      }
+    },
+    {
+      "id": "pagination-2",
+      "family": "pagination",
+      "split": "validation",
+      "repo": "/absolute/path/to/your/project",
+      "start_commit": "REPLACE_WITH_A_COMMIT_WHERE_THE_TASK_IS_UNSOLVED",
+      "prompt": "Stop returning an empty final page when the item count is an exact multiple of the page size. Limit changes to src/list.rs.",
+      "verification": [["bash", "{suite_dir}/verifiers/pagination.sh", "{workspace}"]],
+      "allowed_paths": ["src/list.rs"],
+      "environment": {
+        "required_programs": ["bash", "cargo"],
+        "verification_timeout_seconds": 300
+      }
+    }
+  ]
+}

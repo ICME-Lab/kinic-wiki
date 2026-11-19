@@ -12,13 +12,16 @@
     "lint:skill-registry-web": "npm --prefix skill-registry-web run lint",
     "lint:web": "npm run lint:wikibrowser && npm run lint:skill-registry-web",
     "test:cf-config": "node --test scripts/cloudflare/*.test.mjs",
+    "test:dependency-patches": "node --test scripts/picomatch-patch.test.mjs",
     "test:mcp-latency": "node --test scripts/bench/wiki-mcp-latency.test.mjs"
   },
   "packageManager": "pnpm@11.0.8",
   "devDependencies": {
-    "@cloudflare/config": "0.20.0",
-    "jsonc-parser": "3.3.1",
     "@cloudflare/build-output-utils": "0.8.2",
-    "miniflare": "5.20260801.0-alpha"
+    "@cloudflare/config": "0.20.0",
+    "@mizchi/vlmkit": "0.23.0",
+    "jsonc-parser": "3.3.1",
+    "miniflare": "5.20260801.0-alpha",
+    "typescript-parser": "npm:typescript@6.0.3"
   }
 }

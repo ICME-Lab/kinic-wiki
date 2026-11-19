@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY NOT NULL,balance_cycles INTEGER NOT NULL CHECK(balance_cycles>=0),storage_bytes INTEGER NOT NULL DEFAULT 0,storage_charged_at_ms INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS accounting_accounts_INSERT_size BEFORE INSERT ON accounts WHEN (4+length(CAST(NEW.owner AS BLOB))+24)>512 OR length(CAST(NEW.owner AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_accounts_UPDATE_size BEFORE UPDATE ON accounts WHEN (4+length(CAST(NEW.owner AS BLOB))+24)>512 OR length(CAST(NEW.owner AS BLOB))>63 BEGIN SELECT RAISE(ABORT,'accounting row capacity'); END;

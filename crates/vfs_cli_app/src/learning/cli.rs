@@ -83,7 +83,7 @@ pub enum AgentCommand {
         task: String,
         #[arg(long, required_unless_present = "engine")]
         runner_file: Option<PathBuf>,
-        #[arg(long, value_parser = ["codex", "dsh"])]
+        #[arg(long, value_parser = ["codex", "dsh", "claude"])]
         engine: Option<String>,
         #[arg(long)]
         recall_config: Option<PathBuf>,
@@ -130,7 +130,7 @@ pub enum AgentCommand {
         max_delivery_bytes: Option<u32>,
         #[arg(long, requires = "engine")]
         replay_inbox: bool,
-        #[arg(long, value_parser = ["codex", "dsh"], requires = "replay_inbox")]
+        #[arg(long, value_parser = ["codex", "dsh", "claude"], requires = "replay_inbox")]
         engine: Option<String>,
         #[arg(long)]
         recall_config: Option<PathBuf>,
@@ -385,7 +385,7 @@ pub struct SetupArgs {
     /// Pin the selected keyring identity for this project and destination (requires --apply).
     #[arg(long)]
     pub authorize_keyring: bool,
-    #[arg(long, value_parser = ["codex", "dsh"])]
+    #[arg(long, value_parser = ["codex", "dsh", "claude"])]
     pub engine: String,
     #[arg(long)]
     pub executable: Option<PathBuf>,
@@ -420,7 +420,7 @@ pub struct StatusArgs {
 }
 #[derive(Args, Debug, Clone)]
 pub struct DoctorArgs {
-    #[arg(long, value_parser = ["codex", "dsh"])]
+    #[arg(long, value_parser = ["codex", "dsh", "claude"])]
     pub engine: Option<String>,
     #[arg(long)]
     pub strict: bool,

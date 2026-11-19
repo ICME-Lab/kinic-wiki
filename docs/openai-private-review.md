@@ -2,7 +2,7 @@
 
 This runbook prepares the authenticated Kinic Wiki app for review. It never stores reviewer credentials in the repository.
 
-## Privacy-policy resubmission
+## Publication checks
 
 Publish `docs/legal/privacy-policy.md` at `https://wiki.kinic.xyz/privacy-policy` and confirm that the submission portal points to it. Verify that the published tool disclosures match the portal's Scan Tools results, including nested metadata and conflict responses.
 
@@ -22,7 +22,11 @@ The review login is a dedicated username-and-password path on the normal OAuth a
 
 Set `MCP_REVIEW_IDENTITY_KEY`, `MCP_REVIEW_IDENTITY_PRINCIPAL`, `MCP_REVIEW_USERNAME_HASH`, `MCP_REVIEW_PASSWORD_HASH`, and `MCP_REVIEW_DATABASE_ID` with `CLOUDFLARE_SECRETS_FILE` on the guarded deploy commands (see [Cloudflare CLI](CLOUDFLARE_CLI.md)) for each environment. Use the exact ID returned for the single `openai-review-fixture` database; staging and production IDs are different. Keep the plaintext password only in the OpenAI submission portal and an operator password manager. The checked-in configuration contains the enable flag, access-version label, and `MCP_REVIEW_WRITE_PREFIX=/OpenAIReview/scratch`; deployments fail closed when either boundary setting is absent or invalid. Incrementing `MCP_REVIEW_ACCESS_VERSION` invalidates existing reviewer authorization codes, access tokens, and refresh tokens after credential rotation; never reuse an earlier access-version value.
 
-Review login was closed on 2026-10-14. The native cf configurations set `MCP_REVIEW_LOGIN_ENABLED=false` and `MCP_REVIEW_ACCESS_VERSION=review-closed-20261014`: after deployment the reviewer form is hidden, new reviewer logins are rejected, and earlier reviewer authorization codes, access tokens, and refresh tokens are invalid. Internet Identity sessions are unaffected. For another review, explicitly enable the flag and choose a new, never-used access-version value. To rotate the service identity, grant the replacement principal `writer`, deploy and verify the replacement Secret and expected principal, then revoke the old principal. Never grant the reviewer service identity `owner`.
+For portals that require two reviewer accounts, the same login flow also accepts an optional second pair: `MCP_REVIEW_SECONDARY_USERNAME_HASH` and `MCP_REVIEW_SECONDARY_PASSWORD_HASH`. Supply both as SHA-256 base64url hashes through the guarded deployment's secret file, or omit both. A missing or malformed half-pair makes an enabled review login fail closed. Each username is checked together with its own password; passwords cannot be mixed between pairs. Both accounts use the same configured synthetic-fixture service principal and database, with separate OAuth sessions. They are not independent end-user identities and cannot validate cross-principal data isolation. Use distinct reviewer usernames/passwords and never reuse a previous provider's credentials. The optional pair does not enable review login by itself.
+
+To disable reviewer sign-in, set `MCP_REVIEW_LOGIN_ENABLED=false` and choose a new, never-used `MCP_REVIEW_ACCESS_VERSION` before deploying. The reviewer form is hidden, new reviewer logins are rejected, and existing reviewer authorization codes, access tokens, and refresh tokens are invalidated by the version change. Internet Identity sessions are unaffected. To enable reviewer sign-in, set the flag to `true` with complete credentials and a new access version.
+
+To rotate the service identity, grant the replacement principal `writer`, deploy and verify the replacement Secret and expected principal, then revoke the old principal. Never grant the reviewer service identity `owner`.
 
 ## Prepare staging
 
@@ -46,7 +50,7 @@ pnpm --dir workers/wiki-mcp review:smoke -- \
   --open
 ```
 
-The seeder is idempotent for matching content and metadata, refuses truncated inventory, and refuses to overwrite a conflicting stable page. If an obsolete fixture already occupies either stable path, recreate the dedicated review database explicitly instead of silently migrating it. The smoke test uses random scratch names, verifies exact expected evidence, and removes each owned node with its current etag. If a write response is lost, cleanup rereads the path and deletes it only when its content exactly matches the recorded marker.
+Confirm seeding succeeds, all smoke runs pass, and no test scratch nodes remain. If an obsolete fixture conflicts with a stable evidence page, explicitly recreate the dedicated review database rather than overwriting that page. For leftover scratch nodes, read their current content and etags, verify they belong to the failed test, then remove only those nodes.
 
 ## Prepare production
 
@@ -71,9 +75,9 @@ For both ChatGPT web and mobile:
 1. Use a clean browser profile or mobile device.
 2. Start a new conversation with only the Private Kinic Wiki app enabled.
 3. Choose `OpenAI reviewer sign in` and enter only the submitted username and password. No account creation, passkey, or 2FA is allowed.
-4. Run all five positive prompts from `workers/wiki-mcp/chatgpt-app-submission.json` once.
-5. Confirm the two write cases create only random paths below `/OpenAIReview/scratch/` and clean them up.
-6. Run all three negative prompts and confirm Kinic Wiki is not invoked.
+4. Run every positive prompt defined in `workers/wiki-mcp/chatgpt-app-submission.json` once.
+5. Confirm every write case creates only random paths below `/OpenAIReview/scratch/` and cleans them up.
+6. Run every negative prompt defined in the same JSON and confirm Kinic Wiki is not invoked.
 7. Record the result from that clean conversation and reconnect once only if routing or cached descriptors look stale.
 
 Record the date, client, prompt number, invoked tool sequence, pass/fail result, and any leftover scratch path. Remove leftovers only after reading their current etags. Do not put credentials, service keys, OAuth tokens, delegations, principals, or private node bodies in the record.
@@ -81,16 +85,3 @@ Record the date, client, prompt number, invoked tool sequence, pass/fail result,
 ## Submission gate
 
 Submit only when the checked-in JSON validates, authenticated production smoke passes three consecutive runs, all web and mobile cases pass consistently, and the portal contains working reviewer credentials and concise login instructions.
-
-Use this credential text in the submission portal, substituting only the password:
-
-```text
-Dedicated demo account containing sample data only.
-
-Username: openai-review
-Password: <production review password>
-
-Connect Kinic Wiki, choose "OpenAI reviewer sign in", and enter the credentials above.
-Login provides immediate access to the pre-populated openai-review-fixture database.
-No account creation, passkey, or two-factor authentication is required.
-```

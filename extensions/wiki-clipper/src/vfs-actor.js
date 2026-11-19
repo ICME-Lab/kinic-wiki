@@ -1,3 +1,4 @@
+import { normalizeKnowledgeTargetRoot } from "@kinic/source-contracts";
 // Where: extensions/wiki-clipper/src/vfs-actor.js
 // What: Minimal write-capable VFS actor for evidence source persistence.
 // Why: The wiki browser client is read-only; capture needs source writes plus trigger session APIs.
@@ -61,6 +62,13 @@ function idlFactory({ IDL: idl }) {
     initial_free_grant_applied: idl.Bool
   });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
+  const NodeEntryKind = idl.Variant({ File: idl.Null, Source: idl.Null, Directory: idl.Null, Folder: idl.Null });
+  const ChildNode = idl.Record({
+    updated_at: idl.Opt(idl.Int64), etag: idl.Opt(idl.Text), kind: NodeEntryKind,
+    name: idl.Text, size_bytes: idl.Opt(idl.Nat64), path: idl.Text,
+    is_published: idl.Bool, has_children: idl.Bool, is_virtual: idl.Bool
+  });
+  const ListChildrenRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
   const NodeMutationErrorCode = idl.Variant({
     EtagConflict: idl.Null,
     NotFound: idl.Null,
@@ -132,6 +140,7 @@ function idlFactory({ IDL: idl }) {
     authorize_ops_answer_session: idl.Func([OpsAnswerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
     get_cycles_billing_config: idl.Func([], [idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
+    list_children: idl.Func([ListChildrenRequest], [idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text })], ["query"]),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: NodeMutationError })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),
@@ -272,3 +281,27 @@ function variantKey(value) {
 }
 
 export { isLocalReplicaHost as isLocalHost };
+
+export async function listKnowledgeFoldersWithActor(actor, databaseId) {
+  const pending = ["/Knowledge"];
+  const folders = new Set();
+  let truncated = false;
+  scan: for (let index = 0; index < pending.length; index += 1) {
+    const parent = pending[index];
+    const result = await actor.list_children({ database_id: databaseId, path: parent });
+    if ("Err" in result) throw new Error(result.Err);
+    for (const node of result.Ok) {
+      if (!("Folder" in node.kind) && !("Directory" in node.kind)) continue;
+      let path;
+      try { path = normalizeKnowledgeTargetRoot(node.path); } catch { continue; }
+      if (!path.startsWith(`${parent}/`) || folders.has(path)) continue;
+      if (folders.size >= 500) {
+        truncated = true;
+        break scan;
+      }
+      folders.add(path);
+      if (node.has_children) pending.push(path);
+    }
+  }
+  return { folders: [...folders].sort((a, b) => a.localeCompare(b)), truncated };
+}

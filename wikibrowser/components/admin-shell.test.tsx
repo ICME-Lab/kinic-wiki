@@ -29,6 +29,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AdminShell account controls", () => {
+  it("keeps the undeployed Private Vault out of Wiki navigation", () => {
+    render(<AdminShell>content</AdminShell>);
+    expect(screen.queryByRole("link", { name: "Private Vault" })).toBeNull();
+  });
   it("locks the sidebar Internet Identity login while auth controls are locked", () => {
     render(<AdminShell>content</AdminShell>);
 

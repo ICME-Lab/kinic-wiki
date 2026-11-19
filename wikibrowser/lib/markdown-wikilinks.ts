@@ -3,17 +3,47 @@
 // Why: react-markdown only parses CommonMark/GFM links, while stored notes may use [[target|label]].
 
 export function renderWikilinksAsMarkdown(content: string): string {
-  return walkLinesSkippingCode(content, renderLineWikilinks);
+  return walkLinesSkippingCode(content, (line) => renderLineWikilinks(line));
+}
+
+export function renderWikilinksAsMarkdownWithSourceOffsets(content: string) {
+  const rewrites: { renderedStart: number; renderedEnd: number; sourceEnd: number }[] = [];
+  const markdown = walkLinesSkippingCode(content, (line, sourceLineStart, renderedLineStart) =>
+    renderLineWikilinks(line, (sourceEnd, renderedStart, renderedEnd) => {
+      rewrites.push({
+        renderedStart: renderedLineStart + renderedStart,
+        renderedEnd: renderedLineStart + renderedEnd,
+        sourceEnd: sourceLineStart + sourceEnd,
+      });
+    }));
+
+  return {
+    markdown,
+    sourceOffsetAt(renderedOffset: number): number | undefined {
+      let shift = 0;
+      for (const rewrite of rewrites) {
+        if (renderedOffset < rewrite.renderedStart) break;
+        // Generated Markdown inside this rewrite has no exact source offset.
+        if (renderedOffset < rewrite.renderedEnd) return;
+        shift = rewrite.renderedEnd - rewrite.sourceEnd;
+      }
+      return renderedOffset - shift;
+    },
+  };
 }
 
 export function renderWikilinksAsText(content: string): string {
   return walkLinesSkippingCode(content, renderLineWikilinksText);
 }
 
-function walkLinesSkippingCode(content: string, transform: (line: string) => string): string {
+function walkLinesSkippingCode(content: string, transform: (line: string, sourceStart: number, renderedStart: number) => string): string {
   const lines = content.split("\n");
+  let sourceOffset = 0;
+  let shift = 0;
   let fence: MarkdownFence | null = null;
   return lines.map((line) => {
+    const start = sourceOffset;
+    sourceOffset += line.length + 1;
     if (fence) {
       if (isClosingFenceLine(line, fence)) {
         fence = null;
@@ -28,7 +58,9 @@ function walkLinesSkippingCode(content: string, transform: (line: string) => str
     if (isIndentedCodeLine(line)) {
       return line;
     }
-    return transform(line);
+    const rendered = transform(line, start, start + shift);
+    shift += rendered.length - line.length;
+    return rendered;
   }).join("\n");
 }
 
@@ -50,10 +82,10 @@ function escapeMarkdownDestination(value: string): string {
   return value.replace(/([\\<>])/g, "\\$1");
 }
 
-function renderLineWikilinks(line: string): string {
-  return transformLineWikilinks(line, (raw) => {
-    return renderWikilink(raw);
-  }, { embeds: false });
+type ReportRewrite = (sourceEnd: number, renderedStart: number, renderedEnd: number) => void;
+
+function renderLineWikilinks(line: string, reportRewrite?: ReportRewrite): string {
+  return transformLineWikilinks(line, renderWikilink, { embeds: false, reportRewrite });
 }
 
 function renderLineWikilinksText(line: string): string {
@@ -64,7 +96,11 @@ function renderLineWikilinksText(line: string): string {
   }, { embeds: true });
 }
 
-function transformLineWikilinks(line: string, render: (raw: string) => string | null, { embeds }: { embeds: boolean }): string {
+function transformLineWikilinks(
+  line: string,
+  render: (raw: string) => string | null,
+  { embeds, reportRewrite }: { embeds: boolean; reportRewrite?: ReportRewrite },
+): string {
   let output = "";
   let index = 0;
   while (index < line.length) {
@@ -87,6 +123,7 @@ function transformLineWikilinks(line: string, render: (raw: string) => string | 
       }
       const raw = line.slice(contentStart, close);
       const rendered = render(raw);
+      if (rendered !== null) reportRewrite?.(close + 2, output.length, output.length + rendered.length);
       output += rendered ?? line.slice(index, close + 2);
       index = close + 2;
       continue;

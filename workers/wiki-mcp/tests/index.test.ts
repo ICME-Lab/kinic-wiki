@@ -295,6 +295,25 @@ describe("wiki mcp worker", () => {
     expect(response.status).toBe(404);
   });
 
+  it("serves only the configured Muse host verification file without authentication", async () => {
+    const token = "a".repeat(64);
+    const configured = { ...env, MUSE_CHALLENGE_TOKEN: token };
+    const path = `https://wiki-mcp.kinic.test/.well-known/muse-challenge/${token}`;
+    const response = await worker.fetch(new Request(path), configured);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    await expect(response.text()).resolves.toBe(`muse-challenge=${token}`);
+    for (const [url, settings] of [
+      [path, env],
+      [path + "x", configured],
+      [path.replace(token, "b".repeat(64)), configured],
+      [path, { ...env, MUSE_CHALLENGE_TOKEN: "invalid" }]
+    ] as const) {
+      expect((await worker.fetch(new Request(url), settings)).status).toBe(404);
+    }
+    expect((await worker.fetch(new Request(path, { method: "POST" }), configured)).status).toBe(404);
+  });
+
   it("serves root info without aliasing root POST to MCP", async () => {
     const getResponse = await worker.fetch(new Request("https://wiki-mcp.kinic.test/"), env);
     expect(getResponse.status).toBe(200);

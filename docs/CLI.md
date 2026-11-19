@@ -209,6 +209,8 @@ kinic-vfs-cli --identity-mode anonymous --database-id <database-id> query-sql "S
 
 ## Identity Mode
 
+`identity show --json` reports the principal of the selected `icp-cli` identity.
+
 Authenticated CLI calls depend on `icp-cli`.
 `kinic-vfs-cli` shells out to `icp identity default`, `icp identity export <name>`, and expects an Internet Identity delegation created by `icp identity link ii` / refreshed by `icp identity login`.
 Install an `icp` version that supports II linking:
@@ -334,6 +336,8 @@ Common read and write commands:
 - `write-nodes --input nodes.json --json`
 - `append-node --path /Knowledge/file.md --input append.md`
 - `edit-node --path /Knowledge/file.md --old-text before --new-text after`
+- `multi-edit-node --path /Knowledge/file.md --edits-file edits.json --expected-etag <etag> --json`
+- `mkdir-node --path /Knowledge/new-folder`
 - `delete-node --path /Knowledge/file.md`
 - `delete-tree --path /Knowledge/obsolete-scope --json`
 - `move-node --from-path /Knowledge/a.md --to-path /Knowledge/b.md`
@@ -358,6 +362,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 
 `kind` is `file`, `source`, or `folder`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required. Folder writes are create-only and idempotent; use empty `content`, `metadata_json: "{}"`, and omit `expected_etag`.
 For `move-node --overwrite`, pass `--expected-target-etag` when the destination currently exists. Omit it when the destination is absent. The flag is rejected without `--overwrite`, so callers must read and preserve both the source and destination etags before replacing a live destination.
+`multi-edit-node` applies several prepared replacements to one node; the edits file is a JSON array of `{"old_text": "...", "new_text": "..."}` objects. Read the node immediately before and pass `--expected-etag`.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
 Catalogs are curated by LLM ingest/edit and bounded maintenance skills; see [the maintenance skill](../skills/kinic-wiki-maintain/maintain.md). `rebuild-index` and `rebuild-scope-index` replace catalog bodies and are explicit broad-repair tools, not routine save-time updates.
@@ -387,6 +392,29 @@ kinic-vfs-cli graph-links --prefix /Knowledge --limit 100 --json
 kinic-vfs-cli incoming-links --path /Knowledge/file.md --limit 20 --json
 kinic-vfs-cli outgoing-links --path /Knowledge/file.md --limit 20 --json
 ```
+
+## Evidence Ingest
+
+```bash
+kinic-vfs-cli github ingest issue <owner>/<repo>#<number> --json
+kinic-vfs-cli github ingest pr <owner>/<repo>#<number> --json
+kinic-vfs-cli generate-conversation-wiki --source-path /Sources/chatgpt/<conversation-id>.md
+kinic-vfs-cli purge-source-capture --url <url> --json
+kinic-vfs-cli purge-source-capture --url <url> --yes --json
+```
+
+`github ingest` writes one GitHub issue or pull request into source nodes. `generate-conversation-wiki` creates knowledge pages from a saved conversation source; see [`extensions/wiki-clipper/USAGE.md`](../extensions/wiki-clipper/USAGE.md).
+`purge-source-capture` removes a source capture request, its source and its generated pages, matched by `--url` or `--source-path`. Without `--yes` it is a dry run that prints the delete plan. Deleting a wide generated tree also requires `--force-target-prefix <prefix>`.
+
+## Agent Integration and Learning
+
+These command groups have their own guides:
+
+- `agent setup|doctor|status|run|recall`: project setup, diagnostics and agent execution; see [`AGENT_CONFIGURATION.md`](AGENT_CONFIGURATION.md).
+- `codex setup`, `claude setup`, `dsh setup`: agent plugin installation; see [`AGENT_CONFIGURATION.md`](AGENT_CONFIGURATION.md).
+- `hermes setup|pull|status|flush-pending|shadows`: Hermes skill plugin; see [`plugins/hermes/README.md`](../plugins/hermes/README.md).
+- `learn ...`: continual learning setup, status, proposals and promotion; see [`CONTINUAL_LEARNING.md`](CONTINUAL_LEARNING.md) and [`PORTABLE_LEARNING.md`](PORTABLE_LEARNING.md).
+- `eval run|compare|report`: offline learning evaluation without a canister connection; see [`CONTINUAL_LEARNING.md`](CONTINUAL_LEARNING.md) and [`evaluation/continual-learning/README.md`](../evaluation/continual-learning/README.md).
 
 ## Wiki Skill Distribution
 
