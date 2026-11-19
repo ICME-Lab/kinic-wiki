@@ -22,6 +22,9 @@ const typeOrder = [
   "BekkoRefillResolution",
   "BekkoRefillState",
   "ResultBekkoRefill",
+  "VaultRefillConfig",
+  "VaultRefillStatus",
+  "VaultRefillStateResult",
 
   "EvidenceRebuildControlRequest",
   "EvidenceRebuildRequest",
@@ -210,7 +213,12 @@ const methodOrder = [
   "configure_bekko_refill",
   "check_bekko_refill",
   "reconcile_bekko_refill",
+  "get_vault_refill_state",
+  "configure_vault_refill",
+  "check_vault_refill",
+  "reconcile_vault_refill",
   "periodic_cycles_refill",
+  "periodic_bekko_refill",
   "periodic_storage_billing",
 
   "evidence_rebuild_status",

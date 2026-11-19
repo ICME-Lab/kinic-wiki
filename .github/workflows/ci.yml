@@ -763,7 +763,9 @@ jobs:
       - name: Actual dedicated Wasm protocol acceptance
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic
-        run: pnpm --dir pocketic-tests test:vault
+        run: |
+          pnpm --dir pocketic-tests test:vault
+          node --test pocketic-tests/integration/vault-execution-refill.test.mjs
       - name: Actual ICRC ledger reconciliation acceptance
         env:
           POCKET_IC_BIN: ${{ github.workspace }}/target/tools/pocket-ic

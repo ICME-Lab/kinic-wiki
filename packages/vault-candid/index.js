@@ -108,6 +108,7 @@ export const idlFactory = ({ IDL }) => {
     'sequence' : IDL.Nat64,
   });
   const Result_5 = IDL.Variant({ 'Ok' : Header, 'Err' : Error });
+  const RefillResult = IDL.Variant({ 'Ok' : IDL.Nat, 'Err' : IDL.Text });
   const DeriveKey = IDL.Record({
     'vault' : IDL.Vec(IDL.Nat8),
     'transport' : IDL.Vec(IDL.Nat8),
@@ -384,6 +385,7 @@ export const idlFactory = ({ IDL }) => {
     'Ok' : BridgeRevocation,
     'Err' : BridgeError,
   });
+  const RefillResult_1 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : IDL.Text });
   const BridgeConfig = IDL.Record({
     'daily_limit_cycles' : IDL.Nat64,
     'peer' : IDL.Principal,
@@ -418,6 +420,7 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'create_vault' : IDL.Func([CreateVault], [Result_5], []),
+    'cycles_balance_for_wiki' : IDL.Func([], [RefillResult], []),
     'derive_vault_key' : IDL.Func([DeriveKey], [Result_6], []),
     'get_chunk' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Vec(IDL.Nat8), IDL.Nat64, IDL.Nat32],
@@ -479,6 +482,11 @@ export const idlFactory = ({ IDL }) => {
       ),
     'revoke_wiki_link' : IDL.Func([], [Result_29], []),
     'set_config' : IDL.Func([IDL.Opt(VaultConfig)], [Result_28], []),
+    'set_cycles_refill_source' : IDL.Func(
+        [IDL.Opt(IDL.Principal)],
+        [RefillResult_1],
+        [],
+      ),
     'set_funding_config' : IDL.Func([IDL.Opt(FundingConfig)], [Result_28], []),
     'set_vault_member' : IDL.Func(
         [IDL.Vec(IDL.Nat8), IDL.Principal, AccessRole],

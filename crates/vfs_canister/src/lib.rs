@@ -1,9 +1,10 @@
+use bekko_refill::VaultRefillStateResult;
 use credit_bridge_types::{
     BridgeConfig, BridgeResult, BridgeRevocation, CreditOffer, LinkChallenge, LinkStatus,
 };
 use vfs_runtime::credit_bridge::{TransferAmount, TransferApproval, VaultTransfer};
 use vfs_types::ScopeRevisionRequest;
-use vfs_types::{BekkoRefillConfig, BekkoRefillResolution, BekkoRefillState};
+use vfs_types::{BekkoRefillConfig, BekkoRefillResolution, BekkoRefillState, VaultRefillConfig};
 use vfs_types::{
     EvidenceRebuildControlRequest, EvidenceRebuildRequest, EvidenceRebuildStatus,
     EvidenceRebuildStepRequest,
