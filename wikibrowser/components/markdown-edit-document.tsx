@@ -4,6 +4,9 @@ import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast";
 import type { WikiNode } from "@/lib/types";
+import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
+import { unclosedTopLevelFenceOffset } from "@/lib/markdown-renderer";
+import { renderWikilinksAsMarkdownWithSourceOffsets } from "@/lib/markdown-wikilinks";
 import { errorMessage } from "@/lib/wiki-helpers";
 import { writeNodeAuthenticated } from "@/lib/vfs-client";
 import { MarkdownEditor, type EditorSaveState } from "@/components/markdown-editor";
@@ -153,10 +156,7 @@ function DocumentEditor({
           <VaultPickerButton
             key={node.etag}
             disabled={editor.saveState === "saving"}
-            onInsert={(reference) => updateDraft((draft) => {
-              const gap = !draft || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
-              return `${draft}${gap}${reference}\n`;
-            })}
+            onInsert={(reference) => updateDraft((draft) => insertReference(draft, reference))}
           />
         )}
         onChange={(nextContent) => updateDraft(() => nextContent)}
@@ -167,6 +167,31 @@ function DocumentEditor({
       />
     </article>
   );
+}
+
+function insertReference(draft: string, reference: string): string {
+  const body = splitMarkdownFrontmatter(draft)?.body ?? draft;
+  const rendered = renderWikilinksAsMarkdownWithSourceOffsets(body);
+  const fenceOffset = unclosedTopLevelFenceOffset(rendered.markdown);
+  if (fenceOffset === undefined) {
+    const gap = !draft || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+    return `${draft}${gap}${reference}\n`;
+  }
+
+  // Use the body start when a generated opener has no safe authored boundary.
+  // For an authored opener, keep any indentation on its original line.
+  const markerOffset = rendered.sourceOffsetAt(fenceOffset) ?? 0;
+  const lineStart = markerOffset === 0 ? 0 : 1 + Math.max(
+    body.lastIndexOf("\n", markerOffset - 1), body.lastIndexOf("\r", markerOffset - 1)
+  );
+  const offset = draft.length - body.length + lineStart;
+  const before = draft.slice(0, offset);
+  // The parser ignores a leading BOM. Keep it ahead of the inserted paragraph.
+  const bom = lineStart === 0 && body.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const fence = draft.slice(offset + bom.length);
+  const ending = before.match(/(?:\r\n|[\r\n])$/)?.[0] ?? fence.match(/\r\n|[\r\n]/)?.[0] ?? "\n";
+  const gap = !before || before.endsWith(ending.repeat(2)) ? "" : ending;
+  return `${before}${bom}${gap}${reference}${ending}${ending}${fence}`;
 }
 
 function useSaveShortcut(onSave: () => void) {

@@ -758,9 +758,25 @@ fn integration_pre_rename_shared_receipt_replays_only_for_current_editor_and_exa
     let operation = hex::decode("db9fadbb171746a2a5d5baeca64c7841").unwrap();
     let digest =
         hex::decode("9b7ca5f1a465b585829aac55f9062441569a8b7fda70799d67299108e0cf9759").unwrap();
+    let deleted = Revision {
+        vault: h.id.clone(),
+        object: vec![3; 16],
+        revision: 8,
+        plain_size: 0,
+        manifest: vec![],
+        chunk_hashes: vec![],
+        deleted: true,
+        sequence: 8,
+    };
     e.transaction(|db| {
         let token = ops::begin(db, &operation, &digest, e.now())?;
-        ops::complete(db, &operation, token, &MutationResult::Done, e.now())
+        ops::complete(
+            db,
+            &operation,
+            token,
+            &MutationResult::Revision(deleted),
+            e.now(),
+        )
     })
     .unwrap();
     let retry = |revision| {
@@ -779,7 +795,13 @@ fn integration_pre_rename_shared_receipt_replays_only_for_current_editor_and_exa
         )
     };
     e.funded.set(false);
-    assert!(matches!(retry(7), Ok(MutationResult::Done)));
+    let MutationResult::Revision(replayed) = retry(7).unwrap() else {
+        panic!("DeleteObject receipt did not replay a revision");
+    };
+    assert_eq!(replayed.vault, h.id);
+    assert_eq!(replayed.object, vec![3; 16]);
+    assert_eq!(replayed.revision, 8);
+    assert!(replayed.deleted);
     assert!(matches!(retry(8), Err(Error::Conflict)));
     grant(&e, &h.id, caller, AccessRole::Viewer).unwrap();
     assert!(matches!(retry(7), Err(Error::Unauthorized)));

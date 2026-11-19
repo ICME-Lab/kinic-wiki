@@ -49,6 +49,12 @@ describe("Wiki Vault reference", () => {
     expect(screen.getByTitle("Private Vault document")).toBe(frame);
   });
 
+  it("enhances a standalone reference after a leading byte-order mark", () => {
+    const { container } = render(<MarkdownPreview {...article} content={`\uFEFF${reference}`} />);
+    expect(screen.getByRole("button", { name: "Open private document" }).getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector("iframe")).toBeNull();
+  });
+
   it("requires a fresh click when the object or article changes", () => {
     const otherUrl = `https://vault.kinic.xyz/embed/${vaultId}/${vaultId}`;
     const otherReference = `[非公開資料](${otherUrl})`;

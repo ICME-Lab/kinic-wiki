@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { AnonymousIdentity } from "@icp-sdk/core/agent";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MarkdownEditDocument } from "@/components/markdown-edit-document";
+import { MarkdownPreview } from "@/components/markdown-preview";
 import { writeNodeAuthenticated } from "@/lib/vfs-client";
 import type { WikiNode, WriteNodeResult } from "@/lib/types";
 
@@ -51,6 +52,11 @@ function createPopup() {
 function send(source: Window, data: unknown, from = origin) {
   act(() => window.dispatchEvent(new MessageEvent("message", { source, origin: from, data })));
 }
+
+beforeAll(() => {
+  // CodeMirror can measure selection geometry while saving. jsdom has no layout.
+  Range.prototype.getClientRects ??= () => document.createElement("span").getClientRects();
+});
 
 afterEach(() => {
   cleanup();
@@ -126,6 +132,126 @@ describe("Wiki editor Vault picker", () => {
     send(popup, ready);
     expect(screen.queryByRole("status")).toBeNull();
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "kinic-vault-picker-connect" }, origin);
+  });
+
+  it.each([
+    {
+      name: "an unclosed backtick fence",
+      content: "Draft.\n```js\nkeep(1);",
+      savedContent: `Draft.\n\n${link}\n\n\`\`\`js\nkeep(1);`,
+      code: "keep(1);\n"
+    },
+    {
+      name: "an unclosed fence after a byte-order mark",
+      content: "\uFEFF```js\nkeep(1);",
+      savedContent: `\uFEFF${link}\n\n\`\`\`js\nkeep(1);`,
+      code: "keep(1);\n"
+    },
+    {
+      name: "an unclosed tilde fence with short and mismatched markers",
+      content: "~~~~ example\n~~~\n`````\n~~~~ not a closer\n    ~~~~\nKeep this.",
+      savedContent: `${link}\n\n~~~~ example\n~~~\n\`\`\`\`\`\n~~~~ not a closer\n    ~~~~\nKeep this.`,
+      code: "~~~\n`````\n~~~~ not a closer\n    ~~~~\nKeep this.\n"
+    },
+    {
+      name: "an indented CRLF fence with a trailing line ending",
+      content: "See [[#files|Files]].\r\n   ```js\r\n   keep(1);\r\n",
+      savedContent: `See [[#files|Files]].\r\n\r\n${link}\r\n\r\n   \`\`\`js\r\n   keep(1);\r\n`,
+      code: "keep(1);\n"
+    },
+    {
+      name: "a mixed CR and CRLF draft with a multiline wikilink",
+      content: "[[one\rtwo]]\r\n```js\r\nkeep",
+      savedContent: `[[one\rtwo]]\r\n\r\n${link}\r\n\r\n\`\`\`js\r\nkeep`,
+      code: "keep\n"
+    },
+    {
+      name: "a CR-only draft with a multiline wikilink",
+      content: "[[one\rtwo]]\r```js\rkeep",
+      savedContent: `[[one\rtwo]]\r\r${link}\r\r\`\`\`js\rkeep`,
+      code: "keep\n"
+    },
+    {
+      name: "a fence marker within a multiline wikilink",
+      content: "[[one\r```js\rkeep]]",
+      savedContent: `${link}\r\r[[one\r\`\`\`js\rkeep]]`,
+      code: "keep](<one\r```js\rkeep>)\n"
+    },
+    {
+      name: "a generated tilde fence after a closed HTML comment",
+      content: "<!--\n-->\r[[one\r~~~js\rkeep]]",
+      savedContent: `${link}\n\n<!--\n-->\r[[one\r~~~js\rkeep]]`,
+      code: "keep](<one\r~~~js\rkeep>)\n"
+    },
+    {
+      name: "a generated backtick fence after frontmatter, BOM and a closed comment",
+      content: "---\ntitle: Example\n---\n\n\uFEFF<!--\n-->\r[[one\r```js\rkeep]]",
+      savedContent: `---\ntitle: Example\n---\n\n\uFEFF${link}\n\n<!--\n-->\r[[one\r\`\`\`js\rkeep]]`,
+      code: "keep](<one\r```js\rkeep>)\n"
+    },
+    {
+      name: "a closed fence with a longer closing marker",
+      content: "```js\nkeep(1);\n `````\t",
+      savedContent: `\`\`\`js\nkeep(1);\n \`\`\`\`\`\t\n\n${link}\n`,
+      code: "keep(1);\n"
+    },
+    {
+      name: "a backtick opener with invalid info",
+      content: "```invalid `info\nKeep this.",
+      savedContent: `\`\`\`invalid \`info\nKeep this.\n\n${link}\n`,
+      code: undefined
+    },
+    {
+      name: "a fence nested in a list item",
+      content: "- Keep this.\n  ```js\n  keep(1);",
+      savedContent: `- Keep this.\n  \`\`\`js\n  keep(1);\n\n${link}\n`,
+      code: "keep(1);\n"
+    },
+    {
+      name: "a fence nested in a blockquote",
+      content: "> ```js\n> keep(1);",
+      savedContent: `> \`\`\`js\n> keep(1);\n\n${link}\n`,
+      code: "keep(1);\n"
+    },
+    {
+      name: "a fence-like marker indented as code",
+      content: "    ```js\n    keep(1);",
+      savedContent: `    \`\`\`js\n    keep(1);\n\n${link}\n`,
+      code: "```js\nkeep(1);\n"
+    },
+    {
+      name: "a marker inside a closed HTML comment",
+      content: "<!--\n```js\n-->\nKeep this.",
+      savedContent: `<!--\n\`\`\`js\n-->\nKeep this.\n\n${link}\n`,
+      code: undefined
+    },
+    {
+      name: "a fence after Wiki frontmatter and a wikilink",
+      content: "---\ntitle: Example\n---\n\nSee [[#files|Files]].\n```js\nkeep(1);",
+      savedContent: `---\ntitle: Example\n---\n\nSee [[#files|Files]].\n\n${link}\n\n\`\`\`js\nkeep(1);`,
+      code: "keep(1);\n"
+    },
+  ])("saves a renderable reference for $name", async ({ content, savedContent, code }) => {
+    const { popup } = createPopup();
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    const current = { ...node, content };
+    let saved = current;
+    vi.mocked(writeNodeAuthenticated).mockImplementation(async (_canister, _identity, request) => {
+      saved = { ...current, etag: "new-etag", content: request.content };
+      return { node: saved, created: false };
+    });
+    const { unmount } = render(editor(current, "db_test", async () => saved));
+    fireEvent.click(screen.getByRole("button", { name: "Insert private document" }));
+    send(popup, ready);
+    send(popup, selection);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+    unmount();
+
+    const preview = render(<MarkdownPreview canisterId="test" databaseId="db_test" nodePath={node.path} content={saved.content} />);
+    expect(screen.getAllByRole("button", { name: "Open private document" })).toHaveLength(1);
+    expect(preview.container.querySelector("iframe")).toBeNull();
+    expect(preview.container.querySelector("pre code")?.textContent).toBe(code);
+    expect(saved.content).toBe(savedContent);
   });
 
   it("closes the owned popup and fences delayed selection after changing article", () => {

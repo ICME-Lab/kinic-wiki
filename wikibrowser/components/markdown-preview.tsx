@@ -56,7 +56,8 @@ export function MarkdownPreview({
   const markdown = renderWikilinksAsMarkdown(frontmatter ? frontmatter.body : content);
   const vaultReferences = vaultOrigin ? {
     articleKey: JSON.stringify([canisterId, databaseId, nodePath]),
-    markdown,
+    // The parser's source offsets exclude a leading byte-order mark.
+    markdown: markdown.replace(/^\uFEFF/, ""),
     origin: vaultOrigin
   } : null;
   return (
