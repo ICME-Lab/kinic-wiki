@@ -45,11 +45,19 @@ pub(crate) fn security_headers() -> Vec<(String, String)> {
 const WIKI_ORIGIN: &str = "https://wiki.kinic.xyz";
 const EMBED_PREFIX: &str = "/embed/";
 const PICK_PATH: &str = "/pick";
+const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
+const II_APP_METADATA_PATH: &str = "/.well-known/ii-app-metadata";
+const II_APP_METADATA_BODY: &str = r#"{"name":"Kinic Vault","description":"Private notes, credentials and files, encrypted in your browser.","logo":"/.well-known/ii-app-logo.png"}"#;
+const II_APP_LOGO_PATH: &str = "/.well-known/ii-app-logo.png";
+const II_APP_LOGO: &[u8] =
+    include_bytes!("../../../extensions/wiki-clipper/assets/kinic-logo-transparent.png");
 
 enum HtmlPolicy<'a> {
     Default,
     Embed(&'a str),
     Picker,
+    // Internet Identity reads these well-known resources cross-origin from its own frontend.
+    InternetIdentity,
 }
 
 fn entry(
@@ -69,6 +77,7 @@ fn entry(
                 "Cross-Origin-Opener-Policy",
                 "Cache-Control",
                 "X-Robots-Tag",
+                "Access-Control-Allow-Origin",
             ],
         ))
         .build();
@@ -94,6 +103,9 @@ fn entry(
                 .unwrap()
                 .1;
             *coop = "unsafe-none".into();
+        }
+        HtmlPolicy::InternetIdentity => {
+            headers.push(("Access-Control-Allow-Origin".into(), "*".into()));
         }
     }
     headers.push(("Content-Type".into(), mime.into()));
@@ -138,6 +150,29 @@ fn html_fallbacks(index: &[u8], mime: &str, wiki_origin: Option<&str>) -> Vec<En
         ]);
     }
     routes
+}
+
+fn ii_well_known_entries(origin: &str) -> Vec<Entry> {
+    vec![
+        entry(
+            HttpCertificationPath::exact(II_ALTERNATIVE_ORIGINS_PATH),
+            serde_json::to_vec(&serde_json::json!({"alternativeOrigins":[origin]})).unwrap(),
+            "application/json",
+            HtmlPolicy::InternetIdentity,
+        ),
+        entry(
+            HttpCertificationPath::exact(II_APP_METADATA_PATH),
+            II_APP_METADATA_BODY.as_bytes().to_vec(),
+            "application/json; charset=utf-8",
+            HtmlPolicy::InternetIdentity,
+        ),
+        entry(
+            HttpCertificationPath::exact(II_APP_LOGO_PATH),
+            II_APP_LOGO.to_vec(),
+            "image/png",
+            HtmlPolicy::InternetIdentity,
+        ),
+    ]
 }
 
 fn select_entry<'a>(entries: &'a [Entry], path: &str) -> Option<&'a Entry> {
@@ -218,12 +253,7 @@ pub fn initialize() {
         "application/json",
         HtmlPolicy::Default,
     ));
-    entries.push(entry(
-        HttpCertificationPath::exact("/.well-known/ii-alternative-origins".to_string()),
-        serde_json::to_vec(&serde_json::json!({"alternativeOrigins":[origin]})).unwrap(),
-        "application/json",
-        HtmlPolicy::Default,
-    ));
+    entries.extend(ii_well_known_entries(origin));
     entries.push(entry(
         HttpCertificationPath::exact("/.well-known/ic-domains".to_string()),
         if local.is_none() {
@@ -274,6 +304,48 @@ fn http_request(request: HttpRequest) -> HttpResponse {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    #[test]
+    fn ii_well_known_routes_are_certified_and_cross_origin_readable() {
+        let entries = ii_well_known_entries("https://vault.kinic.xyz");
+        let mut tree = HttpCertificationTree::default();
+        for (_, entry, _) in &entries {
+            tree.insert(entry);
+        }
+        let metadata: serde_json::Value = serde_json::from_str(II_APP_METADATA_BODY).unwrap();
+        assert_eq!(metadata["name"], "Kinic Vault");
+        assert_eq!(metadata["logo"], II_APP_LOGO_PATH);
+        for (path, mime, body) in [
+            (
+                II_ALTERNATIVE_ORIGINS_PATH,
+                "application/json",
+                br#"{"alternativeOrigins":["https://vault.kinic.xyz"]}"#.as_slice(),
+            ),
+            (
+                II_APP_METADATA_PATH,
+                "application/json; charset=utf-8",
+                II_APP_METADATA_BODY.as_bytes(),
+            ),
+            (II_APP_LOGO_PATH, "image/png", II_APP_LOGO),
+        ] {
+            let (_, entry, response) = select_entry(&entries, path).unwrap();
+            let get = |name| {
+                response
+                    .headers()
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(response.body(), body, "{path}");
+            assert_eq!(get("Content-Type"), Some(mime), "{path}");
+            assert_eq!(get("Access-Control-Allow-Origin"), Some("*"), "{path}");
+            assert_eq!(
+                get("X-Robots-Tag"),
+                Some("noindex, nofollow, noarchive, nosnippet")
+            );
+            assert!(tree.witness(entry, path).is_ok(), "{path}");
+        }
+    }
 
     #[test]
     fn certified_html_routes_scope_framing_and_opener_headers() {
