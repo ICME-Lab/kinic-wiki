@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleHelp,
@@ -48,6 +49,15 @@ import { VaultSettings, VaultSharedUploads } from "./management";
 
 export type VaultWork = (operation: () => Promise<void>) => void;
 const id = (h: Header) => b64(bytes(h.id));
+const compactNavigationQuery = "(max-width: 900px)";
+function watchNavigationViewport(listener: () => void) {
+  const viewport = window.matchMedia?.(compactNavigationQuery);
+  viewport?.addEventListener("change", listener);
+  return () => viewport?.removeEventListener("change", listener);
+}
+function isCompactNavigation() {
+  return window.matchMedia?.(compactNavigationQuery).matches ?? false;
+}
 type WorkspaceState = {
   selection:
     | { kind: "none" }
@@ -60,7 +70,15 @@ export function VaultWorkspace({ client }: { client: VaultClient }) {
 }
 function Workspace({ client }: { client: VaultClient }) {
   const guard = useDraftGuard();
-  const [navigationOpen, setNavigationOpen] = useState(false);
+  const compactNavigation = useSyncExternalStore(watchNavigationViewport, isCompactNavigation);
+  const [desktopNavigationOpen, setDesktopNavigationOpen] = useState(true);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [switcherSlot, setSwitcherSlot] = useState<HTMLElement | null>(null);
+  const dockSwitcher = switcherSlot !== null && !compactNavigation;
+  const usePopover = dockSwitcher || compactNavigation;
+  const navigationOpen = usePopover ? popoverOpen : desktopNavigationOpen;
+  const setNavigationOpen = usePopover ? setPopoverOpen : setDesktopNavigationOpen;
+  const navigationAnchor = useRef<HTMLDivElement>(null);
   const nav=useVaultNavigation();
   const settingsOpen=nav.view === "settings" || nav.view === "vault-settings";
   const [settingsTarget, setSettingsTarget] = useState<{ id: string; members: boolean }>();
@@ -77,7 +95,32 @@ function Workspace({ client }: { client: VaultClient }) {
   const [chromeSlot, setChromeSlot] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
     setChromeSlot(document.getElementById("vault-chrome-slot"));
+    setSwitcherSlot(document.getElementById("vault-switcher-slot"));
   }, []);
+  useEffect(() => {
+    if (!usePopover || !popoverOpen || nav.view !== "workspace") return;
+    const inOverlay = (target: EventTarget | null) =>
+      target instanceof Element && !!target.closest('[role="menu"], [data-radix-popper-content-wrapper], dialog');
+    const dismissOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !navigationAnchor.current?.contains(event.target) && !inOverlay(event.target)) {
+        setPopoverOpen(false);
+      }
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || inOverlay(event.target)) return;
+      setPopoverOpen(false);
+      document.getElementById("vault-navigation-toggle")?.focus();
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissOnEscape);
+    };
+  }, [usePopover, popoverOpen, nav.view]);
+  useEffect(() => {
+    if (nav.view !== "workspace") setPopoverOpen(false);
+  }, [nav.view]);
   const [vaults, setVaults] = useState<VaultAccess[]>([]);
   const [vaultAfter, setVaultAfter] = useState<Uint8Array>();
   const loadedPages = useRef(1);
@@ -141,27 +184,30 @@ function Workspace({ client }: { client: VaultClient }) {
   const workId = useRef(0);
   const configurationRequest = useRef(0);
   const balanceRequest = useRef(0);
-  const refreshBalance = useCallback(async () => {
+  const keyCostRequest = useRef(0);
+  const refreshBalance = useCallback(async (includeKeyCost = true) => {
     const request = ++balanceRequest.current;
+    const quote = includeKeyCost ? ++keyCostRequest.current : undefined;
     setBalanceReady(false);
     const ticket = client.session.capture();
     // Admission can settle accrued storage before the balance is read.
     const status = ok(await client.actor.get_spending_status());
     client.session.check(ticket);
     const [balance, cost] = await Promise.all([
-      client.actor.account_balance(), client.actor.vault_key_cost([]),
+      client.actor.account_balance(), includeKeyCost ? client.actor.vault_key_cost([]) : undefined,
     ]);
     const value = ok(balance);
-    const firstFree = "Ok" in cost && cost.Ok.first_key_free;
     client.session.check(ticket);
     if (alive.current && request === balanceRequest.current) {
       setSpending(status);
       setBalance(value);
       setBalanceReady(true);
-      setKeyCost("Ok" in cost ? cost.Ok.fee : undefined);
-      setFirstKeyFree(firstFree);
     }
-    return { balance: value, firstKeyFree: firstFree, status };
+    if (alive.current && cost && quote === keyCostRequest.current) {
+      setKeyCost("Ok" in cost ? cost.Ok.fee : undefined);
+      setFirstKeyFree("Ok" in cost && cost.Ok.first_key_free);
+    }
+    return { balance: value, status };
   }, [client]);
   const refreshId = useRef(0);
   useLayoutEffect(() => {
@@ -220,7 +266,7 @@ function Workspace({ client }: { client: VaultClient }) {
       window.removeEventListener("pagehide", hide);
     };
   }, [client, select]);
-  const run = (operation: Parameters<VaultWork>[0], ownerPays = false) => {
+  const run = (operation: Parameters<VaultWork>[0], ownerPays = false, refreshKeyCost = true) => {
     if (busyRef.current || !alive.current) return;
     busyRef.current = true;
     setBusy(true);
@@ -245,7 +291,7 @@ function Workspace({ client }: { client: VaultClient }) {
           setBusy(false);
         }
         if (current() && !ownerPays && operation !== refreshConfiguration) {
-          const refresh = refreshBalance();
+          const refresh = refreshBalance(refreshKeyCost);
           const balanceCheck = balanceRequest.current;
           void refresh.catch(() => {
             if (current() && balanceCheck === balanceRequest.current)
@@ -254,8 +300,8 @@ function Workspace({ client }: { client: VaultClient }) {
         }
       });
   };
-  const runDocument: VaultWork = (operation) => run(operation, !selectedOwner);
-  const refreshLists = useCallback(async () => {
+  const runDocument: VaultWork = (operation) => run(operation, !selectedOwner, false);
+  const refreshLists = useCallback(async (refreshSelection?: () => Promise<void>) => {
     const ticket = client.session.capture();
     let page = await client.listAccessibleVaults();
     const list = [...page.entries];
@@ -284,6 +330,10 @@ function Workspace({ client }: { client: VaultClient }) {
     if (client.header && client.session.root) {
       let h: Header;
       try {
+        if (refreshSelection) {
+          await refreshSelection();
+          return;
+        }
         h = await client.refreshHeader();
       } catch (cause) {
         // Exact denial evicts the saved key in the client. If the exact request
@@ -320,20 +370,38 @@ function Workspace({ client }: { client: VaultClient }) {
     ]);
     setVaultAfter(page.next[0] ? bytes(page.next[0]) : undefined);
   };
-  const refresh = async () => {
+  const refreshDocuments = async () => {
     const request = ++refreshId.current;
     const ticket = client.session.capture();
-    const [list, header] = await Promise.all([
-      client.items(),
-      client.refreshHeader(),
-    ]);
+    const list = await client.items();
     client.session.check(ticket);
     if (!alive.current) return;
     if (refreshId.current !== request) return;
+    const header = client.header;
+    if (!header) throw Error("Locked");
     setItems(list);
     select(header, "open");
-    if (workspaceRef.current.selection.kind === "open" && workspaceRef.current.selection.owner)
-      await refreshOwnerWorkspace();
+  };
+  const recordDocument = (item: Item) => {
+    refreshId.current++;
+    const object = b64(bytes(item.revision.object));
+    setItems((previous) => {
+      const known = previous.find((entry) => b64(bytes(entry.revision.object)) === object);
+      if (!known) return [...previous, item];
+      if (known.revision.revision >= item.revision.revision) return previous;
+      return previous.map((entry) => entry === known ? item : entry);
+    });
+  };
+  const refresh = async () => {
+    const selection = workspaceRef.current.selection;
+    if (selection.kind !== "none" && selection.owner)
+      await Promise.all([refreshLists(refreshDocuments), refreshOwnerUploads()]);
+    else await refreshDocuments();
+  };
+  const refreshWorkspace = async () => {
+    const documents = refreshLists(opened ? refreshDocuments : undefined);
+    const uploads = selected && !selectedOwner ? undefined : refreshOwnerUploads();
+    await Promise.all([documents, uploads]);
   };
   const refreshConfiguration = useCallback(async () => {
     const request = ++configurationRequest.current;
@@ -394,13 +462,13 @@ function Workspace({ client }: { client: VaultClient }) {
         const ticket = client.session.capture();
         const cost = ok(await client.actor.vault_key_cost([currentHeader.key_name]));
         client.session.check(ticket);
-        const available = await refreshBalance();
+        const available = await refreshBalance(false);
         client.session.check(ticket);
         if (!alive.current) throw Error("Locked");
         setSelectedKeyCost(cost.fee);
         if ("ServiceReserveLow" in available.status) throw Error("ServiceReserveLow");
         if ("Unconfigured" in available.status) throw Error("VaultDisabled");
-        const ownerFee = available.firstKeyFree ? 0n : cost.fee;
+        const ownerFee = cost.first_key_free ? 0n : cost.fee;
         if ("AccountCreditLow" in available.status || available.balance < ownerFee + 20_000_000n)
           throw Error("KeyFundingRequired");
       },
@@ -441,6 +509,12 @@ function Workspace({ client }: { client: VaultClient }) {
       await refreshLists();
       client.session.check(ticket);
       await open(header, true);
+      if (alive.current && usePopover && client.session.root) {
+        setPopoverOpen(false);
+        const focused = document.activeElement;
+        if (focused === document.body || navigationAnchor.current?.contains(focused))
+          document.getElementById("vault-navigation-toggle")?.focus();
+      }
     });
   const available = accountReady && !!spending && "Available" in spending;
   const eligible = available && balanceReady && balance >= 20_000_000n;
@@ -520,10 +594,133 @@ function Workspace({ client }: { client: VaultClient }) {
   const settingsIndex = vaults.findIndex(({ header, role }) => "Owner" in role && id(header) === settingsTarget?.id);
   const settingsVault = vaults[settingsIndex]?.header;
   const ownedCount = vaults.filter(({ role }) => "Owner" in role).length;
+  const selectedIndex = selected ? vaults.findIndex(({ header }) => id(header) === id(selected)) : -1;
+  const selectedName = selected
+    ? vaultDisplayName(selected, selectedIndex >= 0 ? `Vault ${selectedIndex + 1}` : "Vault")
+    : "Vaults";
+  const vaultSwitcher = (
+    <div ref={navigationAnchor} className="vault-nav-anchor">
+      <div className="vault-navigation-controls">
+        <VaultButton
+          tone={dockSwitcher ? "ghost" : "default"}
+          className="vault-navigation-toggle"
+          id="vault-navigation-toggle"
+          size="sm"
+          aria-label="Toggle Vault navigation"
+          title={navigationOpen ? "Hide Vaults" : "Show Vaults"}
+          aria-expanded={navigationOpen}
+          aria-controls="vault-navigation"
+          onClick={() => setNavigationOpen((open) => !open)}
+        >
+          <FolderLock size={16} aria-hidden />
+          <span className="vault-navigation-label">{dockSwitcher ? selectedName : "Vaults"}</span>
+          <ChevronDown size={14} aria-hidden />
+        </VaultButton>
+        <VaultButton
+          tone="ghost"
+          size="icon"
+          className="vault-vault-refresh"
+          aria-label="Refresh Vaults"
+          title={opened ? "Refresh Vaults and documents" : "Refresh Vaults"}
+          disabled={busy}
+          onClick={() => run(refreshWorkspace, false, false)}
+        >
+          <RefreshCw size={14} aria-hidden />
+          Refresh Vaults
+        </VaultButton>
+      </div>
+      <div id="vault-navigation" className="vault-navigation">
+        {navigationOpen ? (
+          <VaultPanel label="Vaults" className="vault-sidebar">
+            <div className="vault-sidebar-title">
+              <h2>Vaults</h2>
+              <span title="Owned Vaults">{ownedCount}/3</span>
+            </div>
+            <div className="vault-sidebar-list">
+              {vaults.map(({ header, role: grant }, index) => {
+                const owner = "Owner" in grant;
+                const name = vaultDisplayName(header, `Vault ${index + 1}`);
+                const active = !!selected && id(selected) === id(header);
+                const memberRole = active && role ? role : Object.keys(grant)[0];
+                const closePopover = () => {
+                  if (usePopover) {
+                    setPopoverOpen(false);
+                    document.getElementById("vault-navigation-toggle")?.focus();
+                  }
+                };
+                return (
+                  <div className="vault-switcher-card" key={id(header)}>
+                    <VaultButton
+                      className="vault-switcher"
+                      title={name}
+                      disabled={busy}
+                      aria-pressed={active}
+                      onClick={() => {
+                        if (opened && active) {
+                          closePopover();
+                          return;
+                        }
+                        guard.protect(() => {
+                          closePopover();
+                          run(() => open(header, owner), !owner);
+                        });
+                      }}
+                    >
+                      <FolderLock size={16} aria-hidden />
+                      <span>
+                        {name}{"Active" in header.state ? "" : ` · ${Object.keys(header.state)[0]}`}{owner ? "" : ` · ${memberRole}`}
+                      </span>
+                    </VaultButton>
+                    {owner ? (
+                      <VaultActions
+                        key={`${id(header)}:${header.name?.[0] ?? ""}`}
+                        header={header}
+                        fallback={`Vault ${index + 1}`}
+                        client={client}
+                        disabled={busy}
+                        canRename={eligible && !client.hasPendingSave}
+                        onSettings={(members) => {
+                          setSettingsTarget({ id: id(header), members });
+                          nav.go("/vault-settings");
+                        }}
+                        onRename={(name) => run(async () => {
+                          const ticket = client.session.capture();
+                          await client.renameVault(header, name);
+                          client.session.check(ticket);
+                          await refreshLists();
+                        })}
+                      />
+                    ) : null}
+                  </div>
+                );
+              })}
+              {vaultAfter ? (
+                <VaultButton disabled={busy} onClick={() => run(loadMoreVaults)}>
+                  Load more Vaults
+                </VaultButton>
+              ) : null}
+            </div>
+            <div className="vault-sidebar-create-wrap">
+              <VaultButton
+                size="sm"
+                className="vault-sidebar-create"
+                disabled={busy || !canCreateVault}
+                onClick={() => guard.protect(createVault)}
+              >
+                <Plus size={16} aria-hidden />
+                {workspace.creation === "unresolved" ? "Retry Vault creation" : "Create Vault"}
+              </VaultButton>
+            </div>
+          </VaultPanel>
+        ) : null}
+      </div>
+    </div>
+  );
   return (
     <div ref={privateDOM} className="vault-workspace">
       <h1 className="sr-only">Private Vault</h1>
       {chromeSlot ? createPortal(sessionControls, chromeSlot) : sessionControls}
+      {dockSwitcher && nav.view === "workspace" ? createPortal(vaultSwitcher, switcherSlot) : null}
       {!accountReady ? (
         <div className="vault-notice vault-notice--info">
           <output>Preparing your Vault account…</output>
@@ -558,102 +755,9 @@ function Workspace({ client }: { client: VaultClient }) {
       ) : null}
       <div hidden={nav.view !== "workspace"}>
       <div
-        className={`vault-workspace-grid ${navigationOpen ? "vault-navigation-open" : ""}`}
+        className={`vault-workspace-grid ${dockSwitcher ? "vault-switcher-docked" : ""} ${navigationOpen ? "vault-navigation-open" : "vault-navigation-collapsed"}`}
       >
-        <VaultButton
-          className="vault-navigation-toggle"
-          id="vault-navigation-toggle"
-          aria-label="Toggle Vault navigation"
-          aria-expanded={navigationOpen}
-          aria-controls="vault-navigation"
-          onClick={() => setNavigationOpen((open) => !open)}
-        >
-          <FolderLock size={16} aria-hidden />
-          Vaults
-          <ChevronRight size={14} aria-hidden />
-        </VaultButton>
-        <div id="vault-navigation" className="vault-navigation">
-          <VaultPanel label="Vaults" className="vault-sidebar">
-            <div className="vault-sidebar-title">
-              <h2>Vaults</h2>
-              <span title="Owned Vaults">{ownedCount}/3</span>
-              <VaultButton
-                tone="ghost"
-                size="icon"
-                className="vault-text-hidden"
-                title="Refresh Vaults"
-                disabled={busy}
-                onClick={() => run(selected && !selectedOwner ? refreshLists : refreshOwnerWorkspace)}
-              >
-                <RefreshCw size={14} aria-hidden />
-                Refresh Vaults
-              </VaultButton>
-            </div>
-            <VaultButton
-              tone="primary"
-              className="vault-sidebar-create"
-              disabled={busy || !canCreateVault}
-              onClick={()=>guard.protect(createVault)}
-            >
-              <Plus size={16} aria-hidden />
-              {workspace.creation === "unresolved"
-                ? "Retry Vault creation"
-                : "Create Vault"}
-            </VaultButton>
-            <div className="vault-sidebar-list">
-              {vaults.map(({ header: h, role: grant }, index) => {
-                const owner = "Owner" in grant;
-                const name = vaultDisplayName(h, `Vault ${index + 1}`);
-                const memberRole = selected && id(selected) === id(h) && role ? role : Object.keys(grant)[0];
-                return (
-                <div className="vault-switcher-card" key={id(h)}>
-                <VaultButton
-                  className="vault-switcher"
-                  title={name}
-                  disabled={busy}
-                  aria-pressed={selected ? id(selected) === id(h) : false}
-                  onClick={() => {
-                    setNavigationOpen(false);
-                    if (navigationOpen)
-                      document
-                        .getElementById("vault-navigation-toggle")
-                        ?.focus();
-                    guard.protect(() => run(() => open(h, owner), !owner));
-                  }}
-                >
-                  <FolderLock size={16} aria-hidden />
-                  <span>
-                    {name}{"Active" in h.state ? "" : ` · ${Object.keys(h.state)[0]}`}{owner ? "" : ` · ${memberRole}`}
-                  </span>
-                </VaultButton>
-                {owner ? <VaultActions
-                  key={`${id(h)}:${h.name?.[0] ?? ""}`}
-                  header={h}
-                  fallback={`Vault ${index + 1}`}
-                  client={client}
-                  disabled={busy}
-                  canRename={eligible && !client.hasPendingSave}
-                  onSettings={(members) => {
-                    setSettingsTarget({ id: id(h), members });
-                    nav.go("/vault-settings");
-                  }}
-                  onRename={name => run(async () => {
-                    const ticket = client.session.capture();
-                    await client.renameVault(h, name);
-                    client.session.check(ticket);
-                    await refreshLists();
-                  })}
-                /> : null}
-                </div>
-              );})}
-              {vaultAfter ? (
-                <VaultButton disabled={busy} onClick={() => run(loadMoreVaults)}>
-                  Load more Vaults
-                </VaultButton>
-              ) : null}
-            </div>
-          </VaultPanel>
-        </div>
+        {!dockSwitcher ? vaultSwitcher : null}
         <div className="vault-main" id="vault-content" tabIndex={-1}>
           {pendingUploads.length > 0 || uploadAfter ? (
             <VaultPanel label="Interrupted uploads" className="grid gap-3">
@@ -764,6 +868,7 @@ function Workspace({ client }: { client: VaultClient }) {
                   canPurge={role === "Owner"}
                   writesDisabled={serviceReserveLow || serviceUnconfigured || (role === "Owner" && !eligible)}
                   run={runDocument}
+                  onCommitted={recordDocument}
                   refresh={refresh}
                 />
                 {role === "Editor" ? (

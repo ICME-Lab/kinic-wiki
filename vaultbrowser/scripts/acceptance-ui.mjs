@@ -64,6 +64,12 @@ export const loginButton = (page) =>
   });
 export const editor = (page) =>
   page.locator('.cm-content[contenteditable="true"]');
+export async function showVaultNavigation(page) {
+  const toggle = page.getByRole("button", { name: "Toggle Vault navigation", exact: true });
+  await toggle.waitFor();
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  await page.getByRole("region", { name: "Vaults", exact: true }).waitFor();
+}
 export async function settle(page, errors = false) {
   await page
     .getByText("Processing Vault operation…", { exact: true })

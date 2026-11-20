@@ -28,16 +28,19 @@ export function VaultField({
   label,
   labelHidden = false,
   fieldClassName = "",
+  ref,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & {
   label: string;
   labelHidden?: boolean;
   fieldClassName?: string;
+  ref?: React.Ref<HTMLInputElement>;
 }) {
   return (
     <label className={`vault-field ${fieldClassName}`}>
       <span className={labelHidden ? "sr-only" : undefined}>{label}</span>
       <Input
+        ref={ref}
         className="vault-input min-w-0"
         autoComplete="off"
         {...props}

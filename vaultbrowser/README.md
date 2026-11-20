@@ -75,7 +75,7 @@ Production KINIC funding supports authoritative user-requested ledger reconcilia
 
 Shared storage capacity is separate from prepaid balance. Owner cleanup, including interrupted-upload cancellation and whole-Vault deletion, remains available with zero prepaid balance. No deployment, DNS change, production mutation or real-funds transfer is part of these checks.
 
-Document lists decrypt metadata only. Typing in the local search field filters titles without reading note bodies. Use **Search note contents** to read notes transiently and include matching bodies; the browser keeps only matching object IDs and discards them when the query/list changes or the Vault closes. There is no persistent full-text index or cache.
+Document lists decrypt metadata only. Opening a document reads and decrypts its contents.
 
 Private Vault views also close after 30 minutes of inactivity. Switching tabs does not shorten that timeout; returning to a tab rechecks expiry even if its timers were throttled. Pointer movement, clicks, typing and scrolling count as activity.
 
