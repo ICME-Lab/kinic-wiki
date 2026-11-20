@@ -108,7 +108,10 @@ try {
     }
     if (path === "/.well-known/ii-app-logo.png") {
       assert.equal(headers["content-type"], "image/png");
-      assert.deepEqual([...new Uint8Array(response.body).slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+      assert.deepEqual(
+        new Uint8Array(response.body).subarray(0, 4),
+        new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      );
     }
     if (path === "/.well-known/ii-alternative-origins")
       assert.deepEqual(

@@ -49,8 +49,7 @@ const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
 const II_APP_METADATA_PATH: &str = "/.well-known/ii-app-metadata";
 const II_APP_METADATA_BODY: &str = r#"{"name":"Kinic Vault","description":"Private notes, credentials and files, encrypted in your browser.","logo":"/.well-known/ii-app-logo.png"}"#;
 const II_APP_LOGO_PATH: &str = "/.well-known/ii-app-logo.png";
-const II_APP_LOGO: &[u8] =
-    include_bytes!("../../../extensions/wiki-clipper/assets/kinic-logo-transparent.png");
+const II_APP_LOGO: &[u8] = include_bytes!("../assets/ii-app-logo.png");
 
 enum HtmlPolicy<'a> {
     Default,
