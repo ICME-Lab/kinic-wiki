@@ -979,6 +979,7 @@ async function verifyAcceptance() {
   assertDeviceKeyStore(await vault.evaluate(readDeviceKeyStore), `${canister}:${owner}`);
   assert.equal((await vault.evaluate(readDeviceKeyStore)).records.filter(record => record.key).length, 0);
   await action(vault, "Back to Vault");
+  await showVaultNavigation(vault);
   delayMethod = "derive_vault_key";
   const keyReady = new Promise((resolve) => {
     delayedReady = resolve;
