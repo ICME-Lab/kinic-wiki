@@ -78,8 +78,12 @@ function Documents({
   const [reveal, setReveal] = useState(false);
   const [file, setFile] = useState<File>();
   const [editorKey, setEditorKey] = useState(0);
-  const [history, setHistory] = useState<Revision[]>([]);
-  const [historyCursor, setHistoryCursor] = useState<bigint>();
+  const [history, setHistory] = useState<{
+    entries: Revision[];
+    cursor?: bigint;
+    visible: boolean;
+  }>();
+  const historyLabel = history?.visible ? "Hide version history" : "Show version history";
   const historyHeading = useRef<HTMLHeadingElement>(null);
   const focusHistory = useRef(false);
   useLayoutEffect(() => {
@@ -106,8 +110,7 @@ function Documents({
     setUrl("");
     setReveal(false);
     setFile(undefined);
-    setHistory([]);
-    setHistoryCursor(undefined);
+    setHistory(undefined);
     setProgress(0);
     setDirty(false);
     setNoteView("edit");
@@ -125,8 +128,7 @@ function Documents({
     const g = client.session.capture();
     const epoch = editorEpoch.current;
     const sameDocument = current && b64(bytes(current.revision.object)) === b64(bytes(item.revision.object));
-    const retainedHistory = sameDocument ? history : [];
-    const retainedCursor = sameDocument ? historyCursor : undefined;
+    const retainedHistory = sameDocument ? history : undefined;
     if (revision.deleted) {
       reset();
       setCurrent(item);
@@ -143,7 +145,6 @@ function Documents({
       setViewedRevision(revision);
       setViewedMetadata(doc.metadata);
       setHistory(retainedHistory);
-      setHistoryCursor(retainedCursor);
       setTitle(doc.metadata.title);
       setKind(doc.metadata.kind);
       const text = new TextDecoder().decode(doc.plaintext);
@@ -181,8 +182,7 @@ function Documents({
     setSavedBody(body);
     setDirty(false);
     setProgress(0);
-    setHistory([]);
-    setHistoryCursor(undefined);
+    setHistory(undefined);
     onCommitted(item);
     setSaveStatus("saved");
   };
@@ -196,8 +196,7 @@ function Documents({
     const item = { revision, metadata: renamed.metadata };
     if (isCurrentBase(renamed)) {
       setCurrent(item);
-      setHistory([]);
-      setHistoryCursor(undefined);
+      setHistory(undefined);
       if (!historical) {
         setViewedRevision(undefined);
         setViewedMetadata(renamed.metadata);
@@ -506,20 +505,25 @@ function Documents({
                 <>
                   <VaultButton
                     size="icon"
-                    aria-label="Show version history"
-                    title="Show version history"
+                    aria-label={historyLabel}
+                    aria-expanded={!!history?.visible}
+                    title={historyLabel}
                     tone="ghost"
                     disabled={disabled}
-                    onClick={() =>
+                    onClick={() => {
+                      if (history) {
+                        focusHistory.current = !history.visible;
+                        setHistory({ ...history, visible: !history.visible });
+                        return;
+                      }
                       run(async () => {
                         const g = client.session.capture();
                         const page = await client.history(current.revision);
                         client.session.check(g);
                         focusHistory.current = true;
-                        setHistory(page.entries);
-                        setHistoryCursor(page.next[0]);
-                      })
-                    }
+                        setHistory({ entries: page.entries, cursor: page.next[0], visible: true });
+                      });
+                    }}
                   >
                     <History size={14} aria-hidden />
                   </VaultButton>
@@ -563,10 +567,10 @@ function Documents({
             </div>
           </div>
           <div className="vault-editor-body">
-            {current && history.length ? (
+            {current && history?.visible ? (
               <div className="vault-history">
                 <h3 ref={historyHeading} tabIndex={-1}>Version history</h3>
-                {history.map((revision) => (
+                {history.entries.map((revision) => (
                   <div
                     className="vault-history-row"
                     key={String(revision.revision)}
@@ -588,7 +592,7 @@ function Documents({
                     ) : null}
                   </div>
                 ))}
-                {historyCursor !== undefined ? (
+                {history.cursor !== undefined ? (
                   <VaultButton
                     size="sm"
                     tone="ghost"
@@ -598,14 +602,14 @@ function Documents({
                         const g = client.session.capture(),
                           page = await client.history(
                             current.revision,
-                            historyCursor,
+                            history.cursor,
                           );
                         client.session.check(g);
-                        setHistory((previous) => [
-                          ...previous,
-                          ...page.entries,
-                        ]);
-                        setHistoryCursor(page.next[0]);
+                        setHistory({
+                          ...history,
+                          entries: [...history.entries, ...page.entries],
+                          cursor: page.next[0],
+                        });
                       })
                     }
                   >

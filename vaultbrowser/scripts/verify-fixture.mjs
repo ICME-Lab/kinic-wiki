@@ -235,6 +235,9 @@ try {
   await expect(page.getByRole("heading", { name: "Version history", exact: true })).toBeFocused();
   await expect(page.getByRole("button", { name: "View revision 1", exact: true })).toBeInViewport();
   await title.fill("mobile private draft");
+  await page.getByRole("button", { name: "Hide version history", exact: true }).press("Enter");
+  await expect(page.getByRole("heading", { name: "Version history", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show version history", exact: true })).toBeFocused();
   await toggle.click();
   assert.equal(await title.inputValue(), "mobile private draft");
   await page.getByRole("button", { name: "Vault 2", exact: true }).click();
@@ -264,6 +267,13 @@ try {
   await expect(roster.getByRole("button", { name: "Create Vault", exact: true })).toBeInViewport();
   await roster.getByRole("button", { name: "Load more Vaults", exact: true }).click();
   await expect(roster.getByRole("button", { name: "Shared 21 · Viewer", exact: true })).toBeAttached();
+  await roster.getByRole("button", { name: "Create Vault", exact: true }).press("Enter");
+  await expect(title).toHaveValue("");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.locator(".vault-switcher-slot").getByRole("button", { name: "Toggle Vault navigation" })).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log(

@@ -587,6 +587,7 @@ it("views a historical revision read-only and downloads the displayed version th
   await x.open();
   await save("Original title", "original body");
   await save("Latest title", "latest body");
+  const listHistory = vi.spyOn(x.actor, "list_history");
   clickAndDiscard(screen.getByRole("button", { name: "Show version history" }));
   const view = await screen.findByRole("button", { name: "View revision 1" });
   expect(screen.queryByText("Download revision 1")).toBeNull();
@@ -607,6 +608,15 @@ it("views a historical revision read-only and downloads the displayed version th
   clickAndDiscard(screen.getByRole("button", { name: "Return to latest version" }));
   await waitFor(() => expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "latest body"));
   expect(screen.getByLabelText("Document title")).toHaveProperty("disabled", false);
+  const hideHistory = screen.getByRole("button", { name: "Hide version history" });
+  clickAndDiscard(hideHistory);
+  expect(screen.queryByRole("heading", { name: "Version history" })).toBeNull();
+  const showHistory = screen.getByRole("button", { name: "Show version history" });
+  expect(showHistory).toBe(hideHistory);
+  expect(showHistory.getAttribute("aria-expanded")).toBe("false");
+  clickAndDiscard(showHistory);
+  await screen.findByRole("button", { name: "View revision 1" });
+  expect(listHistory).toHaveBeenCalledOnce();
   clickAndDiscard(screen.getByRole("button", { name: "Download document" }));
   await waitFor(() => expect(downloads).toHaveLength(2));
   expect(downloads[1].body).toBe("latest body");

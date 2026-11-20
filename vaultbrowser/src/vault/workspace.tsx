@@ -509,6 +509,12 @@ function Workspace({ client }: { client: VaultClient }) {
       await refreshLists();
       client.session.check(ticket);
       await open(header, true);
+      if (alive.current && usePopover && client.session.root) {
+        setPopoverOpen(false);
+        const focused = document.activeElement;
+        if (focused === document.body || navigationAnchor.current?.contains(focused))
+          document.getElementById("vault-navigation-toggle")?.focus();
+      }
     });
   const available = accountReady && !!spending && "Available" in spending;
   const eligible = available && balanceReady && balance >= 20_000_000n;
