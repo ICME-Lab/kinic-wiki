@@ -11,7 +11,7 @@
   --vault-chrome-h: 56px;
   --vault-page-vertical-padding: 64px;
   --vault-sidebar-w: 248px;
-  --vault-list-w: 288px;
+  --vault-list-w: 216px;
   --vault-radius-lg: 14px;
   --vault-radius: 10px;
   --vault-radius-sm: 8px;
@@ -207,22 +207,6 @@ body {
   text-transform: uppercase;
 }
 
-.vault-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: rgb(var(--paper));
-  border: 1px solid rgb(var(--line));
-  color: hsl(var(--muted));
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 .vault-notice {
   display: flex;
   align-items: flex-start;
@@ -407,10 +391,6 @@ body {
   position: sticky;
   top: calc(var(--vault-chrome-h) + 24px);
 }
-.vault-navigation-toggle {
-  display: none;
-}
-
 /* Sidebar */
 .vault-sidebar {
   gap: 4px;
@@ -423,21 +403,34 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 4px 10px;
-}
-.vault-sidebar-title h2 {
-  margin: 0;
-  color: hsl(var(--muted));
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  padding-bottom: 10px;
 }
 .vault-sidebar-title > span {
   margin-left: auto;
   color: hsl(var(--muted));
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+.vault-vault-refresh {
+  gap: 0;
+  font-size: 0;
+}
+.vault-navigation-collapsed .vault-sidebar-title {
+  padding-bottom: 0;
+}
+@media (width > 900px) {
+  .vault-workspace-grid.vault-navigation-collapsed {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .vault-navigation-collapsed .vault-navigation-toggle {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+  }
+  .vault-navigation-collapsed .vault-navigation-toggle > span {
+    display: none;
+  }
 }
 .vault-sidebar-create {
   width: 100%;
@@ -541,31 +534,6 @@ body {
   padding: 0;
   overflow: hidden;
 }
-.vault-documents-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 56px;
-  padding: 10px 12px 10px 18px;
-  border-bottom: 1px solid rgb(var(--line));
-}
-.vault-documents-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-right: auto;
-}
-.vault-documents-title h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 620;
-  letter-spacing: -0.01em;
-}
-.vault-documents-tools {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 .vault-pending-save {
   display: flex;
   flex-wrap: wrap;
@@ -596,35 +564,6 @@ body {
   border-right: 1px solid rgb(var(--line));
   background: rgb(var(--paper) / 0.6);
 }
-.vault-search {
-  display: grid;
-  gap: 6px;
-  padding: 12px;
-  border-bottom: 1px solid rgb(var(--line));
-}
-.vault-search-input {
-  position: relative;
-}
-.vault-search-input > svg {
-  position: absolute;
-  top: 50%;
-  left: 11px;
-  z-index: 1;
-  color: hsl(var(--muted));
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-.vault-search-input .vault-input {
-  min-height: 36px;
-  padding-left: 34px;
-  font-size: 13px;
-}
-.vault-search > .vault-button {
-  justify-content: flex-start;
-  min-height: 28px;
-  padding: 0 8px;
-  font-size: 12px;
-}
 .vault-document-items {
   display: grid;
   align-content: start;
@@ -633,6 +572,10 @@ body {
   min-height: 0;
   padding: 8px;
   overflow-y: auto;
+}
+.vault-new-document {
+  justify-self: start;
+  margin-bottom: 4px;
 }
 .vault-document-card {
   position: relative;
@@ -815,10 +758,6 @@ body {
   border: 1px solid rgb(var(--line));
   border-radius: var(--vault-radius);
   background: rgb(var(--surface));
-}
-.vault-editor-frame:focus-within {
-  border-color: rgb(var(--brand-accent) / 0.5);
-  box-shadow: var(--vault-ring);
 }
 .vault-editor-frame > div {
   background: rgb(var(--surface));
@@ -1010,6 +949,25 @@ body {
 .vault-editor-save {
   flex-shrink: 0;
 }
+.vault-editor-save[aria-busy="true"],
+.vault-editor-save:has(.vault-save-check) {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .vault-save-spinner {
+    animation: vault-save-spin 800ms linear infinite;
+  }
+  .vault-save-check {
+    animation: vault-save-confirm 180ms ease-out;
+  }
+}
+@keyframes vault-save-spin {
+  to { transform: rotate(1turn); }
+}
+@keyframes vault-save-confirm {
+  from { transform: scale(0.7); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
 
 /* ───────────────────────── Management ───────────────────────── */
 
@@ -1142,7 +1100,7 @@ body {
   :root {
     --vault-page-vertical-padding: 52px;
     --vault-sidebar-w: 216px;
-    --vault-list-w: 248px;
+    --vault-list-w: 192px;
   }
   .vault-page {
     padding: 20px 20px 32px;
@@ -1175,37 +1133,22 @@ body {
   }
   .vault-navigation {
     position: static;
-    display: none;
   }
   .vault-navigation-open > .vault-navigation {
-    display: block;
     padding: 12px;
     border: 1px solid rgb(var(--line));
     border-radius: var(--vault-radius-lg);
     background: rgb(var(--surface));
     box-shadow: var(--vault-shadow);
   }
-  .vault-navigation-toggle {
-    display: inline-flex;
-    justify-self: start;
-  }
-  .vault-navigation-toggle > svg:last-child {
-    transition: transform var(--duration-fast);
-  }
-  .vault-navigation-toggle[aria-expanded="true"] > svg:last-child {
-    transform: rotate(90deg);
-  }
   .vault-documents {
     height: auto;
-  }
-  .vault-documents-header {
-    flex-wrap: wrap;
   }
   .vault-document-grid {
     grid-template-columns: minmax(0, 1fr);
   }
   .vault-document-list {
-    max-height: 300px;
+    max-height: 170px;
     border-right: 0;
     border-bottom: 1px solid rgb(var(--line));
   }
@@ -1214,7 +1157,7 @@ body {
   }
   .vault-editor-frame {
     flex: none;
-    height: 60dvh;
+    height: 66dvh;
   }
   .vault-management-grid,
   .vault-welcome-features {
@@ -1327,25 +1270,6 @@ body {
 .vault-workspace > .vault-session-controls {
   justify-content: flex-end;
 }
-/* Icon-only presentation that keeps the visible label as the accessible name. */
-.vault-text-hidden {
-  gap: 0;
-  font-size: 0;
-}
-.vault-sidebar-title > .vault-text-hidden {
-  width: 28px;
-  min-height: 28px;
-  margin: -4px -4px -4px 2px;
-}
-.vault-sidebar-title > span {
-  margin-left: auto;
-}
-.vault-search-idle {
-  display: none;
-}
-.vault-search {
-  gap: 4px;
-}
 .vault-notice > span {
   flex: 1;
 }
@@ -1364,15 +1288,6 @@ body {
     margin-right: 0;
     padding-right: 0;
     border-right: 0;
-  }
-  .vault-documents-header {
-    flex-wrap: nowrap;
-  }
-  .vault-new-document {
-    width: 36px;
-    padding: 0;
-    gap: 0;
-    font-size: 0;
   }
 }
 

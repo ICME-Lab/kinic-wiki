@@ -1,2 +1,2 @@
 Kinic / Vault
-Private documents
+Vaults

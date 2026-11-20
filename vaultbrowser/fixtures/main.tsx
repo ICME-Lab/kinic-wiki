@@ -206,6 +206,7 @@ function Fixture() {
   useEffect(() => {
     const state = new URLSearchParams(location.search).get("state");
     if (state !== "opened" && state !== "key-funding-preview" && state !== "settings") return;
+    let opening = false;
     const timer = window.setInterval(() => {
       if (state === "settings") {
         const title = document.querySelector<HTMLInputElement>('input[placeholder="Untitled"]');
@@ -215,10 +216,17 @@ function Fixture() {
           return;
         }
       }
+      if (opening) return;
       const button = Array.from(document.querySelectorAll("button")).find(
         (b) => b.textContent?.trim() === "Vault 1",
       );
-      if (button && !button.disabled) {
+      if (!button) {
+        const toggle = document.getElementById("vault-navigation-toggle");
+        if (toggle?.getAttribute("aria-expanded") === "false") toggle.click();
+        return;
+      }
+      if (!button.disabled) {
+        opening = true;
         if (state !== "settings") window.clearInterval(timer);
         button.click();
       }

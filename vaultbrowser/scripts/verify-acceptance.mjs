@@ -423,22 +423,13 @@ async function verifyAcceptance() {
   chunkTrace.phase = "post-click-application-retry";
   await action(vault, "Resume save");
   const chunkRetry = finishRetryTrace(chunkTrace);
-  const search = vault.getByLabel("Search this Vault locally");
-  const noteButton = vault.getByRole("button", { name: title, exact: true });
   // Save confirmation precedes the asynchronous metadata-list refresh.
-  await expect(noteButton).toBeVisible();
-  const readsBeforeTyping = chunkReads;
-  await search.fill(plaintext);
-  await expect(noteButton).toHaveCount(0);
-  assert.equal(chunkReads, readsBeforeTyping, "typing must filter metadata without fetching note bodies");
-  await action(vault, "Search note contents");
-  await expect(noteButton).toBeVisible();
-  assert.ok(chunkReads > readsBeforeTyping, "explicit search reads authenticated note contents");
-  await search.fill("absent-body-query");
-  await expect(noteButton).toHaveCount(0);
-  await search.fill("");
+  await expect(vault.getByRole("button", { name: title, exact: true })).toBeVisible();
+  await action(vault, "New document");
+  const readsBeforeOpen = chunkReads;
   await action(vault, title);
-  assert.equal(await editor(vault).innerText(), plaintext);
+  await expect(editor(vault)).toHaveText(plaintext);
+  assert.ok(chunkReads > readsBeforeOpen, "opening a note reads its authenticated content");
   const docs = await inspect(vault, "clientRead", canister, vaultURL, vaultId);
   assert.equal(docs.documents[0].plaintext, plaintext);
   const object = docs.documents[0].object;

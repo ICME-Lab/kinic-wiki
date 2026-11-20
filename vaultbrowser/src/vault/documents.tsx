@@ -1,5 +1,6 @@
 import { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
+  Check,
   ChevronRight,
   Download,
   Eye,
@@ -7,12 +8,10 @@ import {
   FileKey2,
   FileText,
   History,
+  LoaderCircle,
   Paperclip,
   Plus,
-  RefreshCw,
   Save,
-  Search,
-  TextSearch,
   Upload,
 } from "lucide-react";
 import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
@@ -25,7 +24,7 @@ import { VaultPreview } from "./preview";
 import { parseCredential, VaultReadOnly } from "./read-only";
 import { DocumentActions } from "./document-actions";
 import { DraftGuardProvider, useDirtyDraft, useDraftGuard } from "../draft-guard";
-import { VaultButton, VaultField, VaultPanel, vaultError } from "./ui";
+import { VaultButton, VaultField, VaultPanel } from "./ui";
 import type { VaultWork } from "./workspace";
 function Documents({
   client,
@@ -35,6 +34,7 @@ function Documents({
   canEdit = true,
   canPurge = true,
   run,
+  onCommitted,
   refresh,
 }: {
   client: VaultClient;
@@ -44,97 +44,27 @@ function Documents({
   canEdit?: boolean;
   canPurge?: boolean;
   run: VaultWork;
+  onCommitted: (item: Item) => void;
   refresh: () => Promise<void>;
 }) {
   const sensitiveCleanup = useCallback(
     (wipe: () => void) => client.session.addLockCleanup(wipe),
     [client],
   );
-  const [query, setQuery] = useState("");
-  const search = useRef<AbortController | undefined>(undefined);
-  const [bodyMatches, setBodyMatches] = useState<Item[]>();
-  const [searchStatus, setSearchStatus] = useState("");
-  const [searchProgress, setSearchProgress] = useState<{
-    completed: number;
-    total: number;
-  }>();
-  const [saveStatus, setSaveStatus] = useState("");
-  const saveNotice = useRef(0);
-  const alive = useRef(true);
-  const cancelSearch = () => {
-    search.current?.abort();
-    search.current = undefined;
-    setSearchProgress(undefined);
-    setBodyMatches(undefined);
-  };
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "renamed">();
+  const pendingRename = useRef<Item | undefined>(undefined);
   useLayoutEffect(() => {
-    alive.current = true;
     const detach = client.session.addLockCleanup(() => {
-      cancelSearch();
-      setQuery("");
-      setSearchStatus("");
-      setSaveStatus("");
+      setSaving(false);
+      setSaveStatus(undefined);
+      pendingRename.current = undefined;
     });
-    return () => {
-      alive.current = false;
-      search.current?.abort();
-      search.current = undefined;
-      detach();
-    };
+    return () => { detach(); };
   }, [client]);
-  const previousItems = useRef(items);
-  useLayoutEffect(() => {
-    if (previousItems.current === items) return;
-    const unchanged =
-      previousItems.current.length === items.length &&
-      previousItems.current.every((previous, index) => {
-        const current = items[index];
-        return (
-          current &&
-          b64(bytes(previous.revision.object)) === b64(bytes(current.revision.object)) &&
-          previous.revision.revision === current.revision.revision &&
-          previous.revision.deleted === current.revision.deleted
-        );
-      });
-    previousItems.current = items;
-    if (!unchanged && (search.current || bodyMatches)) {
-      cancelSearch();
-      setSearchStatus("Documents refreshed. Search note bodies again.");
-    }
-  }, [items, bodyMatches]);
-  const searchBodies = async () => {
-    cancelSearch();
-    const controller = new AbortController();
-    search.current = controller;
-    const ticket = client.session.capture();
-    const active = () =>
-      alive.current &&
-      search.current === controller &&
-      !controller.signal.aborted &&
-      client.session.capture() === ticket;
-    setSearchStatus("");
-    try {
-      const matches = await client.searchNotes(items, query, {
-        signal: controller.signal,
-        onProgress: (value) => {
-          if (active()) setSearchProgress(value);
-        },
-      });
-      if (!active()) return;
-      setBodyMatches(matches);
-      setSearchStatus("Note body search complete.");
-    } catch (cause) {
-      if (active())
-        setSearchStatus(`Note body search failed: ${vaultError(cause)}`);
-    } finally {
-      if (active()) {
-        search.current = undefined;
-        setSearchProgress(undefined);
-      }
-    }
-  };
   const [current, setCurrent] = useState<Item>();
   const [viewedRevision, setViewedRevision] = useState<Revision>();
+  const historical = !!current && !!viewedRevision && viewedRevision.revision !== current.revision.revision;
   const [viewedMetadata, setViewedMetadata] = useState<Metadata>();
   const [kind, setKind] = useState<Metadata["kind"]>("note");
   const [title, setTitle] = useState("");
@@ -155,8 +85,7 @@ function Documents({
   const editorEpoch=useRef(0);
   const reset = () => {
     editorEpoch.current++;
-    saveNotice.current++;
-    setSaveStatus("");
+    setSaveStatus(undefined);
     setCurrent(undefined);
     setViewedRevision(undefined);
     setViewedMetadata(undefined);
@@ -214,17 +143,21 @@ function Documents({
       doc.plaintext.fill(0);
     }
   };
-  const completeSave = (
+  const editorMetadata = (): Metadata => ({
+    ...current?.metadata,
+    kind,
+    title,
+    ...(file ? { filename: file.name, mime: file.type } : {}),
+  });
+  const confirmed = (
+    ticket: number,
     revision: Revision,
-    metadata: Metadata = {
-      ...current?.metadata,
-      kind,
-      title,
-      ...(file ? { filename: file.name, mime: file.type } : {}),
-    },
+    metadata: Metadata = editorMetadata(),
   ) => {
+    client.session.check(ticket);
+    const item = { revision, metadata };
     editorEpoch.current++;
-    setCurrent({ revision, metadata });
+    setCurrent(item);
     setViewedRevision(undefined);
     setViewedMetadata(metadata);
     setSavedBody(body);
@@ -232,55 +165,81 @@ function Documents({
     setProgress(0);
     setHistory([]);
     setHistoryCursor(undefined);
+    onCommitted(item);
+    setSaveStatus("saved");
   };
-  const confirmed = (ticket: number, revision?: Revision, metadata?: Metadata) => {
+  const isCurrentBase = (item: Item) =>
+    current?.revision.revision === item.revision.revision &&
+    b64(bytes(current.revision.object)) === b64(bytes(item.revision.object));
+  const finishRename = (ticket: number, renamed: Item, revision: Revision) => {
     client.session.check(ticket);
-    if (revision) completeSave(revision, metadata);
-    else reset();
-    saveNotice.current++;
-    setSaveStatus("Saved.");
-    const notice = saveNotice.current;
-    // The committed save is complete. List work must not keep the editor busy
-    // or turn a successful save into an ambiguous operation on refresh failure.
-    void refresh().catch(() => {
-      if (
-        alive.current &&
-        client.session.capture() === ticket &&
-        saveNotice.current === notice
-      )
-        setSaveStatus(
-          "Saved, but the document list could not be refreshed. Refresh documents to update the list.",
-        );
-    });
+    pendingRename.current = undefined;
+    setProgress(0);
+    const item = { revision, metadata: renamed.metadata };
+    if (isCurrentBase(renamed)) {
+      setCurrent(item);
+      setHistory([]);
+      setHistoryCursor(undefined);
+      if (!historical) {
+        setViewedRevision(undefined);
+        setViewedMetadata(renamed.metadata);
+        setTitle(renamed.metadata.title);
+      }
+    }
+    onCommitted(item);
+    setSaveStatus("renamed");
   };
+  const rename = (item: Item, name: string) => run(async () => {
+    const ticket = client.session.capture();
+    const doc = await client.read(item.revision);
+    let plaintext = doc.plaintext;
+    try {
+      client.session.check(ticket);
+      if (doc.metadata.kind === "credential") {
+        const credential: unknown = JSON.parse(new TextDecoder().decode(plaintext));
+        if (!credential || typeof credential !== "object" || Array.isArray(credential))
+          throw Error("InvalidInput");
+        plaintext = utf8.encode(JSON.stringify({ ...credential, label: name }));
+      }
+      const renamed = { ...item, metadata: { ...doc.metadata, title: name } };
+      pendingRename.current = renamed;
+      const revision = await client.save(renamed.metadata, plaintext, item, (n) => {
+        client.session.check(ticket);
+        setProgress(n);
+      });
+      finishRename(ticket, renamed, revision);
+    } finally {
+      if (plaintext !== doc.plaintext) plaintext.fill(0);
+      doc.plaintext.fill(0);
+      if (!client.hasPendingSave) pendingRename.current = undefined;
+    }
+  });
   const save = () => {
     if (readOnly || !dirty) return;
     run(async () => {
       const g = client.session.capture();
-      let plain: Uint8Array;
-      let metadata: Metadata = { kind, title };
-      if (kind === "attachment") {
-        if (!file || file.size > 10 * 1024 * 1024) throw Error("SizeLimit");
-        plain = new Uint8Array(await file.arrayBuffer());
-        metadata = { ...metadata, filename: file.name, mime: file.type };
-      } else {
-        plain = utf8.encode(
-          kind === "credential"
-            ? JSON.stringify({
-                label: title,
-                username,
-                password,
-                URL: url,
-                notes: body,
-              })
-            : body,
-        );
-        if (plain.length > 256 * 1024) {
-          plain.fill(0);
-          throw Error("SizeLimit");
-        }
-      }
+      let plain: Uint8Array | undefined;
+      setSaving(true);
       try {
+        let metadata: Metadata = { kind, title };
+        if (kind === "attachment") {
+          if (!file || file.size > 10 * 1024 * 1024) throw Error("SizeLimit");
+          plain = new Uint8Array(await file.arrayBuffer());
+          metadata = { ...metadata, filename: file.name, mime: file.type };
+        } else {
+          plain = utf8.encode(
+            kind === "credential"
+              ? JSON.stringify({
+                  label: title,
+                  username,
+                  password,
+                  URL: url,
+                  notes: body,
+                })
+              : body,
+          );
+          if (plain.length > 256 * 1024) throw Error("SizeLimit");
+        }
         client.session.check(g);
         const revision = await client.save(metadata, plain, current, (n) => {
           client.session.check(g);
@@ -289,7 +248,8 @@ function Documents({
         client.session.check(g);
         confirmed(g, revision, metadata);
       } finally {
-        plain.fill(0);
+        plain?.fill(0);
+        setSaving(false);
       }
     });
   };
@@ -307,80 +267,26 @@ function Documents({
     }
   };
   const changed = () => {
-    saveNotice.current++;
     setDirty(true);
-    setSaveStatus("");
+    setSaveStatus(undefined);
   };
   const pendingSave = client.hasPendingSave;
+  const saved = saveStatus === "saved";
   const displayedRevision = viewedRevision ?? current?.revision;
-  const historical = !!current && !!viewedRevision && viewedRevision.revision !== current.revision.revision;
+  const displayedObject = displayedRevision && b64(bytes(displayedRevision.object));
   const readOnly =
     !canEdit || disabled || writesDisabled || pendingSave || !!displayedRevision?.deleted || historical;
   const byteCount = utf8.encode(body).length;
   const kindLabel = (k: Metadata["kind"]) =>
     k === "credential" ? "Credential" : k === "attachment" ? "Attachment" : "Note";
-  const visibleItems = items.filter(
-    (item) =>
-      item.metadata.title
-        .toLocaleLowerCase()
-        .includes(query.toLocaleLowerCase()) ||
-      bodyMatches?.some(match => b64(bytes(match.revision.object)) === b64(bytes(item.revision.object))),
-  );
   return (
     <VaultPanel label="Private documents" sensitive className="vault-documents">
-      <div className="vault-documents-header">
-        <div className="vault-documents-title">
-          <h2>Private documents</h2>
-          <span className="vault-count">{items.length}</span>
-        </div>
-        <div className="vault-documents-tools">
-          <VaultButton
-            tone="ghost"
-            size="icon"
-            aria-label="Refresh documents"
-            title="Refresh documents"
-            disabled={disabled}
-            onClick={() => run(refresh)}
-          >
-            <RefreshCw size={16} aria-hidden />
-          </VaultButton>
-          {canEdit ? <VaultButton
-            tone="primary"
-            className="vault-new-document"
-            title="New document"
-            disabled={disabled || pendingSave}
-            onClick={() => guard.protect(reset)}
-          >
-            <Plus size={16} aria-hidden />
-            New document
-          </VaultButton> : null}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-muted">
-          Titles filter immediately. Body search reads notes only.
-        </span>
-        {searchProgress ? (
-          <>
-            <output aria-live="polite">
-              Searching note bodies: {searchProgress.completed} /{" "}
-              {searchProgress.total}
-            </output>
-            <VaultButton
-              onClick={() => {
-                cancelSearch();
-                setSearchStatus("Note body search stopped.");
-              }}
-            >
-              Stop search
-            </VaultButton>
-          </>
-        ) : null}
-        {searchStatus ? (
-          <output aria-live="polite">{searchStatus}</output>
-        ) : null}
-      </div>
-      {saveStatus ? <output aria-live="polite">{saveStatus}</output> : null}
+      {saveStatus === "renamed" ? (
+        <output aria-live="polite">Name changed.</output>
+      ) : null}
+      <output className="sr-only" aria-live="polite">
+        {saving ? "Saving document…" : saved ? "Saved." : ""}
+      </output>
       {canEdit && pendingSave ? (
         <div className="vault-notice vault-notice--warn vault-pending-save">
           <output>
@@ -396,12 +302,19 @@ function Documents({
               onClick={() =>
                 run(async () => {
                   const ticket = client.session.capture();
-                  const revision = await client.resumeSave((n) => {
-                    client.session.check(ticket);
-                    setProgress(n);
-                  });
-                  client.session.check(ticket);
-                  confirmed(ticket, revision);
+                  const renamed = pendingRename.current;
+                  if (!renamed) setSaving(true);
+                  try {
+                    const revision = await client.resumeSave((n) => {
+                      client.session.check(ticket);
+                      setProgress(n);
+                    });
+                    if (renamed) finishRename(ticket, renamed, revision);
+                    else confirmed(ticket, revision);
+                  } finally {
+                    setSaving(false);
+                    if (!client.hasPendingSave) pendingRename.current = undefined;
+                  }
                 })
               }
             >
@@ -413,10 +326,20 @@ function Documents({
               onClick={() =>
                 run(async () => {
                   const ticket = client.session.capture();
-                  const result = await client.cancelSave();
+                  const renamed = pendingRename.current;
+                  let revision: Revision | undefined;
+                  const result = await client.cancelSave((committed) => { revision = committed; });
                   client.session.check(ticket);
-                  if ("Committed" in result) confirmed(ticket);
-                  else {
+                  pendingRename.current = undefined;
+                  if ("Committed" in result) {
+                    if (!revision) throw Error("InvalidReceipt");
+                    if (renamed) finishRename(ticket, renamed, revision);
+                    else {
+                      onCommitted({ revision, metadata: editorMetadata() });
+                      reset();
+                      setSaveStatus("saved");
+                    }
+                  } else {
                     setProgress(0);
                     await refresh();
                   }
@@ -430,43 +353,32 @@ function Documents({
       ) : null}
       <div className="vault-document-grid">
         <div className="vault-document-list">
-          <div className="vault-search">
-            <div className="vault-search-input">
-              <Search size={15} aria-hidden />
-              <VaultField
-                label="Search this Vault locally"
-                labelHidden
-                type="search"
-                placeholder="Search titles…"
-                value={query}
-                disabled={disabled}
-                onChange={(e) => { cancelSearch(); setSearchStatus(""); setQuery(e.target.value); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void searchBodies();
-                }}
-              />
-            </div>
-            <VaultButton
-              tone="ghost"
-              className={query.trim() ? undefined : "vault-search-idle"}
-              disabled={disabled || !!searchProgress || !query.trim()}
-              onClick={() => void searchBodies()}
-            >
-              <TextSearch size={14} aria-hidden />
-              Search note contents
-            </VaultButton>
-          </div>
           <div className="vault-document-items">
-            {visibleItems.map((item) => (
+            {canEdit ? <VaultButton
+              tone="primary"
+              size="icon"
+              className="vault-new-document"
+              aria-label="New document"
+              title="New document"
+              disabled={disabled || pendingSave}
+              onClick={() => guard.protect(reset)}
+            >
+              <Plus size={16} aria-hidden />
+            </VaultButton> : null}
+            {items.map((item) => (
               <div className="vault-document-card" key={b64(bytes(item.revision.object))}>
               <VaultButton
                 disabled={disabled || pendingSave}
-                aria-pressed={
-                  !!current &&
-                  b64(bytes(current.revision.object)) ===
-                    b64(bytes(item.revision.object))
-                }
-                onClick={() => guard.protect(() => run(() => open(item)))}
+                aria-pressed={displayedObject === b64(bytes(item.revision.object))}
+                onClick={() => {
+                  if (
+                    displayedRevision &&
+                    displayedObject === b64(bytes(item.revision.object)) &&
+                    displayedRevision.revision === item.revision.revision &&
+                    displayedRevision.deleted === item.revision.deleted
+                  ) return;
+                  guard.protect(() => run(() => open(item)));
+                }}
                 className="vault-document-item"
               >
                 <span className="vault-document-icon" aria-hidden>
@@ -493,6 +405,7 @@ function Documents({
                 disabled={disabled || pendingSave}
                 writesDisabled={writesDisabled}
                 canPurge={canPurge}
+                onRename={rename}
                 onDelete={(target, permanent) => run(async () => {
                   const ticket = client.session.capture();
                   const epoch = editorEpoch.current;
@@ -508,10 +421,6 @@ function Documents({
             {!items.length ? (
               <p className="vault-document-empty">
                 {canEdit ? "No documents yet. Create a note, credential or attachment." : "No documents yet."}
-              </p>
-            ) : !visibleItems.length ? (
-              <p className="vault-document-empty">
-                No titles match. Use Search note contents to look inside notes.
               </p>
             ) : null}
           </div>
@@ -558,14 +467,19 @@ function Documents({
             {!displayedRevision?.deleted ? (
               <VaultButton
                 tone="primary"
+                size="icon"
                 className="vault-editor-save"
+                aria-label="Save document"
+                aria-busy={saving}
+                title={saving ? "Saving document…" : saved ? "Document saved" : "Save document"}
                 disabled={
                   readOnly || !dirty || (kind === "attachment" && !file)
                 }
                 onClick={save}
               >
-                <Save size={15} aria-hidden />
-                Save document
+                {saving ? <LoaderCircle className="vault-save-spinner" aria-hidden /> :
+                  saved ? <Check className="vault-save-check" aria-hidden /> :
+                  <Save aria-hidden />}
               </VaultButton>
             ) : null}
           </div> : current ? <h3 className="break-words font-medium">{title || "Untitled"}</h3> : null}
@@ -591,7 +505,7 @@ function Documents({
                       disabled={readOnly}
                       lineCount={body.split("\n").length}
                       byteCount={byteCount}
-                      saveState={disabled ? "saving" : dirty ? "dirty" : "idle"}
+                      saveState={saving ? "saving" : dirty ? "dirty" : "idle"}
                       error={null}
                       warning={
                         byteCount > 256 * 1024

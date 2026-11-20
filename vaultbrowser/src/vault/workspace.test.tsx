@@ -149,7 +149,7 @@ it("removes a member from another Vault while preserving an interrupted save", a
   x.lose("SaveInline");
   fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Interrupted note" } });
   fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "retained save" } });
-  fireEvent.click(screen.getByText("Save document"));
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
   await screen.findByText("Resume save");
   expect(x.client.hasPendingSave).toBe(true);
 
@@ -179,7 +179,7 @@ async function save(title = "Secret note", body = "private words") {
   fireEvent.change(screen.getByLabelText("Private note body"), {
     target: { value: body },
   });
-  clickAndDiscard(screen.getByText("Save document"));
+  clickAndDiscard(screen.getByRole("button", { name: "Save document" }));
   await screen.findByRole("button", { name: title });
   await waitFor(() =>
     expect(
@@ -187,6 +187,131 @@ async function save(title = "Secret note", body = "private words") {
     ).toBe(false),
   );
 }
+async function changeDocumentName(title: string, newName: string) {
+  const trigger = screen.getByRole("button", { name: `Actions for ${title}` });
+  await waitFor(() => expect(trigger).toHaveProperty("disabled", false));
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Change name" }));
+  const dialog = await screen.findByRole("dialog", { name: "Change document name" });
+  const input = within(dialog).getByLabelText("Document name");
+  const saveName = within(dialog).getByRole("button", { name: "Save name" });
+  expect(document.activeElement === input).toBe(true);
+  expect(input).toHaveProperty("value", title);
+  expect(saveName).toHaveProperty("disabled", true);
+  fireEvent.change(input, { target: { value: newName } });
+  fireEvent.click(saveName);
+}
+it("changes a saved note's name from its menu without switching the open draft", async () => {
+  const x = await mounted();
+  await x.open();
+  await save("Original", "saved body");
+  const original = x.revisions[0];
+  fireEvent.click(screen.getByRole("button", { name: "New document" }));
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Draft" } });
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "draft body" } });
+  await changeDocumentName("Original", "Renamed");
+  await screen.findByRole("button", { name: "Renamed" });
+  expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Draft");
+  expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "draft body");
+  expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull();
+  const revision = x.revisions.at(-1)!;
+  expect(revision.object).toEqual(original.object);
+  expect(revision.revision).toBe(2n);
+  const doc = await x.client.read(revision);
+  expect(doc.metadata.title).toBe("Renamed");
+  expect(new TextDecoder().decode(doc.plaintext)).toBe("saved body");
+  doc.plaintext.fill(0);
+});
+it("changes an attachment's name without asking for the original file again", async () => {
+  const x = await mounted();
+  await x.open();
+  largeAttachment("Original attachment");
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+  await screen.findByRole("button", { name: "Original attachment" });
+  await changeDocumentName("Original attachment", "Renamed attachment");
+  await screen.findByRole("button", { name: "Renamed attachment" });
+  const doc = await x.client.read(x.revisions.at(-1)!);
+  expect(doc.metadata).toEqual({
+    kind: "attachment",
+    title: "Renamed attachment",
+    filename: "large.bin",
+    mime: "application/octet-stream",
+  });
+  expect(doc.plaintext).toEqual(new Uint8Array(262145).fill(7));
+  doc.plaintext.fill(0);
+});
+it("updates the label of downloaded credentials while preserving other fields", async () => {
+  const x = await mounted();
+  await x.open();
+  const original = { label: "Login", username: "alice", password: "secret", URL: "https://example.test", notes: "memo", custom: { enabled: true } };
+  await x.client.save({ kind: "credential", title: original.label }, new TextEncoder().encode(JSON.stringify(original)));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Vaults" }));
+  const card = await screen.findByRole("button", { name: original.label });
+  await waitFor(() => expect(card).toHaveProperty("disabled", false));
+  fireEvent.click(card);
+  await waitFor(() => expect(screen.getByLabelText("Document title")).toHaveProperty("value", original.label));
+  await changeDocumentName(original.label, "Renamed login");
+  await screen.findByRole("button", { name: "Renamed login" });
+  const download = vi.spyOn(x.client.session, "download").mockImplementation((plaintext) => {
+    expect(JSON.parse(new TextDecoder().decode(plaintext))).toEqual({ ...original, label: "Renamed login" });
+  });
+  const button = screen.getByRole("button", { name: "Download document" });
+  await waitFor(() => expect(button).toHaveProperty("disabled", false));
+  fireEvent.click(button);
+  await waitFor(() => expect(download).toHaveBeenCalledOnce());
+  await waitFor(() => expect(button).toHaveProperty("disabled", false));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+it.each(["Resume save", "Cancel save"])("reconciles an interrupted change name via %s without discarding edits", async (action) => {
+  const x = await mounted();
+  await x.open();
+  await save("Original", "saved body");
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "unsaved edit" } });
+  x.lose("SaveInline");
+  await changeDocumentName("Original", "Renamed");
+  const reconcile = await screen.findByRole("button", { name: action });
+  await waitFor(() => expect(reconcile).toHaveProperty("disabled", false));
+  const history = vi.spyOn(x.actor, "list_history").mockRejectedValueOnce(Error("network"));
+  fireEvent.click(reconcile);
+  const renamed = await screen.findByRole("button", { name: "Renamed" });
+  expect(history).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Renamed");
+  expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "unsaved edit");
+  const read = vi.spyOn(x.client, "read");
+  fireEvent.click(renamed);
+  expect(read).not.toHaveBeenCalled();
+  const saveAgain = screen.getByRole("button", { name: "Save document" });
+  await waitFor(() => expect(saveAgain).toHaveProperty("disabled", false));
+  fireEvent.click(saveAgain);
+  await waitFor(() => {
+    expect(screen.queryByRole("alert")?.textContent).toBeUndefined();
+    expect(x.revisions.at(-1)!.revision).toBe(3n);
+  });
+});
+it("retries a committed attachment rename when its revision cannot be read during cancellation", async () => {
+  const x = await mounted();
+  await x.open();
+  largeAttachment("Original attachment");
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+  await screen.findByRole("button", { name: "Original attachment" });
+  x.lose("CommitRevision");
+  await changeDocumentName("Original attachment", "Renamed attachment");
+  const cancel = await screen.findByRole("button", { name: "Cancel save" });
+  await waitFor(() => expect(cancel).toHaveProperty("disabled", false));
+  const { vault, object, revision, sequence } = x.revisions.at(-1)!;
+  vi.spyOn(x.actor, "get_upload_status").mockResolvedValue({ Ok: { Committed: { vault, object, revision, sequence } } });
+  const readManifest = vi.spyOn(x.actor, "get_manifest").mockRejectedValueOnce(Error("network"));
+  fireEvent.click(cancel);
+  await waitFor(() => expect(readManifest).toHaveBeenCalledOnce());
+  await waitFor(() => expect(cancel).toHaveProperty("disabled", false));
+  expect(x.client.hasPendingSave).toBe(true);
+  expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Original attachment");
+  fireEvent.click(cancel);
+  await screen.findByRole("button", { name: "Renamed attachment" });
+  expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Renamed attachment");
+  expect(x.client.hasPendingSave).toBe(false);
+  expect(x.revisions).toHaveLength(2);
+});
 async function requestDocumentDeletion(title: string, permanent = false) {
   const trigger = screen.getByRole("button", { name: `Actions for ${title}` });
   await waitFor(() => expect(trigger).toHaveProperty("disabled", false));
@@ -248,7 +373,7 @@ async function confirmDocumentDeletion(title: string, permanent = false) {
 it("deletes only the document chosen from its card and requires exact delete confirmation", async () => {
   const x = await mounted(); await x.open();
   await save("Keep", "keep body");
-  clickAndDiscard(screen.getByText("New document"));
+  clickAndDiscard(screen.getByRole("button", { name: "New document" }));
   await save("Remove", "remove body");
   expect(screen.queryByRole("button", { name: "Delete document" })).toBeNull();
   expect(screen.queryByText("Document settings")).toBeNull();
@@ -293,12 +418,12 @@ function largeAttachment(title: string) {
     target: { files: [file] },
   });
 }
-it("opens with II, saves and reads encrypted notes, searches locally, retains drafts and root through refresh", async () => {
+it("opens with II, saves and reads encrypted notes, retains drafts and root through refresh", async () => {
   const x = await mounted();
   await x.open();
   expect(screen.queryByText(/Unlock|passkey/i)).toBeNull();
   await save();
-  clickAndDiscard(screen.getByText("New document"));
+  clickAndDiscard(screen.getByRole("button", { name: "New document" }));
   clickAndDiscard(screen.getByRole("button", { name: "Secret note" }));
   await waitFor(() =>
     expect(
@@ -320,17 +445,31 @@ it("opens with II, saves and reads encrypted notes, searches locally, retains dr
   expect(
     (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
   ).toBe("unsaved draft");
-  fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
-    target: { value: "private words" },
+});
+it("shows saving and confirmed states on the save icon, then resets it on the next edit", async () => {
+  const x = await mounted();
+  await x.open();
+  const persist = x.client.save.bind(x.client);
+  let release!: () => void;
+  const paused = new Promise<void>((resolve) => { release = resolve; });
+  vi.spyOn(x.client, "save").mockImplementationOnce(async (...args) => {
+    await paused;
+    return persist(...args);
   });
-  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
-  fireEvent.click(screen.getByText("Search note contents"));
-  await screen.findByText("Note body search complete.");
-  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
-    target: { value: "absent" },
-  });
-  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
+  const body = screen.getByLabelText("Private note body");
+  const button = screen.getByRole("button", { name: "Save document" });
+  expect(button.textContent).toBe("");
+  fireEvent.change(body, { target: { value: "draft" } });
+  fireEvent.click(button);
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  expect(button).toHaveProperty("disabled", true);
+  release();
+  await screen.findByText("Saved.");
+  expect(button.getAttribute("title")).toBe("Document saved");
+  expect(button.getAttribute("aria-busy")).toBe("false");
+  fireEvent.change(body, { target: { value: "another edit" } });
+  expect(button.getAttribute("title")).toBe("Save document");
+  expect(button).toHaveProperty("disabled", false);
 });
 it("keeps the saved note in the editor and saves further edits as revisions of the same document", async () => {
   const x = await mounted();
@@ -340,7 +479,7 @@ it("keeps the saved note in the editor and saves further edits as revisions of t
   expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Working note");
   expect(screen.getByLabelText("Private note body")).toBe(editor);
   expect(editor).toHaveProperty("value", "first draft");
-  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", true);
   const object = x.revisions.at(-1)!.object;
   await save("Working note", "second draft");
   await save("Renamed note", "third draft");
@@ -352,6 +491,36 @@ it("keeps the saved note in the editor and saves further edits as revisions of t
   expect(new TextDecoder().decode(doc.plaintext)).toBe("third draft");
   doc.plaintext.fill(0);
 });
+
+it("keeps an open note's title edit without reading its displayed revision again", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "private words" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+  const item = await screen.findByRole("button", { name: "Untitled" });
+  await waitFor(() => expect(item).toHaveProperty("disabled", false));
+  const object = x.revisions[0].object;
+  const read = vi.spyOn(x.client, "read");
+
+  fireEvent.click(item);
+  expect(read).not.toHaveBeenCalled();
+  const title = screen.getByLabelText("Document title");
+  fireEvent.change(title, { target: { value: "Renamed note" } });
+  fireEvent.click(item);
+  expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull();
+  expect(title).toHaveProperty("value", "Renamed note");
+  expect(read).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+  await screen.findByRole("button", { name: "Renamed note" });
+  expect(x.revisions.at(-1)!.object).toEqual(object);
+  expect(x.revisions.at(-1)!.revision).toBe(2n);
+  const doc = await x.client.read(x.revisions.at(-1)!);
+  expect(doc.metadata.title).toBe("Renamed note");
+  expect(new TextDecoder().decode(doc.plaintext)).toBe("private words");
+  doc.plaintext.fill(0);
+});
+
 it("retries exact create after refresh and key failure without duplicating a Vault", async () => {
   const x = await mounted();
   x.loseCreate();
@@ -397,7 +566,7 @@ it.each([
       target: { value: "inline body" },
     });
   } else largeAttachment("Lost attachment");
-  fireEvent.click(screen.getByText("Save document"));
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
   await screen.findByRole("alert");
   expect(x.client.hasPendingSave).toBe(true);
   fireEvent.click(
@@ -425,7 +594,7 @@ it("views a historical revision read-only and downloads the displayed version th
   await waitFor(() => expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "original body"));
   expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Original title");
   expect(screen.getByLabelText("Document title")).toHaveProperty("disabled", true);
-  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", true);
   const downloads: { body: string; filename: string }[] = [];
   vi.spyOn(x.client.session, "download").mockImplementation((data, filename) => {
     downloads.push({ body: new TextDecoder().decode(data), filename });
@@ -519,6 +688,7 @@ it.each(["switch", "close", "unmount"])(
     const x = await mounted();
     await x.open();
     await save();
+    fireEvent.click(screen.getByRole("button", { name: "New document" }));
     fireEvent.change(screen.getByLabelText("Document title"), {
       target: { value: "private draft" },
     });
@@ -579,7 +749,7 @@ it("saves credentials as user content and an attachment without extra authentica
     ["Credential notes", "memo"],
   ])
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
-  clickAndDiscard(screen.getByText("Save document"));
+  clickAndDiscard(screen.getByRole("button", { name: "Save document" }));
   await screen.findByRole("button", { name: "Login" });
   clickAndDiscard(screen.getByRole("button", { name: "Login" }));
   await waitFor(() =>
@@ -590,7 +760,7 @@ it("saves credentials as user content and an attachment without extra authentica
   await waitFor(() => expect(screen.getByText("Show password")).toHaveProperty("disabled", false));
   clickAndDiscard(screen.getByText("Show password"));
   expect(screen.getByLabelText("Password").getAttribute("type")).toBe("text");
-  clickAndDiscard(screen.getByText("New document"));
+  clickAndDiscard(screen.getByRole("button", { name: "New document" }));
   fireEvent.change(screen.getByLabelText("Document type"), {
     target: { value: "attachment" },
   });
@@ -604,7 +774,7 @@ it("saves credentials as user content and an attachment without extra authentica
   fireEvent.change(screen.getByLabelText("Attachment (10 MiB maximum)"), {
     target: { files: [file] },
   });
-  clickAndDiscard(screen.getByText("Save document"));
+  clickAndDiscard(screen.getByRole("button", { name: "Save document" }));
   await screen.findByRole("button", { name: "File" });
   const doc = await x.client.read(x.revisions.at(-1)!);
   expect(doc.metadata.filename).toBe("note.txt");
@@ -716,13 +886,13 @@ it("retains the draft after definitive optimistic conflict and permits reopening
   fireEvent.change(screen.getByLabelText("Private note body"), {
     target: { value: "conflicting draft" },
   });
-  clickAndDiscard(screen.getByText("Save document"));
+  clickAndDiscard(screen.getByRole("button", { name: "Save document" }));
   await screen.findByText(/Another update changed/);
   expect(
     (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
   ).toBe("conflicting draft");
   expect(x.client.hasPendingSave).toBe(false);
-  fireEvent.click(screen.getByRole("button", {name:"Refresh documents"}));
+  fireEvent.click(screen.getByRole("button", {name:"Refresh Vaults"}));
   await waitFor(() =>
     expect(
       (screen.getByRole("button", { name: "Secret note" }) as HTMLButtonElement)
@@ -792,7 +962,7 @@ it("keeps the open draft and root when the account disclosure is toggled", async
   expect(x.client.session.root).toBeUndefined();
   expect(screen.queryByDisplayValue("unsaved private draft")).toBeNull();
 });
-it("toggles navigation without disturbing drafts and returns focus before switching Vaults", async () => {
+it("collapses and reopens desktop Vault navigation without disturbing a draft", async () => {
   const x = await mounted();
   await x.open();
   fireEvent.change(screen.getByLabelText("Document title"), {
@@ -802,14 +972,20 @@ it("toggles navigation without disturbing drafts and returns focus before switch
   const toggle = screen.getByRole("button", {
     name: "Toggle Vault navigation",
   });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  clickAndDiscard(toggle);
+  expect(screen.queryByRole("button", { name: "Vault 2" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create Vault" })).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(x.client.session.root).toBe(root);
+  expect(screen.getByDisplayValue("private draft")).toBeTruthy();
+  fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(x.client.session.root).toBe(root);
   expect(screen.getByDisplayValue("private draft")).toBeTruthy();
   clickAndDiscard(screen.getByRole("button", { name: "Vault 2" }));
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  expect(document.activeElement).toBe(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(screen.queryByDisplayValue("private draft")).toBeNull();
   await waitFor(() =>
     expect(Array.from(x.client.header?.id ?? [])).toEqual(
@@ -817,6 +993,18 @@ it("toggles navigation without disturbing drafts and returns focus before switch
     ),
   );
   await screen.findByLabelText("Document title");
+});
+it("keeps the current draft and skips canister reads when reselecting an open Vault", async () => {
+  const x = await mounted();
+  await x.open();
+  const header = vi.spyOn(x.actor, "get_vault_header");
+  const records = vi.spyOn(x.actor, "list_objects");
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Unsaved draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Vault 1" }));
+  expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull();
+  expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Unsaved draft");
+  expect(header).not.toHaveBeenCalled();
+  expect(records).not.toHaveBeenCalled();
 });
 it("shows funding directly beside the first Vault creation step at zero balance", async () => {
   const x = await mounted();
@@ -843,7 +1031,7 @@ it("allows owner credit below the valid canister reserve and reports server deni
   fireEvent.change(screen.getByLabelText("Private note body"), {
     target: { value: "retry body" },
   });
-  clickAndDiscard(screen.getByText("Save document"));
+  clickAndDiscard(screen.getByRole("button", { name: "Save document" }));
   await screen.findByRole("alert");
   expect((screen.getByText("Resume save") as HTMLButtonElement).disabled).toBe(
     false,
@@ -881,7 +1069,7 @@ it("purges a selected document and its history at zero credit while retaining an
   const x = await mounted();
   await x.open();
   await save("Keep", "retained body");
-  clickAndDiscard(screen.getByText("New document"));
+  clickAndDiscard(screen.getByRole("button", { name: "New document" }));
   await save("Remove", "old body");
   clickAndDiscard(screen.getByRole("button", { name: "Remove" }));
   await waitFor(() =>
@@ -895,7 +1083,7 @@ it("purges a selected document and its history at zero credit while retaining an
   x.setBalance(0n);
   clickAndDiscard(screen.getByText("Refresh balance"));
   await screen.findByLabelText("Prepaid balance: 0 cycles");
-  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", true);
   const trigger = screen.getByRole("button", { name: "Actions for Remove" });
   fireEvent.keyDown(trigger, { key: "ArrowDown" });
   const ordinary = await screen.findByRole("menuitem", { name: "Delete document" });
@@ -971,7 +1159,7 @@ it("reconciles a lost cancellation reply while retaining the pending save", asyn
   await x.open();
   x.lose("PutChunk");
   largeAttachment("Cancelled attachment");
-  fireEvent.click(screen.getByText("Save document"));
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
   await screen.findByRole("alert");
   x.lose("CancelUpload");
   clickAndDiscard(screen.getByText("Cancel save"));
@@ -1111,7 +1299,7 @@ it("keeps an already open key usable at zero credit while disabling new writes",
   await x.open();
   expect(x.client.session.root).toBe(root);
   expect(derive).not.toHaveBeenCalled();
-  expect((screen.getByText("Save document") as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Save document" }) as HTMLButtonElement).disabled).toBe(true);
 });
 it("refreshes credit after a failed paid operation too",async()=>{
   const x=await mounted();
@@ -1255,7 +1443,7 @@ it("does not transfer a pending copy status to another credential with the same 
   fireEvent.change(screen.getByLabelText("Document type"),{target:{value:"credential"}});
   fireEvent.change(screen.getByLabelText("Document title"),{target:{value:title}});
   fireEvent.change(screen.getByLabelText("Password"),{target:{value:"same password"}});
-  fireEvent.click(screen.getByText("Save document"));await screen.findByRole("button",{name:title});
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));await screen.findByRole("button",{name:title});
   await waitFor(()=>expect(screen.getByText("Refresh Vaults")).toHaveProperty("disabled",false));
   fireEvent.click(screen.getByRole("button",{name:"New document"}));
  }
@@ -1307,78 +1495,33 @@ it("keeps browser keys and the draft when key removal is cancelled",async()=>{
  fireEvent.click(screen.getByRole("button",{name:"Back to Vault"}));
  expect(screen.getByLabelText("Private note body")).toHaveProperty("value","private draft");
 });
-it("lists titles without body reads and searches note bodies only on explicit request", async () => {
+it("refreshes Vaults and document titles together without reading bodies", async () => {
   const x = await mounted();
   await x.open();
   await save();
+  const header = vi.spyOn(x.actor, "get_vault_header");
+  const balance = vi.spyOn(x.actor, "account_balance");
+  const keyCost = vi.spyOn(x.actor, "vault_key_cost");
   const reads = vi.spyOn(x.actor, "get_chunk");
-  fireEvent.click(screen.getByRole("button", {name:"Refresh documents"}));
+  const vaults = vi.spyOn(x.actor, "list_accessible_vaults");
+  const documents = vi.spyOn(x.actor, "list_objects");
+  expect(screen.queryByRole("button", { name: "Refresh documents" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", {name:"Refresh Vaults"}));
   await waitFor(() =>
     expect(
-      (screen.getByRole("button", {name:"Refresh documents"}) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", {name:"Refresh Vaults"}) as HTMLButtonElement).disabled,
     ).toBe(false),
   );
+  await waitFor(() => expect(balance).toHaveBeenCalledOnce());
+  expect(header).toHaveBeenCalledOnce();
+  expect(keyCost).not.toHaveBeenCalled();
+  expect(vaults).toHaveBeenCalledOnce();
+  expect(documents).toHaveBeenCalledOnce();
   expect(reads).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
-    target: { value: "private words" },
-  });
-  expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
-  expect(reads).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByText("Search note contents"));
-  await screen.findByText("Note body search complete.");
   expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
-  expect(reads).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Private documents" })).toBeNull();
 });
-it.each(["stop", "query", "close", "unmount"])(
-  "fences late body search after %s without locking other actions",
-  async (mode) => {
-    const x = await mounted();
-    await x.open();
-    await save();
-    const original = x.actor.get_chunk;
-    let finish!: () => void;
-    vi.spyOn(x.actor, "get_chunk").mockImplementation(
-      (...args) =>
-        new Promise((resolve) => {
-          finish = () => {
-            void original(...args).then(resolve);
-          };
-        }),
-    );
-    fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
-      target: { value: "private words" },
-    });
-    fireEvent.click(screen.getByText("Search note contents"));
-    await waitFor(() => expect(finish).toBeTypeOf("function"));
-    expect(screen.getByText("Searching note bodies: 0 / 1")).toBeTruthy();
-    expect(
-      (screen.getByText("New document") as HTMLButtonElement).disabled,
-    ).toBe(false);
-    expect(
-      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
-    ).toBe(false);
-    if (mode === "stop") fireEvent.click(screen.getByText("Stop search"));
-    else if (mode === "query")
-      fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
-        target: { value: "absent" },
-      });
-    else if (mode === "close") fireEvent.click(screen.getByText("Close Vault"));
-    else x.view.unmount();
-    await act(async () => {
-      finish();
-      await new Promise((r) => setTimeout(r, 10));
-    });
-    expect(screen.queryByText("Note body search complete.")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Secret note" })).toBeNull();
-    if (mode === "close") {
-      await x.open();
-      expect(
-        (screen.getByLabelText("Search this Vault locally") as HTMLInputElement)
-          .value,
-      ).toBe("");
-    }
-  },
-);
 it("unlocks the workspace before the completed operation's balance refresh returns", async () => {
   const x = await mounted();
   await x.open();
@@ -1421,7 +1564,7 @@ it("confirms an interrupted committed save after credit runs out", async () => {
   });
   fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Committed once" } });
   fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "Recover my save" } });
-  fireEvent.click(screen.getByText("Save document"));
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
   await screen.findByLabelText("Prepaid balance: 0 cycles");
   const resume = screen.getByRole("button", { name: "Resume save" });
   await waitFor(() => expect(resume).toHaveProperty("disabled", false));
@@ -1429,7 +1572,7 @@ it("confirms an interrupted committed save after credit runs out", async () => {
   await screen.findByText("Saved.");
   expect(x.revisions).toHaveLength(1);
   expect(x.calls[0]).toEqual(x.calls[1]);
-  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", true);
 });
 
 it("recovers a delivered Vault creation receipt without enough credit to derive a key", async () => {
@@ -1561,92 +1704,27 @@ it("distinguishes a low service reserve from a need to add owner credit", async 
   expect(screen.getByText("Refresh Vaults")).toHaveProperty("disabled", false);
 });
 
-it("confirms saved and keeps a clean editable document before a delayed refresh, then reports refresh failure as saved", async () => {
+it("updates the document card from the save receipt without refetching the lists or key price", async () => {
   const x = await mounted();
   await x.open();
-  let fail!: () => void;
-  vi.spyOn(x.actor, "list_objects").mockImplementationOnce(
-    () =>
-      new Promise((_resolve, reject) => {
-        fail = () => reject(Error("network"));
-      }),
-  );
-  fireEvent.change(screen.getByLabelText("Document title"), {
-    target: { value: "Saved first" },
-  });
-  fireEvent.change(screen.getByLabelText("Private note body"), {
-    target: { value: "confirmed body" },
-  });
-  fireEvent.click(screen.getByText("Save document"));
-  await screen.findByText("Saved.");
-  expect(x.revisions).toHaveLength(1);
-  expect(
-    (screen.getByLabelText("Document title") as HTMLInputElement).value,
-  ).toBe("Saved first");
-  expect(
-    (screen.getByLabelText("Private note body") as HTMLTextAreaElement).value,
-  ).toBe("confirmed body");
-  expect(
-    (screen.getByText("Save document") as HTMLButtonElement).disabled,
-  ).toBe(true);
-  await waitFor(() =>
-    expect(
-      (screen.getByText("Refresh balance") as HTMLButtonElement).disabled,
-    ).toBe(false),
-  );
-  expect(x.client.hasPendingSave).toBe(false);
-  await act(async () => fail());
-  await screen.findByText(
-    "Saved, but the document list could not be refreshed. Refresh documents to update the list.",
-  );
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByText("Resume save")).toBeNull();
-  expect(x.calls).toHaveLength(1);
+  const documents = vi.spyOn(x.actor, "list_objects");
+  const roster = vi.spyOn(x.actor, "list_accessible_vaults");
+  const uploads = vi.spyOn(x.actor, "list_pending_uploads");
+  const header = vi.spyOn(x.actor, "get_vault_header");
+  const balance = vi.spyOn(x.actor, "account_balance");
+  const keyCost = vi.spyOn(x.actor, "vault_key_cost");
+  await save("Saved first", "confirmed body");
+  await waitFor(() => expect(balance).toHaveBeenCalledOnce());
+  expect(documents).not.toHaveBeenCalled();
+  expect(roster).not.toHaveBeenCalled();
+  expect(uploads).not.toHaveBeenCalled();
+  expect(header).not.toHaveBeenCalled();
+  expect(keyCost).not.toHaveBeenCalled();
+  expect(x.calls.filter(({ action }) => "SaveInline" in action)).toHaveLength(1);
+  expect(screen.getByLabelText("Document title")).toHaveProperty("value", "Saved first");
+  expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "confirmed body");
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", true);
 });
-
-it("preserves completed body matches when refreshed revisions are unchanged", async () => {
-  const x = await mounted();
-  await x.open();
-  await save();
-  fireEvent.change(screen.getByLabelText("Search this Vault locally"), {
-    target: { value: "private words" },
-  });
-  fireEvent.click(screen.getByText("Search note contents"));
-  await screen.findByText("Note body search complete.");
-  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
-  const list = vi.spyOn(x.actor, "list_objects");
-  const before = list.mock.calls.length;
-  fireEvent.click(screen.getByRole("button", {name:"Refresh documents"}));
-  await waitFor(() =>
-    expect(list.mock.calls.length).toBeGreaterThan(before),
-  );
-  expect(screen.getByRole("button", { name: "Secret note" })).toBeTruthy();
-  expect(screen.getByText("Note body search complete.")).toBeTruthy();
-});
-it.each(["close", "unmount"])(
-  "ignores a confirmed-save refresh failure after %s",
-  async (mode) => {
-    const x = await mounted();
-    await x.open();
-    let fail!: () => void;
-    vi.spyOn(x.actor, "list_objects").mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          fail = () => reject(Error("network"));
-        }),
-    );
-    fireEvent.change(screen.getByLabelText("Private note body"), {
-      target: { value: "private saved text" },
-    });
-    fireEvent.click(screen.getByText("Save document"));
-    await screen.findByText("Saved.");
-    if (mode === "close") fireEvent.click(screen.getByText("Close Vault"));
-    else x.view.unmount();
-    await act(async () => fail());
-    expect(screen.queryByText(/Saved, but/)).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
-  },
-);
 
 it.each([false, true])(
   "private auto-lock clears private state without closing authenticated funding (unlocked=%s)",
@@ -1749,8 +1827,8 @@ it("shows only live role capabilities for shared Vaults and closes on revocation
   fireEvent.keyDown(screen.getByRole("menuitem", { name: "Delete document" }), { key: "Escape" });
   x.setRole(x.headers[1].id, { Viewer: null });
   fireEvent(window, new Event("focus"));
-  await waitFor(() => expect(screen.queryByText("Save document")).toBeNull());
-  expect(screen.queryByText("New document")).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Save document" })).toBeNull());
+  expect(screen.queryByRole("button", { name: "New document" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Shared note" }));
   await screen.findByText("private words");
   expect(screen.queryByText("Delete document")).toBeNull();
@@ -1762,7 +1840,7 @@ it("shows only live role capabilities for shared Vaults and closes on revocation
   await waitFor(() => expect(screen.queryByRole("button", { name: /Shared team Vault/ })).toBeNull());
 });
 
-it.each(["open", "Refresh documents", "Refresh Vaults", "document page"])(
+it.each(["open", "Refresh Vaults", "document page"])(
   "removes the exact denied shared Vault from the roster on %s",
   async (action) => {
     const x = await mounted();
@@ -1782,9 +1860,7 @@ it.each(["open", "Refresh documents", "Refresh Vaults", "document page"])(
     if (action === "document page")
       vi.spyOn(x.actor, "shared_list_objects").mockResolvedValueOnce({ Err: { Unauthorized: null } });
     else x.setRole(header.id, null);
-    const control = action === "open" ? shared : screen.getByRole("button", {
-      name: action === "document page" ? "Refresh documents" : action,
-    });
+    const control = action === "open" ? shared : screen.getByRole("button", { name: "Refresh Vaults" });
     await waitFor(() => expect(control).toHaveProperty("disabled", false));
     fireEvent.click(control);
     await waitFor(() => expect(screen.queryByRole("button", { name: /Shared team Vault/ })).toBeNull());
@@ -1856,14 +1932,14 @@ it("scopes shared open, document refresh and save to the grant when the member h
   const accessList = vi.spyOn(x.actor, "list_accessible_vaults");
   const sharedReads = vi.spyOn(x.actor, "shared_list_objects");
   fireEvent.click(shared);
-  const refresh = await screen.findByRole("button", { name: "Refresh documents" });
+  const refresh = await screen.findByRole("button", { name: "Refresh Vaults" });
   await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
   fireEvent.click(refresh);
   await waitFor(() => expect(refresh).toHaveProperty("disabled", false));
   await save("Shared funded note");
-  await waitFor(() => expect(sharedReads).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(sharedReads).toHaveBeenCalledTimes(2));
   expect(ownerUploads).not.toHaveBeenCalled();
-  expect(accessList).not.toHaveBeenCalled();
+  expect(accessList).toHaveBeenCalledOnce();
 });
 
 it.each([
@@ -1882,14 +1958,14 @@ it.each([
 
   fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Team note" } });
   fireEvent.change(screen.getByLabelText("Private note body"), { target: { value: "Editor draft" } });
-  expect(screen.getByText("Save document")).toHaveProperty("disabled", false);
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", false);
   x.setBalance(0n);
   vi.spyOn(x.actor, "get_spending_status").mockResolvedValue({ Ok: status });
   fireEvent.click(screen.getByText("Refresh balance"));
   await screen.findByLabelText("Prepaid balance: 0 cycles");
 
-  await waitFor(() => expect(screen.getByText("Save document")).toHaveProperty("disabled", disabled));
-  expect(screen.getByRole("button", { name: "Refresh documents" })).toHaveProperty("disabled", false);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", disabled));
+  expect(screen.getByRole("button", { name: "Refresh Vaults" })).toHaveProperty("disabled", false);
 });
 
 it.each(["omitted", "changed in the list", "still listed", "outside the loaded page"])(
@@ -1972,7 +2048,7 @@ it("requires a fresh explicit credential reveal when a Viewer opens an older rev
   await reveal();
   expect(screen.queryByText("new private password")).toBeNull();
   expect(screen.queryByText("old private password")).toBeNull();
-  expect(screen.queryByText("Save document")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save document" })).toBeNull();
   fireEvent.click(await reveal());
   await screen.findByText("old private password");
 });
@@ -2094,7 +2170,7 @@ it("refuses member administration for a shared Vault while its key service is un
   await expect(x.client.removeMember(guest)).rejects.toThrow("Unauthorized");
 });
 
-it("closes the previous private view when reopening its selected owner header fails", async () => {
+it("clears the previous private view when switching to a Vault whose owner header fails", async () => {
   const x = await mounted();
   await x.open();
   const input = screen.getByLabelText("Document title") as HTMLInputElement;
@@ -2102,12 +2178,12 @@ it("closes the previous private view when reopening its selected owner header fa
   vi.spyOn(x.actor, "get_vault_header").mockRejectedValueOnce(
     Error("NetworkUnavailable"),
   );
-  clickAndDiscard(screen.getByText("Vault 1"));
+  clickAndDiscard(screen.getByRole("button", { name: "Vault 2" }));
   await screen.findByText("Retry opening Vault");
   expect(input.value).toBe("");
   expect(screen.queryByLabelText("Document title")).toBeNull();
   expect(x.client.session.root).toBeUndefined();
-  await openVaultSettings(undefined, true);
+  await openVaultSettings("Vault 2", true);
   expect(screen.getByText("Vault members")).toBeTruthy();
 });
 
@@ -2128,7 +2204,7 @@ it.each([
   fireEvent.click(screen.getByText("Refresh balance"));
   await screen.findByLabelText(`Prepaid balance: ${balance.toLocaleString("en-US")} cycles`);
   await waitFor(() => expect(screen.getByText("Refresh balance")).toHaveProperty("disabled", false));
-  const saveButton = screen.getByText("Save document");
+  const saveButton = screen.getByRole("button", { name: "Save document" });
   expect(saveButton).toHaveProperty("disabled", disabled);
   if (disabled) {
     fireEvent.click(saveButton);
@@ -2149,13 +2225,13 @@ it("pauses fresh owner saves while the post-operation balance is unresolved", as
   fireEvent.click(screen.getByRole("button", {name:"Refresh Vaults"}));
   await waitFor(() => expect(finish).toBeDefined());
   await waitFor(() => expect(screen.getByRole("button", {name:"Refresh Vaults"})).toHaveProperty("disabled", false));
-  const disabledWhileWaiting = (screen.getByText("Save document") as HTMLButtonElement).disabled;
-  if (disabledWhileWaiting) fireEvent.click(screen.getByText("Save document"));
+  const disabledWhileWaiting = (screen.getByRole("button", { name: "Save document" }) as HTMLButtonElement).disabled;
+  if (disabledWhileWaiting) fireEvent.click(screen.getByRole("button", { name: "Save document" }));
   const callsWhileWaiting = mutate.mock.calls.length;
   await act(async () => finish({Ok:15_000_000n}));
   expect(disabledWhileWaiting).toBe(true);
   expect(callsWhileWaiting).toBe(0);
-  expect(screen.getByText("Save document")).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Save document" })).toHaveProperty("disabled", true);
   expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "Unsaved body");
 });
 
