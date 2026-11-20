@@ -2,6 +2,7 @@
 // What: Interactive popup UI for Kinic Vault Chrome extension (auth, autofill, live TOTP, CRUD, generator, settings).
 // Why: Run Internet Identity login directly from user click activation and keep secrets out of persistent storage.
 import {
+  matchesDomain,
   normalizeDomain,
   parseTagsInput
 } from "@kinic/vault-crypto/credential";
@@ -11,7 +12,11 @@ import {
   generatePassphrase,
   generatePassword
 } from "@kinic/vault-crypto/password";
-import { formatTotpCode, generateTotp } from "@kinic/vault-crypto/totp";
+import {
+  formatTotpCode,
+  generateTotp,
+  parseTotpInput
+} from "@kinic/vault-crypto/totp";
 import { logoutInternetIdentity } from "../src/auth-client.ts";
 import { isWebOriginFillable } from "../src/form-detector.ts";
 import { RUNTIME_CONFIG } from "../src/runtime-config.ts";
@@ -42,6 +47,9 @@ let editingItem: DecryptedItemView | null = null;
 let detailPasswordVisible = false;
 let totpTimer: number | null = null;
 let toastTimer: number | null = null;
+let deleteConfirmTimer: number | null = null;
+let deleteConfirmArmed = false;
+let listRequestSeq = 0;
 let generatorMode: "password" | "passphrase" = "password";
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -88,12 +96,23 @@ function setRootView(mode: "loading" | "signed-out" | "locked" | "unlocked"): vo
   el("btn-lock").hidden = mode !== "unlocked";
 }
 
+function resetDeleteConfirmation(): void {
+  deleteConfirmArmed = false;
+  if (deleteConfirmTimer !== null) {
+    window.clearTimeout(deleteConfirmTimer);
+    deleteConfirmTimer = null;
+  }
+  const btn = document.getElementById("btn-detail-delete");
+  if (btn) btn.textContent = "Delete";
+}
+
 function setVaultSubScreen(screen: "list" | "detail" | "editor"): void {
   el("vault-list-screen").hidden = screen !== "list";
   el("vault-detail-screen").hidden = screen !== "detail";
   el("vault-editor-screen").hidden = screen !== "editor";
   if (screen !== "detail") {
     stopTotpTimer();
+    resetDeleteConfirmation();
   }
 }
 
@@ -242,6 +261,7 @@ function createItemCard(
 }
 
 async function refreshItemList(): Promise<void> {
+  const seq = ++listRequestSeq;
   const result = await sendSw<{
     matches: VaultItemSummary[];
     items: VaultItemSummary[];
@@ -252,6 +272,7 @@ async function refreshItemList(): Promise<void> {
     query: searchQuery,
     filter: currentFilter
   });
+  if (seq !== listRequestSeq) return;
 
   const showMatches =
     !searchQuery.trim() &&
@@ -278,14 +299,18 @@ async function refreshItemList(): Promise<void> {
   }
 }
 
-async function handleFillItem(objectIdHex: string): Promise<void> {
+async function handleFillItem(
+  objectIdHex: string,
+  allowCrossDomain = false
+): Promise<void> {
   try {
     const result = await sendSw<{
       filled: boolean;
       totp: { code: string } | null;
     }>({
       type: "fill-active-tab",
-      objectIdHex
+      objectIdHex,
+      allowCrossDomain
     });
     if (result.totp?.code) {
       await navigator.clipboard.writeText(result.totp.code).catch(() => {});
@@ -347,6 +372,7 @@ async function openDetail(objectIdHex: string): Promise<void> {
 
 function renderDetail(): void {
   stopTotpTimer();
+  resetDeleteConfirmation();
   const item = detailItem;
   if (!item) return;
 
@@ -377,12 +403,23 @@ function renderDetail(): void {
   headerCard.appendChild(hdr);
 
   if (item.summary.kind === "credential" && isWebOriginFillable(activeTabUrl)) {
+    const activeDomain = normalizeDomain(activeTabUrl);
+    const sameSite = matchesDomain(item.summary.domains, activeTabUrl);
     const fillBtn = document.createElement("button");
-    fillBtn.className = "btn primary full";
+    fillBtn.className = sameSite ? "btn primary full" : "btn secondary full";
     fillBtn.type = "button";
-    fillBtn.textContent = "Fill on this page";
+    let crossDomainArmed = false;
+    fillBtn.textContent = sameSite
+      ? "Fill on this page"
+      : `Fill on different site (${activeDomain ?? "current tab"})…`;
     fillBtn.addEventListener("click", () => {
-      void handleFillItem(item.summary.objectIdHex);
+      if (!sameSite && !crossDomainArmed) {
+        crossDomainArmed = true;
+        fillBtn.className = "btn danger full";
+        fillBtn.textContent = `Confirm: fill into ${activeDomain ?? "this site"}`;
+        return;
+      }
+      void handleFillItem(item.summary.objectIdHex, !sameSite);
     });
     headerCard.appendChild(fillBtn);
   }
@@ -548,6 +585,16 @@ async function handleSaveEditor(): Promise<void> {
   saveBtn.disabled = true;
 
   try {
+    const totpRaw = el<HTMLInputElement>("ed-totp").value.trim();
+    if (totpRaw) {
+      try {
+        parseTotpInput(totpRaw);
+      } catch {
+        throw new Error(
+          "Invalid 2FA secret. Enter a valid Base32 key or otpauth://totp/... URI."
+        );
+      }
+    }
     const urlValue = el<HTMLInputElement>("ed-url").value.trim();
     const extraUrls = editingItem?.urls.filter((u) => u !== urlValue) ?? [];
     const saved = await sendSw<VaultItemSummary>({
@@ -559,7 +606,7 @@ async function handleSaveEditor(): Promise<void> {
         password: el<HTMLInputElement>("ed-password").value,
         url: urlValue,
         urls: urlValue ? [urlValue, ...extraUrls] : extraUrls,
-        totp: el<HTMLInputElement>("ed-totp").value.trim(),
+        totp: totpRaw,
         notes: el<HTMLTextAreaElement>("ed-notes").value,
         customFields: editingItem?.customFields ?? [],
         favorite: el<HTMLInputElement>("ed-favorite").checked,
@@ -687,8 +734,8 @@ function wireEvents(): void {
   });
 
   const handleSignOut = async () => {
-    await logoutInternetIdentity();
     await sendSw({ type: "auth-signed-out" });
+    await logoutInternetIdentity();
     detailItem = null;
     editingItem = null;
     await syncUiFromState();
@@ -784,6 +831,14 @@ function wireEvents(): void {
   });
   el("btn-detail-delete").addEventListener("click", () => {
     if (!detailItem) return;
+    if (!deleteConfirmArmed) {
+      deleteConfirmArmed = true;
+      el("btn-detail-delete").textContent = "Confirm delete";
+      if (deleteConfirmTimer !== null) window.clearTimeout(deleteConfirmTimer);
+      deleteConfirmTimer = window.setTimeout(() => resetDeleteConfirmation(), 4000);
+      return;
+    }
+    resetDeleteConfirmation();
     const id = detailItem.summary.objectIdHex;
     void (async () => {
       try {

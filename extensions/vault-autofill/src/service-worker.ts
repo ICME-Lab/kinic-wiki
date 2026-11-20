@@ -1,7 +1,7 @@
 // Where: extensions/vault-autofill/src/service-worker.ts
 // What: MV3 background service worker coordinating the offscreen VaultEngine, popup UI, and content autofill.
 // Why: Enforce sender/origin verification, badge updates, auto-lock alarms, and ephemeral save-login prompts.
-import { normalizeDomain } from "@kinic/vault-crypto/credential";
+import { matchesDomain, normalizeDomain } from "@kinic/vault-crypto/credential";
 import { isWebOriginFillable } from "./form-detector.ts";
 import {
   DEFAULT_EXTENSION_SETTINGS,
@@ -15,7 +15,9 @@ import {
 const SETTINGS_STORAGE_KEY = "kinic-vault-settings-v1";
 const PENDING_SAVES_SESSION_KEY = "kinic-vault-pending-saves-v1";
 const AUTO_LOCK_ALARM = "kinic-vault-auto-lock";
-const PENDING_SAVE_TTL_MS = 5 * 60 * 1000;
+const PENDING_SAVE_TTL_MS = 60 * 1000;
+const MIN_AUTO_LOCK_MINUTES = 5;
+const MAX_AUTO_LOCK_MINUTES = 30;
 const BADGE_COLOR = "#4f46e5";
 
 type SenderLike = {
@@ -44,6 +46,7 @@ type ServiceWorkerStorage = {
 
 type ServiceWorkerDeps = {
   offscreenBridge: OffscreenBridge;
+  hasExistingOffscreen: () => Promise<boolean>;
   storage: ServiceWorkerStorage;
   extensionId: () => string;
   setBadge: (tabId: number | undefined, text: string) => Promise<void>;
@@ -90,6 +93,18 @@ async function ensureOffscreenDocument(): Promise<void> {
   return ensureOffscreenInFlight;
 }
 
+async function defaultHasExistingOffscreen(): Promise<boolean> {
+  if (typeof chrome === "undefined" || typeof chrome.runtime?.getContexts !== "function") {
+    return false;
+  }
+  const url = chrome.runtime.getURL("offscreen/offscreen.html");
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [url]
+  });
+  return contexts.length > 0;
+}
+
 async function defaultOffscreenBridge(message: Record<string, unknown>) {
   await ensureOffscreenDocument();
   return chrome.runtime.sendMessage({
@@ -101,6 +116,7 @@ async function defaultOffscreenBridge(message: Record<string, unknown>) {
 function createDefaultDeps(): ServiceWorkerDeps {
   return {
     offscreenBridge: defaultOffscreenBridge,
+    hasExistingOffscreen: defaultHasExistingOffscreen,
     storage: {
       getLocal: (key) => chrome.storage.local.get(key),
       setLocal: (items) => chrome.storage.local.set(items),
@@ -187,14 +203,33 @@ async function callOffscreen<T>(message: Record<string, unknown>): Promise<T> {
   return response.result as T;
 }
 
+async function callOffscreenIfRunning<T>(
+  message: Record<string, unknown>
+): Promise<T | null> {
+  if (!(await deps.hasExistingOffscreen())) {
+    return null;
+  }
+  return callOffscreen<T>(message);
+}
+
+function isSamePromptDomain(url: string, promptDomain: string): boolean {
+  const currentDomain = normalizeDomain(url);
+  if (!currentDomain || !promptDomain) return false;
+  return (
+    currentDomain === promptDomain ||
+    currentDomain.endsWith(`.${promptDomain}`) ||
+    promptDomain.endsWith(`.${currentDomain}`)
+  );
+}
+
 export async function loadSettings(): Promise<VaultExtensionSettings> {
   const data = await deps.storage.getLocal(SETTINGS_STORAGE_KEY);
   const stored = (data?.[SETTINGS_STORAGE_KEY] ?? {}) as Partial<VaultExtensionSettings>;
   const autoLockMinutes =
     typeof stored.autoLockMinutes === "number" &&
     Number.isFinite(stored.autoLockMinutes) &&
-    stored.autoLockMinutes >= 5 &&
-    stored.autoLockMinutes <= 240
+    stored.autoLockMinutes >= MIN_AUTO_LOCK_MINUTES &&
+    stored.autoLockMinutes <= MAX_AUTO_LOCK_MINUTES
       ? Math.round(stored.autoLockMinutes)
       : DEFAULT_EXTENSION_SETTINGS.autoLockMinutes;
   return {
@@ -226,8 +261,8 @@ export async function saveSettings(
     autoLockMinutes:
       typeof patch.autoLockMinutes === "number" &&
       Number.isFinite(patch.autoLockMinutes) &&
-      patch.autoLockMinutes >= 5 &&
-      patch.autoLockMinutes <= 240
+      patch.autoLockMinutes >= MIN_AUTO_LOCK_MINUTES &&
+      patch.autoLockMinutes <= MAX_AUTO_LOCK_MINUTES
         ? Math.round(patch.autoLockMinutes)
         : current.autoLockMinutes,
     inlineTriggerEnabled:
@@ -277,6 +312,19 @@ async function clearAllPendingSaves(): Promise<void> {
   await writePendingSaves({});
 }
 
+export async function clearPendingSaveIfNavigatedAway(
+  tabId: number,
+  nextUrl?: string
+): Promise<void> {
+  const prompts = await readPendingSaves();
+  const prompt = prompts[String(tabId)];
+  if (!prompt) return;
+  if (!nextUrl || !isSamePromptDomain(nextUrl, prompt.domain)) {
+    delete prompts[String(tabId)];
+    await writePendingSaves(prompts);
+  }
+}
+
 export async function refreshTabBadge(tab?: {
   id?: number;
   url?: string;
@@ -288,14 +336,14 @@ export async function refreshTabBadge(tab?: {
     return;
   }
   try {
-    const result = await callOffscreen<{
+    const result = await callOffscreenIfRunning<{
       unlocked: boolean;
       matches: VaultItemSummary[];
     }>({
       type: "get-matches-for-url",
       url: target.url
     });
-    const count = result.unlocked ? result.matches.length : 0;
+    const count = result?.unlocked ? result.matches.length : 0;
     await deps.setBadge(target.id, count > 0 ? String(Math.min(count, 99)) : "");
   } catch {
     await deps.setBadge(target.id, "");
@@ -310,7 +358,7 @@ async function bumpAutoLockIfUnlocked(): Promise<void> {
 export async function handleAutoLockAlarm(): Promise<void> {
   await clearAllPendingSaves();
   try {
-    await callOffscreen({ type: "lock-vault" });
+    await callOffscreenIfRunning({ type: "lock-vault" });
   } catch {
     // Offscreen document may already be closed.
   }
@@ -333,7 +381,7 @@ export async function handleMessage(
     if (!settings.inlineTriggerEnabled) {
       return { ok: true, result: { enabled: false, unlocked: false, matches: [] } };
     }
-    const result = await callOffscreen<{
+    const result = await callOffscreenIfRunning<{
       unlocked: boolean;
       domain: string | null;
       matches: VaultItemSummary[];
@@ -341,6 +389,17 @@ export async function handleMessage(
       type: "get-matches-for-url",
       url: tab.url
     });
+    if (!result) {
+      return {
+        ok: true,
+        result: {
+          enabled: true,
+          unlocked: false,
+          domain: normalizeDomain(tab.url),
+          matches: []
+        }
+      };
+    }
     return {
       ok: true,
       result: {
@@ -402,7 +461,7 @@ export async function handleMessage(
       return { ok: true, result: { prompt: null } };
     }
 
-    const evaluation = await callOffscreen<
+    const evaluation = await callOffscreenIfRunning<
       | { action: "ignore" }
       | {
           action: "create" | "update";
@@ -419,7 +478,7 @@ export async function handleMessage(
         typeof message.pageTitle === "string" ? message.pageTitle : tab.title
     });
 
-    if (evaluation.action === "ignore") {
+    if (!evaluation || evaluation.action === "ignore") {
       return { ok: true, result: { prompt: null } };
     }
 
@@ -460,12 +519,8 @@ export async function handleMessage(
     if (!prompt) {
       return { ok: true, result: { prompt: null } };
     }
-    const currentDomain = normalizeDomain(tab.url);
-    const sameDomain =
-      currentDomain === prompt.domain ||
-      Boolean(currentDomain?.endsWith(`.${prompt.domain}`)) ||
-      Boolean(prompt.domain.endsWith(`.${currentDomain ?? ""}`));
-    if (!sameDomain) {
+    if (!isSamePromptDomain(tab.url, prompt.domain)) {
+      await clearPendingSaveForTab(tab.tabId);
       return { ok: true, result: { prompt: null } };
     }
     return {
@@ -489,6 +544,10 @@ export async function handleMessage(
     const prompt = prompts[String(tab.tabId)];
     if (!prompt || prompt.id !== promptId) {
       throw new Error("SAVE_PROMPT_EXPIRED");
+    }
+    if (!isSamePromptDomain(tab.url, prompt.domain)) {
+      await clearPendingSaveForTab(tab.tabId);
+      throw new Error("SAVE_PROMPT_DOMAIN_MISMATCH");
     }
 
     const customTitle =
@@ -650,12 +709,37 @@ export async function handleMessage(
         type: "read-item",
         objectIdHex: message.objectIdHex
       });
-      await deps.sendToTab(tab.id, {
+      const allowCrossDomain = message.allowCrossDomain === true;
+      if (
+        !allowCrossDomain &&
+        !matchesDomain(decrypted.summary.domains, tab.url)
+      ) {
+        throw new Error("CROSS_DOMAIN_CONFIRM_REQUIRED");
+      }
+      const response = (await deps.sendToTab(tab.id, {
         type: "fill-credentials",
         username: decrypted.username,
         password: decrypted.password,
         totp: decrypted.totp?.code ?? ""
-      });
+      })) as
+        | {
+            ok?: boolean;
+            result?: {
+              filledUsername?: boolean;
+              filledPassword?: boolean;
+              filledTotp?: boolean;
+            };
+          }
+        | undefined;
+      const filledAny = Boolean(
+        response?.ok &&
+          (response.result?.filledUsername ||
+            response.result?.filledPassword ||
+            response.result?.filledTotp)
+      );
+      if (!filledAny) {
+        throw new Error("No login form found on this page.");
+      }
       await bumpAutoLockIfUnlocked();
       return {
         ok: true,
@@ -673,11 +757,14 @@ export async function handleMessage(
       const password =
         typeof message.password === "string" ? message.password : "";
       if (!password) throw new Error("Password is required.");
-      const response = await deps.sendToTab(tab.id, {
+      const response = (await deps.sendToTab(tab.id, {
         type: "fill-generated-password",
         password
-      });
-      return { ok: true, result: response };
+      })) as { ok?: boolean; result?: { filledCount?: number } } | undefined;
+      if (!response?.ok || !(response.result?.filledCount && response.result.filledCount > 0)) {
+        throw new Error("No password field found on this page.");
+      }
+      return { ok: true, result: response.result };
     }
     case "load-settings": {
       return { ok: true, result: await loadSettings() };
@@ -686,6 +773,12 @@ export async function handleMessage(
       const next = await saveSettings(
         (message.settings ?? {}) as Partial<VaultExtensionSettings>
       );
+      const state = await callOffscreenIfRunning<VaultEngineState>({
+        type: "get-state"
+      });
+      if (state?.isUnlocked) {
+        await deps.scheduleAutoLock(next.autoLockMinutes);
+      }
       return { ok: true, result: next };
     }
     default:
@@ -730,6 +823,9 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
       changeInfo: { status?: string; url?: string },
       tab: { id?: number; url?: string }
     ) => {
+      if (changeInfo.url) {
+        await clearPendingSaveIfNavigatedAway(tabId, changeInfo.url);
+      }
       if (changeInfo.url || changeInfo.status === "complete") {
         await refreshTabBadge({ id: tabId, url: changeInfo.url ?? tab?.url });
       }

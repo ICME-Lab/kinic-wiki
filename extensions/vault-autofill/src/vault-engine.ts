@@ -64,9 +64,26 @@ type EngineDeps = {
     identity: Identity,
     config: VaultRuntimeConfig
   ) => Promise<VaultClientLike>;
+  clearPersistedDeviceKeys: () => Promise<void>;
   now: () => number;
   config: VaultRuntimeConfig;
 };
+
+const DEVICE_KEYS_DB_NAME = "kinic-vault-device-keys-v1";
+
+async function defaultClearPersistedDeviceKeys(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  await new Promise<void>((resolve) => {
+    try {
+      const request = indexedDB.deleteDatabase(DEVICE_KEYS_DB_NAME);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
 
 async function defaultCreateVaultClient(
   identity: Identity,
@@ -154,6 +171,8 @@ export class VaultEngine {
       authSnapshot: deps.authSnapshot ?? defaultAuthSnapshot,
       resetAuthClient: deps.resetAuthClient ?? defaultResetAuthClient,
       createVaultClient: deps.createVaultClient ?? defaultCreateVaultClient,
+      clearPersistedDeviceKeys:
+        deps.clearPersistedDeviceKeys ?? defaultClearPersistedDeviceKeys,
       now: deps.now ?? (() => Date.now()),
       config: deps.config ?? RUNTIME_CONFIG
     };
@@ -450,6 +469,11 @@ export class VaultEngine {
       }
     }
     this.destroyClient();
+    try {
+      await this.deps.clearPersistedDeviceKeys();
+    } catch {
+      // Continue resetting auth client even if storage wipe fails.
+    }
     await this.deps.resetAuthClient();
     return { reset: true };
   }

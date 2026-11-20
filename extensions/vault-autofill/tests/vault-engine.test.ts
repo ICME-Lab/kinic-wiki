@@ -264,4 +264,22 @@ describe("VaultEngine", () => {
     expect(locked.itemCount).toBe(0);
     expect(engine.getMatchesForUrl("https://github.com").unlocked).toBe(false);
   });
+
+  it("wipes persisted device keys on forgetAndReset even when no VaultClient is active", async () => {
+    const clearPersistedDeviceKeys = vi.fn(async () => {});
+    const resetAuthClient = vi.fn(async () => {});
+    const engine = new VaultEngine({
+      authSnapshot: async () => ({
+        isAuthenticated: false,
+        identity: null,
+        principal: null
+      }),
+      clearPersistedDeviceKeys,
+      resetAuthClient
+    });
+
+    await engine.forgetAndReset();
+    expect(clearPersistedDeviceKeys).toHaveBeenCalledTimes(1);
+    expect(resetAuthClient).toHaveBeenCalledTimes(1);
+  });
 });

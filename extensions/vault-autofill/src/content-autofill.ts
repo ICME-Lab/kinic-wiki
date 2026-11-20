@@ -3,6 +3,7 @@
 // Why: Keep web page DOM isolated from Vault secrets while delivering a 1Password-grade browser experience.
 import {
   extractSubmittedCredentials,
+  isLikelyLoginSubmitTrigger,
   isPasswordInput,
   isUsernameInput,
   isWebOriginFillable
@@ -489,12 +490,20 @@ function initContentAutofill(): void {
   document.addEventListener(
     "click",
     (event) => {
+      if (
+        event.target instanceof Node &&
+        ((activePickerHost && activePickerHost.contains(event.target)) ||
+          (activeBannerHost && activeBannerHost.contains(event.target)))
+      ) {
+        return;
+      }
       const el =
         event.target instanceof Element
           ? event.target.closest("button, input[type='submit'], [role='button']")
           : null;
       if (!el) return;
       const form = el.closest("form");
+      if (!isLikelyLoginSubmitTrigger(el, form)) return;
       if (form) {
         captureAndReportLogin(form);
       } else {

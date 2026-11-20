@@ -18,6 +18,10 @@ const USERNAME_PATTERN =
   /\b(user(?:name|id)?|e[-_]?mail|login|log[-_ ]?in|account|acct|handle|identifier|member|uid|sign[-_ ]?in)\b/i;
 const NON_USERNAME_PATTERN =
   /\b(search|query|filter|coupon|promo|captcha|csrf|comment|message|title|subject|address|city|zip|postal|card|cvv|cvc)\b/i;
+const SUBMIT_ACTION_PATTERN =
+  /\b(sign[-_ ]?in|log[-_ ]?in|login|continue|next|submit|sign[-_ ]?up|register|create[-_ ]?account|save|update[-_ ]?password|change[-_ ]?password|confirm|verify)\b/i;
+const NON_SUBMIT_BUTTON_PATTERN =
+  /\b(show|hide|reveal|visibility|toggle|eye|clear|cancel|close|back|forgot|reset|cookie|accept|decline|reject|dismiss|help|info|copy|generate)\b/i;
 
 export type DetectedLoginTarget = {
   form: HTMLFormElement | null;
@@ -186,7 +190,11 @@ function collectTargetInScope(
 export function findLoginTarget(doc: Document): DetectedLoginTarget | null {
   // 1. Prefer the form containing the currently focused element if it has login fields.
   const active = doc.activeElement;
-  if (active instanceof doc.defaultView!.HTMLInputElement || (active && active.tagName === "INPUT")) {
+  const InputCtor = doc.defaultView?.HTMLInputElement;
+  if (
+    (InputCtor && active instanceof InputCtor) ||
+    (active && active.tagName === "INPUT")
+  ) {
     const activeInput = active as HTMLInputElement;
     if (activeInput.form) {
       const focusedTarget = collectTargetInScope(activeInput.form, activeInput.form);
@@ -239,4 +247,40 @@ export function extractSubmittedCredentials(
   }
   const username = target?.usernameInput?.value.trim() ?? "";
   return { username, password };
+}
+
+export function isLikelyLoginSubmitTrigger(
+  el: Element,
+  form: HTMLFormElement | null
+): boolean {
+  const tag = el.tagName.toUpperCase();
+  const explicitType = (el.getAttribute("type") ?? "").toLowerCase();
+  if (explicitType === "reset") return false;
+
+  const buttonLabel = [
+    el.getAttribute("aria-label") ?? "",
+    el.getAttribute("title") ?? "",
+    el.getAttribute("name") ?? "",
+    el.id ?? "",
+    el.getAttribute("value") ?? "",
+    el.textContent ?? ""
+  ]
+    .join(" ")
+    .trim();
+
+  if (NON_SUBMIT_BUTTON_PATTERN.test(buttonLabel)) {
+    return false;
+  }
+
+  if (form) {
+    if (tag === "INPUT" && explicitType === "submit") return true;
+    if (tag === "BUTTON" && (explicitType === "" || explicitType === "submit")) {
+      return true;
+    }
+    return SUBMIT_ACTION_PATTERN.test(buttonLabel);
+  }
+
+  // Outside a <form> (SPA views), require an explicit submit/login label.
+  if (tag === "INPUT" && explicitType === "submit") return true;
+  return SUBMIT_ACTION_PATTERN.test(buttonLabel);
 }

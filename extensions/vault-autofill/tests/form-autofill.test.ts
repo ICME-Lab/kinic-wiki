@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractSubmittedCredentials,
   findLoginTarget,
+  isLikelyLoginSubmitTrigger,
   isWebOriginFillable
 } from "../src/form-detector.ts";
 import { fillGeneratedPassword, fillLoginFields } from "../src/form-filler.ts";
@@ -155,5 +156,30 @@ describe("DOM form detection and autofill", () => {
       username: "bob@example.com",
       password: "my-pass-123"
     });
+  });
+
+  it("distinguishes login submit triggers from password visibility, cancel, and cookie buttons", () => {
+    const dom = new JSDOM(`
+      <!doctype html>
+      <body>
+        <form id="f">
+          <button id="show-pw" type="button" aria-label="Show password">👁</button>
+          <button id="cancel" type="button">Cancel</button>
+          <button id="submit-implicit">Sign in</button>
+          <button id="submit-explicit" type="submit">Go</button>
+        </form>
+        <button id="cookie" type="button">Accept cookies</button>
+        <button id="spa-login" type="button">Log in</button>
+      </body>
+    `);
+    const doc = dom.window.document;
+    const form = doc.getElementById("f") as HTMLFormElement;
+
+    expect(isLikelyLoginSubmitTrigger(doc.getElementById("show-pw")!, form)).toBe(false);
+    expect(isLikelyLoginSubmitTrigger(doc.getElementById("cancel")!, form)).toBe(false);
+    expect(isLikelyLoginSubmitTrigger(doc.getElementById("submit-implicit")!, form)).toBe(true);
+    expect(isLikelyLoginSubmitTrigger(doc.getElementById("submit-explicit")!, form)).toBe(true);
+    expect(isLikelyLoginSubmitTrigger(doc.getElementById("cookie")!, null)).toBe(false);
+    expect(isLikelyLoginSubmitTrigger(doc.getElementById("spa-login")!, null)).toBe(true);
   });
 });

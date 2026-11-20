@@ -31,7 +31,6 @@ export function setNativeInputValue(input: HTMLInputElement, value: string): boo
   const EventCtor = win?.Event ?? Event;
   input.dispatchEvent(new EventCtor("input", { bubbles: true }));
   input.dispatchEvent(new EventCtor("change", { bubbles: true }));
-  input.dispatchEvent(new EventCtor("blur", { bubbles: true }));
   return true;
 }
 
