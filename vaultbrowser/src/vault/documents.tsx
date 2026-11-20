@@ -1,7 +1,6 @@
 import { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
   Check,
-  ChevronRight,
   Download,
   Eye,
   EyeOff,
@@ -52,11 +51,14 @@ function Documents({
     [client],
   );
   const [saving, setSaving] = useState(false);
+  const [noteView, setNoteView] = useState<"edit" | "preview">("edit");
+  const titleInput = useRef<HTMLInputElement>(null);
   const [saveStatus, setSaveStatus] = useState<"saved" | "renamed">();
   const pendingRename = useRef<Item | undefined>(undefined);
   useLayoutEffect(() => {
     const detach = client.session.addLockCleanup(() => {
       setSaving(false);
+      setNoteView("edit");
       setSaveStatus(undefined);
       pendingRename.current = undefined;
     });
@@ -101,7 +103,16 @@ function Documents({
     setHistoryCursor(undefined);
     setProgress(0);
     setDirty(false);
+    setNoteView("edit");
     setEditorKey((k) => k + 1);
+  };
+  const startNewDocument = () => {
+    reset();
+    setKind("note");
+    const ticket = client.session.capture();
+    requestAnimationFrame(() => {
+      if (client.session.capture() === ticket) titleInput.current?.focus();
+    });
   };
   const open = async (item: Item, revision: Revision = item.revision) => {
     const g = client.session.capture();
@@ -353,18 +364,21 @@ function Documents({
       ) : null}
       <div className="vault-document-grid">
         <div className="vault-document-list">
+          {canEdit ? (
+            <div className="vault-list-actions">
+              <VaultButton
+                tone="primary"
+                size="icon"
+                aria-label="New document"
+                title="New document"
+                disabled={disabled || pendingSave}
+                onClick={() => guard.protect(startNewDocument)}
+              >
+                <Plus size={16} aria-hidden />
+              </VaultButton>
+            </div>
+          ) : null}
           <div className="vault-document-items">
-            {canEdit ? <VaultButton
-              tone="primary"
-              size="icon"
-              className="vault-new-document"
-              aria-label="New document"
-              title="New document"
-              disabled={disabled || pendingSave}
-              onClick={() => guard.protect(reset)}
-            >
-              <Plus size={16} aria-hidden />
-            </VaultButton> : null}
             {items.map((item) => (
               <div className="vault-document-card" key={b64(bytes(item.revision.object))}>
               <VaultButton
@@ -434,55 +448,112 @@ function Documents({
               </VaultButton>
             </div>
           ) : null}
-          {canEdit ? <div className="vault-editor-head">
-            <VaultField
-              fieldClassName="vault-editor-title"
-              label="Document title"
-              labelHidden
-              placeholder="Untitled"
-              value={title}
-              maxLength={512}
-              disabled={readOnly}
-              onChange={(e) => {
-                setTitle(e.target.value);
-                changed();
-              }}
-            />
-            <label className="vault-field vault-editor-kind">
-              <span className="sr-only">Document type</span>
-              <select
-                className="vault-select"
-                value={kind}
-                disabled={readOnly || !!current}
-                onChange={(e) => {
-                  setKind(e.target.value as Metadata["kind"]);
-                  changed();
-                }}
-              >
-                <option value="note">Note</option>
-                <option value="credential">Credential</option>
-                <option value="attachment">Attachment</option>
-              </select>
-            </label>
-            {!displayedRevision?.deleted ? (
-              <VaultButton
-                tone="primary"
-                size="icon"
-                className="vault-editor-save"
-                aria-label="Save document"
-                aria-busy={saving}
-                title={saving ? "Saving document…" : saved ? "Document saved" : "Save document"}
-                disabled={
-                  readOnly || !dirty || (kind === "attachment" && !file)
-                }
-                onClick={save}
-              >
-                {saving ? <LoaderCircle className="vault-save-spinner" aria-hidden /> :
-                  saved ? <Check className="vault-save-check" aria-hidden /> :
-                  <Save aria-hidden />}
-              </VaultButton>
-            ) : null}
-          </div> : current ? <h3 className="break-words font-medium">{title || "Untitled"}</h3> : null}
+          <div className="vault-editor-head">
+            <div className="vault-editor-bar-title">
+              {canEdit ? (
+                <VaultField
+                  ref={titleInput}
+                  fieldClassName="vault-editor-title"
+                  label="Document title"
+                  labelHidden
+                  placeholder="Untitled"
+                  value={title}
+                  maxLength={512}
+                  disabled={readOnly}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    changed();
+                  }}
+                />
+              ) : current ? (
+                <h3 className="vault-editor-readonly-title">{title || "Untitled"}</h3>
+              ) : null}
+            </div>
+            <div className="vault-editor-bar-actions">
+              {current ? <span className="vault-editor-kind-badge">{kindLabel(kind)}</span> : canEdit ? (
+                <label className="vault-field vault-editor-kind">
+                  <span className="sr-only">Document type</span>
+                  <select
+                    className="vault-select"
+                    value={kind}
+                    disabled={readOnly}
+                    onChange={(e) => {
+                      setKind(e.target.value as Metadata["kind"]);
+                      changed();
+                    }}
+                  >
+                    <option value="note">Note</option>
+                    <option value="credential">Credential</option>
+                    <option value="attachment">Attachment</option>
+                  </select>
+                </label>
+              ) : null}
+              {canEdit && kind === "note" && !displayedRevision?.deleted ? (
+                <fieldset className="vault-view-switch">
+                  <legend className="sr-only">Note view</legend>
+                  <VaultButton size="sm" tone="ghost" aria-pressed={noteView === "edit"} onClick={() => setNoteView("edit")}>Edit</VaultButton>
+                  <VaultButton size="sm" tone="ghost" aria-pressed={noteView === "preview"} onClick={() => setNoteView("preview")}>Preview</VaultButton>
+                </fieldset>
+              ) : null}
+              {current ? (
+                <>
+                  <VaultButton
+                    size="icon"
+                    aria-label="Show version history"
+                    title="Show version history"
+                    tone="ghost"
+                    disabled={disabled}
+                    onClick={() =>
+                      run(async () => {
+                        const g = client.session.capture();
+                        const page = await client.history(current.revision);
+                        client.session.check(g);
+                        setHistory(page.entries);
+                        setHistoryCursor(page.next[0]);
+                      })
+                    }
+                  >
+                    <History size={14} aria-hidden />
+                  </VaultButton>
+                  {!displayedRevision?.deleted && (canEdit || kind !== "credential") ? (
+                    <VaultButton
+                      size="icon"
+                      aria-label="Download document"
+                      title="Download document"
+                      tone="ghost"
+                      disabled={disabled}
+                      onClick={() => run(() => download(displayedRevision!))}
+                    >
+                      <Download size={14} aria-hidden />
+                    </VaultButton>
+                  ) : null}
+                </>
+              ) : null}
+              {progress > 0 ? (
+                <output className="vault-editor-progress">
+                  Upload {progress}%
+                </output>
+              ) : null}
+              {canEdit && !displayedRevision?.deleted ? (
+                <VaultButton
+                  tone="primary"
+                  size="icon"
+                  className="vault-editor-save"
+                  aria-label="Save document"
+                  aria-busy={saving}
+                  title={saving ? "Saving document…" : saved ? "Document saved" : "Save document"}
+                  disabled={
+                    readOnly || !dirty || (kind === "attachment" && !file)
+                  }
+                  onClick={save}
+                >
+                  {saving ? <LoaderCircle className="vault-save-spinner" aria-hidden /> :
+                    saved ? <Check className="vault-save-check" aria-hidden /> :
+                    <Save aria-hidden />}
+                </VaultButton>
+              ) : null}
+            </div>
+          </div>
           <div className="vault-editor-body">
             {!displayedRevision?.deleted ? (
               !canEdit ? (
@@ -496,7 +567,7 @@ function Documents({
                 ) : null
               ) : kind === "note" ? (
                 <>
-                  <div className="vault-editor-frame">
+                  <div className="vault-editor-frame" hidden={noteView === "preview"}>
                     <MarkdownEditor
                       key={editorKey}
                       content={body}
@@ -525,15 +596,13 @@ function Documents({
                       onSave={save}
                     />
                   </div>
-                  <details className="vault-preview">
-                    <summary>
-                      <ChevronRight size={14} aria-hidden />
-                      Private Markdown preview
-                    </summary>
-                    <div>
-                      <VaultPreview content={body} />
+                  {noteView === "preview" ? (
+                    <div className="vault-preview-pane">
+                      {body.trim()
+                        ? <VaultPreview content={body} />
+                        : <p className="vault-preview-empty">Nothing to preview yet.</p>}
                     </div>
-                  </details>
+                  ) : null}
                 </>
               ) : kind === "credential" ? (
                 <div className="vault-credential">
@@ -674,51 +743,7 @@ function Documents({
               </div>
             ) : null}
           </div>
-          <div
-            className="vault-editor-footer"
-            hidden={!current && progress === 0}
-          >
-            {current ? (
-              <div className="vault-editor-footer-actions">
-                <VaultButton
-                  size="sm"
-                  tone="ghost"
-                  disabled={disabled}
-                  onClick={() =>
-                    run(async () => {
-                      const g = client.session.capture();
-                      const page = await client.history(current.revision);
-                      client.session.check(g);
-                      setHistory(page.entries);
-                      setHistoryCursor(page.next[0]);
-                    })
-                  }
-                >
-                  <History size={14} aria-hidden />
-                  Show version history
-                </VaultButton>
-                {!displayedRevision?.deleted && (canEdit || kind !== "credential") ? (
-                  <>
-                    <VaultButton
-                      size="sm"
-                      tone="ghost"
-                      disabled={disabled}
-                      onClick={() => run(() => download(displayedRevision!))}
-                    >
-                      <Download size={14} aria-hidden />
-                      Download document
-                    </VaultButton>
-                  </>
-                ) : null}
 
-              </div>
-            ) : null}
-            {progress > 0 ? (
-              <output className="vault-editor-progress">
-                Upload {progress}%
-              </output>
-            ) : null}
-          </div>
         </div>
       </div>
     </VaultPanel>

@@ -22,12 +22,11 @@ export function VaultChrome({ actions }: { actions?: ReactNode }) {
     >Skip to content</a>
     <header className="vault-chrome chrome-material">
       <div className="vault-chrome-inner">
-        <a className="vault-brand" href="/" onClick={event=>{if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&!event.altKey){event.preventDefault();nav.go("/");}}} aria-label="Kinic Vault home">
+        <a className="vault-brand" href="/" onClick={event=>{if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&!event.altKey){event.preventDefault();nav.go("/");}}} aria-label="KinicVault home">
           <img src="/kinic-mark.png" width="30" height="30" alt="" />
-          <span>
-            Kinic <span className="text-muted font-normal">/</span> Vault
-          </span>
+          <span>KinicVault</span>
         </a>
+        <div id="vault-switcher-slot" className="vault-switcher-slot" />
         <span className="vault-chrome-label">
           <LockKeyhole size={13} aria-hidden />
           Private space

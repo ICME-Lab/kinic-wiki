@@ -1,6 +1,7 @@
 // Synthetic UI + real document encryption. Not actual II/vetKD acceptance.
 import assert from "node:assert/strict";
 import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { showVaultNavigation } from "./acceptance-ui.mjs";
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({
@@ -38,13 +39,14 @@ try {
   const title = page.getByLabel("Document title");
   await title.waitFor();
   assert.equal(await page.locator("summary").filter({ hasText: "Account & storage" }).isVisible(), false);
+  await showVaultNavigation(page);
   await page.getByRole("button", { name: "Actions for Vault 1", exact: true }).click();
   await page.getByRole("menuitem", { name: "Manage members", exact: true }).click();
   await page.getByText("No additional members.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Back to Vault", exact: true }).click();
   assert.equal(await page.getByRole("searchbox").count(), 0);
   assert.equal(await page.getByRole("heading", { name: "Private documents", exact: true }).count(), 0);
-  const documentList = page.locator(".vault-document-items");
+  const documentList = page.locator(".vault-document-list");
   const newDocument = documentList.getByRole("button", { name: "New document", exact: true });
   await expect(newDocument).toBeVisible();
   await expect(newDocument).toHaveText("");
@@ -57,17 +59,17 @@ try {
   await title.fill("Edited secret");
   const toggle = page.getByRole("button", { name: "Toggle Vault navigation" });
   const frame = page.locator(".vault-editor-frame");
-  const expandedWidth = (await frame.boundingBox()).width;
-  assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+  const editorWidth = (await frame.boundingBox()).width;
+  await expect(page.locator(".vault-switcher-slot").getByRole("button", { name: "Toggle Vault navigation" })).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await toggle.press("Enter");
-  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-  assert.equal(await page.getByRole("button", { name: "Create Vault", exact: true }).isVisible(), false);
-  assert.ok((await frame.boundingBox()).width > expandedWidth + 200);
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", { name: "Create Vault", exact: true })).toBeVisible();
+  assert.equal((await frame.boundingBox()).width, editorWidth);
+  await toggle.press("Escape");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
   assert.equal(await title.inputValue(), "Edited secret");
-  assert.equal(await toggle.evaluate((e) => e === document.activeElement), true);
-  await toggle.press("Enter");
-  assert.equal(await toggle.getAttribute("aria-expanded"), "true");
-  assert.equal((await frame.boundingBox()).width, expandedWidth);
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.insertText(
@@ -78,10 +80,13 @@ try {
     await editor.evaluate((e) => e === document.activeElement),
     false,
   );
-  const preview = page.getByText("Private Markdown preview", { exact: true });
-  await preview.focus();
-  await page.keyboard.press("Enter");
-  assert.equal(await preview.evaluate((e) => e.parentElement.open), true);
+  const preview = page.getByRole("button", { name: "Preview", exact: true });
+  const edit = page.getByRole("button", { name: "Edit", exact: true });
+  await page.evaluate(() => { window.beforePreviewEditor = window.syntheticEditor(); });
+  await preview.press("Enter");
+  await expect(preview).toHaveAttribute("aria-pressed", "true");
+  await expect(editor).toBeHidden();
+  await expect(page.locator(".vault-preview-pane")).toContainText("Your private notes belong here.");
   assert.equal(
     await page
       .locator(
@@ -90,7 +95,10 @@ try {
       .count(),
     0,
   );
-  await page.getByText("Refresh Vaults", { exact: true }).click();
+  await edit.press("Enter");
+  await expect(editor).toBeVisible();
+  assert.equal(await page.evaluate(() => window.beforePreviewEditor === window.syntheticEditor()), true);
+  await page.getByRole("button", { name: "Refresh Vaults", exact: true }).click();
   assert.equal(await title.inputValue(), "Edited secret");
   const savedText = await editor.innerText();
   await page.evaluate(() => { window.beforeSaveEditor = window.syntheticEditor(); });
@@ -119,7 +127,7 @@ try {
     .getByRole("button", { name: "Edited secret", exact: true })
     .click();
   await editor.getByText("Your private notes belong here.", { exact: true }).waitFor();
-  await page.getByText("Show version history", { exact: true }).click();
+  await page.getByRole("button", { name: "Show version history", exact: true }).click();
   const historyDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "View revision 1", exact: true }).click();
   await page.getByRole("button", { name: "Download document", exact: true }).click();
@@ -155,7 +163,8 @@ try {
         ([action, value]) => action === "revoke" && value === url,
       ),
     );
-  await page.getByText("Vault 1", { exact: true }).click();
+  await showVaultNavigation(page);
+  await page.getByRole("button", { name: "Vault 1", exact: true }).click();
   await title.waitFor();
   await page.locator('.cm-content[contenteditable="true"]').click();
   await page.keyboard.press("ControlOrMeta+z");
@@ -171,7 +180,8 @@ try {
   await page.getByText("Close Vault", { exact: true }).click();
   await acceptDiscard();
   assert.equal(await page.evaluate(() => window.retainedPassword.value), "");
-  await page.getByText("Vault 1", { exact: true }).click();
+  await showVaultNavigation(page);
+  await page.getByRole("button", { name: "Vault 1", exact: true }).click();
   await title.waitFor();
   await page.getByLabel("Document type").selectOption("attachment");
   await page.getByLabel("Attachment (10 MiB maximum)").setInputFiles({

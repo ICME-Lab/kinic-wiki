@@ -10,6 +10,7 @@ import {
   completeLogin,
   editor,
   loginButton,
+  showVaultNavigation,
 } from "./acceptance-ui.mjs";
 import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 
@@ -99,6 +100,7 @@ async function identity() {
   return { context, page, credentials, principal };
 }
 async function manageMembers(page) {
+  await showVaultNavigation(page);
   await button(page, "Actions for Vault 1").click();
   await page.getByRole("menuitem", { name: "Manage members", exact: true }).click();
   await page.getByText("Vault members", { exact: true }).waitFor();
@@ -129,6 +131,7 @@ try {
   await owner.page.getByText("Payment complete", { exact: true }).waitFor();
   await action(owner.page, "Back to Vault");
   await action(member.page, "Back to Vault");
+  await showVaultNavigation(owner.page);
   await action(owner.page, "Create Vault");
   await owner.page.getByLabel("Document title").fill(title);
   await editor(owner.page).fill(body);
@@ -141,6 +144,7 @@ try {
     .filter({ hasText: member.principal });
   await expect(row.getByLabel("Member role")).toHaveValue("Viewer");
   await action(member.page, "Refresh Vaults");
+  await showVaultNavigation(member.page);
   await action(member.page, "Vault 1 · Viewer");
   await action(member.page, title);
   await expect(member.page.getByText(body, { exact: true })).toBeVisible();
@@ -289,6 +293,7 @@ try {
   await expect(row.getByLabel("Member role")).toHaveValue("Editor");
   await member.page.bringToFront();
   await action(member.page, "Refresh Vaults");
+  await showVaultNavigation(member.page);
   await action(member.page, "Vault 1 · Editor");
   await action(member.page, title);
   await editor(member.page).fill(edited);

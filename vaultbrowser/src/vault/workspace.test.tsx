@@ -587,7 +587,7 @@ it("views a historical revision read-only and downloads the displayed version th
   await x.open();
   await save("Original title", "original body");
   await save("Latest title", "latest body");
-  clickAndDiscard(screen.getByText("Show version history"));
+  clickAndDiscard(screen.getByRole("button", { name: "Show version history" }));
   const view = await screen.findByRole("button", { name: "View revision 1" });
   expect(screen.queryByText("Download revision 1")).toBeNull();
   clickAndDiscard(view);
@@ -599,15 +599,15 @@ it("views a historical revision read-only and downloads the displayed version th
   vi.spyOn(x.client.session, "download").mockImplementation((data, filename) => {
     downloads.push({ body: new TextDecoder().decode(data), filename });
   });
-  await waitFor(() => expect(screen.getByText("Download document")).toHaveProperty("disabled", false));
-  clickAndDiscard(screen.getByText("Download document"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Download document" })).toHaveProperty("disabled", false));
+  clickAndDiscard(screen.getByRole("button", { name: "Download document" }));
   await waitFor(() => expect(downloads).toHaveLength(1));
   expect(downloads[0].body).toBe("original body");
   expect(downloads[0].filename).toContain("revision-1");
   clickAndDiscard(screen.getByRole("button", { name: "Return to latest version" }));
   await waitFor(() => expect(screen.getByLabelText("Private note body")).toHaveProperty("value", "latest body"));
   expect(screen.getByLabelText("Document title")).toHaveProperty("disabled", false);
-  clickAndDiscard(screen.getByText("Download document"));
+  clickAndDiscard(screen.getByRole("button", { name: "Download document" }));
   await waitFor(() => expect(downloads).toHaveLength(2));
   expect(downloads[1].body).toBe("latest body");
   expect(downloads[1].filename).toContain("revision-2");
@@ -617,8 +617,8 @@ it("retains history after ordinary deletion and purges the document and history"
   await x.open();
   await save();
   clickAndDiscard(screen.getByRole("button", { name: "Secret note" }));
-  await waitFor(() => expect(screen.getByText("Show version history")).toHaveProperty("disabled", false));
-  clickAndDiscard(screen.getByText("Show version history"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Show version history" })).toHaveProperty("disabled", false));
+  clickAndDiscard(screen.getByRole("button", { name: "Show version history" }));
   await screen.findByText("Revision 1");
   await confirmDocumentDeletion("Secret note");
   await screen.findByRole("button", { name: "Secret note (deleted)" });
@@ -636,10 +636,10 @@ it("retains history after ordinary deletion and purges the document and history"
   );
   await waitFor(() =>
     expect(
-      (screen.getByText("Show version history") as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "Show version history" }) as HTMLButtonElement).disabled,
     ).toBe(false),
   );
-  clickAndDiscard(screen.getByText("Show version history"));
+  clickAndDiscard(screen.getByRole("button", { name: "Show version history" }));
   await screen.findByRole("button", { name: "View revision 1" });
   await confirmDocumentDeletion("Secret note", true);
   await waitFor(() => expect(x.revisions).toHaveLength(0));
@@ -1079,7 +1079,7 @@ it("purges a selected document and its history at zero credit while retaining an
   );
   await save("Remove", "new body");
   clickAndDiscard(screen.getByRole("button", { name: "Remove" }));
-  await screen.findByText("Show version history");
+  await screen.findByRole("button", { name: "Show version history" });
   x.setBalance(0n);
   clickAndDiscard(screen.getByText("Refresh balance"));
   await screen.findByLabelText("Prepaid balance: 0 cycles");

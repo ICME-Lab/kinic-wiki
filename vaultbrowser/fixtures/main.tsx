@@ -217,7 +217,7 @@ function Fixture() {
         }
       }
       if (opening) return;
-      const button = Array.from(document.querySelectorAll("button")).find(
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>(".vault-switcher")).find(
         (b) => b.textContent?.trim() === "Vault 1",
       );
       if (!button) {
