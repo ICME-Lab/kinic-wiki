@@ -11,6 +11,17 @@ import {
 } from "../src/credential.ts";
 
 describe("credential schema and domain helpers", () => {
+  it("does not write an unpaired surrogate when truncating v3 metadata", () => {
+    const tag = "a".repeat(63) + "🗝";
+    const title = "b".repeat(511) + "🗝";
+    const username = "c".repeat(255) + "🗝";
+    const metadata = buildCredentialMetadata(title, { username, tags: [tag] });
+
+    expect(metadata.title).toBe("b".repeat(511));
+    expect(metadata.username).toBe("c".repeat(255));
+    expect(metadata.tags).toEqual(["a".repeat(63)]);
+  });
+
   it("normalizes valid URLs and bare domains and rejects unsafe schemes", () => {
     expect(normalizeDomain("https://App.GitHub.com:8443/login?next=/")).toBe(
       "app.github.com",

@@ -1,7 +1,7 @@
 import { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
   ArrowLeftRight,
-  ChevronRight,
+  Check,
   Download,
   Eye,
   EyeOff,
@@ -9,13 +9,12 @@ import {
   FileText,
   History,
   KeyRound,
+  LoaderCircle,
   Paperclip,
   Plus,
-  RefreshCw,
   Save,
   Search,
   Star,
-  TextSearch,
   Upload,
 } from "lucide-react";
 import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
@@ -28,6 +27,7 @@ import {
   parseCredential,
   parseTagsInput,
   serializeCredential,
+  truncateMetadataText,
 } from "@kinic/vault-crypto/credential";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
@@ -44,7 +44,7 @@ import { VaultPreview } from "./preview";
 import { VaultReadOnly } from "./read-only";
 import { DocumentActions } from "./document-actions";
 import { DraftGuardProvider, useDirtyDraft, useDraftGuard } from "../draft-guard";
-import { VaultButton, VaultField, VaultPanel, vaultError } from "./ui";
+import { VaultButton, VaultField, VaultPanel } from "./ui";
 import type { VaultWork } from "./workspace";
 
 type CategoryFilter = "all" | "favorites" | "credential" | "note" | "attachment";
@@ -56,6 +56,7 @@ function Documents({
   canEdit = true,
   canPurge = true,
   run,
+  onCommitted,
   refresh,
 }: {
   client: VaultClient;
@@ -65,104 +66,43 @@ function Documents({
   canEdit?: boolean;
   canPurge?: boolean;
   run: VaultWork;
+  onCommitted: (item: Item) => void;
   refresh: () => Promise<void>;
 }) {
   const sensitiveCleanup = useCallback(
     (wipe: () => void) => client.session.addLockCleanup(wipe),
     [client],
   );
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [portabilityOpen, setPortabilityOpen] = useState(false);
   const [importPending, setImportPending] = useState(false);
   const closePortability = useCallback(() => setPortabilityOpen(false), []);
-  const search = useRef<AbortController | undefined>(undefined);
-  const [bodyMatches, setBodyMatches] = useState<Item[]>();
-  const [searchStatus, setSearchStatus] = useState("");
-  const [searchProgress, setSearchProgress] = useState<{
-    completed: number;
-    total: number;
-  }>();
-  const [saveStatus, setSaveStatus] = useState("");
-  const saveNotice = useRef(0);
-  const alive = useRef(true);
-  const cancelSearch = () => {
-    search.current?.abort();
-    search.current = undefined;
-    setSearchProgress(undefined);
-    setBodyMatches(undefined);
-  };
+  const [saving, setSaving] = useState(false);
+  const [noteView, setNoteView] = useState<"edit" | "preview">("edit");
+  const titleInput = useRef<HTMLInputElement>(null);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "renamed">();
+  const pendingRename = useRef<Item | undefined>(undefined);
+  const pendingMetadata = useRef<Metadata | undefined>(undefined);
   useLayoutEffect(() => {
-    alive.current = true;
     const detach = client.session.addLockCleanup(() => {
-      cancelSearch();
+      setSearchOpen(false);
       setQuery("");
       setCategory("all");
       setPortabilityOpen(false);
       setImportPending(false);
-      setSearchStatus("");
-      setSaveStatus("");
+      setSaving(false);
+      setNoteView("edit");
+      setSaveStatus(undefined);
+      pendingRename.current = undefined;
+      pendingMetadata.current = undefined;
     });
-    return () => {
-      alive.current = false;
-      search.current?.abort();
-      search.current = undefined;
-      detach();
-    };
+    return () => { detach(); };
   }, [client]);
-  const previousItems = useRef(items);
-  useLayoutEffect(() => {
-    if (previousItems.current === items) return;
-    const unchanged =
-      previousItems.current.length === items.length &&
-      previousItems.current.every((previous, index) => {
-        const current = items[index];
-        return (
-          current &&
-          b64(bytes(previous.revision.object)) === b64(bytes(current.revision.object)) &&
-          previous.revision.revision === current.revision.revision &&
-          previous.revision.deleted === current.revision.deleted
-        );
-      });
-    previousItems.current = items;
-    if (!unchanged && (search.current || bodyMatches)) {
-      cancelSearch();
-      setSearchStatus("Documents refreshed. Search note bodies again.");
-    }
-  }, [items, bodyMatches]);
-  const searchBodies = async () => {
-    cancelSearch();
-    const controller = new AbortController();
-    search.current = controller;
-    const ticket = client.session.capture();
-    const active = () =>
-      alive.current &&
-      search.current === controller &&
-      !controller.signal.aborted &&
-      client.session.capture() === ticket;
-    setSearchStatus("");
-    try {
-      const matches = await client.searchNotes(items, query, {
-        signal: controller.signal,
-        onProgress: (value) => {
-          if (active()) setSearchProgress(value);
-        },
-      });
-      if (!active()) return;
-      setBodyMatches(matches);
-      setSearchStatus("Note body search complete.");
-    } catch (cause) {
-      if (active())
-        setSearchStatus(`Note body search failed: ${vaultError(cause)}`);
-    } finally {
-      if (active()) {
-        search.current = undefined;
-        setSearchProgress(undefined);
-      }
-    }
-  };
   const [current, setCurrent] = useState<Item>();
   const [viewedRevision, setViewedRevision] = useState<Revision>();
+  const historical = !!current && !!viewedRevision && viewedRevision.revision !== current.revision.revision;
   const [viewedMetadata, setViewedMetadata] = useState<Metadata>();
   const [kind, setKind] = useState<Metadata["kind"]>("note");
   const [title, setTitle] = useState("");
@@ -179,8 +119,19 @@ function Documents({
   const [reveal, setReveal] = useState(false);
   const [file, setFile] = useState<File>();
   const [editorKey, setEditorKey] = useState(0);
-  const [history, setHistory] = useState<Revision[]>([]);
-  const [historyCursor, setHistoryCursor] = useState<bigint>();
+  const [history, setHistory] = useState<{
+    entries: Revision[];
+    cursor?: bigint;
+    visible: boolean;
+  }>();
+  const historyLabel = history?.visible ? "Hide version history" : "Show version history";
+  const historyHeading = useRef<HTMLHeadingElement>(null);
+  const focusHistory = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusHistory.current || disabled) return;
+    focusHistory.current = false;
+    historyHeading.current?.focus();
+  }, [disabled, history]);
   const [progress, setProgress] = useState(0);
   const [dirty, setDirty] = useState(false);
   const guard = useDraftGuard();
@@ -188,8 +139,7 @@ function Documents({
   const editorEpoch=useRef(0);
   const reset = () => {
     editorEpoch.current++;
-    saveNotice.current++;
-    setSaveStatus("");
+    setSaveStatus(undefined);
     setCurrent(undefined);
     setViewedRevision(undefined);
     setViewedMetadata(undefined);
@@ -206,18 +156,25 @@ function Documents({
     setTagsText("");
     setReveal(false);
     setFile(undefined);
-    setHistory([]);
-    setHistoryCursor(undefined);
+    setHistory(undefined);
     setProgress(0);
     setDirty(false);
+    setNoteView("edit");
     setEditorKey((k) => k + 1);
+  };
+  const startNewDocument = () => {
+    reset();
+    setKind("note");
+    const ticket = client.session.capture();
+    requestAnimationFrame(() => {
+      if (client.session.capture() === ticket) titleInput.current?.focus();
+    });
   };
   const open = async (item: Item, revision: Revision = item.revision) => {
     const g = client.session.capture();
     const epoch = editorEpoch.current;
     const sameDocument = current && b64(bytes(current.revision.object)) === b64(bytes(item.revision.object));
-    const retainedHistory = sameDocument ? history : [];
-    const retainedCursor = sameDocument ? historyCursor : undefined;
+    const retainedHistory = sameDocument ? history : undefined;
     if (revision.deleted) {
       reset();
       setCurrent(item);
@@ -234,7 +191,6 @@ function Documents({
       setViewedRevision(revision);
       setViewedMetadata(doc.metadata);
       setHistory(retainedHistory);
-      setHistoryCursor(retainedCursor);
       setTitle(doc.metadata.title);
       setKind(doc.metadata.kind);
       const text = new TextDecoder().decode(doc.plaintext);
@@ -260,94 +216,120 @@ function Documents({
       doc.plaintext.fill(0);
     }
   };
-  const completeSave = (
+  const editorMetadata = (): Metadata => ({
+    ...current?.metadata,
+    kind,
+    title,
+    ...(file ? { filename: file.name, mime: file.type } : {}),
+  });
+  const confirmed = (
+    ticket: number,
     revision: Revision,
-    metadata: Metadata = {
-      ...current?.metadata,
-      kind,
-      title,
-      ...(file ? { filename: file.name, mime: file.type } : {}),
-    },
+    metadata: Metadata = editorMetadata(),
   ) => {
+    client.session.check(ticket);
+    const item = { revision, metadata };
     editorEpoch.current++;
-    setCurrent({ revision, metadata });
+    setCurrent(item);
     setViewedRevision(undefined);
     setViewedMetadata(metadata);
     setSavedBody(body);
     setDirty(false);
     setProgress(0);
-    setHistory([]);
-    setHistoryCursor(undefined);
+    setHistory(undefined);
+    onCommitted(item);
+    setSaveStatus("saved");
   };
-  const confirmed = (ticket: number, revision?: Revision, metadata?: Metadata) => {
+  const isCurrentBase = (item: Item) =>
+    current?.revision.revision === item.revision.revision &&
+    b64(bytes(current.revision.object)) === b64(bytes(item.revision.object));
+  const finishRename = (ticket: number, renamed: Item, revision: Revision) => {
     client.session.check(ticket);
-    if (revision) completeSave(revision, metadata);
-    else reset();
-    saveNotice.current++;
-    setSaveStatus("Saved.");
-    const notice = saveNotice.current;
-    // The committed save is complete. List work must not keep the editor busy
-    // or turn a successful save into an ambiguous operation on refresh failure.
-    void refresh().catch(() => {
-      if (
-        alive.current &&
-        client.session.capture() === ticket &&
-        saveNotice.current === notice
-      )
-        setSaveStatus(
-          "Saved, but the document list could not be refreshed. Refresh documents to update the list.",
-        );
-    });
+    pendingRename.current = undefined;
+    setProgress(0);
+    const item = { revision, metadata: renamed.metadata };
+    if (isCurrentBase(renamed)) {
+      setCurrent(item);
+      setHistory(undefined);
+      if (!historical) {
+        setViewedRevision(undefined);
+        setViewedMetadata(renamed.metadata);
+        setTitle(renamed.metadata.title);
+      }
+    }
+    onCommitted(item);
+    setSaveStatus("renamed");
   };
+  const rename = (item: Item, name: string) => run(async () => {
+    const ticket = client.session.capture();
+    const doc = await client.read(item.revision);
+    let plaintext = doc.plaintext;
+    try {
+      client.session.check(ticket);
+      if (doc.metadata.kind === "credential") {
+        const credential: unknown = JSON.parse(new TextDecoder().decode(plaintext));
+        if (!credential || typeof credential !== "object" || Array.isArray(credential))
+          throw Error("InvalidInput");
+        plaintext = utf8.encode(JSON.stringify({ ...credential, label: name }));
+      }
+      const renamed = { ...item, metadata: { ...doc.metadata, title: name } };
+      pendingRename.current = renamed;
+      const revision = await client.save(renamed.metadata, plaintext, item, (n) => {
+        client.session.check(ticket);
+        setProgress(n);
+      });
+      finishRename(ticket, renamed, revision);
+    } finally {
+      if (plaintext !== doc.plaintext) plaintext.fill(0);
+      doc.plaintext.fill(0);
+      if (!client.hasPendingSave) pendingRename.current = undefined;
+    }
+  });
   const save = () => {
     if (readOnly || !dirty) return;
     run(async () => {
       const g = client.session.capture();
-      let plain: Uint8Array;
-      let metadata: Metadata = { kind, title };
-      const parsedTags = parseTagsInput(tagsText);
-      if (kind === "attachment") {
-        if (!file || file.size > 10 * 1024 * 1024) throw Error("SizeLimit");
-        plain = new Uint8Array(await file.arrayBuffer());
-        metadata = { ...metadata, filename: file.name, mime: file.type };
-      } else if (kind === "credential") {
-        const extraUrlList = extraUrls
-          .split(/\r?\n/)
-          .map((entry) => entry.trim())
-          .filter(Boolean);
-        const credentialPayload = {
-          label: title,
-          username,
-          password,
-          URL: url,
-          urls: [url, ...extraUrlList].filter(Boolean),
-          totp: totp.trim(),
-          customFields,
-          notes: body,
-          favorite,
-          tags: parsedTags,
-        };
-        metadata = buildCredentialMetadata(title, credentialPayload);
-        plain = utf8.encode(serializeCredential(credentialPayload));
-        if (plain.length > 256 * 1024) {
-          plain.fill(0);
-          throw Error("SizeLimit");
-        }
-      } else {
-        metadata = {
-          kind: "note",
-          title,
-          ...(favorite ? { favorite: true } : {}),
-          ...(parsedTags.length > 0 ? { tags: parsedTags } : {}),
-        };
-        plain = utf8.encode(body);
-        if (plain.length > 256 * 1024) {
-          plain.fill(0);
-          throw Error("SizeLimit");
-        }
-      }
+      let plain: Uint8Array | undefined;
+      setSaving(true);
       try {
+        const documentTitle = truncateMetadataText(title, 512);
+        let metadata: Metadata = { kind, title: documentTitle };
+        const parsedTags = parseTagsInput(tagsText);
+        if (kind === "attachment") {
+          if (!file || file.size > 10 * 1024 * 1024) throw Error("SizeLimit");
+          plain = new Uint8Array(await file.arrayBuffer());
+          metadata = { ...metadata, filename: file.name, mime: file.type };
+        } else if (kind === "credential") {
+          const extraUrlList = extraUrls
+            .split(/\r?\n/)
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+          const credentialPayload = {
+            label: documentTitle,
+            username,
+            password,
+            URL: url,
+            urls: [url, ...extraUrlList].filter(Boolean),
+            totp: totp.trim(),
+            customFields,
+            notes: body,
+            favorite,
+            tags: parsedTags,
+          };
+          metadata = buildCredentialMetadata(documentTitle, credentialPayload);
+          plain = utf8.encode(serializeCredential(credentialPayload));
+        } else {
+          metadata = {
+            kind: "note",
+            title: documentTitle,
+            ...(favorite ? { favorite: true } : {}),
+            ...(parsedTags.length > 0 ? { tags: parsedTags } : {}),
+          };
+          plain = utf8.encode(body);
+        }
+        if (kind !== "attachment" && plain.length > 256 * 1024) throw Error("SizeLimit");
         client.session.check(g);
+        pendingMetadata.current = metadata;
         const revision = await client.save(metadata, plain, current, (n) => {
           client.session.check(g);
           setProgress(n);
@@ -355,7 +337,9 @@ function Documents({
         client.session.check(g);
         confirmed(g, revision, metadata);
       } finally {
-        plain.fill(0);
+        plain?.fill(0);
+        if (!client.hasPendingSave) pendingMetadata.current = undefined;
+        setSaving(false);
       }
     });
   };
@@ -373,31 +357,22 @@ function Documents({
     }
   };
   const changed = () => {
-    saveNotice.current++;
     setDirty(true);
-    setSaveStatus("");
+    setSaveStatus(undefined);
   };
   const pendingSave = client.hasPendingSave;
+  const saved = saveStatus === "saved";
   const displayedRevision = viewedRevision ?? current?.revision;
-  const historical = !!current && !!viewedRevision && viewedRevision.revision !== current.revision.revision;
+  const displayedObject = displayedRevision && b64(bytes(displayedRevision.object));
   const readOnly =
     !canEdit || disabled || writesDisabled || pendingSave || !!displayedRevision?.deleted || historical;
   const byteCount = utf8.encode(body).length;
   const kindLabel = (k: Metadata["kind"]) =>
     k === "credential" ? "Login" : k === "attachment" ? "Attachment" : "Note";
-  const matchesCategory = (item: Item) => {
-    if (category === "all") return true;
-    if (category === "favorites") return item.metadata.favorite === true;
-    return item.metadata.kind === category;
-  };
-  const visibleItems = items.filter(
-    (item) =>
-      matchesCategory(item) &&
-      (matchesMetadataQuery(item.metadata, query) ||
-        bodyMatches?.some(
-          (match) =>
-            b64(bytes(match.revision.object)) === b64(bytes(item.revision.object)),
-        )),
+  const visibleItems = items.filter(({ metadata }) =>
+    (category === "all" ||
+      (category === "favorites" ? metadata.favorite === true : metadata.kind === category)) &&
+    matchesMetadataQuery(metadata, query)
   );
   const extractedDomains = extractDomains([
     url,
@@ -405,44 +380,12 @@ function Documents({
   ]);
   return (
     <VaultPanel label="Private documents" sensitive className="vault-documents">
-      <div className="vault-documents-header">
-        <div className="vault-documents-title">
-          <h2>Private documents</h2>
-          <span className="vault-count">{items.length}</span>
-        </div>
-        <div className="vault-documents-tools">
-          {canEdit ? <VaultButton
-            tone="ghost"
-            size="sm"
-            aria-expanded={portabilityOpen}
-            disabled={disabled || pendingSave}
-            onClick={() => setPortabilityOpen((v) => !v)}
-          >
-            <ArrowLeftRight size={15} aria-hidden />
-            Import / Export
-          </VaultButton> : null}
-          <VaultButton
-            tone="ghost"
-            size="icon"
-            aria-label="Refresh documents"
-            title="Refresh documents"
-            disabled={disabled}
-            onClick={() => run(refresh)}
-          >
-            <RefreshCw size={16} aria-hidden />
-          </VaultButton>
-          {canEdit ? <VaultButton
-            tone="primary"
-            className="vault-new-document"
-            title="New document"
-            disabled={disabled || pendingSave}
-            onClick={() => guard.protect(reset)}
-          >
-            <Plus size={16} aria-hidden />
-            New document
-          </VaultButton> : null}
-        </div>
-      </div>
+      {saveStatus === "renamed" ? (
+        <output aria-live="polite">Name changed.</output>
+      ) : null}
+      <output className="sr-only" aria-live="polite">
+        {saving ? "Saving document…" : saved ? "Saved." : ""}
+      </output>
       {canEdit && portabilityOpen ? (
         <VaultPortabilityPanel
           client={client}
@@ -455,31 +398,6 @@ function Documents({
           refresh={refresh}
         />
       ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-muted">
-          Titles filter immediately. Body search reads notes only.
-        </span>
-        {searchProgress ? (
-          <>
-            <output aria-live="polite">
-              Searching note bodies: {searchProgress.completed} /{" "}
-              {searchProgress.total}
-            </output>
-            <VaultButton
-              onClick={() => {
-                cancelSearch();
-                setSearchStatus("Note body search stopped.");
-              }}
-            >
-              Stop search
-            </VaultButton>
-          </>
-        ) : null}
-        {searchStatus ? (
-          <output aria-live="polite">{searchStatus}</output>
-        ) : null}
-      </div>
-      {saveStatus ? <output aria-live="polite">{saveStatus}</output> : null}
       {canEdit && pendingSave && !importPending ? (
         <div className="vault-notice vault-notice--warn vault-pending-save">
           <output>
@@ -495,12 +413,22 @@ function Documents({
               onClick={() =>
                 run(async () => {
                   const ticket = client.session.capture();
-                  const revision = await client.resumeSave((n) => {
-                    client.session.check(ticket);
-                    setProgress(n);
-                  });
-                  client.session.check(ticket);
-                  confirmed(ticket, revision);
+                  const renamed = pendingRename.current;
+                  if (!renamed) setSaving(true);
+                  try {
+                    const revision = await client.resumeSave((n) => {
+                      client.session.check(ticket);
+                      setProgress(n);
+                    });
+                    if (renamed) finishRename(ticket, renamed, revision);
+                    else confirmed(ticket, revision, pendingMetadata.current);
+                  } finally {
+                    setSaving(false);
+                    if (!client.hasPendingSave) {
+                      pendingRename.current = undefined;
+                      pendingMetadata.current = undefined;
+                    }
+                  }
                 })
               }
             >
@@ -512,13 +440,24 @@ function Documents({
               onClick={() =>
                 run(async () => {
                   const ticket = client.session.capture();
-                  const result = await client.cancelSave();
+                  const renamed = pendingRename.current;
+                  let revision: Revision | undefined;
+                  const result = await client.cancelSave((committed) => { revision = committed; });
                   client.session.check(ticket);
-                  if ("Committed" in result) confirmed(ticket);
-                  else {
+                  pendingRename.current = undefined;
+                  if ("Committed" in result) {
+                    if (!revision) throw Error("InvalidReceipt");
+                    if (renamed) finishRename(ticket, renamed, revision);
+                    else {
+                      onCommitted({ revision, metadata: pendingMetadata.current ?? editorMetadata() });
+                      reset();
+                      setSaveStatus("saved");
+                    }
+                  } else {
                     setProgress(0);
                     await refresh();
                   }
+                  pendingMetadata.current = undefined;
                 })
               }
             >
@@ -529,69 +468,107 @@ function Documents({
       ) : null}
       <div className="vault-document-grid">
         <div className="vault-document-list">
-          <div className="vault-search">
-            <div className="vault-search-input">
-              <Search size={15} aria-hidden />
-              <VaultField
-                label="Search this Vault locally"
-                labelHidden
-                type="search"
-                placeholder="Search titles, domains, usernames, tags…"
-                value={query}
-                disabled={disabled}
-                onChange={(e) => { cancelSearch(); setSearchStatus(""); setQuery(e.target.value); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void searchBodies();
-                }}
-              />
-            </div>
-            <div
-              className="vault-category-filters"
-              role="group"
-              aria-label="Filter by category"
-            >
-              {(
-                [
-                  ["all", "All"],
-                  ["favorites", "Favorites"],
-                  ["credential", "Logins"],
-                  ["note", "Notes"],
-                  ["attachment", "Files"],
-                ] as const
-              ).map(([value, label]) => (
-                <VaultButton
-                  key={value}
-                  size="sm"
-                  tone={category === value ? "primary" : "ghost"}
-                  aria-pressed={category === value}
-                  disabled={disabled}
-                  onClick={() => setCategory(value)}
-                >
-                  {label}
-                </VaultButton>
-              ))}
-            </div>
+          <div className="vault-list-actions">
             <VaultButton
               tone="ghost"
-              className={query.trim() ? undefined : "vault-search-idle"}
-              disabled={disabled || !!searchProgress || !query.trim()}
-              onClick={() => void searchBodies()}
+              size="icon"
+              aria-label="Search and filter documents"
+              title="Search and filter documents"
+              aria-expanded={searchOpen}
+              disabled={disabled}
+              onClick={() => {
+                setSearchOpen(!searchOpen);
+                if (searchOpen) {
+                  setQuery("");
+                  setCategory("all");
+                }
+              }}
             >
-              <TextSearch size={14} aria-hidden />
-              Search note contents
+              <Search size={16} aria-hidden />
             </VaultButton>
+            {canEdit ? (
+              <>
+                <VaultButton
+                  tone="ghost"
+                  size="icon"
+                  aria-label="Import / Export"
+                  title="Import / Export"
+                  aria-expanded={portabilityOpen}
+                  disabled={disabled || pendingSave}
+                  onClick={() => setPortabilityOpen((open) => !open)}
+                >
+                  <ArrowLeftRight size={16} aria-hidden />
+                </VaultButton>
+                <VaultButton
+                  tone="primary"
+                  size="icon"
+                  aria-label="New document"
+                  title="New document"
+                  disabled={disabled || pendingSave}
+                  onClick={() => guard.protect(startNewDocument)}
+                >
+                  <Plus size={16} aria-hidden />
+                </VaultButton>
+              </>
+            ) : null}
           </div>
+          {searchOpen ? (
+            <div className="vault-search">
+              <div className="vault-search-input">
+                <Search size={15} aria-hidden />
+                <VaultField
+                  label="Search this Vault locally"
+                  labelHidden
+                  type="search"
+                  placeholder="Search titles, domains, usernames, tags…"
+                  value={query}
+                  disabled={disabled}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </div>
+              <div
+                className="vault-category-filters"
+                role="group"
+                aria-label="Filter by category"
+              >
+                {(
+                  [
+                    ["all", "All"],
+                    ["favorites", "Favorites"],
+                    ["credential", "Logins"],
+                    ["note", "Notes"],
+                    ["attachment", "Files"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <VaultButton
+                    key={value}
+                    size="sm"
+                    tone={category === value ? "primary" : "ghost"}
+                    aria-pressed={category === value}
+                    disabled={disabled}
+                    onClick={() => setCategory(value)}
+                  >
+                    {label}
+                  </VaultButton>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="vault-document-items">
             {visibleItems.map((item) => (
               <div className="vault-document-card" key={b64(bytes(item.revision.object))}>
               <VaultButton
                 disabled={disabled || pendingSave}
-                aria-pressed={
-                  !!current &&
-                  b64(bytes(current.revision.object)) ===
-                    b64(bytes(item.revision.object))
-                }
-                onClick={() => guard.protect(() => run(() => open(item)))}
+                aria-pressed={displayedObject === b64(bytes(item.revision.object))}
+                onClick={() => {
+                  if (
+                    displayedRevision &&
+                    displayedObject === b64(bytes(item.revision.object)) &&
+                    displayedRevision.revision === item.revision.revision &&
+                    displayedRevision.deleted === item.revision.deleted
+                  ) return;
+                  guard.protect(() => run(() => open(item)));
+                }}
                 className="vault-document-item"
               >
                 <span className="vault-document-icon" aria-hidden>
@@ -628,6 +605,7 @@ function Documents({
                 disabled={disabled || pendingSave}
                 writesDisabled={writesDisabled}
                 canPurge={canPurge}
+                onRename={rename}
                 onDelete={(target, permanent) => run(async () => {
                   const ticket = client.session.capture();
                   const epoch = editorEpoch.current;
@@ -644,10 +622,6 @@ function Documents({
               <p className="vault-document-empty">
                 {canEdit ? "No documents yet. Create a note, credential or attachment." : "No documents yet."}
               </p>
-            ) : !visibleItems.length ? (
-              <p className="vault-document-empty">
-                No titles match. Use Search note contents to look inside notes.
-              </p>
             ) : null}
           </div>
         </div>
@@ -660,51 +634,170 @@ function Documents({
               </VaultButton>
             </div>
           ) : null}
-          {canEdit ? <div className="vault-editor-head">
-            <VaultField
-              fieldClassName="vault-editor-title"
-              label="Document title"
-              labelHidden
-              placeholder="Untitled"
-              value={title}
-              maxLength={512}
-              disabled={readOnly}
-              onChange={(e) => {
-                setTitle(e.target.value);
-                changed();
-              }}
-            />
-            <label className="vault-field vault-editor-kind">
-              <span className="sr-only">Document type</span>
-              <select
-                className="vault-select"
-                value={kind}
-                disabled={readOnly || !!current}
-                onChange={(e) => {
-                  setKind(e.target.value as Metadata["kind"]);
-                  changed();
-                }}
-              >
-                <option value="note">Note</option>
-                <option value="credential">Credential</option>
-                <option value="attachment">Attachment</option>
-              </select>
-            </label>
-            {!displayedRevision?.deleted ? (
-              <VaultButton
-                tone="primary"
-                className="vault-editor-save"
-                disabled={
-                  readOnly || !dirty || (kind === "attachment" && !file)
-                }
-                onClick={save}
-              >
-                <Save size={15} aria-hidden />
-                Save document
-              </VaultButton>
-            ) : null}
-          </div> : current ? <h3 className="break-words font-medium">{title || "Untitled"}</h3> : null}
+          <div className="vault-editor-head">
+            <div className="vault-editor-bar-title">
+              {canEdit ? (
+                <VaultField
+                  ref={titleInput}
+                  fieldClassName="vault-editor-title"
+                  label="Document title"
+                  labelHidden
+                  placeholder="Untitled"
+                  value={title}
+                  maxLength={512}
+                  disabled={readOnly}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    changed();
+                  }}
+                />
+              ) : current ? (
+                <h3 className="vault-editor-readonly-title">{title || "Untitled"}</h3>
+              ) : null}
+            </div>
+            <div className="vault-editor-bar-actions">
+              {current ? <span className="vault-editor-kind-badge">{kindLabel(kind)}</span> : canEdit ? (
+                <label className="vault-field vault-editor-kind">
+                  <span className="sr-only">Document type</span>
+                  <select
+                    className="vault-select"
+                    value={kind}
+                    disabled={readOnly}
+                    onChange={(e) => {
+                      setKind(e.target.value as Metadata["kind"]);
+                      changed();
+                    }}
+                  >
+                    <option value="note">Note</option>
+                    <option value="credential">Credential</option>
+                    <option value="attachment">Attachment</option>
+                  </select>
+                </label>
+              ) : null}
+              {canEdit && kind === "note" && !displayedRevision?.deleted ? (
+                <fieldset className="vault-view-switch">
+                  <legend className="sr-only">Note view</legend>
+                  <VaultButton size="sm" tone="ghost" aria-pressed={noteView === "edit"} onClick={() => setNoteView("edit")}>Edit</VaultButton>
+                  <VaultButton size="sm" tone="ghost" aria-pressed={noteView === "preview"} onClick={() => setNoteView("preview")}>Preview</VaultButton>
+                </fieldset>
+              ) : null}
+              {current ? (
+                <>
+                  <VaultButton
+                    size="icon"
+                    aria-label={historyLabel}
+                    aria-expanded={!!history?.visible}
+                    title={historyLabel}
+                    tone="ghost"
+                    disabled={disabled}
+                    onClick={() => {
+                      if (history) {
+                        focusHistory.current = !history.visible;
+                        setHistory({ ...history, visible: !history.visible });
+                        return;
+                      }
+                      run(async () => {
+                        const g = client.session.capture();
+                        const page = await client.history(current.revision);
+                        client.session.check(g);
+                        focusHistory.current = true;
+                        setHistory({ entries: page.entries, cursor: page.next[0], visible: true });
+                      });
+                    }}
+                  >
+                    <History size={14} aria-hidden />
+                  </VaultButton>
+                  {!displayedRevision?.deleted && (canEdit || kind !== "credential") ? (
+                    <VaultButton
+                      size="icon"
+                      aria-label="Download document"
+                      title="Download document"
+                      tone="ghost"
+                      disabled={disabled}
+                      onClick={() => run(() => download(displayedRevision!))}
+                    >
+                      <Download size={14} aria-hidden />
+                    </VaultButton>
+                  ) : null}
+                </>
+              ) : null}
+              {progress > 0 ? (
+                <output className="vault-editor-progress">
+                  Upload {progress}%
+                </output>
+              ) : null}
+              {canEdit && !displayedRevision?.deleted ? (
+                <VaultButton
+                  tone="primary"
+                  size="icon"
+                  className="vault-editor-save"
+                  aria-label="Save document"
+                  aria-busy={saving}
+                  title={saving ? "Saving document…" : saved ? "Document saved" : "Save document"}
+                  disabled={
+                    readOnly || !dirty || (kind === "attachment" && !file)
+                  }
+                  onClick={save}
+                >
+                  {saving ? <LoaderCircle className="vault-save-spinner" aria-hidden /> :
+                    saved ? <Check className="vault-save-check" aria-hidden /> :
+                    <Save aria-hidden />}
+                </VaultButton>
+              ) : null}
+            </div>
+          </div>
           <div className="vault-editor-body">
+            {current && history?.visible ? (
+              <div className="vault-history">
+                <h3 ref={historyHeading} tabIndex={-1}>Version history</h3>
+                {history.entries.map((revision) => (
+                  <div
+                    className="vault-history-row"
+                    key={String(revision.revision)}
+                  >
+                    <span>
+                      Revision {String(revision.revision)}
+                      {revision.deleted ? " (deleted)" : ""}
+                    </span>
+                    {!revision.deleted ? (
+                      <VaultButton
+                        size="sm"
+                        disabled={disabled || pendingSave}
+                        aria-pressed={displayedRevision?.revision === revision.revision}
+                        onClick={() => guard.protect(() => run(() => open(current, revision)))}
+                      >
+                        <Eye size={14} aria-hidden />
+                        View revision {String(revision.revision)}
+                      </VaultButton>
+                    ) : null}
+                  </div>
+                ))}
+                {history.cursor !== undefined ? (
+                  <VaultButton
+                    size="sm"
+                    tone="ghost"
+                    disabled={disabled}
+                    onClick={() =>
+                      run(async () => {
+                        const g = client.session.capture(),
+                          page = await client.history(
+                            current.revision,
+                            history.cursor,
+                          );
+                        client.session.check(g);
+                        setHistory({
+                          ...history,
+                          entries: [...history.entries, ...page.entries],
+                          cursor: page.next[0],
+                        });
+                      })
+                    }
+                  >
+                    Load more history
+                  </VaultButton>
+                ) : null}
+              </div>
+            ) : null}
             {!displayedRevision?.deleted ? (
               !canEdit ? (
                 current ? (
@@ -717,7 +810,7 @@ function Documents({
                 ) : null
               ) : kind === "note" ? (
                 <>
-                  <div className="vault-editor-frame">
+                  <div className="vault-editor-frame" hidden={noteView === "preview"}>
                     <MarkdownEditor
                       key={editorKey}
                       content={body}
@@ -726,7 +819,7 @@ function Documents({
                       disabled={readOnly}
                       lineCount={body.split("\n").length}
                       byteCount={byteCount}
-                      saveState={disabled ? "saving" : dirty ? "dirty" : "idle"}
+                      saveState={saving ? "saving" : dirty ? "dirty" : "idle"}
                       error={null}
                       warning={
                         byteCount > 256 * 1024
@@ -746,15 +839,13 @@ function Documents({
                       onSave={save}
                     />
                   </div>
-                  <details className="vault-preview">
-                    <summary>
-                      <ChevronRight size={14} aria-hidden />
-                      Private Markdown preview
-                    </summary>
-                    <div>
-                      <VaultPreview content={body} />
+                  {noteView === "preview" ? (
+                    <div className="vault-preview-pane">
+                      {body.trim()
+                        ? <VaultPreview content={body} />
+                        : <p className="vault-preview-empty">Nothing to preview yet.</p>}
                     </div>
-                  </details>
+                  ) : null}
                 </>
               ) : kind === "credential" ? (
                 <div className="vault-credential">
@@ -935,103 +1026,9 @@ function Documents({
                 until permanent deletion.
               </p>
             )}
-            {current && history.length ? (
-              <div className="vault-history">
-                <h3>Version history</h3>
-                {history.map((revision) => (
-                  <div
-                    className="vault-history-row"
-                    key={String(revision.revision)}
-                  >
-                    <span>
-                      Revision {String(revision.revision)}
-                      {revision.deleted ? " (deleted)" : ""}
-                    </span>
-                    {!revision.deleted ? (
-                      <VaultButton
-                        size="sm"
-                        disabled={disabled || pendingSave}
-                        aria-pressed={displayedRevision?.revision === revision.revision}
-                        onClick={() => guard.protect(() => run(() => open(current, revision)))}
-                      >
-                        <Eye size={14} aria-hidden />
-                        View revision {String(revision.revision)}
-                      </VaultButton>
-                    ) : null}
-                  </div>
-                ))}
-                {historyCursor !== undefined ? (
-                  <VaultButton
-                    size="sm"
-                    tone="ghost"
-                    disabled={disabled}
-                    onClick={() =>
-                      run(async () => {
-                        const g = client.session.capture(),
-                          page = await client.history(
-                            current.revision,
-                            historyCursor,
-                          );
-                        client.session.check(g);
-                        setHistory((previous) => [
-                          ...previous,
-                          ...page.entries,
-                        ]);
-                        setHistoryCursor(page.next[0]);
-                      })
-                    }
-                  >
-                    Load more history
-                  </VaultButton>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <div
-            className="vault-editor-footer"
-            hidden={!current && progress === 0}
-          >
-            {current ? (
-              <div className="vault-editor-footer-actions">
-                <VaultButton
-                  size="sm"
-                  tone="ghost"
-                  disabled={disabled}
-                  onClick={() =>
-                    run(async () => {
-                      const g = client.session.capture();
-                      const page = await client.history(current.revision);
-                      client.session.check(g);
-                      setHistory(page.entries);
-                      setHistoryCursor(page.next[0]);
-                    })
-                  }
-                >
-                  <History size={14} aria-hidden />
-                  Show version history
-                </VaultButton>
-                {!displayedRevision?.deleted && (canEdit || kind !== "credential") ? (
-                  <>
-                    <VaultButton
-                      size="sm"
-                      tone="ghost"
-                      disabled={disabled}
-                      onClick={() => run(() => download(displayedRevision!))}
-                    >
-                      <Download size={14} aria-hidden />
-                      Download document
-                    </VaultButton>
-                  </>
-                ) : null}
 
-              </div>
-            ) : null}
-            {progress > 0 ? (
-              <output className="vault-editor-progress">
-                Upload {progress}%
-              </output>
-            ) : null}
           </div>
+
         </div>
       </div>
     </VaultPanel>

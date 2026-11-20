@@ -7,6 +7,8 @@ edition = "2024"
 bench-search-stages = []
 
 [dependencies]
+base64 = "0.22.1"
+miniz_oxide = "=0.8.9"
 kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }
 sha2 = "0.10.9"
 serde = { version = "1.0.228", features = ["derive"] }

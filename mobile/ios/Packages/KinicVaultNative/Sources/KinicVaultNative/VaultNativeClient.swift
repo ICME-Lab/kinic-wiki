@@ -378,11 +378,12 @@ public actor VaultNativeClient {
     public func renameVault(header selected: VaultNativeHeader, name: String, identity: ICAuthSession) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.isValidVaultName(trimmed) else { throw VaultNativeError.invalidInput }
+        let current = try await header(selected.id, identity: identity)
         let operation = try Self.randomBytes16()
         let args = try VaultWire.renameVaultArguments(
-            vault: selected.id,
+            vault: current.id,
             name: trimmed,
-            expectedSequence: selected.sequence,
+            expectedSequence: current.sequence,
             mutationOperation: operation
         )
         _ = try await call("mutate", args, identity: identity)
@@ -457,14 +458,10 @@ public actor VaultNativeClient {
         var records: [VaultAutoFillRecordSnapshot] = []
         var cursor = Data()
         var seenCursors = Set<Data>()
-        var scanned = 0
-        var bytes = 0
         repeat {
             guard seenCursors.insert(cursor).inserted else { throw VaultNativeError.invalidResponse }
             let page = try await call("list_objects", VaultWire.arguments(CandidTypedValue(first.id), CandidTypedValue(cursor)), identity: identity)
             for revision in try VaultWire.array(VaultWire.rawField("entries", page)) {
-                scanned += 1
-                guard scanned <= 10_000 else { throw VaultNativeError.snapshotTooLarge }
                 let deleted: Bool = try VaultWire.field("deleted", revision)
                 if deleted { continue }
                 let object: Data = try VaultWire.field("object", revision)
@@ -489,8 +486,6 @@ public actor VaultNativeClient {
                 // Validate every chunk before publishing a usable offline cache.
                 var plaintext = try VaultDocumentV3.decrypt(rootKey: root, context: context, object: object, revision: rev, manifestBytes: manifest, chunks: chunks, hashes: hashes).plaintext
                 plaintext.resetBytes(in: 0..<plaintext.count)
-                bytes += manifest.count + chunks.reduce(0) { $0 + $1.count }
-                guard records.count < 1_000, bytes <= 8 * 1_048_576 else { throw VaultNativeError.snapshotTooLarge }
                 records.append(VaultAutoFillRecordSnapshot(objectIdBase64URL: Base64URL.encode(object), revision: rev, manifestBase64URL: Base64URL.encode(manifest), chunksBase64URL: chunks.map(Base64URL.encode), hashesBase64URL: hashes.map(Base64URL.encode)))
             }
             cursor = try VaultWire.field("next", page, as: Optional<Data>.self) ?? Data()

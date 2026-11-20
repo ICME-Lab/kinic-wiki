@@ -120,11 +120,16 @@ export function matchesDomain(
   });
 }
 
+export function truncateMetadataText(text: string, limit: number): string {
+  // Unicode matching preserves pairs and removes any lone surrogate at the boundary.
+  return text.slice(0, limit).replace(/[\uD800-\uDFFF]/gu, "");
+}
+
 export function normalizeTags(tags: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of tags) {
-    const trimmed = raw.trim().slice(0, MAX_TAG_LENGTH);
+    const trimmed = truncateMetadataText(raw.trim(), MAX_TAG_LENGTH);
     if (!trimmed) continue;
     const key = trimmed.toLocaleLowerCase();
     if (seen.has(key)) continue;
@@ -262,15 +267,13 @@ export function buildCredentialMetadata(
     ...(record.urls ?? []),
   ];
   const domains = extractDomains(urls);
-  const username = (record.username ?? "")
-    .trim()
-    .slice(0, MAX_USERNAME_META_LENGTH);
+  const username = truncateMetadataText((record.username ?? "").trim(), MAX_USERNAME_META_LENGTH);
   const hasTotp = Boolean(record.totp && record.totp.trim().length > 0);
   const tags = normalizeTags(record.tags ?? []);
 
   const metadata: Metadata = {
     kind: "credential",
-    title: title.slice(0, 512),
+    title: truncateMetadataText(title, 512),
   };
   if (username) metadata.username = username;
   if (domains.length > 0) metadata.domains = domains;

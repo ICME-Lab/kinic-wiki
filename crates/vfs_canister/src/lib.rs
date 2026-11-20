@@ -1,9 +1,10 @@
+use bekko_refill::VaultRefillStateResult;
 use credit_bridge_types::{
     BridgeConfig, BridgeResult, BridgeRevocation, CreditOffer, LinkChallenge, LinkStatus,
 };
 use vfs_runtime::credit_bridge::{TransferAmount, TransferApproval, VaultTransfer};
 use vfs_types::ScopeRevisionRequest;
-use vfs_types::{BekkoRefillConfig, BekkoRefillResolution, BekkoRefillState};
+use vfs_types::{BekkoRefillConfig, BekkoRefillResolution, BekkoRefillState, VaultRefillConfig};
 use vfs_types::{
     EvidenceRebuildControlRequest, EvidenceRebuildRequest, EvidenceRebuildStatus,
     EvidenceRebuildStepRequest,
@@ -2765,6 +2766,19 @@ fn data_certificate() -> Option<Vec<u8>> {
 #[cfg(not(target_arch = "wasm32"))]
 fn data_certificate() -> Option<Vec<u8>> {
     None
+}
+
+#[query]
+fn database_storage_stats(r: DatabaseIdRequest) -> Result<vfs_types::DatabaseStorageStats, String> {
+    require_controller_caller()?;
+    with_service(|s| s.database_storage_stats(&r.database_id))
+}
+#[update]
+fn archive_intermediate_source(
+    r: vfs_types::ArchiveIntermediateSourceRequest,
+) -> Result<vfs_types::ArchiveIntermediateSourceResult, String> {
+    require_controller_caller()?;
+    with_service(|s| s.archive_intermediate_source(r))
 }
 
 #[query]

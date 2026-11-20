@@ -209,7 +209,7 @@ struct VaultItemEditorView: View {
     }
 
     private var canSubmit: Bool {
-        !isSaving
+        model.isUnlocked && !isSaving
             && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (mode.kind != .credential || totpValidationError == nil)
     }
@@ -280,6 +280,9 @@ struct VaultItemEditorView: View {
                         .disabled(!canSubmit)
                     }
                 }
+            }
+            .onChange(of: model.isUnlocked) { _, unlocked in
+                if !unlocked { dismiss() }
             }
             .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
             .alert("Discard Changes?", isPresented: $confirmsDiscard) {

@@ -1,6 +1,7 @@
 // Synthetic UI + real document encryption. Not actual II/vetKD acceptance.
 import assert from "node:assert/strict";
-import { chromium } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
+import { showVaultNavigation } from "./acceptance-ui.mjs";
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({
@@ -38,25 +39,37 @@ try {
   const title = page.getByLabel("Document title");
   await title.waitFor();
   assert.equal(await page.locator("summary").filter({ hasText: "Account & storage" }).isVisible(), false);
+  await showVaultNavigation(page);
   await page.getByRole("button", { name: "Actions for Vault 1", exact: true }).click();
   await page.getByRole("menuitem", { name: "Manage members", exact: true }).click();
   await page.getByText("No additional members.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Back to Vault", exact: true }).click();
-  const search = page.getByLabel("Search this Vault locally");
-  const syntheticNote = page.getByRole("button", { name: "Welcome note", exact: true });
-  await search.fill("Your private notes belong here.");
-  assert.equal(await syntheticNote.count(), 0, "typing filters titles only");
-  await page.getByRole("button", { name: "Search note contents", exact: true }).click();
-  await syntheticNote.waitFor();
-  await search.fill("absent-body-query");
-  assert.equal(await syntheticNote.count(), 0, "query changes discard body IDs");
-  await search.fill("");
-  await page
-    .getByRole("button", { name: "Welcome note", exact: true })
-    .click();
+  assert.equal(await page.getByRole("searchbox").count(), 0);
+  assert.equal(await page.getByRole("heading", { name: "Private documents", exact: true }).count(), 0);
+  const documentList = page.locator(".vault-document-list");
+  const newDocument = documentList.getByRole("button", { name: "New document", exact: true });
+  await expect(newDocument).toBeVisible();
+  await expect(newDocument).toHaveText("");
+  await expect(documentList.getByRole("button", { name: "Welcome note", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh documents", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh Vaults", exact: true })).toHaveCount(1);
+  await page.getByRole("button", { name: "Welcome note", exact: true }).click();
   const editor = page.locator('.cm-content[contenteditable="true"]');
   await editor.getByText("Your private notes belong here.", { exact: true }).waitFor();
   await title.fill("Edited secret");
+  const toggle = page.getByRole("button", { name: "Toggle Vault navigation" });
+  const frame = page.locator(".vault-editor-frame");
+  const editorWidth = (await frame.boundingBox()).width;
+  await expect(page.locator(".vault-switcher-slot").getByRole("button", { name: "Toggle Vault navigation" })).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", { name: "Create Vault", exact: true })).toBeVisible();
+  assert.equal((await frame.boundingBox()).width, editorWidth);
+  await toggle.press("Escape");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
+  assert.equal(await title.inputValue(), "Edited secret");
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.insertText(
@@ -67,10 +80,13 @@ try {
     await editor.evaluate((e) => e === document.activeElement),
     false,
   );
-  const preview = page.getByText("Private Markdown preview", { exact: true });
-  await preview.focus();
-  await page.keyboard.press("Enter");
-  assert.equal(await preview.evaluate((e) => e.parentElement.open), true);
+  const preview = page.getByRole("button", { name: "Preview", exact: true });
+  const edit = page.getByRole("button", { name: "Edit", exact: true });
+  await page.evaluate(() => { window.beforePreviewEditor = window.syntheticEditor(); });
+  await preview.press("Enter");
+  await expect(preview).toHaveAttribute("aria-pressed", "true");
+  await expect(editor).toBeHidden();
+  await expect(page.locator(".vault-preview-pane")).toContainText("Your private notes belong here.");
   assert.equal(
     await page
       .locator(
@@ -79,11 +95,14 @@ try {
       .count(),
     0,
   );
-  await page.getByText("Refresh Vaults", { exact: true }).click();
+  await edit.press("Enter");
+  await expect(editor).toBeVisible();
+  assert.equal(await page.evaluate(() => window.beforePreviewEditor === window.syntheticEditor()), true);
+  await page.getByRole("button", { name: "Refresh Vaults", exact: true }).click();
   assert.equal(await title.inputValue(), "Edited secret");
   const savedText = await editor.innerText();
   await page.evaluate(() => { window.beforeSaveEditor = window.syntheticEditor(); });
-  await page.getByText("Save document", { exact: true }).click();
+  await page.getByRole("button", { name: "Save document", exact: true }).click();
   await page.waitForFunction(() => {
     const title = document.querySelector('input[maxlength="512"]');
     return title && !title.disabled;
@@ -91,11 +110,11 @@ try {
   assert.equal(await title.inputValue(), "Edited secret");
   assert.equal(await editor.innerText(), savedText);
   assert.equal(await page.evaluate(() => window.beforeSaveEditor === window.syntheticEditor()), true);
-  assert.equal(await page.getByText("Save document", { exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Save document", exact: true }).isDisabled(), true);
   await editor.click();
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.insertText("\nFurther edits after saving");
-  await page.getByText("Save document", { exact: true }).click();
+  await page.getByRole("button", { name: "Save document", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('input[maxlength="512"]').disabled);
   assert.match(await editor.innerText(), /Further edits after saving/);
   await editor.click();
@@ -108,7 +127,7 @@ try {
     .getByRole("button", { name: "Edited secret", exact: true })
     .click();
   await editor.getByText("Your private notes belong here.", { exact: true }).waitFor();
-  await page.getByText("Show version history", { exact: true }).click();
+  await page.getByRole("button", { name: "Show version history", exact: true }).click();
   const historyDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "View revision 1", exact: true }).click();
   await page.getByRole("button", { name: "Download document", exact: true }).click();
@@ -144,7 +163,8 @@ try {
         ([action, value]) => action === "revoke" && value === url,
       ),
     );
-  await page.getByText("Vault 1", { exact: true }).click();
+  await showVaultNavigation(page);
+  await page.getByRole("button", { name: "Vault 1", exact: true }).click();
   await title.waitFor();
   await page.locator('.cm-content[contenteditable="true"]').click();
   await page.keyboard.press("ControlOrMeta+z");
@@ -160,7 +180,8 @@ try {
   await page.getByText("Close Vault", { exact: true }).click();
   await acceptDiscard();
   assert.equal(await page.evaluate(() => window.retainedPassword.value), "");
-  await page.getByText("Vault 1", { exact: true }).click();
+  await showVaultNavigation(page);
+  await page.getByRole("button", { name: "Vault 1", exact: true }).click();
   await title.waitFor();
   await page.getByLabel("Document type").selectOption("attachment");
   await page.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
@@ -189,9 +210,8 @@ try {
   );
   await page.getByRole("button", { name: "Back to Vault", exact: true }).click();
   await page.setViewportSize({ width: 375, height: 812 });
-  const toggle = page.getByRole("button", { name: "Toggle Vault navigation" });
   assert.equal(await toggle.isVisible(), true);
-  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
   assert.equal(
     await page.getByText("Vault 1", { exact: true }).isVisible(),
     false,
@@ -210,8 +230,19 @@ try {
     await toggle.evaluate((e) => e === document.activeElement),
     true,
   );
+  await page.getByRole("button", { name: "Edited secret", exact: true }).click();
+  await page.getByRole("button", { name: "Show version history", exact: true }).press("Enter");
+  await expect(page.getByRole("heading", { name: "Version history", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "View revision 1", exact: true })).toBeInViewport();
   await title.fill("mobile private draft");
+  await page.getByRole("button", { name: "Hide version history", exact: true }).press("Enter");
+  await expect(page.getByRole("heading", { name: "Version history", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show version history", exact: true })).toBeFocused();
   await toggle.click();
+  assert.equal(await title.inputValue(), "mobile private draft");
+  await page.getByRole("button", { name: "Vault 2", exact: true }).click();
+  await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "true");
   assert.equal(await title.inputValue(), "mobile private draft");
   await page.getByRole("button", { name: "Vault 2", exact: true }).click();
   await acceptDiscard();
@@ -220,10 +251,33 @@ try {
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
   await page.getByText("Close Vault", { exact: true }).click();
   await acceptDiscard();
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.evaluate(() => {
+    const network = window.syntheticNetwork;
+    for (let index = 2; index < 22; index++) {
+      const id = new Uint8Array(16).fill(index + 3);
+      network.headers.push({ ...network.headers[0], id, name: [`Shared ${index}`] });
+      network.setRole(id, { Viewer: null });
+    }
+  });
+  await page.getByRole("button", { name: "Refresh Vaults", exact: true }).click();
+  await showVaultNavigation(page);
+  const roster = page.getByRole("region", { name: "Vaults", exact: true });
+  await expect(roster).toBeInViewport({ ratio: 1 });
+  await expect(roster.getByRole("button", { name: "Create Vault", exact: true })).toBeInViewport();
+  await roster.getByRole("button", { name: "Load more Vaults", exact: true }).click();
+  await expect(roster.getByRole("button", { name: "Shared 21 · Viewer", exact: true })).toBeAttached();
+  await roster.getByRole("button", { name: "Create Vault", exact: true }).press("Enter");
+  await expect(title).toHaveValue("");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.locator(".vault-switcher-slot").getByRole("button", { name: "Toggle Vault navigation" })).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log(
-    "PASS: encrypted save/read fixture, keyboard exit/preview, refresh preservation, history download, DOM/editor undo/password/File/Blob wipe, funding disabled, mobile navigation/focus/draft isolation; 0 page errors, 0 external requests. Synthetic UI only.",
+    "PASS: encrypted save/read fixture, keyboard exit/preview, refresh preservation, history download, DOM/editor undo/password/File/Blob wipe, funding disabled, desktop and mobile navigation/focus/draft isolation; 0 page errors, 0 external requests. Synthetic UI only.",
   );
 } finally {
   await browser.close();

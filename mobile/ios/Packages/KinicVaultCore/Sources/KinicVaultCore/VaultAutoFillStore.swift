@@ -287,7 +287,7 @@ public final class VaultAutoFillSnapshotStore: Sendable {
         }
     }
 
-    /// Lists credential candidates using manifest metadata only (never decrypts password chunks).
+    /// Uses manifest metadata when present and reads older credentials that stored URLs only in the body.
     public func listCandidates(
         rootKey: SymmetricKey,
         matchingHost: String? = nil
@@ -305,19 +305,27 @@ public final class VaultAutoFillSnapshotStore: Sendable {
                 revision: record.revision,
                 manifestBytes: manifest
             )
-            guard parsed.metadata.kind == .credential else { continue }
+            let metadata = parsed.metadata
+            guard metadata.kind == .credential else { continue }
+            let legacy: VaultCredentialRecord?
+            if metadata.domains == nil || metadata.username == nil {
+                legacy = try snapshot.decryptItem(objectIdBase64URL: record.objectIdBase64URL, rootKey: rootKey)?.credential
+            } else {
+                legacy = nil
+            }
+            let domains = metadata.domains ?? VaultCredentialCodec.extractDomains(legacy?.urls ?? [])
             if let matchingHost,
-               !VaultCredentialCodec.matchesDomain(domains: parsed.metadata.domains, queryHost: matchingHost)
+               !VaultCredentialCodec.matchesDomain(domains: domains, queryHost: matchingHost)
             {
                 continue
             }
             results.append(
                 VaultAutoFillCandidate(
                     recordIdentifier: binding + "." + record.objectIdBase64URL,
-                    title: parsed.metadata.title,
-                    username: parsed.metadata.username ?? "",
-                    domains: parsed.metadata.domains ?? [],
-                    hasTotp: parsed.metadata.hasTotp ?? false
+                    title: metadata.title,
+                    username: metadata.username ?? legacy?.username ?? "",
+                    domains: domains,
+                    hasTotp: metadata.hasTotp ?? (legacy?.totp.isEmpty == false)
                 )
             )
         }

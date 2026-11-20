@@ -791,6 +791,20 @@
       "CREATE VIEW fs_search_content AS SELECT n.id,n.path,n.kind,COALESCE(m.title,n.name,n.path) AS title,CASE WHEN m.shared=1 THEN m.summary ELSE n.content END AS content FROM fs_nodes n LEFT JOIN fs_search_metadata m ON m.node_row_id=n.id"
     ]
   ],
+  "optional_archive_refs": [
+    [
+      "table",
+      "archive_publication_refs",
+      "archive_publication_refs",
+      "CREATE TABLE archive_publication_refs (\n    node_id INTEGER PRIMARY KEY CHECK (node_id > 0)\n)"
+    ],
+    [
+      "table",
+      "archive_publication_scan",
+      "archive_publication_scan",
+      "CREATE TABLE archive_publication_scan (\n    id INTEGER PRIMARY KEY CHECK (id = 1),\n    last_receipt_rowid INTEGER NOT NULL\n)"
+    ]
+  ],
   "optional_statistics": [
     [
       "table",

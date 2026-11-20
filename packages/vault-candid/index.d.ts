@@ -288,6 +288,10 @@ export interface ReconciliationState {
   'spender' : Principal,
   'lease_generation' : bigint,
 }
+export type RefillResult = { 'Ok' : bigint } |
+  { 'Err' : string };
+export type RefillResult_1 = { 'Ok' : null } |
+  { 'Err' : string };
 export type Result = { 'Ok' : bigint } |
   { 'Err' : Error };
 export type Result_1 = { 'Ok' : null } |
@@ -425,6 +429,7 @@ export interface _SERVICE {
     Result_4
   >,
   'create_vault' : ActorMethod<[CreateVault], Result_5>,
+  'cycles_balance_for_wiki' : ActorMethod<[], RefillResult>,
   'derive_vault_key' : ActorMethod<[DeriveKey], Result_6>,
   'get_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
@@ -479,6 +484,7 @@ export interface _SERVICE {
   >,
   'revoke_wiki_link' : ActorMethod<[], Result_29>,
   'set_config' : ActorMethod<[[] | [VaultConfig]], Result_28>,
+  'set_cycles_refill_source' : ActorMethod<[[] | [Principal]], RefillResult_1>,
   'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_28>,
   'set_vault_member' : ActorMethod<
     [Uint8Array | number[], Principal, AccessRole],

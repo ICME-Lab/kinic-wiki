@@ -20,6 +20,8 @@ vi.mock("./workspace", () => ({
   ),
 }));
 import VaultPage from "./page";
+import { VaultChrome } from "../chrome";
+import { VaultNavigationScope } from "../navigation";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -31,6 +33,20 @@ function signedIn(identity: Identity = Ed25519KeyIdentity.generate()) {
   state.create.mockResolvedValue({ destroy: state.destroy });
   return identity;
 }
+it("moves skip-link focus to the welcome heading when signed out", () => {
+  state.session = { loading: false, ready: true };
+  render(
+    <VaultNavigationScope>
+      <VaultChrome />
+      <VaultPage />
+    </VaultNavigationScope>,
+  );
+  const skip = screen.getByRole("link", { name: "Skip to content" });
+  skip.focus();
+  fireEvent.click(skip);
+  expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Private Vault" }));
+});
+
 it("mounts private UI only in an authenticated browser and destroys it before unresolved logout finishes", async () => {
   signedIn();
   const view = render(<VaultPage />);

@@ -43,16 +43,16 @@ export const idlFactory = ({ IDL }) => {
     'collected_execution_fee_cycles' : IDL.Nat64,
     'estimated_execution_fee_cycles' : IDL.Nat64,
   });
-  const Result_5 = IDL.Variant({ 'Ok' : VaultTransfer, 'Err' : BridgeError });
+  const Result_6 = IDL.Variant({ 'Ok' : VaultTransfer, 'Err' : BridgeError });
   const TransferApproval = IDL.Variant({
     'Exact' : IDL.Nat64,
     'AllAvailable' : IDL.Null,
   });
-  const Result_19 = IDL.Variant({
+  const Result_21 = IDL.Variant({
     'Ok' : IDL.Opt(VaultTransfer),
     'Err' : BridgeError,
   });
-  const Result_4 = IDL.Variant({
+  const Result_5 = IDL.Variant({
     'Ok' : IDL.Opt(LinkStatus),
     'Err' : BridgeError,
   });
@@ -62,31 +62,31 @@ export const idlFactory = ({ IDL }) => {
     'vault_owner' : IDL.Principal,
     'expires_at_ns' : IDL.Nat64,
   });
-  const Result_47 = IDL.Variant({ 'Ok' : LinkChallenge, 'Err' : BridgeError });
-  const Result_57 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : BridgeError });
+  const Result_49 = IDL.Variant({ 'Ok' : LinkChallenge, 'Err' : BridgeError });
+  const Result_59 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : BridgeError });
   return IDL.Service({
     'approve_vault_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_1], []),
-    'cancel_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_5], []),
+    'cancel_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_6], []),
     'execute_vault_transfer' : IDL.Func(
         [IDL.Vec(IDL.Nat8), TransferApproval],
-        [Result_5],
+        [Result_6],
         [],
       ),
     'get_pending_vault_transfer' : IDL.Func(
         [IDL.Opt(IDL.Text)],
-        [Result_19],
+        [Result_21],
         [],
       ),
-    'get_vault_link' : IDL.Func([], [Result_4], ['query']),
-    'get_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_5], []),
-    'preview_vault_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_47], []),
+    'get_vault_link' : IDL.Func([], [Result_5], ['query']),
+    'get_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_6], []),
+    'preview_vault_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_49], []),
     'quote_vault_transfer' : IDL.Func(
         [IDL.Text, TransferAmount, IDL.Vec(IDL.Nat8)],
-        [Result_5],
+        [Result_6],
         [],
       ),
-    'reconcile_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_5], []),
-    'revoke_vault_link' : IDL.Func([], [Result_57], []),
+    'reconcile_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_6], []),
+    'revoke_vault_link' : IDL.Func([], [Result_59], []),
   });
 };
 export const init = ({ IDL }) => { return []; };

@@ -9,10 +9,14 @@ try {
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(process.env.VAULT_FIXTURE_URL ?? "http://127.0.0.1:3027");
-    await page.locator(".vault-sidebar").waitFor({ state: "attached" });
-    assert.equal(await page.evaluate(() => !!window.syntheticNetwork), true, "Synthetic fixture required");
     const navigation = page.getByRole("button", { name: "Toggle Vault navigation", exact: true });
-    if (await navigation.isVisible()) await navigation.click();
+    const showVaults = async () => {
+      if (await navigation.getAttribute("aria-expanded") === "false") await navigation.click();
+      await expect(page.getByRole("region", { name: "Vaults" })).toBeVisible();
+    };
+    await navigation.waitFor();
+    assert.equal(await page.evaluate(() => !!window.syntheticNetwork), true, "Synthetic fixture required");
+    await showVaults();
     const rename = async (name, next) => {
       const trigger = page.getByRole("button", { name: `Actions for ${name}`, exact: true });
       await trigger.focus(); await page.keyboard.press("Enter");
@@ -30,7 +34,7 @@ try {
     await page.getByRole("button", { name: "仕事", exact: true }).click();
     await page.getByLabel("Document title").fill("Unsaved note");
     await page.evaluate(() => { window.renameRoot = window.syntheticVault.session.root; });
-    if (await navigation.isVisible()) await navigation.click();
+    await showVaults();
     await rename("仕事", "個人メモ");
     await expect(page.getByLabel("Document title")).toHaveValue("Unsaved note");
     assert.equal(await page.evaluate(() => window.renameRoot === window.syntheticVault.session.root), true, "Rename must preserve the active key");

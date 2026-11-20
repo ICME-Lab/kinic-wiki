@@ -95,6 +95,10 @@ public struct VaultAutoFillSyncPayload: Sendable {
         let payload = try await load()
         guard epoch == ticket else { throw CancellationError() }
         guard payload.snapshot.context == context else { throw VaultCryptoError.invalidContext }
+        guard Self.fitsOfflineCache(payload.snapshot) else {
+            try await disable()
+            throw VaultNativeError.snapshotTooLarge
+        }
         // Validate metadata before any cache or Keychain mutation.
         for record in payload.snapshot.records {
             _ = try VaultDocumentV3.readManifest(rootKey: payload.rootKey, context: context, object: Base64URL.decode(record.objectIdBase64URL), revision: record.revision, manifestBytes: Base64URL.decode(record.manifestBase64URL))
@@ -103,5 +107,19 @@ public struct VaultAutoFillSyncPayload: Sendable {
         try snapshotStore.save(payload.snapshot)
         let candidates = try snapshotStore.listCandidates(rootKey: payload.rootKey)
         try await publish(candidates, ticket: ticket)
+    }
+
+    private static func fitsOfflineCache(_ snapshot: VaultAutoFillSnapshot) -> Bool {
+        guard snapshot.records.count <= 1_000 else { return false }
+        var remaining = 8 * 1_048_576
+        for record in snapshot.records {
+            // Snapshot fields use unpadded base64url, so this is the decoded byte count.
+            remaining -= record.manifestBase64URL.utf8.count * 3 / 4
+            for chunk in record.chunksBase64URL {
+                remaining -= chunk.utf8.count * 3 / 4
+            }
+            if remaining < 0 { return false }
+        }
+        return true
     }
 }

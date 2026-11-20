@@ -25,7 +25,7 @@ export function VaultWelcome({
           <FolderLock size={30} aria-hidden />
         </div>
         <p className="vault-eyebrow">Your private workspace</p>
-        <h1 id="vault-welcome-title">Private Vault</h1>
+        <h1 id="vault-welcome-title" tabIndex={-1}>Private Vault</h1>
         <p className="vault-welcome-lede">
           Sign in with Internet Identity and create your Vault. Your notes,
           credentials and files are encrypted in your

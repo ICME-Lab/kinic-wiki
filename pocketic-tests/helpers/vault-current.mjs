@@ -136,6 +136,7 @@ export async function fixture({
     return {
       ...v,
       pic,
+      url: server.getUrl(),
       fake,
       wasm,
       install,
