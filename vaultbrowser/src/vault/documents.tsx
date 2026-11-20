@@ -80,6 +80,13 @@ function Documents({
   const [editorKey, setEditorKey] = useState(0);
   const [history, setHistory] = useState<Revision[]>([]);
   const [historyCursor, setHistoryCursor] = useState<bigint>();
+  const historyHeading = useRef<HTMLHeadingElement>(null);
+  const focusHistory = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusHistory.current || disabled) return;
+    focusHistory.current = false;
+    historyHeading.current?.focus();
+  }, [disabled, history]);
   const [progress, setProgress] = useState(0);
   const [dirty, setDirty] = useState(false);
   const guard = useDraftGuard();
@@ -508,6 +515,7 @@ function Documents({
                         const g = client.session.capture();
                         const page = await client.history(current.revision);
                         client.session.check(g);
+                        focusHistory.current = true;
                         setHistory(page.entries);
                         setHistoryCursor(page.next[0]);
                       })
@@ -555,6 +563,57 @@ function Documents({
             </div>
           </div>
           <div className="vault-editor-body">
+            {current && history.length ? (
+              <div className="vault-history">
+                <h3 ref={historyHeading} tabIndex={-1}>Version history</h3>
+                {history.map((revision) => (
+                  <div
+                    className="vault-history-row"
+                    key={String(revision.revision)}
+                  >
+                    <span>
+                      Revision {String(revision.revision)}
+                      {revision.deleted ? " (deleted)" : ""}
+                    </span>
+                    {!revision.deleted ? (
+                      <VaultButton
+                        size="sm"
+                        disabled={disabled || pendingSave}
+                        aria-pressed={displayedRevision?.revision === revision.revision}
+                        onClick={() => guard.protect(() => run(() => open(current, revision)))}
+                      >
+                        <Eye size={14} aria-hidden />
+                        View revision {String(revision.revision)}
+                      </VaultButton>
+                    ) : null}
+                  </div>
+                ))}
+                {historyCursor !== undefined ? (
+                  <VaultButton
+                    size="sm"
+                    tone="ghost"
+                    disabled={disabled}
+                    onClick={() =>
+                      run(async () => {
+                        const g = client.session.capture(),
+                          page = await client.history(
+                            current.revision,
+                            historyCursor,
+                          );
+                        client.session.check(g);
+                        setHistory((previous) => [
+                          ...previous,
+                          ...page.entries,
+                        ]);
+                        setHistoryCursor(page.next[0]);
+                      })
+                    }
+                  >
+                    Load more history
+                  </VaultButton>
+                ) : null}
+              </div>
+            ) : null}
             {!displayedRevision?.deleted ? (
               !canEdit ? (
                 current ? (
@@ -691,57 +750,7 @@ function Documents({
                 until permanent deletion.
               </p>
             )}
-            {current && history.length ? (
-              <div className="vault-history">
-                <h3>Version history</h3>
-                {history.map((revision) => (
-                  <div
-                    className="vault-history-row"
-                    key={String(revision.revision)}
-                  >
-                    <span>
-                      Revision {String(revision.revision)}
-                      {revision.deleted ? " (deleted)" : ""}
-                    </span>
-                    {!revision.deleted ? (
-                      <VaultButton
-                        size="sm"
-                        disabled={disabled || pendingSave}
-                        aria-pressed={displayedRevision?.revision === revision.revision}
-                        onClick={() => guard.protect(() => run(() => open(current, revision)))}
-                      >
-                        <Eye size={14} aria-hidden />
-                        View revision {String(revision.revision)}
-                      </VaultButton>
-                    ) : null}
-                  </div>
-                ))}
-                {historyCursor !== undefined ? (
-                  <VaultButton
-                    size="sm"
-                    tone="ghost"
-                    disabled={disabled}
-                    onClick={() =>
-                      run(async () => {
-                        const g = client.session.capture(),
-                          page = await client.history(
-                            current.revision,
-                            historyCursor,
-                          );
-                        client.session.check(g);
-                        setHistory((previous) => [
-                          ...previous,
-                          ...page.entries,
-                        ]);
-                        setHistoryCursor(page.next[0]);
-                      })
-                    }
-                  >
-                    Load more history
-                  </VaultButton>
-                ) : null}
-              </div>
-            ) : null}
+
           </div>
 
         </div>

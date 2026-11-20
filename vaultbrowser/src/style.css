@@ -109,6 +109,20 @@ body {
   background: rgb(var(--surface));
   box-shadow: var(--vault-shadow);
 }
+.vault-switcher-slot .vault-sidebar {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--vault-chrome-h) - 16px);
+}
+.vault-switcher-slot .vault-sidebar-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.vault-switcher-slot .vault-sidebar-title,
+.vault-switcher-slot .vault-sidebar-create-wrap {
+  flex-shrink: 0;
+}
 .vault-chrome-label {
   display: inline-flex;
   align-items: center;

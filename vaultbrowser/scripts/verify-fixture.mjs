@@ -230,6 +230,10 @@ try {
     await toggle.evaluate((e) => e === document.activeElement),
     true,
   );
+  await page.getByRole("button", { name: "Edited secret", exact: true }).click();
+  await page.getByRole("button", { name: "Show version history", exact: true }).press("Enter");
+  await expect(page.getByRole("heading", { name: "Version history", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "View revision 1", exact: true })).toBeInViewport();
   await title.fill("mobile private draft");
   await toggle.click();
   assert.equal(await title.inputValue(), "mobile private draft");
@@ -244,6 +248,22 @@ try {
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
   await page.getByText("Close Vault", { exact: true }).click();
   await acceptDiscard();
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.evaluate(() => {
+    const network = window.syntheticNetwork;
+    for (let index = 2; index < 22; index++) {
+      const id = new Uint8Array(16).fill(index + 3);
+      network.headers.push({ ...network.headers[0], id, name: [`Shared ${index}`] });
+      network.setRole(id, { Viewer: null });
+    }
+  });
+  await page.getByRole("button", { name: "Refresh Vaults", exact: true }).click();
+  await showVaultNavigation(page);
+  const roster = page.getByRole("region", { name: "Vaults", exact: true });
+  await expect(roster).toBeInViewport({ ratio: 1 });
+  await expect(roster.getByRole("button", { name: "Create Vault", exact: true })).toBeInViewport();
+  await roster.getByRole("button", { name: "Load more Vaults", exact: true }).click();
+  await expect(roster.getByRole("button", { name: "Shared 21 · Viewer", exact: true })).toBeAttached();
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log(
