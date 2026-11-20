@@ -1559,3 +1559,233 @@ body {
 .vault-isolated--picker {
   width: min(100%, 40rem);
 }
+
+/* ───────────────── Password Manager Extensions ───────────────── */
+
+.vault-category-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vault-document-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-meta-star {
+  color: #eab308;
+  flex-shrink: 0;
+}
+
+.vault-meta-totp {
+  color: rgb(var(--accent-text));
+  flex-shrink: 0;
+}
+
+.vault-credential-row {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vault-strength {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.vault-strength--weak {
+  background: rgb(239 68 68 / 0.12);
+  color: #b91c1c;
+}
+
+.vault-strength--fair {
+  background: rgb(245 158 11 / 0.14);
+  color: #b45309;
+}
+
+.vault-strength--strong {
+  background: rgb(34 197 94 / 0.14);
+  color: #15803d;
+}
+
+.vault-strength--very-strong {
+  background: rgb(16 185 129 / 0.16);
+  color: #047857;
+}
+
+.vault-generator-wrap {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.vault-generator {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius);
+  background: rgb(var(--paper));
+}
+
+.vault-generator-modes,
+.vault-generator-actions,
+.vault-generator-checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.vault-generator-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius-sm);
+  background: rgb(var(--surface));
+}
+
+.vault-generator-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.vault-generator-options {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-generator-range {
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.vault-generator-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.vault-totp-section {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-totp-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius);
+  background: rgb(var(--paper));
+}
+
+.vault-totp-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vault-totp-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.vault-totp-timer {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--muted));
+  min-width: 28px;
+}
+
+.vault-totp-error {
+  color: #b91c1c;
+}
+
+.vault-textarea--compact {
+  min-height: 68px;
+}
+
+.vault-domain-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vault-domain-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--line));
+  background: rgb(var(--paper));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: hsl(var(--muted));
+}
+
+.vault-portability {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius);
+  background: rgb(var(--paper));
+}
+
+.vault-portability-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vault-portability-tabs,
+.vault-portability-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.vault-portability-body,
+.vault-portability-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.vault-portability-status {
+  font-size: 13px;
+  font-weight: 550;
+}

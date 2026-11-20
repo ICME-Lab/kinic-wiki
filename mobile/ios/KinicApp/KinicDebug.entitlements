@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(APP_GROUP_ID)</string>
@@ -14,8 +16,10 @@
 	<array>
 		<string>applinks:$(KINIC_ASSOCIATED_DOMAIN)</string>
 		<string>webcredentials:$(KINIC_ASSOCIATED_DOMAIN)</string>
+		<string>webcredentials:$(KINIC_VAULT_CALLBACK_DOMAIN)</string>
 		<string>applinks:$(KINIC_ASSOCIATED_DOMAIN)?mode=developer</string>
 		<string>webcredentials:$(KINIC_ASSOCIATED_DOMAIN)?mode=developer</string>
+		<string>webcredentials:vault.localhost?mode=developer</string>
 	</array>
 </dict>
 </plist>

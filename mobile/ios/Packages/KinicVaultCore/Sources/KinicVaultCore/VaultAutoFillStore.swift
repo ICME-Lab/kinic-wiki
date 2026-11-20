@@ -1,0 +1,388 @@
+import CryptoKit
+import Foundation
+
+/// Encrypted on-disk snapshot for iOS AutoFill (`ASCredentialProviderViewController`).
+/// Plaintext passwords never touch disk; only ciphertext manifests/chunks + public routing headers are stored.
+public struct VaultAutoFillRecordSnapshot: Codable, Equatable, Sendable {
+    public let objectIdBase64URL: String
+    public let revision: UInt64
+    public let manifestBase64URL: String
+    public let chunksBase64URL: [String]
+    public let hashesBase64URL: [String]
+
+    public init(
+        objectIdBase64URL: String,
+        revision: UInt64,
+        manifestBase64URL: String,
+        chunksBase64URL: [String],
+        hashesBase64URL: [String]
+    ) {
+        self.objectIdBase64URL = objectIdBase64URL
+        self.revision = revision
+        self.manifestBase64URL = manifestBase64URL
+        self.chunksBase64URL = chunksBase64URL
+        self.hashesBase64URL = hashesBase64URL
+    }
+}
+
+public struct VaultAutoFillSnapshot: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public let context: VaultContext
+    public let updatedAtEpochSeconds: Int64
+    public let records: [VaultAutoFillRecordSnapshot]
+
+    public init(
+        context: VaultContext,
+        updatedAtEpochSeconds: Int64 = Int64(Date().timeIntervalSince1970),
+        records: [VaultAutoFillRecordSnapshot]
+    ) {
+        self.schemaVersion = 1
+        self.context = context
+        self.updatedAtEpochSeconds = updatedAtEpochSeconds
+        self.records = records
+    }
+}
+
+public struct VaultAutoFillCandidate: Equatable, Sendable {
+    public let recordIdentifier: String
+    public let title: String
+    public let username: String
+    public let domains: [String]
+    public let hasTotp: Bool
+}
+
+public struct VaultAutoFillDecryptedCredential: Equatable, Sendable {
+    public let recordIdentifier: String
+    public let title: String
+    public let username: String
+    public let password: String
+    public let totpCode: String?
+}
+
+public struct VaultItemSummary: Equatable, Identifiable, Hashable, Sendable {
+    public var id: String { objectIdBase64URL }
+    public let objectIdBase64URL: String
+    public let revision: UInt64
+    public let kind: VaultDocumentKind
+    public let title: String
+    public let username: String
+    public let domains: [String]
+    public let hasTotp: Bool
+    public let favorite: Bool
+    public let tags: [String]
+    public let filename: String?
+    public let mime: String?
+
+    public init(
+        objectIdBase64URL: String,
+        revision: UInt64,
+        kind: VaultDocumentKind,
+        title: String,
+        username: String = "",
+        domains: [String] = [],
+        hasTotp: Bool = false,
+        favorite: Bool = false,
+        tags: [String] = [],
+        filename: String? = nil,
+        mime: String? = nil
+    ) {
+        self.objectIdBase64URL = objectIdBase64URL
+        self.revision = revision
+        self.kind = kind
+        self.title = title
+        self.username = username
+        self.domains = domains
+        self.hasTotp = hasTotp
+        self.favorite = favorite
+        self.tags = tags
+        self.filename = filename
+        self.mime = mime
+    }
+
+    public func matches(query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        let lowered = trimmed.lowercased()
+        if title.lowercased().contains(lowered)
+            || username.lowercased().contains(lowered)
+            || domains.contains(where: { $0.lowercased().contains(lowered) })
+            || tags.contains(where: { $0.lowercased().contains(lowered) })
+            || (filename?.lowercased().contains(lowered) ?? false)
+        {
+            return true
+        }
+        return VaultCredentialCodec.matchesDomain(domains: domains, queryHost: trimmed)
+    }
+}
+
+public struct VaultDecryptedItem: Equatable, Sendable {
+    public let summary: VaultItemSummary
+    public let credential: VaultCredentialRecord?
+    public let noteText: String?
+    public let plaintextLength: Int
+
+    public init(
+        summary: VaultItemSummary,
+        credential: VaultCredentialRecord? = nil,
+        noteText: String? = nil,
+        plaintextLength: Int
+    ) {
+        self.summary = summary
+        self.credential = credential
+        self.noteText = noteText
+        self.plaintextLength = plaintextLength
+    }
+}
+
+extension VaultAutoFillSnapshot {
+    public func listItems(rootKey: SymmetricKey) throws -> [VaultItemSummary] {
+        var results: [VaultItemSummary] = []
+        results.reserveCapacity(records.count)
+        for record in records {
+            let object = try Base64URL.decode(record.objectIdBase64URL)
+            let manifest = try Base64URL.decode(record.manifestBase64URL)
+            let parsed = try VaultDocumentV3.readManifest(
+                rootKey: rootKey,
+                context: context,
+                object: object,
+                revision: record.revision,
+                manifestBytes: manifest
+            )
+            results.append(
+                VaultItemSummary(
+                    objectIdBase64URL: record.objectIdBase64URL,
+                    revision: record.revision,
+                    kind: parsed.metadata.kind,
+                    title: parsed.metadata.title,
+                    username: parsed.metadata.username ?? "",
+                    domains: parsed.metadata.domains ?? [],
+                    hasTotp: parsed.metadata.hasTotp ?? false,
+                    favorite: parsed.metadata.favorite ?? false,
+                    tags: parsed.metadata.tags ?? [],
+                    filename: parsed.metadata.filename,
+                    mime: parsed.metadata.mime
+                )
+            )
+        }
+        return results
+    }
+
+    public func decryptItem(
+        objectIdBase64URL: String,
+        rootKey: SymmetricKey
+    ) throws -> VaultDecryptedItem? {
+        guard let record = records.first(where: { $0.objectIdBase64URL == objectIdBase64URL }) else {
+            return nil
+        }
+        let object = try Base64URL.decode(record.objectIdBase64URL)
+        let manifest = try Base64URL.decode(record.manifestBase64URL)
+        let chunks = try record.chunksBase64URL.map(Base64URL.decode)
+        let hashes = try record.hashesBase64URL.map(Base64URL.decode)
+        let decrypted = try VaultDocumentV3.decrypt(
+            rootKey: rootKey,
+            context: context,
+            object: object,
+            revision: record.revision,
+            manifestBytes: manifest,
+            chunks: chunks,
+            hashes: hashes
+        )
+        let meta = decrypted.metadata
+        let summary = VaultItemSummary(
+            objectIdBase64URL: record.objectIdBase64URL,
+            revision: record.revision,
+            kind: meta.kind,
+            title: meta.title,
+            username: meta.username ?? "",
+            domains: meta.domains ?? [],
+            hasTotp: meta.hasTotp ?? false,
+            favorite: meta.favorite ?? false,
+            tags: meta.tags ?? [],
+            filename: meta.filename,
+            mime: meta.mime
+        )
+        switch meta.kind {
+        case .credential:
+            return VaultDecryptedItem(
+                summary: summary,
+                credential: VaultCredentialCodec.parse(decrypted.plaintext),
+                noteText: nil,
+                plaintextLength: decrypted.plaintext.count
+            )
+        case .note:
+            return VaultDecryptedItem(
+                summary: summary,
+                credential: nil,
+                noteText: String(data: decrypted.plaintext, encoding: .utf8) ?? "",
+                plaintextLength: decrypted.plaintext.count
+            )
+        case .attachment:
+            return VaultDecryptedItem(
+                summary: summary,
+                credential: nil,
+                noteText: nil,
+                plaintextLength: decrypted.plaintext.count
+            )
+        }
+    }
+
+    public func upsertingRecord(
+        _ record: VaultAutoFillRecordSnapshot,
+        updatedAtEpochSeconds: Int64 = Int64(Date().timeIntervalSince1970)
+    ) -> VaultAutoFillSnapshot {
+        var next = records
+        if let index = next.firstIndex(where: { $0.objectIdBase64URL == record.objectIdBase64URL }) {
+            next[index] = record
+        } else {
+            next.append(record)
+        }
+        return VaultAutoFillSnapshot(
+            context: context,
+            updatedAtEpochSeconds: updatedAtEpochSeconds,
+            records: next
+        )
+    }
+
+    public func removingRecord(
+        objectIdBase64URL: String,
+        updatedAtEpochSeconds: Int64 = Int64(Date().timeIntervalSince1970)
+    ) -> VaultAutoFillSnapshot {
+        VaultAutoFillSnapshot(
+            context: context,
+            updatedAtEpochSeconds: updatedAtEpochSeconds,
+            records: records.filter { $0.objectIdBase64URL != objectIdBase64URL }
+        )
+    }
+}
+
+public final class VaultAutoFillSnapshotStore: Sendable {
+    private let fileURL: URL
+
+    public init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
+
+    public func save(_ snapshot: VaultAutoFillSnapshot) throws {
+        let dir = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(snapshot)
+        try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+    }
+
+    public func load() throws -> VaultAutoFillSnapshot? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+        let data = try Data(contentsOf: fileURL)
+        let snapshot = try JSONDecoder().decode(VaultAutoFillSnapshot.self, from: data)
+        guard snapshot.schemaVersion == 1 else {
+            throw VaultCryptoError.invalidManifest
+        }
+        return snapshot
+    }
+
+    public func clear() throws {
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            try FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
+    /// Uses manifest metadata when present and reads older credentials that stored URLs only in the body.
+    public func listCandidates(
+        rootKey: SymmetricKey,
+        matchingHost: String? = nil
+    ) throws -> [VaultAutoFillCandidate] {
+        guard let snapshot = try load() else { return [] }
+        let binding = Base64URL.encode(Data(SHA256.hash(data: try snapshot.context.contextInput())))
+        var results: [VaultAutoFillCandidate] = []
+        for record in snapshot.records {
+            let object = try Base64URL.decode(record.objectIdBase64URL)
+            let manifest = try Base64URL.decode(record.manifestBase64URL)
+            let parsed = try VaultDocumentV3.readManifest(
+                rootKey: rootKey,
+                context: snapshot.context,
+                object: object,
+                revision: record.revision,
+                manifestBytes: manifest
+            )
+            let metadata = parsed.metadata
+            guard metadata.kind == .credential else { continue }
+            let legacy: VaultCredentialRecord?
+            if metadata.domains == nil || metadata.username == nil {
+                legacy = try snapshot.decryptItem(objectIdBase64URL: record.objectIdBase64URL, rootKey: rootKey)?.credential
+            } else {
+                legacy = nil
+            }
+            let domains = metadata.domains ?? VaultCredentialCodec.extractDomains(legacy?.urls ?? [])
+            if let matchingHost,
+               !VaultCredentialCodec.matchesDomain(domains: domains, queryHost: matchingHost)
+            {
+                continue
+            }
+            results.append(
+                VaultAutoFillCandidate(
+                    recordIdentifier: binding + "." + record.objectIdBase64URL,
+                    title: metadata.title,
+                    username: metadata.username ?? legacy?.username ?? "",
+                    domains: domains,
+                    hasTotp: metadata.hasTotp ?? (legacy?.totp.isEmpty == false)
+                )
+            )
+        }
+        return results
+    }
+
+    /// Decrypts a single requested credential on demand after biometric/user confirmation.
+    public func decryptCredential(
+        recordIdentifier: String,
+        rootKey: SymmetricKey,
+        now: Date = Date()
+    ) throws -> VaultAutoFillDecryptedCredential? {
+        guard let snapshot = try load() else { return nil }
+        let prefix = Base64URL.encode(Data(SHA256.hash(data: try snapshot.context.contextInput()))) + "."
+        guard recordIdentifier.hasPrefix(prefix) else { return nil }
+        let objectID = String(recordIdentifier.dropFirst(prefix.count))
+        guard let record = snapshot.records.first(where: { $0.objectIdBase64URL == objectID }) else { return nil }
+        let object = try Base64URL.decode(record.objectIdBase64URL)
+        let manifest = try Base64URL.decode(record.manifestBase64URL)
+        let chunks = try record.chunksBase64URL.map(Base64URL.decode)
+        let hashes = try record.hashesBase64URL.map(Base64URL.decode)
+        let decrypted = try VaultDocumentV3.decrypt(
+            rootKey: rootKey,
+            context: snapshot.context,
+            object: object,
+            revision: record.revision,
+            manifestBytes: manifest,
+            chunks: chunks,
+            hashes: hashes
+        )
+        let credential = VaultCredentialCodec.parse(decrypted.plaintext)
+        let totpCode: String? = if !credential.totp.isEmpty {
+            try? VaultTOTP.generate(input: credential.totp, now: now).code
+        } else {
+            nil
+        }
+        return VaultAutoFillDecryptedCredential(
+            recordIdentifier: recordIdentifier,
+            title: decrypted.metadata.title,
+            username: credential.username,
+            password: credential.password,
+            totpCode: totpCode
+        )
+    }
+
+    /// Lists all Vault item summaries from manifest metadata without decrypting chunk plaintext.
+    public func listItems(rootKey: SymmetricKey) throws -> [VaultItemSummary] {
+        guard let snapshot = try load() else { return [] }
+        return try snapshot.listItems(rootKey: rootKey)
+    }
+
+    /// Decrypts a single item (credential or note) on demand.
+    public func decryptItem(
+        objectIdBase64URL: String,
+        rootKey: SymmetricKey
+    ) throws -> VaultDecryptedItem? {
+        guard let snapshot = try load() else { return nil }
+        return try snapshot.decryptItem(objectIdBase64URL: objectIdBase64URL, rootKey: rootKey)
+    }
+}

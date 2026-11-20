@@ -14,7 +14,8 @@ struct KinicApp: App {
 #if DEBUG
         if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "navigation" {
             _model = State(initialValue: NavigationFixture.makeModel())
-        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
+        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai"
+                    || ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "vault" {
             _model = State(initialValue: .preview())
         } else {
             _model = State(initialValue: .live())
@@ -42,6 +43,12 @@ struct KinicApp: App {
             AskAIScreenshotPreview()
                 .tint(KinicDesign.hotPink)
                 .preferredColorScheme(ProcessInfo.processInfo.environment["KINIC_DARK_MODE"] == "1" ? .dark : .light)
+        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "vault" {
+            VaultScreenshotPreview(
+                screen: ProcessInfo.processInfo.environment["KINIC_VAULT_SCREEN"] ?? "list"
+            )
+            .tint(KinicDesign.hotPink)
+            .preferredColorScheme(ProcessInfo.processInfo.environment["KINIC_DARK_MODE"] == "1" ? .dark : .light)
         } else {
             liveView
         }

@@ -163,3 +163,116 @@ External TestFlight distribution still needs App Store Connect configuration aft
 
 Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200, returns `content-type: application/json`, includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`, and excludes `/cycles` before the `/*` catch-all so funding remains on the web. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
 The script fails before upload if either the app archive or Share Extension archive lacks `PrivacyInfo.xcprivacy`.
+
+### Kinic Vault tab and AutoFill configuration
+
+Vault authentication uses its own canister derivation origin, Keychain session
+(`xyz.kinic.vault.session.<canister>`), and root key store. Wiki sign-in is
+never reused for Vault. Both the **Vault** tab and **Settings → Vault AutoFill**
+share one state model supporting logins, secure notes, live TOTP codes, password
+and passphrase generation, `SaveInline` create/edit, and offline Face ID unlock.
+
+For production or staging builds, configure dedicated Vault build settings in
+`Config/Kinic.xcconfig` (or via build-setting overrides):
+
+- `KINIC_VAULT_ENVIRONMENT`: `production` or `staging`
+- `KINIC_VAULT_CANISTER_ID`: dedicated Vault canister ID (rejected if equal to `KINIC_CANISTER_ID`)
+- `KINIC_VAULT_API_BASE_URL`: `https://icp0.io`
+- `KINIC_VAULT_IDENTITY_PROVIDER`: `https://id.ai/authorize`
+- `KINIC_VAULT_DERIVATION_ORIGIN`: optional override; defaults to `https://<canister>.icp0.io`
+- `KINIC_VAULT_CALLBACK_DOMAIN`: dedicated Vault callback domain (default `vault.kinic.xyz`; rejected if equal to `KINIC_CALLBACK_DOMAIN` / `wiki.kinic.xyz`)
+
+In Debug builds, `KINIC_LOCAL_VAULT_CONFIG` takes precedence over bundle settings
+for local replica development.
+
+The native package wraps DFINITY `ic-vetkeys = 0.9.0` through a small C interface.
+Before generating the Xcode project, install the Rust targets:
+
+```sh
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+mobile/ios/scripts/build-vault-native.sh
+mobile/ios/scripts/ensure-xcodegen-project.sh
+```
+
+The project generator builds the bridge automatically. Generated XCFrameworks
+and Cargo build outputs are ignored by Git. For macOS package tests alone,
+`build-vault-native.sh --macos-only` avoids the iOS target requirement; regenerate
+the full bridge before building the iOS app. macOS 15 and iOS 18 remain the floors.
+
+A Debug app reads a JSON file **inside its app container** from the launch
+environment variable `KINIC_LOCAL_VAULT_CONFIG`:
+
+```json
+{
+  "canister": "<local Vault canister ID>",
+  "apiBaseURL": "https://localhost",
+  "internetIdentityURL": "https://<local II canister ID>.localhost/authorize",
+  "derivationOrigin": "https://<local Vault canister ID>.localhost",
+  "callbackURL": "https://vault.localhost/ios-vault-auth-callback",
+  "rootKeyBase64": "<base64 local replica DER root public key>"
+}
+```
+
+Serve the local replica through a trusted HTTPS loopback proxy on port 443. It
+must route canister hostnames to the local IC gateway and preserve response
+bodies and certificate headers. Trust the local TLS CA in the task's Simulator;
+do not disable TLS or IC certificate validation. The root key above is public
+and must come from the intended local replica. Release builds reject this local
+configuration and cannot select test vetKD master keys through this settings UI.
+
+Build the local Vault assets with `ICP_ENVIRONMENT=local-vault`,
+`VAULT_LOCAL_ORIGIN=https://vault.localhost`,
+`VAULT_LOCAL_HOST=https://localhost`, `VAULT_LOCAL_II` set to the HTTPS local II
+origin, and
+`VAULT_LOCAL_NATIVE_CALLBACK=https://vault.localhost/ios-vault-auth-callback`.
+The local HTTPS host must serve these certified routes from that canister:
+
+- `/.well-known/ii-auth-callbacks` on the derivation origin, readable by II via CORS.
+- `/.well-known/apple-app-site-association` on `vault.localhost`.
+- `/ios-vault-auth-callback` as a terminal response, with no redirect or script.
+
+Debug entitlements include `webcredentials:vault.localhost?mode=developer`.
+The callback has no custom port because iOS associated-domain discovery uses
+its HTTPS origin. Ensure the HTTPS Web Vault configuration advertises the same
+derivation origin as native; an HTTP development origin identifies a different
+II user. Changing the local transport scheme does not migrate that user's Vault.
+
+Enable Kinic Vault in iOS AutoFill settings first. In Kinic Settings, open
+**Local Vault AutoFill**, sign in separately, choose an owned Vault, and sync.
+If sync reports that the provider is disabled, enable it and sync again; the app
+does not report QuickType readiness until publication succeeds. Sync explicitly
+replaces the selected offline Vault. Disable/sign-out immediately fences pending work and attempts to remove both
+the snapshot and keys, then removes QuickType identities. Cleanup failures are
+reported for retry; the disable action remains available without the Debug
+connection file on later launches. Cached credentials
+remain usable offline until disabled; remote revocation cannot be observed while
+offline. A fresh certified access denial removes the cache. The cache is bounded
+to 1,000 credentials and 8 MiB of raw manifest/chunk data; an excess fails visibly
+rather than silently omitting entries.
+
+Verification commands:
+
+```sh
+node mobile/ios/scripts/check-vault-autofill-config.mjs
+swift test --package-path mobile/ios/Packages/KinicVaultCore
+swift test --package-path mobile/ios/Packages/KinicVaultNative
+cargo test --manifest-path mobile/ios/Native/VaultVetKeys/Cargo.toml --locked
+```
+
+For the real local-replica interoperability test, install PocketIC 16.1.0 and the
+separately locked `pocketic-tests` dependencies, then build the fixtures:
+
+```sh
+node pocketic-tests/scripts/build-vault-client-acceptance.mjs
+node pocketic-tests/scripts/build-vault-ledger.mjs
+CARGO_TARGET_DIR=.local/vault-native-pocketic-target cargo build -p vault-canister --features synthetic-funding-test-only --target wasm32-unknown-unknown --release --locked
+POCKET_IC_BIN=/path/to/pocket-ic-16.1 node pocketic-tests/integration/vault-ios-native.test.mjs
+```
+
+This test uses synthetic operating credit only. It performs genuine native signed
+calls and certificate verification against a local canister, obtains and verifies
+a real vetKey, fills from an encrypted cache, and verifies Web→Swift and Swift→Web
+root continuity without exporting the Web Crypto key. A **test-only** URLProtocol
+forwards requests to the HTTP PocketIC gateway; it is absent from the app. This
+proves the native data/crypto/sync path, not interactive II/AASA, biometric prompts,
+or QuickType behavior on a running iOS device. Record those device checks separately.

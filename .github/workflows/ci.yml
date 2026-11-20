@@ -180,6 +180,11 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.5.app
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Install native Vault Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - name: Generate iOS project
         run: mobile/ios/scripts/ensure-xcodegen-project.sh
       - id: ios-simulator

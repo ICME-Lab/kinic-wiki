@@ -137,3 +137,11 @@ workers/payment/cloudflare.production.ts
 
 # Disposable Vault browser fixtures.
 **/.tmp-vault/
+
+# Generated native Vault crypto libraries and Swift package state.
+/mobile/ios/Packages/KinicVaultNative/Artifacts/
+**/.build/
+**/.swiftpm/configuration/mirrors.json
+
+# Task-local reuse of the separately locked PocketIC dependencies.
+/pocketic-tests/node_modules

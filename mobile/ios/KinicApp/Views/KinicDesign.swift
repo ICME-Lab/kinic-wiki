@@ -15,6 +15,11 @@ enum KinicDesign {
             ? UIColor(red: 1.0, green: 0.36, blue: 0.65, alpha: 1)
             : UIColor(red: 0.72, green: 0.078, blue: 0.349, alpha: 1)
     })
+    static let vaultIndigo = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.50, green: 0.58, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.2, green: 0.141, blue: 0.835, alpha: 1)
+    })
     // Guideline Body Gray #636161 on light surfaces; system secondary label keeps dark mode legible.
     static let bodyGray = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
@@ -25,6 +30,7 @@ enum KinicDesign {
     static let hairlineGray = Color(uiColor: .separator)
     #else
     static let hotPink = Color(red: 0.72, green: 0.078, blue: 0.349)
+    static let vaultIndigo = Color(red: 0.2, green: 0.141, blue: 0.835)
     static let bodyGray = Color(red: 0.388, green: 0.38, blue: 0.38)
     static let supportGray = Color(red: 0.302, green: 0.302, blue: 0.302)
     static let hairlineGray = Color(red: 0.902, green: 0.902, blue: 0.902)
