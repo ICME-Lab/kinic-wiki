@@ -1,0 +1,27 @@
+{
+  "name": "@kinic/vault-autofill-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:local": "node scripts/build.mjs --local",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "icons:generate": "node scripts/generate-icons.mjs"
+  },
+  "dependencies": {
+    "@icp-sdk/auth": "5.0.0",
+    "@icp-sdk/core": "^5.4.0",
+    "@kinic/vault-candid": "workspace:*",
+    "@kinic/vault-client": "workspace:*",
+    "@kinic/vault-crypto": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "esbuild": "0.28.1",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
+  }
+}

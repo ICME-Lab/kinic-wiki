@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Kinic Vault",
+  "version": "0.1.0",
+  "description": "Autofill logins, generate strong passwords, and copy 2FA codes from your encrypted Kinic Vault.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsRBz4k5q5sy1J6u24wtK2qy2r/dNHPsYmJ4/0AgS/ufRzfhIIKckTahimuxEiSPUyia+iqxil3rsXyc9mIlzKr/8VLkgKW0AmxYaSJPRHEybqGQvSmV+QmfRfa5825tXq9p1HkR03Y/aiszQJ7EbBRGgq2FuKpm9yrOc3Qm3PnXL2pXv5WGR+cmwiMXA3XmTeBJYO2Z98qI/kaQuiEtc3Uf/NkwKHgtGQoDfDJVU3JauQ4ehkUiYgK9uOXbKQZhAbS7LKtKm8Enadd3qqoP7j9wsPvZLUS5WozGeB1YjZQFZznaPSMaEnDdjd9t1JHdwxTzsrEBd6T2Ks42CVRTA8wIDAQAB",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Kinic Vault",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "dist/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "exclude_matches": [
+        "https://id.ai/*",
+        "https://vault.kinic.xyz/*",
+        "https://mcx4q-2qaaa-aaaao-qqn3a-cai.icp0.io/*",
+        "https://wiki.kinic.xyz/*"
+      ],
+      "js": ["dist/content-autofill.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "permissions": ["storage", "activeTab", "offscreen", "alarms"],
+  "host_permissions": [
+    "https://id.ai/*",
+    "https://icp0.io/*",
+    "https://mcx4q-2qaaa-aaaao-qqn3a-cai.icp0.io/*",
+    "https://vault.kinic.xyz/*"
+  ]
+}

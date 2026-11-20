@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Kinic Vault</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="topbar">
+        <div class="brand">
+          <img src="../icons/icon-32.png" alt="" class="brand-icon" />
+          <div class="brand-copy">
+            <strong class="brand-name">Kinic Vault</strong>
+            <span id="site-subtitle" class="brand-sub">Encrypted passwords</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-open-web" class="icon-btn" type="button" title="Open Kinic Vault Web" aria-label="Open Kinic Vault Web">↗</button>
+          <button id="btn-lock" class="icon-btn" type="button" title="Lock Vault" aria-label="Lock Vault" hidden>🔒</button>
+        </div>
+      </header>
+
+      <!-- Loading state -->
+      <section id="view-loading" class="center-state">
+        <div class="spinner" aria-hidden="true"></div>
+        <p class="muted">Checking Vault status…</p>
+      </section>
+
+      <!-- Signed-out state -->
+      <section id="view-signed-out" class="center-state" hidden>
+        <img src="../icons/icon-128.png" alt="" class="hero-icon" />
+        <h1>Welcome to Kinic Vault</h1>
+        <p class="muted center-copy">
+          Autofill logins, generate strong passwords, and copy 2FA codes — synced securely with Web and iOS.
+        </p>
+        <button id="btn-sign-in" class="btn primary full" type="button">Sign in</button>
+        <p id="signed-out-error" class="error-text" hidden></p>
+      </section>
+
+      <!-- Locked state -->
+      <section id="view-locked" class="center-state" hidden>
+        <img src="../icons/icon-128.png" alt="" class="hero-icon" />
+        <h1>Vault is locked</h1>
+        <p class="muted center-copy">Unlock to view and autofill your saved logins.</p>
+        <div id="locked-vault-picker" class="field full" hidden>
+          <label for="locked-vault-select">Vault</label>
+          <select id="locked-vault-select"></select>
+        </div>
+        <button id="btn-unlock" class="btn primary full" type="button">Unlock Vault</button>
+        <button id="btn-create-first-vault" class="btn primary full" type="button" hidden>Create your first Vault</button>
+        <button id="btn-locked-sign-out" class="btn ghost full" type="button">Sign out</button>
+        <p id="locked-error" class="error-text" hidden></p>
+      </section>
+
+      <!-- Unlocked workspace -->
+      <div id="view-unlocked" class="workspace" hidden>
+        <!-- Tab 1: Vault Browser / Detail / Editor -->
+        <main id="panel-vault" class="panel">
+          <!-- List screen -->
+          <div id="vault-list-screen" class="screen">
+            <div class="search-row">
+              <input
+                id="search-input"
+                class="search-input"
+                type="search"
+                placeholder="Search logins, sites, tags…"
+                autocomplete="off"
+              />
+              <button id="btn-new-login" class="btn primary compact" type="button">+ New</button>
+            </div>
+
+            <div class="filter-pills" role="tablist" aria-label="Item categories">
+              <button class="pill active" data-filter="all" type="button">All</button>
+              <button class="pill" data-filter="logins" type="button">Logins</button>
+              <button class="pill" data-filter="favorites" type="button">Favorites</button>
+              <button class="pill" data-filter="notes" type="button">Notes</button>
+            </div>
+
+            <div class="scroll-body">
+              <section id="matches-section" class="list-section" hidden>
+                <div class="section-label">
+                  <span>Suggested for</span>
+                  <strong id="matches-domain"></strong>
+                </div>
+                <div id="matches-list" class="item-list"></div>
+              </section>
+
+              <section class="list-section">
+                <div class="section-label">
+                  <span id="all-items-label">All items</span>
+                  <span id="items-count" class="count-pill">0</span>
+                </div>
+                <div id="items-list" class="item-list"></div>
+                <p id="items-empty" class="empty-copy" hidden>No matching items found.</p>
+              </section>
+            </div>
+          </div>
+
+          <!-- Detail screen -->
+          <div id="vault-detail-screen" class="screen" hidden>
+            <div class="subbar">
+              <button id="btn-detail-back" class="btn ghost compact" type="button">← Back</button>
+              <div class="subbar-actions">
+                <button id="btn-detail-edit" class="btn secondary compact" type="button">Edit</button>
+                <button id="btn-detail-delete" class="btn danger compact" type="button">Delete</button>
+              </div>
+            </div>
+            <div id="detail-content" class="scroll-body detail-body"></div>
+          </div>
+
+          <!-- Editor screen -->
+          <div id="vault-editor-screen" class="screen" hidden>
+            <div class="subbar">
+              <button id="btn-editor-cancel" class="btn ghost compact" type="button">Cancel</button>
+              <strong id="editor-heading" class="subbar-title">New Login</strong>
+              <button id="btn-editor-save" class="btn primary compact" type="button">Save</button>
+            </div>
+            <form id="editor-form" class="scroll-body editor-body">
+              <label class="field">
+                <span>Title</span>
+                <input id="ed-title" type="text" placeholder="e.g. GitHub" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Username or Email</span>
+                <input id="ed-username" type="text" placeholder="you@example.com" autocomplete="off" />
+              </label>
+              <div class="field">
+                <span>Password</span>
+                <div class="inline-input-row">
+                  <input id="ed-password" type="password" placeholder="Password" autocomplete="new-password" />
+                  <button id="btn-ed-toggle-pw" class="btn secondary compact" type="button">Show</button>
+                  <button id="btn-ed-gen-pw" class="btn secondary compact" type="button">Generate</button>
+                </div>
+              </div>
+              <label class="field">
+                <span>Website URL</span>
+                <input id="ed-url" type="url" placeholder="https://example.com" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>2FA Secret (TOTP key or otpauth:// URI)</span>
+                <input id="ed-totp" type="text" placeholder="Optional Base32 secret" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Tags (comma-separated)</span>
+                <input id="ed-tags" type="text" placeholder="work, finance" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Notes</span>
+                <textarea id="ed-notes" rows="3" placeholder="Optional notes"></textarea>
+              </label>
+              <label class="toggle-row">
+                <input id="ed-favorite" type="checkbox" />
+                <span>Mark as favorite</span>
+              </label>
+              <p id="editor-error" class="error-text" hidden></p>
+            </form>
+          </div>
+        </main>
+
+        <!-- Tab 2: Generator -->
+        <main id="panel-generator" class="panel scroll-body" hidden>
+          <div class="segmented" role="tablist" aria-label="Generator mode">
+            <button id="gen-mode-password" class="seg-btn active" type="button">Password</button>
+            <button id="gen-mode-passphrase" class="seg-btn" type="button">Passphrase</button>
+          </div>
+
+          <div class="gen-output-card">
+            <output id="gen-output" class="gen-output"></output>
+            <div class="strength-row">
+              <div class="strength-track"><div id="gen-strength-bar" class="strength-bar"></div></div>
+              <span id="gen-strength-label" class="strength-label"></span>
+            </div>
+            <div class="gen-actions">
+              <button id="btn-gen-refresh" class="btn secondary" type="button">Regenerate</button>
+              <button id="btn-gen-copy" class="btn primary" type="button">Copy</button>
+              <button id="btn-gen-fill" class="btn secondary" type="button">Fill</button>
+            </div>
+          </div>
+
+          <div id="gen-password-options" class="options-card">
+            <label class="slider-row">
+              <span>Length: <strong id="gen-len-val">20</strong></span>
+              <input id="gen-length" type="range" min="8" max="64" value="20" />
+            </label>
+            <label class="toggle-row"><input id="gen-upper" type="checkbox" checked /><span>Uppercase (A–Z)</span></label>
+            <label class="toggle-row"><input id="gen-lower" type="checkbox" checked /><span>Lowercase (a–z)</span></label>
+            <label class="toggle-row"><input id="gen-digits" type="checkbox" checked /><span>Numbers (0–9)</span></label>
+            <label class="toggle-row"><input id="gen-symbols" type="checkbox" checked /><span>Symbols (!@#$…)</span></label>
+            <label class="toggle-row"><input id="gen-ambiguous" type="checkbox" /><span>Avoid ambiguous (0, O, 1, l, I)</span></label>
+          </div>
+
+          <div id="gen-passphrase-options" class="options-card" hidden>
+            <label class="slider-row">
+              <span>Words: <strong id="gen-words-val">5</strong></span>
+              <input id="gen-words" type="range" min="3" max="10" value="5" />
+            </label>
+            <label class="field">
+              <span>Separator</span>
+              <select id="gen-separator">
+                <option value="-">Hyphen (-)</option>
+                <option value=".">Period (.)</option>
+                <option value="_">Underscore (_)</option>
+                <option value=" ">Space</option>
+              </select>
+            </label>
+            <label class="toggle-row"><input id="gen-cap" type="checkbox" checked /><span>Capitalize words</span></label>
+            <label class="toggle-row"><input id="gen-num" type="checkbox" checked /><span>Include a number</span></label>
+          </div>
+        </main>
+
+        <!-- Tab 3: Settings -->
+        <main id="panel-settings" class="panel scroll-body" hidden>
+          <div class="options-card">
+            <label class="field">
+              <span>Active Vault</span>
+              <select id="settings-vault-select"></select>
+            </label>
+            <div class="row-gap">
+              <button id="btn-sync-now" class="btn secondary flex1" type="button">Sync now</button>
+              <button id="btn-create-vault" class="btn secondary flex1" type="button">+ New Vault</button>
+            </div>
+          </div>
+
+          <div class="options-card">
+            <label class="field">
+              <span>Auto-lock after inactivity</span>
+              <select id="settings-autolock">
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+              </select>
+            </label>
+            <label class="toggle-row">
+              <input id="settings-inline" type="checkbox" checked />
+              <span>Show inline autofill picker on login fields</span>
+            </label>
+            <label class="toggle-row">
+              <input id="settings-save-banner" type="checkbox" checked />
+              <span>Offer to save new or updated logins</span>
+            </label>
+          </div>
+
+          <div class="options-card">
+            <button id="btn-settings-open-web" class="btn secondary full" type="button">Open Kinic Vault Web</button>
+            <button id="btn-settings-lock" class="btn secondary full" type="button">Lock Vault now</button>
+            <button id="btn-settings-sign-out" class="btn danger full" type="button">Sign out</button>
+          </div>
+        </main>
+
+        <nav class="tabbar" role="tablist" aria-label="Navigation">
+          <button class="tab-btn active" data-tab="vault" type="button">Vault</button>
+          <button class="tab-btn" data-tab="generator" type="button">Generator</button>
+          <button class="tab-btn" data-tab="settings" type="button">Settings</button>
+        </nav>
+      </div>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    </div>
+
+    <script src="../dist/popup.js" type="module"></script>
+  </body>
+</html>

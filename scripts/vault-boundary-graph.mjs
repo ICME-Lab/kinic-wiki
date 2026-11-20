@@ -52,7 +52,7 @@ export function checkTypescript(root, ts = loadParser(root)) {
       else if (/\.[cm]?[jt]sx?$/.test(p) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(p)) files.push(p);
     }
   };
-  for (const dir of ['wikibrowser/src', 'wikibrowser/app', 'wikibrowser/components', 'wikibrowser/hooks', 'wikibrowser/lib', 'vaultbrowser/src', 'packages']) {
+  for (const dir of ['wikibrowser/src', 'wikibrowser/app', 'wikibrowser/components', 'wikibrowser/hooks', 'wikibrowser/lib', 'vaultbrowser/src', 'extensions/vault-autofill/src', 'extensions/vault-autofill/popup', 'extensions/vault-autofill/auth', 'packages']) {
     if (existsSync(resolve(root, dir))) walk(resolve(root, dir));
   }
   for (const e of readdirSync(resolve(root, 'packages'))) {
@@ -67,8 +67,8 @@ export function checkTypescript(root, ts = loadParser(root)) {
   const serviceFiles = new Set(files.filter(file => usesPersistenceOrNetwork(sources.get(file))));
   const classify = p => {
     const name = relative(root, p).replaceAll('\\', '/');
-    if (/^(vaultbrowser|packages\/vault-)/.test(name)) return 'vault';
-    if (/^(wikibrowser|packages\/vfs-)/.test(name)) return 'wiki';
+    if (/^(vaultbrowser|extensions\/vault-autofill|packages\/vault-)/.test(name)) return 'vault';
+    if (/^(wikibrowser|extensions\/wiki-clipper|shared\/ii-auth|packages\/vfs-)/.test(name)) return 'wiki';
     if (/^packages\/ui\//.test(name)) return 'ui';
     if (/^packages\/credit-bridge-candid\//.test(name)) return 'bridge';
     if (/^external:@icp-sdk\/core\/(?:agent|candid|principal)$/.test(p)) return 'transport';
