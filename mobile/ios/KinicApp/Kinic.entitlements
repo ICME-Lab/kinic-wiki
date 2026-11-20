@@ -16,6 +16,7 @@
 	<array>
 		<string>applinks:$(KINIC_ASSOCIATED_DOMAIN)</string>
 		<string>webcredentials:$(KINIC_ASSOCIATED_DOMAIN)</string>
+		<string>webcredentials:$(KINIC_VAULT_CALLBACK_DOMAIN)</string>
 	</array>
 </dict>
 </plist>

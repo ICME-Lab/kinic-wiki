@@ -31,6 +31,24 @@ public struct VaultAutoFillSyncPayload: Sendable {
         self.snapshotStore = snapshotStore; self.keys = keys; self.identities = identities
     }
 
+    public func isProviderEnabled() async -> Bool {
+        await identities.isEnabled
+    }
+
+    public func hasOfflineSnapshot() -> Bool {
+        (try? snapshotStore.load()) != nil
+    }
+
+    public func offlineSnapshotVaultId() -> Data? {
+        (try? snapshotStore.load())?.context.vault
+    }
+
+    public func loadOfflineSnapshot() throws -> (VaultAutoFillSnapshot, SymmetricKey)? {
+        guard let snapshot = try snapshotStore.load() else { return nil }
+        let key = try keys.load(context: snapshot.context)
+        return (snapshot, key)
+    }
+
     private func publish(_ candidates: [VaultAutoFillCandidate], ticket: Int) async throws {
         let previous = identityTail
         let update = Task { @MainActor in

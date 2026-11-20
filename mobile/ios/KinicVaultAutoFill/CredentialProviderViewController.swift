@@ -248,7 +248,7 @@ private struct AutoFillRootView: View {
             Group {
                 switch state {
                 case .configuration:
-                    ContentUnavailableView("Enable Kinic Vault AutoFill", systemImage: "lock.shield", description: Text("Finish enabling Kinic Vault, then return to Kinic Settings to sign in and sync your Vault."))
+                    ContentUnavailableView("Enable Kinic Vault AutoFill", systemImage: "lock.shield", description: Text("Finish enabling Kinic Vault, then open the Vault tab in Kinic to sign in and sync your Vault."))
                 case .configurationNeeded:
                     ContentUnavailableView(
                         "Open Kinic to Sync Vault",

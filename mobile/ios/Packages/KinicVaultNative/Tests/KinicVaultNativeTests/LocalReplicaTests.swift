@@ -79,10 +79,69 @@ func localReplicaRoundTrip() async throws {
     #expect(credential?.password == "local-only-password")
     #expect(credential?.totpCode?.count == 6)
     #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("local-only-password"))
+    // Verify Swift write mutations (RenameVault, SaveInline create & update, DeleteObject) against the real canister.
+    let selected = try #require(headers.first)
+    try await client.renameVault(header: selected, name: "Swift Renamed Vault", identity: identity)
+    let renamedHeaders = try await client.ownedVaults(identity: identity)
+    let renamed = try #require(renamedHeaders.first(where: { $0.id == selected.id }))
+    #expect(renamed.name == "Swift Renamed Vault")
+
+    let createdRecord = VaultCredentialRecord(
+        label: "Swift Created Login",
+        username: "swift-user@example.com",
+        password: "initial-swift-password",
+        url: "https://swift.example.com/login",
+        urls: ["https://swift.example.com/login"],
+        totp: "JBSWY3DPEHPK3PXP",
+        notes: "Created from iOS",
+        customFields: [VaultCustomField(label: "PIN", value: "1234", hidden: true)],
+        favorite: true,
+        tags: ["ios"]
+    )
+    let created = try await client.saveInline(
+        header: renamed,
+        metadata: VaultCredentialCodec.buildMetadata(title: "Swift Created Login", record: createdRecord),
+        plaintext: try VaultCredentialCodec.serialize(createdRecord),
+        identity: identity
+    )
+    #expect(created.revision == 1)
+
+    var updatedRecord = createdRecord
+    updatedRecord.password = "updated-swift-password"
+    updatedRecord.customFields = [VaultCustomField(label: "PIN", value: "5678", hidden: true)]
+    let updated = try await client.saveInline(
+        header: renamed,
+        metadata: VaultCredentialCodec.buildMetadata(title: "Swift Created Login", record: updatedRecord),
+        plaintext: try VaultCredentialCodec.serialize(updatedRecord),
+        existingObject: try Base64URL.decode(created.snapshotRecord.objectIdBase64URL),
+        expectedRevision: created.revision,
+        identity: identity
+    )
+    #expect(updated.revision == 2)
+
+    let tempNote = try await client.saveInline(
+        header: renamed,
+        metadata: VaultMetadata(kind: .note, title: "Temporary Note"),
+        plaintext: Data("delete me".utf8),
+        identity: identity
+    )
+    try await client.deleteObject(
+        header: renamed,
+        object: try Base64URL.decode(tempNote.snapshotRecord.objectIdBase64URL),
+        expectedRevision: tempNote.revision,
+        identity: identity
+    )
+
+    let refreshed = try await client.fetchSnapshot(header: renamed, identity: identity)
+    #expect(refreshed.snapshot.records.count == 2)
+    let refreshedItems = try refreshed.snapshot.listItems(rootKey: refreshed.rootKey)
+    #expect(refreshedItems.contains(where: { $0.title == "Swift Created Login" && $0.revision == 2 }))
+    #expect(!refreshedItems.contains(where: { $0.title == "Temporary Note" }))
+
     // Return ciphertext only; Node decrypts it with the existing non-extractable Web key.
     let object = Data(repeating: 44, count: 16)
     let encrypted = try VaultDocumentV3.encrypt(rootKey: payload.rootKey, context: payload.snapshot.context, object: object, revision: 1, metadata: VaultMetadata(kind: .note, title: "Swift interoperability"), plaintext: Data("Swift to Web root continuity".utf8))
-    let output: [String: Any] = ["manifest": Base64URL.encode(encrypted.manifest), "chunks": encrypted.chunks.map(Base64URL.encode), "hashes": encrypted.hashes.map(Base64URL.encode), "object": Base64URL.encode(object)]
+    let output: [String: Any] = ["manifest": Base64URL.encode(encrypted.manifest), "chunks": encrypted.chunks.map(Base64URL.encode), "hashes": encrypted.hashes.map(Base64URL.encode), "object": Base64URL.encode(object), "savedObject": created.snapshotRecord.objectIdBase64URL]
     try JSONSerialization.data(withJSONObject: output).write(to: URL(fileURLWithPath: fixture.swiftCipherOutput))
     try await controller.disable()
     #expect(try store.load() == nil)

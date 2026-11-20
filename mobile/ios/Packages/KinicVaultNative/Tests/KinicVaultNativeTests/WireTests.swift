@@ -74,3 +74,117 @@ func missingObjectPreservesHeaderFailures() async throws {
         Issue.record("Cancellation accepted")
     } catch is CancellationError {} catch { Issue.record("Cancellation hidden: \(error)") }
 }
+
+@Test("Vault mutation Candid builders encode SaveInline, DeleteObject, and RenameVault cleanly")
+func encodesVaultMutations() throws {
+    let vault = Data(repeating: 1, count: 16)
+    let object = Data(repeating: 2, count: 16)
+    let op = Data(repeating: 3, count: 16)
+    let hash = Data(repeating: 4, count: 32)
+    let saveArgs = try VaultWire.saveInlineArguments(
+        vault: vault,
+        object: object,
+        expectedRevision: 0,
+        requestOperation: op,
+        plainSize: 42,
+        manifest: Data("{}".utf8),
+        chunkHashes: [hash],
+        bytes: Data([1, 2, 3]),
+        contextHash: hash,
+        mutationOperation: op
+    )
+    #expect(saveArgs.values.count == 1)
+
+    let deleteArgs = try VaultWire.deleteObjectArguments(
+        vault: vault,
+        object: object,
+        expectedRevision: 1,
+        mutationOperation: op
+    )
+    #expect(deleteArgs.values.count == 1)
+
+    let renameArgs = try VaultWire.renameVaultArguments(
+        vault: vault,
+        name: "Personal",
+        expectedSequence: 2,
+        mutationOperation: op
+    )
+    #expect(renameArgs.values.count == 1)
+
+    #expect(VaultNativeClient.isValidVaultName("Personal Vault"))
+    #expect(!VaultNativeClient.isValidVaultName("   "))
+    #expect(!VaultNativeClient.isValidVaultName("Bad\nName"))
+}
+
+@Test("Vault error unwrapping preserves Conflict and QuotaExceeded semantics")
+func mapsSpecificCanisterErrors() throws {
+    for (tag, expected): (String, VaultNativeError) in [
+        ("Conflict", .conflict),
+        ("QuotaExceeded", .quotaExceeded),
+        ("InvalidInput", .invalidInput),
+        ("Busy", .busy),
+    ] {
+        let errVariant = try CandidVariant(fields: [CandidField(tag, type: .null)], tag: tag, value: .null)
+        let resultVariant = try CandidVariant(
+            fields: [CandidField("Err", type: .variant(errVariant.fields))],
+            tag: "Err",
+            value: .variant(errVariant)
+        )
+        #expect(throws: expected) { _ = try VaultWire.unwrap(.variant(resultVariant)) }
+    }
+}
+
+@Test("Inline reconciliation matches exact manifest and rejects deleted or tampered revisions")
+func reconcilesExactInlineManifestOnly() throws {
+    let vault = Data(repeating: 1, count: 16)
+    let object = Data(repeating: 2, count: 16)
+    let manifest = Data("{\"version\":3}".utf8)
+    let hash = Data(repeating: 7, count: 32)
+    func makeRevision(deleted: Bool = false, sequence: UInt64 = 5, manifestBytes: Data = manifest, hashes: [Data] = [hash]) -> CandidValue {
+        let entries: [(String, CandidValue)] = [
+            ("deleted", .bool(deleted)),
+            ("vault", .blob(vault)),
+            ("object", .blob(object)),
+            ("revision", .nat64(1)),
+            ("sequence", .nat64(sequence)),
+            ("plain_size", .nat64(12)),
+            ("manifest", .blob(manifestBytes)),
+            ("chunk_hashes", hashes.candidValue),
+        ]
+        return .record([], Dictionary(uniqueKeysWithValues: entries.map { (Candid.fieldID($0.0), $0.1) }))
+    }
+
+    #expect(
+        try VaultWire.matchesReconciledInlineManifest(
+            makeRevision(),
+            vault: vault,
+            object: object,
+            expectedNextRevision: 1,
+            plainSize: 12,
+            manifest: manifest,
+            chunkHashes: [hash]
+        ) == 5
+    )
+    #expect(
+        try VaultWire.matchesReconciledInlineManifest(
+            makeRevision(deleted: true),
+            vault: vault,
+            object: object,
+            expectedNextRevision: 1,
+            plainSize: 12,
+            manifest: manifest,
+            chunkHashes: [hash]
+        ) == nil
+    )
+    #expect(
+        try VaultWire.matchesReconciledInlineManifest(
+            makeRevision(manifestBytes: Data("{\"version\":2}".utf8)),
+            vault: vault,
+            object: object,
+            expectedNextRevision: 1,
+            plainSize: 12,
+            manifest: manifest,
+            chunkHashes: [hash]
+        ) == nil
+    )
+}

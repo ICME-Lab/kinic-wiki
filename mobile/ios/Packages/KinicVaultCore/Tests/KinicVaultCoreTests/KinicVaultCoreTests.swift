@@ -260,4 +260,123 @@ struct KinicVaultCoreTests {
         #expect(filled?.totpCode == nil)
     }
 
+    @Test("Generates passphrases and measures strength consistently with Web")
+    func passphraseGenerationAndStrength() throws {
+        let phrase = try VaultPasswordGenerator.generatePassphrase(
+            VaultPassphraseOptions(words: 5, separator: "-", capitalize: true, includeNumber: true)
+        )
+        let parts = phrase.split(separator: "-")
+        #expect(parts.count == 5)
+        let generatorStrength = VaultPasswordGenerator.estimatePassphraseStrength(
+            VaultPassphraseOptions(words: 5, separator: "-", capitalize: true, includeNumber: true)
+        )
+        let recognizedStrength = VaultPasswordGenerator.estimateStrength(phrase)
+        #expect(recognizedStrength.level == generatorStrength.level)
+        #expect(abs(recognizedStrength.entropyBits - generatorStrength.entropyBits) < 0.001)
+
+        // Short password is always weak regardless of character diversity.
+        #expect(VaultPasswordGenerator.estimateStrength("Ab1!x").level == .weak)
+        // Formatting choice (capitalization / separator) does not inflate passphrase entropy.
+        let lowerStrength = VaultPasswordGenerator.estimatePassphraseStrength(
+            VaultPassphraseOptions(words: 4, separator: "-", capitalize: false, includeNumber: false)
+        )
+        let capStrength = VaultPasswordGenerator.estimatePassphraseStrength(
+            VaultPassphraseOptions(words: 4, separator: ".", capitalize: true, includeNumber: false)
+        )
+        #expect(lowerStrength == capStrength)
+        #expect(lowerStrength.level == .weak) // 4 * 8 = 32 bits < 40
+    }
+
+    @Test("Formats TOTP codes cleanly for 6-digit and 8-digit displays")
+    func formatsTotpCodes() {
+        #expect(VaultTOTP.formatCode("123456") == "123 456")
+        #expect(VaultTOTP.formatCode("94287082") == "9428 7082")
+        #expect(VaultTOTP.formatCode("12345") == "12345")
+    }
+
+    @Test("Snapshot lists both credentials and notes while AutoFill candidates stay credential-only")
+    func snapshotListsRichItemsAndPreservesAutoFillFilter() throws {
+        let context = try makeTestContext()
+        let key = SymmetricKey(data: Data(repeating: 9, count: 32))
+
+        let credObject = Data(repeating: 10, count: 16)
+        let credRecord = VaultCredentialRecord(
+            label: "GitHub",
+            username: "alice@example.com",
+            password: "super-secret-password",
+            url: "https://github.com/login",
+            urls: ["https://github.com/login", "https://gist.github.com"],
+            totp: "JBSWY3DPEHPK3PXP",
+            notes: "Work account",
+            customFields: [VaultCustomField(label: "Recovery PIN", value: "9988", hidden: true)],
+            favorite: true,
+            tags: ["work", "dev"]
+        )
+        let credMeta = VaultCredentialCodec.buildMetadata(title: "GitHub", record: credRecord)
+        let credEncrypted = try VaultDocumentV3.encrypt(
+            rootKey: key,
+            context: context,
+            object: credObject,
+            revision: 1,
+            metadata: credMeta,
+            plaintext: try VaultCredentialCodec.serialize(credRecord)
+        )
+
+        let noteObject = Data(repeating: 11, count: 16)
+        let noteMeta = VaultMetadata(kind: .note, title: "SSH Backup", favorite: true, tags: ["ops"])
+        let noteEncrypted = try VaultDocumentV3.encrypt(
+            rootKey: key,
+            context: context,
+            object: noteObject,
+            revision: 1,
+            metadata: noteMeta,
+            plaintext: Data("backup key instructions".utf8)
+        )
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("vault-items-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = VaultAutoFillSnapshotStore(fileURL: url)
+        let snapshot = VaultAutoFillSnapshot(
+            context: context,
+            records: [
+                VaultAutoFillRecordSnapshot(
+                    objectIdBase64URL: Base64URL.encode(credObject),
+                    revision: 1,
+                    manifestBase64URL: Base64URL.encode(credEncrypted.manifest),
+                    chunksBase64URL: credEncrypted.chunks.map(Base64URL.encode),
+                    hashesBase64URL: credEncrypted.hashes.map(Base64URL.encode)
+                ),
+                VaultAutoFillRecordSnapshot(
+                    objectIdBase64URL: Base64URL.encode(noteObject),
+                    revision: 1,
+                    manifestBase64URL: Base64URL.encode(noteEncrypted.manifest),
+                    chunksBase64URL: noteEncrypted.chunks.map(Base64URL.encode),
+                    hashesBase64URL: noteEncrypted.hashes.map(Base64URL.encode)
+                ),
+            ]
+        )
+        try store.save(snapshot)
+
+        let items = try store.listItems(rootKey: key)
+        #expect(items.count == 2)
+        #expect(items.first(where: { $0.kind == .credential })?.favorite == true)
+        #expect(items.first(where: { $0.kind == .credential })?.matches(query: "gist.github.com") == true)
+        #expect(items.first(where: { $0.kind == .note })?.matches(query: "ops") == true)
+
+        // AutoFill candidates remain strictly credential-only.
+        let candidates = try store.listCandidates(rootKey: key)
+        #expect(candidates.count == 1)
+        #expect(candidates[0].title == "GitHub")
+
+        let decryptedCred = try store.decryptItem(objectIdBase64URL: Base64URL.encode(credObject), rootKey: key)
+        #expect(decryptedCred?.credential?.customFields == [VaultCustomField(label: "Recovery PIN", value: "9988", hidden: true)])
+        #expect(decryptedCred?.credential?.urls == ["https://github.com/login", "https://gist.github.com"])
+
+        let decryptedNote = try store.decryptItem(objectIdBase64URL: Base64URL.encode(noteObject), rootKey: key)
+        #expect(decryptedNote?.noteText == "backup key instructions")
+
+        let removed = snapshot.removingRecord(objectIdBase64URL: Base64URL.encode(noteObject))
+        #expect(try removed.listItems(rootKey: key).count == 1)
+    }
+
 }

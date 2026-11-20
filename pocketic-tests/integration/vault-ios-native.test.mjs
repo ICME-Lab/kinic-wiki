@@ -61,7 +61,21 @@ try {
   const context = { canister: canisterId.toText(), owner: owner.toText(), vault: new Uint8Array(header.id), nonce: new Uint8Array(header.nonce), key_name: header.key_name };
   const doc = await documents.decryptDocumentV3(web.session.root, context, unb64(encrypted.object), 1n, unb64(encrypted.manifest), encrypted.chunks.map(unb64), encrypted.hashes.map(unb64));
   assert.equal(new TextDecoder().decode(doc.plaintext), 'Swift to Web root continuity'); doc.plaintext.fill(0);
-  console.log('Native signed calls, real vetKD, encrypted AutoFill cache, and Web ↔ Swift root continuity PASS (synthetic credit only).');
+  // Verify Swift SaveInline / RenameVault / DeleteObject mutations directly from Web.
+  const refreshedHeader = await web.refreshHeader();
+  assert.equal(refreshedHeader.name[0], 'Swift Renamed Vault');
+  const activeItems = await web.items({ includeDeleted: false });
+  assert.equal(activeItems.length, 2);
+  const swiftItem = activeItems.find((item) => item.metadata.title === 'Swift Created Login');
+  assert.ok(swiftItem, 'Expected Swift-created login in Web items');
+  assert.equal(swiftItem.revision.revision, 2n);
+  const opened = await web.read(swiftItem.revision);
+  const parsedCred = JSON.parse(new TextDecoder().decode(opened.plaintext));
+  opened.plaintext.fill(0);
+  assert.equal(parsedCred.username, 'swift-user@example.com');
+  assert.equal(parsedCred.password, 'updated-swift-password');
+  assert.deepEqual(parsedCred.customFields, [{ label: 'PIN', value: '5678', hidden: true }]);
+  console.log('Native signed calls, real vetKD, SaveInline/RenameVault/DeleteObject, encrypted AutoFill cache, and Web ↔ Swift root continuity PASS (synthetic credit only).');
 } finally {
   web?.destroy();
   try { await pic?.tearDown(); } finally { await server.stop(); rmSync(directory, { recursive: true, force: true }); }

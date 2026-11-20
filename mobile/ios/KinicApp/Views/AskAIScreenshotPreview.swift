@@ -55,6 +55,10 @@ struct AskAIScreenshotPreview: View {
             .tag(AppTab.askAI)
 
             Color.clear
+                .tabItem { Label("Vault", systemImage: "lock.shield") }
+                .tag(AppTab.vault)
+
+            Color.clear
                 .tabItem { Label("Manage", systemImage: "slider.horizontal.3") }
                 .tag(AppTab.manage)
         }

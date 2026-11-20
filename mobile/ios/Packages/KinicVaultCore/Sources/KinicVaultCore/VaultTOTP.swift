@@ -170,4 +170,12 @@ public enum VaultTOTP {
         let code = String(format: "%0\(config.digits)u", binary % modulo)
         return VaultTOTPCode(code: code, remainingSeconds: remaining, period: config.period)
     }
+
+    public static func formatCode(_ code: String) -> String {
+        let digits = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard digits.count >= 6 else { return digits }
+        let split = digits.count / 2
+        let index = digits.index(digits.startIndex, offsetBy: split)
+        return "\(digits[..<index]) \(digits[index...])"
+    }
 }

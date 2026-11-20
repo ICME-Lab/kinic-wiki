@@ -50,6 +50,12 @@ struct HomeView: View {
             }
             .tag(AppTab.askAI)
 
+            VaultTabView(model: model.vaultAutoFill)
+            .tabItem {
+                Label("Vault", systemImage: "lock.shield")
+            }
+            .tag(AppTab.vault)
+
             NavigationStack {
                 ManageView(model: model)
             }
@@ -81,6 +87,8 @@ struct HomeView: View {
                 model.restoreSharedDatabaseSelection()
                 // Items the Share Extension queued wait here until the app can store and send them.
                 Task { await workItemModel.importQueuedCaptures() }
+            } else if phase == .background {
+                model.vaultAutoFill.appDidEnterBackground()
             }
             if phase != .inactive { model.assistantConversation.sceneChanged(active: phase == .active) }
         }
