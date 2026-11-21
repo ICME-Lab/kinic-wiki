@@ -8,7 +8,7 @@ It stores durable knowledge nodes in an Internet Computer canister and exposes t
 - Public MCP: `https://wiki-mcp.kinic.xyz/mcp` (anonymous, read-only)
 - Private MCP: `https://wiki-private-mcp.kinic.xyz/mcp` (OAuth with Internet Identity)
 
-The separate [Kinic Vault](vaultbrowser/README.md) uses Internet Identity ownership and browser-encrypted documents on its own origin and canister. It has no independent Vault recovery; losing II access loses Vault access unless II itself is recovered. Production funding remains disabled. See [Vault validation](docs/vault/validation.md).
+The separate [Kinic Vault](docs/vault/README.md) provides Internet Identity-owned, client-encrypted documents on its own origin (`https://vault.kinic.xyz`) and dedicated canister, with pinned KINIC ledger funding and optional Wiki embed references. It has no independent Vault recovery; losing II access permanently loses Vault access unless II itself is recovered. See the [Vault overview](docs/vault/README.md) and [Vault browser guide](vaultbrowser/README.md).
 
 ## Why Kinic Wiki
 
@@ -49,6 +49,7 @@ Curator is not a store. It is a future maintenance workflow for skill and knowle
 | Surface | What it does | Guide |
 | --- | --- | --- |
 | Browser ([wikibrowser](wikibrowser/)) | Browse, search, and edit databases; manage members, cycles, and publication; Skill Registry at `/skills/<database-id>`; marketplace at `/marketplace`; published nodes at `/p/<public-id>` | [wikibrowser/README.md](wikibrowser/README.md) |
+| Standalone Vault ([vaultbrowser](vaultbrowser/)) | Separate canister and browser UI for Internet Identity-owned, client-encrypted documents, team sharing, and opaque Wiki embeds | [docs/vault/README.md](docs/vault/README.md) |
 | CLI (`kinic-vfs-cli`) | Scripted node, database, skill store, Context Pack, GitHub ingest, and agent learning operations | [docs/CLI.md](docs/CLI.md) |
 | Remote MCP ([workers/wiki-mcp](workers/wiki-mcp/)) | Public: seven anonymous read tools. Private: the same reads plus eight atomic mutation tools behind OAuth | [docs/mcp.md](docs/mcp.md) |
 | Chrome extension ([wiki-clipper](extensions/wiki-clipper/)) | Saves ChatGPT, Claude, and Gemini conversations and active-tab snapshots as evidence, and creates wiki pages from them | [extensions/wiki-clipper/README.md](extensions/wiki-clipper/README.md) |
@@ -144,4 +145,5 @@ Agents should discover relevant skills, inspect the package, use the instruction
 - Skill Registry workflows: [docs/SKILL_REGISTRY.md](docs/SKILL_REGISTRY.md)
 - Canister Store API: [docs/STORE_API.md](docs/STORE_API.md)
 - Shared Rust library tool calling: [docs/AGENT_TOOL_CALLING.md](docs/AGENT_TOOL_CALLING.md)
+- Standalone Vault architecture, protocol, operations, and testing: [docs/vault/README.md](docs/vault/README.md)
 - VFS validation and benchmarks: [docs/validation/VFS_VALIDATION_PLAN.md](docs/validation/VFS_VALIDATION_PLAN.md)
