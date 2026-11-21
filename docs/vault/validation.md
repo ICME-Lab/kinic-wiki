@@ -20,13 +20,15 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all -- --check
 
 # Boundary, build, release, and CI guards
-node --test scripts/vault-boundary-graph.test.mjs scripts/vault-build.test.mjs scripts/vault-release.test.mjs scripts/vault-ci-jobs.test.mjs
+node --test scripts/vault-boundary-graph.test.mjs scripts/vault-build.test.mjs scripts/vault-release.test.mjs scripts/vault-ci-jobs.test.mjs scripts/vault-browser-teardown.test.mjs vaultbrowser/scripts/shared-payment-preflight.test.mjs
 node scripts/check-vault-boundary.mjs
 
 # Candid contract check, TypeScript tests, and typechecks
 node packages/vault-client/scripts/generate-contracts.mjs --check
-pnpm --filter './packages/vault-*' --filter vaultbrowser -r test
+pnpm --dir packages/credit-bridge-candid test
+pnpm --filter './packages/vault-*' --filter @kinic/payments --filter vaultbrowser -r test
 pnpm --dir packages/vault-client typecheck
+pnpm --dir packages/payments typecheck
 pnpm --dir vaultbrowser typecheck
 ```
 
@@ -42,7 +44,7 @@ POCKET_IC_BIN=/absolute/path/to/pocket-ic pnpm --dir pocketic-tests test:vault
 POCKET_IC_BIN=/absolute/path/to/pocket-ic pnpm --dir pocketic-tests test:vault-funding-ledger
 ```
 
-- `test:vault` exercises real Vault Wasm, vetKD, full-capacity admission, exact retries, same-format upgrades, team sharing, isolation, and certified asset/configuration assertions (`lifecycle`, `state`, `capacity`, `sharing`, `isolation`, `physical-isolation`, `certification`).
+- `test:vault` exercises real Vault Wasm, vetKD, initial grant/subsidy, full-capacity admission, exact retries, same-format upgrades, team sharing, isolation, and certified asset/configuration assertions (`initial-grant`, `lifecycle`, `sharing`, `state`, `capacity`, `isolation`, `physical-isolation`, `certification`).
 - `test:vault-funding-ledger` downloads the SHA-256-pinned official DFINITY ledger/archive release (`ledger-suite-icrc-2026-03-09`) and runs against the production ledger principal in an isolated topology to test ICRC-2 transfer replay, archive reconciliation, concurrent scans, wrong-spender rejection, 100-block continuation, and upgrade preservation. The lost-response hook is injected only into a disposable test build and is absent from production code.
 
 To run only the team-sharing and certification Wasm scenarios after building artifacts:

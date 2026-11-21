@@ -21,7 +21,7 @@ Set Wiki's `VITE_PRIVATE_VAULT_URL` to the published Vault URL to show **Private
 - **On-demand decryption**: Document lists decrypt metadata only; opening a document fetches and decrypts its contents.
 - **Version history**: **Show version history** lists saved revisions. **View revision** displays a revision read-only; **Return to latest version** resumes the current document. **Download document** downloads the displayed saved revision. Historical views cannot overwrite the latest version.
 - **Document actions**: Each document card has an **…** menu for renaming, **Delete document** (history retained), and **Permanently delete document and history** (irreversible). Both deletions open a confirmation dialog naming the target and require typing `delete`. Permanent deletion remains available with zero prepaid balance.
-- **Vault renaming**: Each Vault card has an **… → Rename Vault** action (owner-only plaintext display metadata up to 64 characters; survives upgrades and does not change the root key or require a key retrieval). Existing Vaults keep the `Vault 1` fallback until renamed. Deploy a backend accepting `RenameVault` before publishing UI that calls it; mutation receipt hashes preserve backward compatibility with historical Candid shapes (`crates/vault_service/src/tests/fixtures/README.md`).
+- **Vault renaming**: Each Vault card has an **… → Rename Vault** action (owner-only plaintext display metadata up to 64 characters; survives upgrades and does not change the root key or require a key retrieval). Existing Vaults keep the `Vault 1` fallback until renamed. Deploy a backend accepting `RenameVault` before publishing UI that calls it; mutation receipt hashes preserve backward compatibility with historical Candid shapes (see [fixture notes](../crates/vault_service/src/tests/fixtures/README.md)).
 - **In-session recovery**: Pending creation and interrupted saves stay in memory for retry/resume/cancel within the session. **Settings** provides storage maintenance (**Free up unused storage**), browser key removal (**Delete saved keys from this browser**), and permanent Vault deletion (requires typing the Vault name).
 - **Session & device keys**: Uses AuthClient 5.0.0 with an 8-hour delegation TTL and 30-minute idle timeout across workspace, `/pick`, and `/embed`. Verified non-extractable AES-GCM root keys are cached in IndexedDB scoped to caller and canister and revalidated on reopen. See [operations](../docs/vault/operations.md#browser-session-and-device-keys) for exact cross-tab, teardown, and revocation boundaries.
 
@@ -49,7 +49,7 @@ pnpm --dir vaultbrowser build
 pnpm --filter @kinic/vault-client test
 node packages/vault-client/scripts/generate-contracts.mjs --check
 node scripts/check-vault-boundary.mjs
-wikibrowser/node_modules/.bin/oxlint --deny-warnings vaultbrowser/src vaultbrowser/fixtures/main.tsx vaultbrowser/fixtures/network.ts packages/vault-client/src packages/vault-client/test
+pnpm --dir wikibrowser exec oxlint --react-plugin --import-plugin --jsdoc-plugin --jsx-a11y-plugin --deny-warnings ../vaultbrowser/src ../packages/vault-client/src ../packages/payments/src ../packages/ui/src
 ```
 
 The production browser bundle is embedded into the Vault canister via `bash scripts/build-vault-canister.sh`. Local certified builds require `ICP_ENVIRONMENT=local-vault`, `VAULT_LOCAL_ORIGIN`, `VAULT_LOCAL_HOST`, and `VAULT_LOCAL_II` (plus `VAULT_LOCAL_WIKI_ORIGIN` for local cross-origin `/pick` and `/embed`).

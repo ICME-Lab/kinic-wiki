@@ -19,7 +19,7 @@ An owner adds a teammate using their **Vault** Internet Identity principal (deri
 3. The teammate refreshes their Vault list. In the Wiki editor, **Insert private document** opens the Vault picker. Saving the article shares only the opaque reference with Wiki readers; each reader still needs a Vault membership to open the document.
 4. The owner can change the role or choose **Remove member**. The canister checks each future shared call immediately. Open private views recheck on focus, when visibility resumes, and every 30 seconds while visible, clearing the view once access is denied.
 
-The Vault's recorded owner funds all shared calls, including new key retrievals. If opening a shared Vault reports insufficient prepaid balance, contact the owner.
+The Vault's recorded owner funds all shared calls, including new key retrievals (using the owner's first-key subsidy when eligible, or prepaid credit). If opening a shared Vault reports insufficient prepaid balance, contact the owner.
 
 Session timeouts and browser device-key caching follow the rules in [operations](operations.md#browser-session-and-device-keys): closing, signing out, or timing out keeps non-extractable key handles in IndexedDB until deleted via **Account settings → Maintenance → Delete saved keys from this browser**, and reopening always re-authenticates and rechecks current access.
 
