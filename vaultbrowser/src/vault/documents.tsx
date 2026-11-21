@@ -526,9 +526,8 @@ function Documents({
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </div>
-              <div
+              <fieldset
                 className="vault-category-filters"
-                role="group"
                 aria-label="Filter by category"
               >
                 {(
@@ -551,7 +550,7 @@ function Documents({
                     {label}
                   </VaultButton>
                 ))}
-              </div>
+              </fieldset>
             </div>
           ) : null}
           <div className="vault-document-items">

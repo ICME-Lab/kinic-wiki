@@ -171,7 +171,7 @@ export function PasswordGeneratorPanel({
         {open ? "Close generator" : "Generate password"}
       </VaultButton>
       {open ? (
-        <div className="vault-generator" role="region" aria-label="Password generator">
+        <section className="vault-generator" aria-label="Password generator">
           <div className="vault-generator-modes">
             <VaultButton
               size="sm"
@@ -306,7 +306,7 @@ export function PasswordGeneratorPanel({
               Use password
             </VaultButton>
           </div>
-        </div>
+        </section>
       ) : null}
     </div>
   );

@@ -67,7 +67,7 @@ export function VaultPortabilityPanel({
   const [pendingIndex, setPendingIndex] = useState<number>();
   const callbacks = useRef({ onClose, onPendingSaveChange });
   useLayoutEffect(() => { callbacks.current = { onClose, onPendingSaveChange }; });
-  const fileEpoch = useRef(0);
+  const fileEpoch = useRef<object>({});
   const working = useRef(false);
   const start = (work: () => Promise<void>) => { if (run) run(work); else void work(); };
   const cancelled = useRef(false);
@@ -77,7 +77,7 @@ export function VaultPortabilityPanel({
     alive.current = true;
     const detach = client.session.addLockCleanup(() => {
       cancelled.current = true;
-      fileEpoch.current++;
+      fileEpoch.current = {};
       working.current = false;
       setOutcomes({});
       setPendingIndex(undefined);
@@ -90,7 +90,7 @@ export function VaultPortabilityPanel({
       callbacks.current.onClose();
     });
     return () => {
-      fileEpoch.current++;
+      fileEpoch.current = {};
       alive.current = false;
       cancelled.current = true;
       detach();
@@ -99,7 +99,8 @@ export function VaultPortabilityPanel({
 
   const handleFile = async (file: File | undefined) => {
     if (working.current || pendingIndex !== undefined) return;
-    const epoch = ++fileEpoch.current;
+    const epoch = {};
+    fileEpoch.current = epoch;
     const ticket = client.session.capture();
     const current = () => alive.current && epoch === fileEpoch.current && ticket === client.session.capture();
     setOutcomes({});
@@ -342,9 +343,8 @@ export function VaultPortabilityPanel({
   };
 
   return (
-    <div
+    <section
       className="vault-portability"
-      role="region"
       aria-label="Import and export Vault"
     >
       <div className="vault-portability-head">
@@ -420,8 +420,8 @@ export function VaultPortabilityPanel({
                 <p>{oversizedCount} item(s) exceed the 256 KiB limit and were not imported. Keep your source file.</p>
                 <ul aria-label="Import item results">{indexed.filter(({ index }) => outcomes[index] === "oversized").map(({ entry, index }) => <li key={index}>{entry.title}: exceeds 256 KiB</li>)}</ul>
               </div> : null}
-              {pending ? <div role="status">
-                <p>A save result is unknown. Resolve it before importing more items.</p>
+              {pending ? <div>
+                <output>A save result is unknown. Resolve it before importing more items.</output>
                 <VaultButton disabled={busy || disabled} onClick={() => start(() => resolveImport(false))}>Resolve import save</VaultButton>
                 <VaultButton disabled={busy || disabled} onClick={() => start(() => resolveImport(true))}>Cancel unfinished import save</VaultButton>
               </div> : null}
@@ -521,6 +521,6 @@ export function VaultPortabilityPanel({
           {status}
         </output>
       ) : null}
-    </div>
+    </section>
   );
 }

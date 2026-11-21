@@ -1566,6 +1566,10 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
 }
 
 .vault-document-meta {
