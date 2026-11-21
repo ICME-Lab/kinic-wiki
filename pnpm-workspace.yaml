@@ -8,6 +8,7 @@ packages:
   - workers/wiki-generator
   - workers/payment
   - extensions/wiki-clipper
+  - extensions/vault-autofill
   - tools/candid
 
 allowBuilds:
