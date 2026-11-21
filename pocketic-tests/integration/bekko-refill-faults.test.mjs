@@ -179,6 +179,28 @@ test("callback trap preserves the deposit journal through upgrade and controller
   } finally { await pic.tearDown(); }
 });
 
+test("a Bekko callback trap leaves the same timer tick available to Vault", { timeout: 120000 }, async () => {
+  const { pic, wiki } = await setup(wasm("bekko-refill-callback-trap.wasm"));
+  try {
+    assert.ok("Err" in await wiki.periodic_bekko_refill());
+    const { canisterId: vaultId } = await pic.setupCanister({
+      sender: owner, controllers: [owner], cycles: 10_000_000_000_000n,
+      idlFactory: fixtureIdl, wasm: wasm("bekko-refill-fault-fixture.wasm"),
+    });
+    ok(await wiki.configure_vault_refill({
+      target: vaultId, enabled: true, threshold_cycles: 11_000_000_000_000n,
+      target_cycles: 12_000_000_000_000n, max_transfer_cycles: 300_000_000_000n,
+    }));
+    const before = BigInt(await pic.getCyclesBalance(vaultId));
+    await pic.advanceTime(86_400_001);
+    await pic.tick(50);
+    assert.ok(activeIs("Depositing")(await stateOf(wiki)));
+    const [{ state }] = ok(await wiki.get_vault_refill_state());
+    assert.ok("Succeeded" in (state.history.at(-1)?.outcome ?? {}));
+    assert.ok(BigInt(await pic.getCyclesBalance(vaultId)) > before + 290_000_000_000n);
+  } finally { await pic.tearDown(); }
+});
+
 test("upgrade during an outstanding deposit keeps Unknown despite the old callback", { timeout: 120000 }, async () => {
   const { pic, wiki, proxy, deferred } = await setup(wasm("bekko-refill-delayed.wasm"));
   try {

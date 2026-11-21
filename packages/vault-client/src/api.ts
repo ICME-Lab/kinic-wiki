@@ -940,7 +940,7 @@ export class VaultClient {
           if (j.contextHash && unresolvedReceipt) {
             try {
               const ownedRequest = this.ownedInlineRequest(j);
-              const revision = await this.reconciledInline(j);
+              const revision = await this.committedSaveRevision(j);
               if (this.rootEpoch !== undefined)
                 await this.checkEpoch(j.ticket, this.rootEpoch);
               this.session.check(j.ticket);
@@ -1009,21 +1009,21 @@ export class VaultClient {
     const request = this.request;
     if (request.kind === "sending") return undefined;
     if (request.kind === "idle") return request;
-    const expected = {
-      action: {
-        SaveInline: {
-          request: j.request,
-          bytes: j.chunks[0],
-          context_hash: j.contextHash,
-        },
-      },
-      operation: j.operation,
-    };
-    return stable(request.mutation) === stable(expected) ? request : undefined;
+    const { action, operation } = request.mutation;
+    if (!("SaveInline" in action) || !j.contextHash || request.shared !== this.memberProtocol)
+      return undefined;
+    const inline = action.SaveInline;
+    if (
+      equal(bytes(operation), j.operation) &&
+      sameBeginRequest(inline.request, j.request) &&
+      equal(bytes(inline.bytes), j.chunks[0]) &&
+      equal(bytes(inline.context_hash), j.contextHash)
+    )
+      return request;
   }
   // Authenticated immutable revision lookup remains usable after both kinds
   // of receipt are collected. Match the full encrypted payload, not just IDs.
-  private async reconciledInline(j: Save): Promise<Revision> {
+  private async committedSaveRevision(j: Save): Promise<Revision> {
     const r = await this.manifest(
       j.request.vault,
       j.request.object,
@@ -1385,7 +1385,7 @@ export class VaultClient {
       : await this.actor.get_upload_status(upload);
     return this.checkedResult(t, reply);
   }
-  async cancelSave() {
+  async cancelSave(onCommitted?: (revision: Revision) => void) {
     const j = this.pendingSave;
     if (!j) throw Error("NoPendingSave");
     if (this.saveState.kind !== "ready") throw Error("SaveInProgress");
@@ -1400,8 +1400,12 @@ export class VaultClient {
       };
       if (j.contextHash && (j.uncertain || this.request.kind === "ambiguous")) {
         const ownedRequest = this.ownedInlineRequest(j);
-        const revision = await this.reconciledInline(j);
+        const revision = await this.committedSaveRevision(j);
         check();
+        if (onCommitted) {
+          onCommitted(revision);
+          check();
+        }
         if (this.request === ownedRequest) this.request = { kind: "idle" };
         j.chunks.forEach((chunk) => chunk.fill(0));
         this.saveState = { kind: "idle" };
@@ -1427,6 +1431,13 @@ export class VaultClient {
           status.Committed.sequence <= 0n)
       )
         throw Error("InvalidReceipt");
+      // Keep the save job retryable until the editor can advance its base revision.
+      if ("Committed" in status && onCommitted) {
+        const revision = await this.committedSaveRevision(j);
+        check();
+        if (revision.sequence !== status.Committed.sequence) throw Error("InvalidReceipt");
+        onCommitted(revision);
+      }
       if ("Pending" in status) {
         if (!sameBeginRequest(status.Pending.request, j.request))
           throw Error("InvalidReceipt");

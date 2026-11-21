@@ -1,5 +1,6 @@
 use candid::Principal;
 use credit_bridge_types::*;
+use refill::RefillResult;
 use vault_types::*;
 mod accounting;
 mod initial_grant;
@@ -13,6 +14,7 @@ mod http;
 mod key_cost;
 mod key_subsidy;
 mod payment_holds;
+mod refill;
 mod schema;
 mod state;
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;

@@ -94,7 +94,7 @@ public enum VaultCredentialCodec {
         guard let components = URLComponents(string: candidate),
               var host = components.host?.lowercased(),
               !host.isEmpty,
-              host.count <= 255
+              host.utf16.count <= 255
         else {
             return nil
         }
@@ -191,16 +191,17 @@ public enum VaultCredentialCodec {
 
     public static func buildMetadata(title: String, record: VaultCredentialRecord) -> VaultMetadata {
         let domains = extractDomains([record.url] + record.urls)
-        let trimmedUser = String(record.username.trimmingCharacters(in: .whitespacesAndNewlines).prefix(256))
+        let trimmedUser = VaultMetadata.truncateText(record.username.trimmingCharacters(in: .whitespacesAndNewlines), limit: 256)
+        let tags = record.tags.map { VaultMetadata.truncateText($0, limit: 64) }.filter { !$0.isEmpty }.prefix(32)
         let hasTotp = !record.totp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VaultMetadata(
             kind: .credential,
-            title: String(title.prefix(512)),
+            title: VaultMetadata.truncateText(title, limit: 512),
             username: trimmedUser.isEmpty ? nil : trimmedUser,
             domains: domains.isEmpty ? nil : domains,
             hasTotp: hasTotp ? true : nil,
             favorite: record.favorite ? true : nil,
-            tags: record.tags.isEmpty ? nil : Array(record.tags.prefix(32))
+            tags: tags.isEmpty ? nil : Array(tags)
         )
     }
 }

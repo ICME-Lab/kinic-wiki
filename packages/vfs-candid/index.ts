@@ -6,6 +6,27 @@ import { IDL } from "@icp-sdk/core/candid";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
+  const ArchiveIntermediateSourceRequest = idl.Record({
+    database_id: idl.Text,
+    expected_mount: idl.Nat16,
+    path: idl.Text,
+    expected_etag: idl.Text,
+    expected_node_id: idl.Text,
+    expected_revision: idl.Nat64,
+    expected_content_hash: idl.Text,
+    expected_snapshot_revision: idl.Text,
+    backup_manifest_sha256: idl.Text
+  });
+  const StoragePageStats = idl.Record({ page_size: idl.Nat64, page_count: idl.Nat64, freelist_pages: idl.Nat64 });
+  const DatabaseStorageStats = idl.Record({ mount_id: idl.Nat16, pages: StoragePageStats });
+  const ArchiveIntermediateSourceResult = idl.Record({
+    path: idl.Text,
+    snapshot_revision: idl.Text,
+    before: StoragePageStats,
+    after: StoragePageStats
+  });
+  const ResultArchiveIntermediateSource = idl.Variant({ Ok: ArchiveIntermediateSourceResult, Err: idl.Text });
+  const ResultDatabaseStorageStats = idl.Variant({ Ok: DatabaseStorageStats, Err: idl.Text });
   const BekkoRefillConfig = idl.Record({
     target_cycles: idl.Nat,
     max_transfer_cycles: idl.Nat,
@@ -35,7 +56,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     amount_cycles: idl.Nat,
     outcome: BekkoRefillOutcome,
     started_ns: idl.Nat64,
-    finished_ns: idl.Opt(idl.Nat64)
+    finished_ns: idl.Opt(idl.Nat64),
+    target: idl.Opt(idl.Principal)
   });
   const BekkoRefillReservation = idl.Record({ amount_cycles: idl.Nat, sent_ns: idl.Nat64 });
   const BekkoRefillResolution = idl.Variant({ Deposited: idl.Null, NotDeposited: idl.Null });
@@ -48,6 +70,15 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     config: BekkoRefillConfig
   });
   const ResultBekkoRefill = idl.Variant({ Ok: BekkoRefillState, Err: idl.Text });
+  const VaultRefillConfig = idl.Record({
+    target: idl.Principal,
+    target_cycles: idl.Nat,
+    max_transfer_cycles: idl.Nat,
+    enabled: idl.Bool,
+    threshold_cycles: idl.Nat
+  });
+  const VaultRefillStatus = idl.Record({ target: idl.Principal, state: BekkoRefillState });
+  const VaultRefillStateResult = idl.Variant({ Ok: idl.Opt(VaultRefillStatus), Err: idl.Text });
   const EvidenceRebuildControlRequest = idl.Record({
     expected_state_hash: idl.Text,
     database_id: idl.Text,
@@ -660,11 +691,18 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
+    database_storage_stats: idl.Func([DatabaseIdRequest], [ResultDatabaseStorageStats], ["query"]),
+    archive_intermediate_source: idl.Func([ArchiveIntermediateSourceRequest], [ResultArchiveIntermediateSource], []),
     get_bekko_refill_state: idl.Func([], [ResultBekkoRefill], ["query"]),
     configure_bekko_refill: idl.Func([BekkoRefillConfig], [ResultUnit], []),
     check_bekko_refill: idl.Func([], [ResultBekkoRefill], []),
     reconcile_bekko_refill: idl.Func([idl.Nat64, BekkoRefillResolution, idl.Text], [ResultUnit], []),
+    get_vault_refill_state: idl.Func([], [VaultRefillStateResult], ["query"]),
+    configure_vault_refill: idl.Func([VaultRefillConfig], [ResultUnit], []),
+    check_vault_refill: idl.Func([], [VaultRefillStateResult], []),
+    reconcile_vault_refill: idl.Func([idl.Nat64, BekkoRefillResolution, idl.Text], [ResultUnit], []),
     periodic_cycles_refill: idl.Func([], [ResultUnit], []),
+    periodic_bekko_refill: idl.Func([], [ResultUnit], []),
     periodic_storage_billing: idl.Func([], [ResultUnit], []),
     evidence_rebuild_status: idl.Func([DatabaseIdRequest], [ResultEvidenceRebuild], ["query"]),
     evidence_rebuild_begin: idl.Func([EvidenceRebuildRequest], [ResultEvidenceRebuild], []),

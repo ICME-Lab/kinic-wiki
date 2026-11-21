@@ -27,6 +27,45 @@ struct KinicVaultCoreTests {
         )
     }
 
+    @Test func metadataUsesTheWebUTF16Limits() throws {
+        let emoji = "🗝"
+        let longTag = String(repeating: emoji, count: 40)
+        let record = VaultCredentialRecord(username: String(repeating: emoji, count: 150), tags: [longTag])
+        let metadata = VaultCredentialCodec.buildMetadata(title: String(repeating: emoji, count: 300), record: record)
+        #expect(metadata.title.utf16.count == 512)
+        #expect(metadata.username?.utf16.count == 256)
+        #expect(metadata.tags?.first?.utf16.count == 64)
+        try metadata.validate()
+        #expect(throws: VaultCryptoError.invalidMetadata) {
+            try VaultMetadata(kind: .note, title: "Test", tags: [longTag]).validate()
+        }
+    }
+
+    @Test func findsLegacyWebCredentialsByDomain() throws {
+        let context = try makeTestContext()
+        let key = SymmetricKey(size: .bits256)
+        let object = Data(repeating: 4, count: 16)
+        let payload = Data(#"{"username":"alice","password":"test","URL":"https://example.com/login"}"#.utf8)
+        let encrypted = try VaultDocumentV3.encrypt(
+            rootKey: key, context: context, object: object, revision: 1,
+            metadata: VaultMetadata(kind: .credential, title: "Legacy"), plaintext: payload
+        )
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = VaultAutoFillSnapshotStore(fileURL: file)
+        defer { try? store.clear() }
+        let record = VaultAutoFillRecordSnapshot(
+            objectIdBase64URL: Base64URL.encode(object), revision: 1,
+            manifestBase64URL: Base64URL.encode(encrypted.manifest),
+            chunksBase64URL: encrypted.chunks.map(Base64URL.encode), hashesBase64URL: encrypted.hashes.map(Base64URL.encode)
+        )
+        try store.save(VaultAutoFillSnapshot(context: context, records: [record]))
+
+        let candidate = try #require(store.listCandidates(rootKey: key, matchingHost: "example.com").first)
+        #expect(candidate.domains == ["example.com"])
+        #expect(candidate.username == "alice")
+        #expect(try store.decryptCredential(recordIdentifier: candidate.recordIdentifier, rootKey: key)?.password == "test")
+    }
+
     @Test("Decrypts real TypeScript v3 encrypted credential byte-for-byte")
     func decryptsTypeScriptV3Vector() throws {
         let context = try makeTestContext()

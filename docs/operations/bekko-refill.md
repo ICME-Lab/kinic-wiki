@@ -1,8 +1,8 @@
 # Bekko execution-cycle refill
 
-The existing startup/upgrade check and daily Wiki timer check the Wiki's Launcher refill first, then the fixed Bekko `xrg4h-oiaaa-aaaal-qxrya-cai`. Daily storage billing runs in a separate self-call so external failures and waits cannot block it. There is no new recurring timer. All balance/deposit calls have a 30-second bounded wait; the self-refill task has a 60-second outer bound. Timeouts are scheduling bounds, not wall-clock service guarantees under subnet load.
+The startup/upgrade check and daily Wiki timer check the Wiki's Launcher refill first, then the fixed Bekko `xrg4h-oiaaa-aaaal-qxrya-cai`, then Vault if configured. Daily storage billing and Bekko run in separate self-calls. A Bekko callback trap leaves its deposit locked and the timer can still check Vault. Each balance/deposit call has a 30-second bounded wait. The outer Launcher and Bekko self-calls have bounds of 60 and 90 seconds, respectively.
 
-Only Wiki execution cycles fund Bekko execution cycles, via management `deposit_cycles`. Database/user cycle balances and ledgers are never debited. The target is compiled in and cannot be configured.
+Management `deposit_cycles` transfers Wiki execution cycles to Bekko or Vault. The Bekko target is compiled in. Wiki and Vault controllers configure the Vault target and authorize the Wiki source.
 
 ## Initial settings and measurement
 
@@ -38,13 +38,22 @@ Example configuration, initially disabled:
 })
 ```
 
-A balance equal to or above the Bekko threshold skips the deposit. Amounts are limited by the target deficit, per-call maximum, remaining rolling daily budget and fresh Wiki funds. Failed deposits still consume the attempted daily budget conservatively; settings edits, audit-history pruning and upgrades cannot reset it. At most 256 deposits may be attempted per rolling day; further attempts stop until reservations expire. Operation IDs and amounts are saved before attaching cycles.
+A balance equal to or above a target's threshold skips the deposit. Amounts are limited by the target deficit, per-call maximum, remaining rolling daily budget and fresh Wiki funds. The existing `max_daily_cycles`, `wiki_reserve_cycles` and 256-attempt cap now apply to both targets together. Failed deposits consume the attempted daily budget. Settings edits, audit-history pruning and upgrades preserve those reservations. Operation IDs and amounts are saved before attaching cycles.
+
+## Vault setup
+
+1. Fund the new Vault canister with enough cycles to run until the first check. Pick a refill threshold above Vault's `minimum_cycles` and freezing reserve, with enough margin for the daily check interval and expected peak key retrievals.
+2. On Vault, a controller calls `set_cycles_refill_source(opt principal "<wiki-id>")`. This authorizes the specified Wiki canister to call `cycles_balance_for_wiki`.
+3. On Wiki, a controller calls `configure_vault_refill` with the Vault principal in `target`, its `threshold_cycles`, `target_cycles` and `max_transfer_cycles`, and `enabled = false`. The shared Wiki reserve and daily cap are managed through `configure_bekko_refill`, even when Bekko deposits are disabled.
+4. Review the limits, enable the Vault target and use `check_vault_refill` for a manual check that can send real cycles. `get_vault_refill_state` returns the configured principal and the journal. The field `observed_bekko_cycles` in the shared journal type records the observed balance of the target. Vault attempts also record the destination principal.
+
+`reconcile_vault_refill` follows the same disabled-state and evidence requirements as `reconcile_bekko_refill`. Use direct operations funding to recover a frozen Vault whose balance check fails.
 
 ## Failure and upgrade recovery
 
 Balance-call failure or malformed data sends nothing. A frozen Bekko cannot execute its balance update: inspect status as controller and fund/recover it externally under an authorized recovery operation. A failed check is recorded with recovery guidance; no inference that the balance is zero is made.
 
-Clean deposit rejection is recorded as failed. Timeout/uncertain rejection/decode failure is recorded **Unknown**, preserving the active lock. On Wiki upgrade, a read-only check becomes interrupted; a pending deposit becomes Unknown. Further automated deposits stop until explicit reconciliation. A callback trap or journal write failure similarly leaves the persisted operation in place; recover via a Wiki upgrade, inspect/reconcile with evidence, then explicitly re-enable. Reconciliation never refunds the rolling attempted budget. Never assume a timed-out deposit failed or use an uncertain balance difference alone as proof.
+Clean deposit rejection is recorded as failed. A timeout, uncertain rejection or decode failure is recorded **Unknown**, preserving the active lock. On Wiki upgrade, a read-only check becomes interrupted and a pending deposit becomes Unknown. Further automated deposits to the affected target stop until explicit reconciliation. A callback trap or journal write failure also leaves the operation in place. Recover via a Wiki upgrade, inspect and reconcile with evidence, then explicitly re-enable. Reconciliation preserves the rolling attempted budget. Confirm the actual outcome using evidence beyond the balance difference alone.
 
 Controller reconciliation attests to the observed outcome. It is not a way to cancel an in-flight message. If evidence cannot establish the outcome, leave the operation locked and refill disabled. Maintain access to controller status/logs and external cycle funding for recovery.
 
@@ -76,7 +85,7 @@ A second disposable Wiki build traps immediately after a successful deposit resp
 
 The builder copies current working sources into `.tmp-test/`, uses an isolated target directory, and removes the source copy in `finally`. Fault injection anchors must match exactly once or the build fails. Neither the normal Wiki Wasm nor production Rust files receive test hooks. Fault-injected Wasm files under `target/bekko-refill-*.wasm` are test artifacts and must not be deployed.
 
-## Production rollout after PR review and merge
+## First-time Bekko production rollout after PR review and merge
 
 1. Save current module hashes, controller status, model info and representative inference vectors. Verify the compact model pack SHA256 and build provenance. Keep the previous deployable Wasm.
 2. Upgrade **Bekko first**, using the existing compact recipe and upgrade mode. Do not reinstall or reupload/reset weights. Call controller `activate`, confirm `active`, `weights_verified`, unchanged model/revision/runtime/embedding-space/pack hash and bit-identical sampled vectors. Its existing upgrade path requires explicit activation.

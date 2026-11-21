@@ -63,12 +63,13 @@ try {
   assert.equal(new TextDecoder().decode(doc.plaintext), 'Swift to Web root continuity'); doc.plaintext.fill(0);
   // Verify Swift SaveInline / RenameVault / DeleteObject mutations directly from Web.
   const refreshedHeader = await web.refreshHeader();
-  assert.equal(refreshedHeader.name[0], 'Swift Renamed Vault');
+  assert.equal(refreshedHeader.name[0], 'Swift Renamed After Saving');
   const activeItems = await web.items({ includeDeleted: false });
   assert.equal(activeItems.length, 2);
   const swiftItem = activeItems.find((item) => item.metadata.title === 'Swift Created Login');
   assert.ok(swiftItem, 'Expected Swift-created login in Web items');
   assert.equal(swiftItem.revision.revision, 2n);
+  assert.deepEqual(swiftItem.metadata.tags, ['ios', '🗝'.repeat(32)]);
   const opened = await web.read(swiftItem.revision);
   const parsedCred = JSON.parse(new TextDecoder().decode(opened.plaintext));
   opened.plaintext.fill(0);

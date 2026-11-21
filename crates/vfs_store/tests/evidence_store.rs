@@ -387,3 +387,42 @@ fn recreating_moved_evidence_reuses_its_saved_representation() {
         format!("kinic:evidence:v1:{}", sha(body.as_bytes()))
     );
 }
+
+#[test]
+fn shared_evidence_compresses_storage_and_preserves_listing_and_history() {
+    use vfs_types::{NodeKind, WriteNodeRequest};
+    let (dir, store) = common::new_store();
+    store.enable_evidence_storage().unwrap();
+    let (path, _) = fixture("compressed");
+    common::ensure_parent_folders(&store, &path, 1);
+    let body = serde_json::json!({"id":"event","run_id":"compressed","kind":"hook","payload":{"capture":{"session_evidence":{"records":[{"text":"compress me 日本語 ".repeat(8000)}]}}}}).to_string();
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".into(),
+                path: path.clone(),
+                kind: NodeKind::Source,
+                content: body.clone(),
+                metadata_json: r#"{"kind":"kinic.learning.evidence"}"#.into(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("wiki.sqlite3")).unwrap();
+    let saved:i64=db.query_row("SELECT (SELECT coalesce(sum(length(CAST(body AS BLOB))),0) FROM fs_evidence_blobs)+(SELECT coalesce(sum(length(CAST(manifest_json AS BLOB))),0) FROM fs_evidence_manifests)",[],|r|r.get(0)).unwrap();
+    assert!(saved < 5000, "stored payload: {saved}");
+    assert_eq!(store.read_node(&path).unwrap().unwrap().content, body);
+    let revision = store.current_node_revision(&path).unwrap().unwrap();
+    assert_eq!(revision.node.content, body);
+    let children = store
+        .list_children(vfs_types::ListChildrenRequest {
+            database_id: "default".into(),
+            path: path.rsplit_once('/').unwrap().0.into(),
+        })
+        .unwrap();
+    assert_eq!(
+        children.iter().find(|n| n.path == path).unwrap().size_bytes,
+        Some(body.len() as u64)
+    );
+}

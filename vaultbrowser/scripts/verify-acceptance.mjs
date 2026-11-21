@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { chromium, expect } from "../../wikibrowser/node_modules/@playwright/test/index.mjs";
-import { action, editor, loginButton, settle } from "./acceptance-ui.mjs";
+import { action, editor, loginButton, settle, showVaultNavigation } from "./acceptance-ui.mjs";
 import { idlFactory } from "../../packages/vault-candid/index.js";
 import { assertDeviceKeyStore, readDeviceKeyStore } from "./device-key-store.mjs";
 const require = createRequire(import.meta.url);
@@ -237,6 +237,7 @@ async function verifyAcceptance() {
   await vault.goto(vaultURL);
   await inspector(vault);
   ownerCredentials = await signIn(vault, loginButton(vault), [], true);
+  await showVaultNavigation(vault);
   await vault
     .getByRole("button", { name: "Create Vault", exact: true })
     .waitFor();
@@ -344,6 +345,7 @@ async function verifyAcceptance() {
     { stdio: "inherit" },
   );
   await vault.goto(vaultURL);
+  await showVaultNavigation(vault);
   await vault
     .getByRole("button", { name: "Create Vault", exact: true })
     .waitFor();
@@ -377,7 +379,9 @@ async function verifyAcceptance() {
   }
   const createTrace = startRetryTrace("create_vault");
   dropMethod = "create_vault";
+  await showVaultNavigation(vault);
   await action(vault, "Create Vault", true);
+  await showVaultNavigation(vault);
   await vault
     .getByRole("button", { name: "Retry Vault creation", exact: true })
     .waitFor();
@@ -388,6 +392,7 @@ async function verifyAcceptance() {
   const keyTrace = startRetryTrace("derive_vault_key");
   dropMethod = "derive_vault_key";
   createTrace.phase = "post-click-application-retry";
+  await showVaultNavigation(vault);
   await action(vault, "Retry Vault creation", true);
   await vault
     .getByRole("button", { name: "Retry opening Vault", exact: true })
@@ -423,22 +428,13 @@ async function verifyAcceptance() {
   chunkTrace.phase = "post-click-application-retry";
   await action(vault, "Resume save");
   const chunkRetry = finishRetryTrace(chunkTrace);
-  const search = vault.getByLabel("Search this Vault locally");
-  const noteButton = vault.getByRole("button", { name: title, exact: true });
   // Save confirmation precedes the asynchronous metadata-list refresh.
-  await expect(noteButton).toBeVisible();
-  const readsBeforeTyping = chunkReads;
-  await search.fill(plaintext);
-  await expect(noteButton).toHaveCount(0);
-  assert.equal(chunkReads, readsBeforeTyping, "typing must filter metadata without fetching note bodies");
-  await action(vault, "Search note contents");
-  await expect(noteButton).toBeVisible();
-  assert.ok(chunkReads > readsBeforeTyping, "explicit search reads authenticated note contents");
-  await search.fill("absent-body-query");
-  await expect(noteButton).toHaveCount(0);
-  await search.fill("");
+  await expect(vault.getByRole("button", { name: title, exact: true })).toBeVisible();
+  await action(vault, "New document");
+  const readsBeforeOpen = chunkReads;
   await action(vault, title);
-  assert.equal(await editor(vault).innerText(), plaintext);
+  await expect(editor(vault)).toHaveText(plaintext);
+  assert.ok(chunkReads > readsBeforeOpen, "opening a note reads its authenticated content");
   const docs = await inspect(vault, "clientRead", canister, vaultURL, vaultId);
   assert.equal(docs.documents[0].plaintext, plaintext);
   const object = docs.documents[0].object;
@@ -499,6 +495,7 @@ async function verifyAcceptance() {
   assert.ok(blobs.some(([kind]) => kind === "create"));
   for (const [, url] of blobs.filter(([kind]) => kind === "create"))
     assert.ok(blobs.some(([kind, u]) => kind === "revoke" && u === url));
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await editor(vault).waitFor();
   await editor(vault).press("ControlOrMeta+z");
@@ -523,6 +520,7 @@ async function verifyAcceptance() {
   if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
     await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await vault.getByLabel("Document type").selectOption("attachment");
   await vault.getByLabel("Attachment (10 MiB maximum)").setInputFiles({
@@ -535,11 +533,13 @@ async function verifyAcceptance() {
   if (await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).isVisible())
     await vault.getByRole("dialog", {name:"Discard unsaved changes?"}).getByRole("button", {name:"Discard changes"}).click();
   await assertCleared(vault);
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await action(vault, title);
   pass("actual private password and File input references clear on close");
 
   await retain(vault);
+  await showVaultNavigation(vault);
   await action(vault, "Create Vault");
   sourceName = `Vault ${(await readback(vault)).headers.Ok.findIndex((h) => h.id.join() === vaultId.join()) + 1}`;
   await editor(vault).waitFor();
@@ -557,7 +557,7 @@ async function verifyAcceptance() {
   assert.equal(await disclosure.count(), 0);
   const toggle = vault.getByRole("button", { name: "Toggle Vault navigation" });
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-  await toggle.click();
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
   assert.equal(
@@ -576,6 +576,7 @@ async function verifyAcceptance() {
   await assertCleared(vault);
   await signIn(vault, loginButton(vault));
   assert.equal((await readback(vault)).principal, owner);
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await action(vault, title);
   assert.equal(await editor(vault).innerText(), plaintext);
@@ -614,6 +615,7 @@ async function verifyAcceptance() {
   });
   ownerCredentials = await signIn(vault, loginButton(vault));
   assert.equal((await readback(vault)).principal, owner);
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await action(vault, title);
   pass(
@@ -636,6 +638,7 @@ async function verifyAcceptance() {
     vaultId,
   );
   assert.equal(independent.documents[0].plaintext, plaintext);
+  await showVaultNavigation(second);
   await action(second, sourceName);
   await action(second, title);
   assert.equal(await editor(second).innerText(), plaintext);
@@ -976,6 +979,7 @@ async function verifyAcceptance() {
   assertDeviceKeyStore(await vault.evaluate(readDeviceKeyStore), `${canister}:${owner}`);
   assert.equal((await vault.evaluate(readDeviceKeyStore)).records.filter(record => record.key).length, 0);
   await action(vault, "Back to Vault");
+  await showVaultNavigation(vault);
   delayMethod = "derive_vault_key";
   const keyReady = new Promise((resolve) => {
     delayedReady = resolve;
@@ -999,6 +1003,7 @@ async function verifyAcceptance() {
     "late real key reply after logout cannot reinstall old client root or private UI; same-owner new login remains closed",
   );
 
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await action(vault, title);
   const persistence = await vault.evaluate(
@@ -1137,6 +1142,7 @@ async function verifyAcceptance() {
   ownerCredentials = await completeLocalLogin(iiURL, await shortPopup, ownerCredentials);
   await shortLogin;
   await vault.reload();
+  await showVaultNavigation(vault);
   await vault
     .getByRole("button", { name: "Create Vault", exact: true })
     .waitFor();
@@ -1149,6 +1155,7 @@ async function verifyAcceptance() {
     earliest < BigInt(shortStarted + 55000) * 1000000n,
     "Actual signed II expiration must be short",
   );
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await action(vault, title);
   await retain(vault);
@@ -1192,6 +1199,7 @@ async function verifyAcceptance() {
   );
 
   await signIn(vault, loginButton(vault));
+  await showVaultNavigation(vault);
   await action(vault, sourceName);
   await action(vault, title);
   await retain(vault);

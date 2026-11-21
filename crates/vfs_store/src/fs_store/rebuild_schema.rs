@@ -8,6 +8,7 @@ struct Catalog {
     legacy_renamed: Vec<Object>,
     shared: Vec<Object>,
     optional_statistics: Vec<Object>,
+    optional_archive_refs: Vec<Object>,
 }
 // Generated only from checked-in migrations; never learned from the source DB.
 const CATALOG: &str = include_str!("../../migrations/005_rebuild_schema.json");
@@ -43,6 +44,24 @@ pub(super) fn validate(conn: &Connection) -> Result<Vec<Object>, String> {
             }
             objects.remove(index);
         }
+    }
+    let archive_refs: Vec<_> = objects
+        .iter()
+        .filter(|object| {
+            expected
+                .optional_archive_refs
+                .iter()
+                .any(|entry| entry.1 == object.1)
+        })
+        .cloned()
+        .collect();
+    if !archive_refs.is_empty() {
+        if normalize(&archive_refs)? != normalize(&expected.optional_archive_refs)? {
+            return Err(
+                "unknown rebuild source schema: archive publication reference index".into(),
+            );
+        }
+        objects.retain(|object| !archive_refs.iter().any(|entry| entry.1 == object.1));
     }
     let normalized_objects = normalize(&objects)?;
     if normalized_objects != normalize(&expected.legacy)?

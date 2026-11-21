@@ -31,8 +31,13 @@ connection.execute('ANALYZE')
 statistics = connection.execute(
     "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name='sqlite_stat1'"
 ).fetchone()
+connection.executescript((migrations / 'archive_publication_refs.sql').read_text())
+archive_refs = [obj for obj in catalog() if obj[1] in {
+    'archive_publication_refs', 'archive_publication_scan'
+}]
 output = migrations / '005_rebuild_schema.json'
 output.write_text(json.dumps({'legacy': legacy, 'legacy_renamed': legacy_renamed, 'shared': shared,
+                              'optional_archive_refs': archive_refs,
                               'optional_statistics': [statistics,
                                   ['table', 'sqlite_stat4', 'sqlite_stat4',
                                    'CREATE TABLE sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample)']]}, indent=2) + '\n')

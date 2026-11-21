@@ -2,6 +2,7 @@ import type { Metadata } from "./documents-v3.ts";
 import {
   buildCredentialMetadata,
   normalizeTags,
+  truncateMetadataText,
   parseCredential,
   serializeCredential,
   type CredentialCustomField,
@@ -133,13 +134,14 @@ function makeImportedCredential(
   title: string,
   partial: Partial<CredentialRecord>,
 ): ImportedCredentialItem {
-  const cleanTitle = (
+  const cleanTitle = truncateMetadataText(
     title.trim() ||
-    partial.URL?.trim() ||
-    partial.urls?.[0]?.trim() ||
-    partial.username?.trim() ||
-    "Untitled login"
-  ).slice(0, 512);
+      partial.URL?.trim() ||
+      partial.urls?.[0]?.trim() ||
+      partial.username?.trim() ||
+      "Untitled login",
+    512,
+  );
   const plaintext = serializeCredential({
     ...partial,
     label: cleanTitle,
@@ -160,7 +162,7 @@ function makeImportedNote(
   body: string,
   options: { favorite?: boolean; tags?: string[] } = {},
 ): ImportedNoteItem {
-  const cleanTitle = (title.trim() || "Untitled note").slice(0, 512);
+  const cleanTitle = truncateMetadataText(title.trim() || "Untitled note", 512);
   const tags = normalizeTags(options.tags ?? []);
   const metadata: Metadata = {
     kind: "note",

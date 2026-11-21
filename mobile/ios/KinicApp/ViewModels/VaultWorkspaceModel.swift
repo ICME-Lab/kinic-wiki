@@ -54,6 +54,7 @@ enum VaultCategoryFilter: String, CaseIterable, Identifiable, Sendable {
 enum VaultAutoFillStatus: Equatable, Sendable {
     case notSynced
     case syncing
+    case onlineOnly
     case ready(credentialCount: Int, syncedAt: Date)
     case providerDisabled(cachedCount: Int, syncedAt: Date)
     case error(String)
@@ -102,7 +103,7 @@ final class VaultWorkspaceModel {
 
     var canConnect: Bool { native != nil && authenticator != nil && cache != nil }
     var isSignedIn: Bool { isPreviewFixture ? principal != nil : (principal != nil && session != nil) }
-    var canWrite: Bool { isSignedIn && selectedVaultHeader != nil && !busy && !isSaving }
+    var canWrite: Bool { isUnlocked && isSignedIn && selectedVaultHeader != nil && !busy && !isSaving }
     var selectedVaultHeader: VaultNativeHeader? {
         vaults.first(where: { $0.id == selectedVault })
     }
@@ -145,6 +146,7 @@ final class VaultWorkspaceModel {
     @ObservationIgnored private var activeSnapshot: VaultAutoFillSnapshot?
     @ObservationIgnored private var activeRootKey: SymmetricKey?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private(set) var unlockRevision = 0
     @ObservationIgnored private var didAttemptInitialRestore = false
     @ObservationIgnored private let onCleanupFailure: (String) -> Void
     @ObservationIgnored private let isPreviewFixture: Bool
@@ -312,12 +314,11 @@ final class VaultWorkspaceModel {
 
     func appDidEnterBackground() {
         guard !isPreviewFixture, !isAuthenticating else { return }
-        if isUnlocked && hasOfflineSnapshot {
-            lock()
-        }
+        lock()
     }
 
     func lock() {
+        unlockRevision += 1
         activeRootKey = nil
         activeSnapshot = nil
         items = []
@@ -338,7 +339,8 @@ final class VaultWorkspaceModel {
         hasOfflineSnapshot = cache.hasOfflineSnapshot()
         let enabled = await cache.isProviderEnabled()
         if case .syncing = autoFillStatus { return }
-        if let snapshot = activeSnapshot {
+        if case .onlineOnly = autoFillStatus { return }
+        if let snapshot = activeSnapshot, hasOfflineSnapshot {
             let credCount = items.count(where: { $0.kind == .credential })
             let syncedAt = Date(timeIntervalSince1970: TimeInterval(snapshot.updatedAtEpochSeconds))
             lastSyncedAt = syncedAt
@@ -392,46 +394,42 @@ final class VaultWorkspaceModel {
 
     // MARK: - Biometric Unlock
 
-    func unlockOfflineWithBiometrics() async {
-        guard !isPreviewFixture, let cache else { return }
-        guard hasOfflineSnapshot else {
-            status = "No synced Vault is stored on this device yet."
-            return
-        }
+    func unlockWithDeviceAuthentication() async {
+        guard !isPreviewFixture, !busy, !isSaving, let cache else { return }
         let ticket = generation
-        let unlocked = await evaluateDeviceOwnerAuthentication(
+        let unlockTicket = unlockRevision
+        let authenticated = await evaluateDeviceOwnerAuthentication(
             reason: "Unlock Kinic Vault to view your saved logins and codes"
         )
-        guard unlocked, generation == ticket else { return }
+        guard authenticated, generation == ticket, unlockRevision == unlockTicket else { return }
         do {
-            guard let (snapshot, rootKey) = try cache.loadOfflineSnapshot() else {
-                hasOfflineSnapshot = false
-                status = "No synced Vault was found on this device."
+            if let (snapshot, rootKey) = try cache.loadOfflineSnapshot() {
+                let enabled = await cache.isProviderEnabled()
+                guard generation == ticket, unlockRevision == unlockTicket else { return }
+                if vaults.contains(where: { $0.id == snapshot.context.vault }) {
+                    selectedVault = snapshot.context.vault
+                }
+                let payload = VaultAutoFillSyncPayload(snapshot: snapshot, rootKey: rootKey)
+                let loadedItems = try snapshot.listItems(rootKey: rootKey)
+                showWorkspace(payload, items: loadedItems, unlockTicket: unlockTicket)
+                updateCachedStatus(payload, items: loadedItems, providerEnabled: enabled)
+                status = isSignedIn
+                    ? "Vault unlocked."
+                    : "Viewing offline Vault. Sign in to sync or edit items."
                 return
             }
-            let loadedItems = try snapshot.listItems(rootKey: rootKey)
-            let enabled = await cache.isProviderEnabled()
-            guard generation == ticket else { return }
-            activeSnapshot = snapshot
-            activeRootKey = rootKey
-            items = loadedItems
-            isUnlocked = true
-            if vaults.contains(where: { $0.id == snapshot.context.vault }) {
-                selectedVault = snapshot.context.vault
-            }
-            let syncedAt = Date(timeIntervalSince1970: TimeInterval(snapshot.updatedAtEpochSeconds))
-            lastSyncedAt = syncedAt
-            let credCount = loadedItems.count(where: { $0.kind == .credential })
-            autoFillStatus = enabled
-                ? .ready(credentialCount: credCount, syncedAt: syncedAt)
-                : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
-            status = isSignedIn
-                ? "Vault unlocked."
-                : "Viewing offline Vault. Sign in to sync or edit items."
         } catch {
-            if generation == ticket {
+            guard generation == ticket, unlockRevision == unlockTicket else { return }
+            if !isSignedIn {
                 status = "Could not decrypt the cached Vault. Sign in and sync again."
+                return
             }
+        }
+        if isSignedIn {
+            await synchronize(unlockTicket: unlockTicket)
+        } else {
+            hasOfflineSnapshot = false
+            status = "No synced Vault was found on this device."
         }
     }
 
@@ -459,6 +457,7 @@ final class VaultWorkspaceModel {
         isAuthenticating = true
         session = nil; principal = nil; vaults = []; selectedVault = nil
         lock()
+        let unlockTicket = unlockRevision
         defer {
             if generation == ticket {
                 busy = false
@@ -492,7 +491,7 @@ final class VaultWorkspaceModel {
                 status = "Syncing your Vault…"
                 busy = false
                 isAuthenticating = false
-                await synchronize()
+                await synchronize(unlockTicket: unlockTicket)
             }
         } catch {
             if generation == ticket {
@@ -514,9 +513,9 @@ final class VaultWorkspaceModel {
             guard generation == ticket else { return }
             vaults.append(header)
             selectedVault = header.id
-            status = "Vault created. Syncing…"
+            status = "Vault created. Unlock to sync and browse it."
             busy = false
-            await synchronize()
+            await unlockWithDeviceAuthentication()
         } catch {
             if generation == ticket {
                 status = error.localizedDescription
@@ -548,35 +547,20 @@ final class VaultWorkspaceModel {
     }
 
     func synchronize() async {
-        guard !busy, let identity = session, let native, let cache, let canister = vaultCanisterId,
+        await synchronize(unlockTicket: isUnlocked ? unlockRevision : nil)
+    }
+
+    private func synchronize(unlockTicket: Int?) async {
+        guard !busy, !isSaving, let identity = session, let native, let cache,
               let selected = selectedVaultHeader else { return }
         let ticket = generation
         busy = true
         autoFillStatus = .syncing
         defer { if generation == ticket { busy = false } }
         do {
-            let context = try selected.context(canister: canister, owner: identity.principal)
-            var fetchedPayload: VaultAutoFillSyncPayload?
-            do {
-                try await cache.synchronize(context: context) {
-                    let payload = try await native.fetchSnapshot(header: selected, identity: identity)
-                    guard self.generation == ticket else { throw CancellationError() }
-                    fetchedPayload = payload
-                    return payload
-                }
-                guard generation == ticket else { return }
-                if let payload = fetchedPayload {
-                    try applyUnlockedPayload(payload, providerEnabled: true)
-                }
-                status = "Offline AutoFill and QuickType are ready."
-            } catch VaultNativeError.providerDisabled {
-                guard generation == ticket else { return }
-                // The Vault tab still stays usable even before iOS AutoFill is enabled in System Settings.
-                if let payload = fetchedPayload {
-                    try applyUnlockedPayload(payload, providerEnabled: false)
-                }
-                status = "Vault synced. Enable Kinic Vault in iOS AutoFill settings for QuickType."
-            }
+            let payload = try await native.fetchSnapshot(header: selected, identity: identity)
+            guard generation == ticket else { return }
+            try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
         } catch {
             guard generation == ticket else { return }
             if case VaultNativeError.accessLost = error {
@@ -591,19 +575,62 @@ final class VaultWorkspaceModel {
         }
     }
 
-    private func applyUnlockedPayload(_ payload: VaultAutoFillSyncPayload, providerEnabled: Bool) throws {
-        let loadedItems = try payload.snapshot.listItems(rootKey: payload.rootKey)
+    func showWorkspace(_ payload: VaultAutoFillSyncPayload, items: [VaultItemSummary], unlockTicket: Int?) {
+        guard unlockTicket == unlockRevision else { return }
         activeSnapshot = payload.snapshot
         activeRootKey = payload.rootKey
-        items = loadedItems
+        self.items = items
         isUnlocked = true
+    }
+
+    private func updateCachedStatus(
+        _ payload: VaultAutoFillSyncPayload, items: [VaultItemSummary], providerEnabled: Bool
+    ) {
         hasOfflineSnapshot = true
         let syncedAt = Date(timeIntervalSince1970: TimeInterval(payload.snapshot.updatedAtEpochSeconds))
         lastSyncedAt = syncedAt
-        let credCount = loadedItems.count(where: { $0.kind == .credential })
+        let credCount = items.count(where: { $0.kind == .credential })
         autoFillStatus = providerEnabled
             ? .ready(credentialCount: credCount, syncedAt: syncedAt)
             : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
+    }
+
+    private func publishSnapshot(
+        _ payload: VaultAutoFillSyncPayload, cache: VaultAutoFillSyncController,
+        ticket: Int, unlockTicket: Int?
+    ) async throws {
+        let loadedItems = try payload.snapshot.listItems(rootKey: payload.rootKey)
+        do {
+            try await cache.synchronize(context: payload.snapshot.context) { payload }
+            let enabled = await cache.isProviderEnabled()
+            guard generation == ticket else { return }
+            updateCachedStatus(payload, items: loadedItems, providerEnabled: enabled)
+            status = enabled
+                ? "Offline AutoFill and QuickType are ready."
+                : "Vault synced. Enable Kinic Vault in iOS AutoFill settings for QuickType."
+        } catch VaultNativeError.providerDisabled {
+            guard generation == ticket else { return }
+            updateCachedStatus(payload, items: loadedItems, providerEnabled: false)
+            status = "Vault synced. Enable Kinic Vault in iOS AutoFill settings for QuickType."
+        } catch VaultNativeError.snapshotTooLarge {
+            guard generation == ticket else { return }
+            hasOfflineSnapshot = false
+            lastSyncedAt = nil
+            autoFillStatus = .onlineOnly
+            status = "This Vault is available online. It exceeds the offline AutoFill cache limit."
+        } catch {
+            guard generation == ticket else { return }
+            hasOfflineSnapshot = cache.hasOfflineSnapshot()
+            autoFillStatus = .error(error.localizedDescription)
+            status = "Offline AutoFill update failed: \(error.localizedDescription)"
+        }
+        showWorkspace(payload, items: loadedItems, unlockTicket: unlockTicket)
+    }
+
+    private func applyPreviewPayload(_ payload: VaultAutoFillSyncPayload) throws {
+        let loadedItems = try payload.snapshot.listItems(rootKey: payload.rootKey)
+        showWorkspace(payload, items: loadedItems, unlockTicket: unlockRevision)
+        updateCachedStatus(payload, items: loadedItems, providerEnabled: true)
     }
 
     // MARK: - Decryption & CRUD (SaveInline / DeleteObject)
@@ -627,7 +654,7 @@ final class VaultWorkspaceModel {
         var sanitizedRecord = record
         sanitizedRecord.tags = Array(
             record.tags
-                .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64)) }
+                .map { VaultMetadata.truncateText($0.trimmingCharacters(in: .whitespacesAndNewlines), limit: 64) }
                 .filter { !$0.isEmpty }
                 .prefix(32)
         )
@@ -654,13 +681,13 @@ final class VaultWorkspaceModel {
         let cleanTags = Array(
             Set(
                 tags
-                    .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64)) }
+                    .map { VaultMetadata.truncateText($0.trimmingCharacters(in: .whitespacesAndNewlines), limit: 64) }
                     .filter { !$0.isEmpty }
             )
         ).sorted()
         let metadata = VaultMetadata(
             kind: .note,
-            title: String(trimmedTitle.prefix(512)),
+            title: VaultMetadata.truncateText(trimmedTitle, limit: 512),
             favorite: favorite ? true : nil,
             tags: cleanTags.isEmpty ? nil : Array(cleanTags.prefix(32))
         )
@@ -705,6 +732,8 @@ final class VaultWorkspaceModel {
         guard let identity = session, let native, let selected = selectedVaultHeader else {
             throw isSignedIn ? VaultWorkspaceError.noSelectedVault : VaultWorkspaceError.notSignedIn
         }
+        guard isUnlocked, let snapshot = activeSnapshot, let cache else { throw VaultWorkspaceError.locked }
+        let unlockTicket = unlockRevision
         let existingObjectData: Data?
         if let existing {
             existingObjectData = try Base64URL.decode(existing.objectIdBase64URL)
@@ -735,11 +764,10 @@ final class VaultWorkspaceModel {
         }
         guard generation == ticket else { throw CancellationError() }
 
-        let baseSnapshot = (activeSnapshot?.context == saved.context ? activeSnapshot : nil)
-            ?? VaultAutoFillSnapshot(context: saved.context, records: [])
-        let updatedSnapshot = baseSnapshot.upsertingRecord(saved.snapshotRecord)
+        guard snapshot.context == saved.context else { throw VaultCryptoError.invalidContext }
+        let updatedSnapshot = snapshot.upsertingRecord(saved.snapshotRecord)
         let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: saved.rootKey)
-        await publishLocalMutationPayload(payload, ticket: ticket)
+        try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
         return saved.snapshotRecord.objectIdBase64URL
     }
 
@@ -747,13 +775,17 @@ final class VaultWorkspaceModel {
         if isPreviewFixture {
             guard let snapshot = activeSnapshot, let rootKey = activeRootKey else { return }
             let updated = snapshot.removingRecord(objectIdBase64URL: summary.objectIdBase64URL)
-            try applyUnlockedPayload(VaultAutoFillSyncPayload(snapshot: updated, rootKey: rootKey), providerEnabled: true)
+            try applyPreviewPayload(VaultAutoFillSyncPayload(snapshot: updated, rootKey: rootKey))
             return
         }
         guard !busy, !isSaving else { throw VaultNativeError.busy }
         guard let identity = session, let native, let selected = selectedVaultHeader else {
             throw isSignedIn ? VaultWorkspaceError.noSelectedVault : VaultWorkspaceError.notSignedIn
         }
+        guard isUnlocked, let snapshot = activeSnapshot, let rootKey = activeRootKey, let cache else {
+            throw VaultWorkspaceError.locked
+        }
+        let unlockTicket = unlockRevision
         let objectData = try Base64URL.decode(summary.objectIdBase64URL)
         let ticket = generation
         isSaving = true
@@ -775,33 +807,9 @@ final class VaultWorkspaceModel {
         }
         guard generation == ticket else { throw CancellationError() }
 
-        if let snapshot = activeSnapshot, let rootKey = activeRootKey {
-            let updatedSnapshot = snapshot.removingRecord(objectIdBase64URL: summary.objectIdBase64URL)
-            let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: rootKey)
-            await publishLocalMutationPayload(payload, ticket: ticket)
-        }
-        status = "Deleted \"\(summary.title)\"."
-    }
-
-    private func publishLocalMutationPayload(_ payload: VaultAutoFillSyncPayload, ticket: Int) async {
-        guard let cache else {
-            try? applyUnlockedPayload(payload, providerEnabled: false)
-            return
-        }
-        do {
-            try await cache.synchronize(context: payload.snapshot.context) { payload }
-            guard generation == ticket else { return }
-            try applyUnlockedPayload(payload, providerEnabled: true)
-            status = "Saved and synced to AutoFill."
-        } catch VaultNativeError.providerDisabled {
-            guard generation == ticket else { return }
-            try? applyUnlockedPayload(payload, providerEnabled: false)
-            status = "Saved to Vault. Enable Kinic Vault in iOS AutoFill settings for QuickType."
-        } catch {
-            guard generation == ticket else { return }
-            try? applyUnlockedPayload(payload, providerEnabled: false)
-            status = "Saved to Vault, but AutoFill cache update failed: \(error.localizedDescription)"
-        }
+        let updatedSnapshot = snapshot.removingRecord(objectIdBase64URL: summary.objectIdBase64URL)
+        let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: rootKey)
+        try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
     }
 
     private func savePreviewDocument(
@@ -830,7 +838,7 @@ final class VaultWorkspaceModel {
             hashesBase64URL: encrypted.hashes.map(Base64URL.encode)
         )
         let updated = snapshot.upsertingRecord(record)
-        try applyUnlockedPayload(VaultAutoFillSyncPayload(snapshot: updated, rootKey: rootKey), providerEnabled: true)
+        try applyPreviewPayload(VaultAutoFillSyncPayload(snapshot: updated, rootKey: rootKey))
         return record.objectIdBase64URL
     }
 

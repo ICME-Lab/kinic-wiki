@@ -30,11 +30,11 @@ type LinkStatus = record {
   vault_owner : principal;
 };
 type Result_1 = variant { Ok : LinkStatus; Err : BridgeError };
-type Result_19 = variant { Ok : opt VaultTransfer; Err : BridgeError };
-type Result_4 = variant { Ok : opt LinkStatus; Err : BridgeError };
-type Result_47 = variant { Ok : LinkChallenge; Err : BridgeError };
-type Result_5 = variant { Ok : VaultTransfer; Err : BridgeError };
-type Result_57 = variant { Ok; Err : BridgeError };
+type Result_21 = variant { Ok : opt VaultTransfer; Err : BridgeError };
+type Result_49 = variant { Ok : LinkChallenge; Err : BridgeError };
+type Result_5 = variant { Ok : opt LinkStatus; Err : BridgeError };
+type Result_59 = variant { Ok; Err : BridgeError };
+type Result_6 = variant { Ok : VaultTransfer; Err : BridgeError };
 type TransferAmount = variant { All; Exact : nat64 };
 type TransferApproval = variant { Exact : nat64; AllAvailable };
 type TransferPhase = variant { Quoted; Refunded; Paid; Offered; Unknown };
@@ -50,13 +50,13 @@ type VaultTransfer = record {
 };
 service : {
   approve_vault_link : (blob) -> (Result_1);
-  cancel_vault_transfer : (blob) -> (Result_5);
-  execute_vault_transfer : (blob, TransferApproval) -> (Result_5);
-  get_pending_vault_transfer : (opt text) -> (Result_19);
-  get_vault_link : () -> (Result_4) query;
-  get_vault_transfer : (blob) -> (Result_5);
-  preview_vault_link : (blob) -> (Result_47);
-  quote_vault_transfer : (text, TransferAmount, blob) -> (Result_5);
-  reconcile_vault_transfer : (blob) -> (Result_5);
-  revoke_vault_link : () -> (Result_57);
+  cancel_vault_transfer : (blob) -> (Result_6);
+  execute_vault_transfer : (blob, TransferApproval) -> (Result_6);
+  get_pending_vault_transfer : (opt text) -> (Result_21);
+  get_vault_link : () -> (Result_5) query;
+  get_vault_transfer : (blob) -> (Result_6);
+  preview_vault_link : (blob) -> (Result_49);
+  quote_vault_transfer : (text, TransferAmount, blob) -> (Result_6);
+  reconcile_vault_transfer : (blob) -> (Result_6);
+  revoke_vault_link : () -> (Result_59);
 }

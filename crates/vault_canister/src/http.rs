@@ -399,8 +399,9 @@ mod route_tests {
 
     #[test]
     fn native_production_callbacks_serve_certified_vault_origin_only() {
-        let routes = native_callback_entries_for_host(PRODUCTION_NATIVE_CALLBACK, "vault.kinic.xyz")
-            .unwrap();
+        let routes =
+            native_callback_entries_for_host(PRODUCTION_NATIVE_CALLBACK, "vault.kinic.xyz")
+                .unwrap();
         let (_, _, declaration) = select_entry(&routes, "/.well-known/ii-auth-callbacks").unwrap();
         let body: serde_json::Value = serde_json::from_slice(declaration.body()).unwrap();
         assert_eq!(

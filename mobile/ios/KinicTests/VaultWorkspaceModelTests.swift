@@ -2,6 +2,7 @@
 // What: Unit tests for VaultWorkspaceModel connection isolation, filtering, CRUD, and locking.
 // Why: Verifies the iOS Vault tab obeys Wiki/Vault origin separation and preserves credential fields.
 
+import CryptoKit
 import Foundation
 import KinicVaultCore
 import KinicVaultNative
@@ -66,6 +67,28 @@ struct VaultWorkspaceModelTests {
         #expect(throws: VaultConnectionConfigurationError.sharedWithWikiOrigin) {
             _ = try VaultWorkspaceModel.resolveConnection(from: overlappingCanister).get()
         }
+    }
+
+    @MainActor
+    @Test func lockRejectsRefreshAndLateSyncResults() throws {
+        let model = VaultWorkspaceModel.preview()
+        let previousUnlock = model.unlockRevision
+        let items = model.items
+        let context = try VaultContext(
+            canister: "rrkah-fqaaa-aaaaa-aaaaq-cai", owner: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            vault: Data(repeating: 1, count: 16), nonce: Data(repeating: 2, count: 32), keyName: "test_key_1"
+        )
+        let payload = VaultAutoFillSyncPayload(
+            snapshot: VaultAutoFillSnapshot(context: context, records: []), rootKey: SymmetricKey(size: .bits256)
+        )
+        model.lock()
+        model.showWorkspace(payload, items: items, unlockTicket: nil)
+        #expect(!model.isUnlocked)
+        model.showWorkspace(payload, items: items, unlockTicket: previousUnlock)
+        #expect(!model.isUnlocked)
+        #expect(model.items.isEmpty)
+        model.showWorkspace(payload, items: items, unlockTicket: model.unlockRevision)
+        #expect(model.isUnlocked)
     }
 
     @MainActor

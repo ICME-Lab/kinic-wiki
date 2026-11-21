@@ -63,13 +63,22 @@ struct VaultTabView: View {
             VaultPasswordGeneratorSheet()
         }
         .sheet(item: $editorKind) { kind in
-            VaultItemEditorView(
-                model: model,
-                mode: .create(kind),
-                onSaved: { _ in
-                    showToast(kind == .note ? "Note saved to Vault" : "Login saved to Vault")
-                }
-            )
+            if model.isUnlocked {
+                VaultItemEditorView(
+                    model: model,
+                    mode: .create(kind),
+                    onSaved: { _ in
+                        showToast(kind == .note ? "Note saved to Vault" : "Login saved to Vault")
+                    }
+                )
+            }
+        }
+        .onChange(of: model.isUnlocked) { _, unlocked in
+            if !unlocked {
+                editorKind = nil
+                itemPendingDelete = nil
+                isShowingGenerator = false
+            }
         }
         .alert("Rename Vault", isPresented: $isShowingRenameVault) {
             TextField("Vault name", text: $renameDraft)
@@ -394,6 +403,7 @@ struct VaultTabView: View {
         case .ready: "checkmark.shield.fill"
         case .syncing: "arrow.triangle.2.circlepath"
         case .providerDisabled: "exclamationmark.shield.fill"
+        case .onlineOnly: "wifi"
         case .error: "exclamationmark.triangle.fill"
         case .notSynced: "lock.shield"
         }
@@ -403,7 +413,7 @@ struct VaultTabView: View {
         switch model.autoFillStatus {
         case .ready: KinicDesign.successGreen
         case .syncing: KinicDesign.hotPink
-        case .providerDisabled: .orange
+        case .providerDisabled, .onlineOnly: .orange
         case .error: KinicDesign.errorRed
         case .notSynced: .secondary
         }
@@ -417,6 +427,8 @@ struct VaultTabView: View {
             "Syncing Vault…"
         case .providerDisabled:
             "Enable iOS AutoFill for QuickType"
+        case .onlineOnly:
+            "Vault Available Online"
         case .error:
             "AutoFill Sync Needs Attention"
         case .notSynced:
@@ -432,6 +444,8 @@ struct VaultTabView: View {
             "Updating encrypted snapshot and Keychain"
         case .providerDisabled(let count, _):
             "\(count) \(count == 1 ? "login" : "logins") cached · Turn on Kinic Vault in iOS Settings → AutoFill & Passwords"
+        case .onlineOnly:
+            "This Vault exceeds the offline AutoFill cache limit."
         case .error(let message):
             message
         case .notSynced:
@@ -526,7 +540,7 @@ struct VaultTabView: View {
 
                 VStack(spacing: 12) {
                     Button {
-                        Task { await model.unlockOfflineWithBiometrics() }
+                        Task { await model.unlockWithDeviceAuthentication() }
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "lock.open.fill")
@@ -630,7 +644,7 @@ struct VaultTabView: View {
                 VStack(spacing: 8) {
                     Text("Sync Your Vault")
                         .font(.title2.bold())
-                    Text("Download an encrypted snapshot so your logins work offline and in iOS AutoFill.")
+                    Text("Unlock with Face ID or your device passcode to sync and browse this Vault.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -650,7 +664,7 @@ struct VaultTabView: View {
                 }
 
                 Button {
-                    Task { await model.synchronize() }
+                    Task { await model.unlockWithDeviceAuthentication() }
                 } label: {
                     if model.busy {
                         ProgressView()

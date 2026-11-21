@@ -1,6 +1,8 @@
 //! Authenticated internal evidence references; arbitrary user text never grants blob access.
 use super::*;
-use crate::evidence_codec::{EncodedEvidence, EvidencePiece, decode_evidence, encode_evidence};
+mod compression;
+use crate::evidence_codec::{EvidencePiece, decode_evidence, encode_evidence};
+use compression::{pack_blob, pack_manifest, unpack_blob, unpack_manifest};
 
 impl FsStore {
     /// Enable only a fresh destination; existing records require the bounded rebuild.
@@ -53,8 +55,7 @@ pub(super) fn store_evidence(
     if let Some(row) = prior_row {
         let prior:Option<(String,String)> = conn.query_row("SELECT b.reference,m.manifest_json FROM fs_nodes n JOIN fs_evidence_bindings b ON b.path=n.path AND b.etag=n.etag AND b.reference=n.content JOIN fs_evidence_manifests m ON m.reference=b.reference WHERE n.id=?1",params![row],|r|Ok((crate::sqlite::row_get(r,0)?,crate::sqlite::row_get(r,1)?))).optional().map_err(|e|e.to_string())?;
         if let Some((reference, json)) = prior {
-            let manifest: EncodedEvidence =
-                serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            let manifest = unpack_manifest(&json)?;
             if manifest.original_sha256 == sha256_hex(&node.content) {
                 return bind(conn, node, &reference);
             }
@@ -91,7 +92,7 @@ pub(super) fn store_evidence(
             let body = String::from_utf8(bytes).map_err(|_| "evidence blob must be UTF-8")?;
             conn.execute(
                 "INSERT OR IGNORE INTO fs_evidence_blobs(run_id,sha256,body) VALUES(?1,?2,?3)",
-                params![run, sha, body],
+                params![run, sha, pack_blob(&body)],
             )
             .map_err(|e| e.to_string())?;
             let saved: String = conn
@@ -101,12 +102,12 @@ pub(super) fn store_evidence(
                     |r| crate::sqlite::row_get(r, 0),
                 )
                 .map_err(|e| e.to_string())?;
-            if saved != body {
+            if unpack_blob(&saved)? != body {
                 return Err("evidence blob collision".into());
             }
         }
     }
-    let json = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
+    let json = pack_manifest(&manifest)?;
     conn.execute(
         "INSERT OR IGNORE INTO fs_evidence_manifests(reference,manifest_json) VALUES(?1,?2)",
         params![reference, json],
@@ -119,7 +120,7 @@ pub(super) fn store_evidence(
             |r| crate::sqlite::row_get(r, 0),
         )
         .map_err(|e| e.to_string())?;
-    if saved != json {
+    if unpack_manifest(&saved)? != manifest {
         return Err("evidence manifest collision".into());
     }
     bind(conn, node, &reference)
@@ -155,7 +156,7 @@ pub(crate) fn hydrate_node(conn: &Connection, node: &mut Node) -> Result<(), Str
 }
 
 fn decode_stored_manifest(conn: &Connection, json: &str) -> Result<String, String> {
-    let manifest: EncodedEvidence = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let manifest = unpack_manifest(json)?;
     decode_evidence(&manifest, |run, sha| {
         let body: String = conn
             .query_row(
@@ -164,7 +165,7 @@ fn decode_stored_manifest(conn: &Connection, json: &str) -> Result<String, Strin
                 |r| crate::sqlite::row_get(r, 0),
             )
             .map_err(|e| e.to_string())?;
-        Ok(body.into_bytes())
+        Ok(unpack_blob(&body)?.into_bytes())
     })
 }
 

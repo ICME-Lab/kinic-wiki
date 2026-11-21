@@ -153,7 +153,7 @@ it("renders read-only Markdown and removes private content on focus after revoca
     />,
   );
   await screen.findByRole("heading", { name: "Private body" });
-  expect(screen.queryByText("Save document")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save document" })).toBeNull();
   setRole(header.id, null);
   fireEvent(window, new Event("focus"));
   await screen.findByText("This private document is unavailable.");

@@ -96,7 +96,7 @@ func localReplicaRoundTrip() async throws {
         notes: "Created from iOS",
         customFields: [VaultCustomField(label: "PIN", value: "1234", hidden: true)],
         favorite: true,
-        tags: ["ios"]
+        tags: ["ios", String(repeating: "🗝", count: 40)]
     )
     let created = try await client.saveInline(
         header: renamed,
@@ -105,6 +105,9 @@ func localReplicaRoundTrip() async throws {
         identity: identity
     )
     #expect(created.revision == 1)
+    try await client.renameVault(header: renamed, name: "Swift Renamed After Saving", identity: identity)
+    let afterSaving = try await client.ownedVaults(identity: identity)
+    #expect(afterSaving.first?.name == "Swift Renamed After Saving")
 
     var updatedRecord = createdRecord
     updatedRecord.password = "updated-swift-password"

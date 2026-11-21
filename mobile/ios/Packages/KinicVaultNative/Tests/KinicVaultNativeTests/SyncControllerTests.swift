@@ -88,3 +88,27 @@ func disabledProviderNeedsResync() async throws {
     try await controller.synchronize(context: payload.snapshot.context) { payload }
     #expect(identities.candidates.count == 1)
 }
+
+@MainActor @Test("An oversized snapshot clears the offline cache without modifying the online payload")
+func oversizedSnapshotClearsOfflineCache() async throws {
+    let payload = try cachedPayload()
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = VaultAutoFillSnapshotStore(fileURL: url)
+    defer { try? store.clear() }
+    let keys = TestKeys()
+    let identities = TestIdentities()
+    let controller = VaultAutoFillSyncController(snapshotStore: store, keys: keys, identities: identities)
+    try await controller.synchronize(context: payload.snapshot.context) { payload }
+    let oversized = VaultAutoFillSyncPayload(
+        snapshot: VaultAutoFillSnapshot(context: payload.snapshot.context, records: Array(repeating: payload.snapshot.records[0], count: 1_001)),
+        rootKey: payload.rootKey
+    )
+
+    await #expect(throws: VaultNativeError.snapshotTooLarge) {
+        try await controller.synchronize(context: payload.snapshot.context) { oversized }
+    }
+    #expect(oversized.snapshot.records.count == 1_001)
+    #expect(!controller.hasOfflineSnapshot())
+    #expect(keys.key == nil)
+    #expect(identities.candidates.isEmpty)
+}

@@ -8,6 +8,12 @@ const root = join(here, "..", "..");
 const didPath = join(root, "crates", "vfs_canister", "vfs.did");
 
 const typeOrder = [
+  "ArchiveIntermediateSourceRequest",
+  "StoragePageStats",
+  "DatabaseStorageStats",
+  "ArchiveIntermediateSourceResult",
+  "ResultArchiveIntermediateSource",
+  "ResultDatabaseStorageStats",
   "BekkoRefillConfig",
   "BekkoRefillReconciliation",
   "BekkoRefillOutcome",
@@ -16,6 +22,9 @@ const typeOrder = [
   "BekkoRefillResolution",
   "BekkoRefillState",
   "ResultBekkoRefill",
+  "VaultRefillConfig",
+  "VaultRefillStatus",
+  "VaultRefillStateResult",
 
   "EvidenceRebuildControlRequest",
   "EvidenceRebuildRequest",
@@ -198,11 +207,18 @@ const typeOrder = [
 ];
 
 const methodOrder = [
+  "database_storage_stats",
+  "archive_intermediate_source",
   "get_bekko_refill_state",
   "configure_bekko_refill",
   "check_bekko_refill",
   "reconcile_bekko_refill",
+  "get_vault_refill_state",
+  "configure_vault_refill",
+  "check_vault_refill",
+  "reconcile_vault_refill",
   "periodic_cycles_refill",
+  "periodic_bekko_refill",
   "periodic_storage_billing",
 
   "evidence_rebuild_status",

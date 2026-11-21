@@ -241,6 +241,8 @@ type ReconciliationState = record {
   spender : principal;
   lease_generation : int64;
 };
+type RefillResult = variant { Ok : nat; Err : text };
+type RefillResult_1 = variant { Ok; Err : text };
 type Result = variant { Ok : nat64; Err : Error };
 type Result_1 = variant { Ok; Err : BridgeError };
 type Result_10 = variant { Ok : Revision; Err : Error };
@@ -333,6 +335,7 @@ service : () -> {
   cancel_quote : (blob) -> (Result_3);
   consume_wiki_link : (blob, principal) -> (Result_4);
   create_vault : (CreateVault) -> (Result_5);
+  cycles_balance_for_wiki : () -> (RefillResult);
   derive_vault_key : (DeriveKey) -> (Result_6);
   get_chunk : (blob, blob, nat64, nat32) -> (Result_7);
   get_config : () -> (Result_8);
@@ -368,6 +371,7 @@ service : () -> {
   remove_vault_member : (blob, principal) -> (Result_28);
   revoke_wiki_link : () -> (Result_29);
   set_config : (opt VaultConfig) -> (Result_28);
+  set_cycles_refill_source : (opt principal) -> (RefillResult_1);
   set_funding_config : (opt FundingConfig) -> (Result_28);
   set_vault_member : (blob, principal, AccessRole) -> (Result_28);
   set_wiki_bridge_config : (BridgeConfig) -> (Result_1);

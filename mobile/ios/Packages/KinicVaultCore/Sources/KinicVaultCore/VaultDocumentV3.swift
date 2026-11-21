@@ -40,21 +40,30 @@ public struct VaultMetadata: Codable, Equatable, Sendable {
         self.tags = tags
     }
 
+    /// v3 metadata limits use UTF-16 code units, as in the Web client.
+    public static func truncateText(_ text: String, limit: Int) -> String {
+        var remaining = limit
+        return String(text.prefix { character in
+            remaining -= character.utf16.count
+            return remaining >= 0
+        })
+    }
+
     func validate() throws {
-        guard title.count <= 512 else { throw VaultCryptoError.invalidMetadata }
-        if let username, username.count > 256 {
+        guard title.utf16.count <= 512 else { throw VaultCryptoError.invalidMetadata }
+        if let username, username.utf16.count > 256 {
             throw VaultCryptoError.invalidMetadata
         }
         if let domains {
             guard domains.count <= 32,
-                  domains.allSatisfy({ !$0.isEmpty && $0.count <= 255 })
+                  domains.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 255 })
             else {
                 throw VaultCryptoError.invalidMetadata
             }
         }
         if let tags {
             guard tags.count <= 32,
-                  tags.allSatisfy({ !$0.isEmpty && $0.count <= 64 })
+                  tags.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 64 })
             else {
                 throw VaultCryptoError.invalidMetadata
             }

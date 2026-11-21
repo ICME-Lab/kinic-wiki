@@ -38,10 +38,12 @@ const candidateMethods = serviceMethods(candidate);
 const removedMethods = [...liveMethods].filter((method) => !candidateMethods.has(method));
 const addedMethods = [...candidateMethods].filter((method) => !liveMethods.has(method));
 const expectedAddedMethods = [
+  "archive_intermediate_source",
   "check_bekko_refill",
   "configure_bekko_refill",
   "configure_voice_rate",
   "current_node_revision",
+  "database_storage_stats",
   "evidence_rebuild_activate",
   "evidence_rebuild_begin",
   "evidence_rebuild_resume_writes",

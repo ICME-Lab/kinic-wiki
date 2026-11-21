@@ -35,7 +35,7 @@ try {
     'Call::bounded_wait(Principal::from_text("6dngc-faaaa-aaaay-aackq-cai").unwrap(), "deposit_cycles")'));
   run(); output("bekko-refill-delayed.wasm");
   writeFileSync(refill, replaceOnce(originalRefill,
-    'let outcome = deposit_bekko_cycles(amount).await;',
-    'let outcome = deposit_bekko_cycles(amount).await;\n        if matches!(outcome, BekkoRefillOutcome::Succeeded) { ic_cdk::trap("injected refill callback trap"); }'));
+    'let outcome = deposit_refill_cycles(canister, amount).await;',
+    'let outcome = deposit_refill_cycles(canister, amount).await;\n        if matches!(target, RefillTarget::Bekko) && matches!(outcome, BekkoRefillOutcome::Succeeded) { ic_cdk::trap("injected refill callback trap"); }'));
   run(); output("bekko-refill-callback-trap.wasm");
 } finally { rmSync(source, { recursive: true, force: true }); }

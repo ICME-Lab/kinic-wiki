@@ -70,7 +70,7 @@ describe("VaultDocuments password manager features", () => {
       saved.push(JSON.parse(new TextDecoder().decode(plain)));
       return { object: new Uint8Array(16).fill(1), revision: 2n, deleted: false, manifest: new Uint8Array(), chunk_count: 1, total_size: 10n, created_at: 1n, metadata: meta };
     });
-    render(<VaultDocuments client={client} items={[item]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
+    render(<VaultDocuments onCommitted={vi.fn()} client={client} items={[item]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
     fireEvent.click(screen.getByRole("button", { name: "Imported" }));
     await waitFor(() => expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("alice"));
     fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Renamed" } });
@@ -89,7 +89,7 @@ describe("VaultDocuments password manager features", () => {
     const { client, save } = makeClient();
     save.mockImplementationOnce(async () => { Object.assign(client, { hasPendingSave: true }); throw Error("NetworkError"); });
     Object.assign(client, { resumeSave: async () => { Object.assign(client, { hasPendingSave: false }); return { revision: 1n }; } });
-    render(<VaultDocuments client={client} items={[]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
+    render(<VaultDocuments onCommitted={vi.fn()} client={client} items={[]} disabled={false} writesDisabled={false} refresh={async () => {}} run={f => { void f(); }} />);
     fireEvent.click(screen.getByRole("button", { name: "Import / Export" }));
     const file = { name: "logins.csv", size: 60, text: async () => "name,url,username,password\nSite,https://site.test,alice,secret" };
     fireEvent.change(screen.getByLabelText("Select CSV or JSON file"), { target: { files: [file] } });
@@ -128,6 +128,7 @@ describe("VaultDocuments password manager features", () => {
     const { client } = makeClient();
     render(
       <VaultDocuments
+        onCommitted={vi.fn()}
         client={client}
         items={items}
         disabled={false}
@@ -139,6 +140,7 @@ describe("VaultDocuments password manager features", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Search and filter documents" }));
     // Filter by Favorites
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
     expect(screen.getByRole("button", { name: "GitHub" })).toBeTruthy();
@@ -169,6 +171,7 @@ describe("VaultDocuments password manager features", () => {
     const refresh = vi.fn(async () => {});
     render(
       <VaultDocuments
+        onCommitted={vi.fn()}
         client={client}
         items={[]}
         disabled={false}
@@ -261,6 +264,7 @@ describe("VaultDocuments password manager features", () => {
     const refresh = vi.fn(async () => {});
     render(
       <VaultDocuments
+        onCommitted={vi.fn()}
         client={client}
         items={[existingItem]}
         disabled={false}
