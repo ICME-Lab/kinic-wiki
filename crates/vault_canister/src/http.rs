@@ -499,7 +499,10 @@ mod route_tests {
                 .unwrap();
         let mut tree = HttpCertificationTree::default();
         tree.insert(&entry);
-        assert!(tree.witness(&entry, "/.well-known/ii-alternative-origins").is_ok());
+        assert!(
+            tree.witness(&entry, "/.well-known/ii-alternative-origins")
+                .is_ok()
+        );
         assert!(
             response
                 .headers()
