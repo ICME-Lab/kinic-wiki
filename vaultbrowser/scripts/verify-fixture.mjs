@@ -174,12 +174,20 @@ try {
   );
   await page.getByLabel("Document type").selectOption("credential");
   await page.getByLabel("Password", { exact: true }).fill("credential secret");
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.getByRole("button", { name: "Add login", exact: true }).press("Enter");
+  const extraLogin = page.getByRole("group", { name: "Login 2", exact: true });
+  await expect(extraLogin.getByLabel("Username", { exact: true })).toBeFocused();
+  await extraLogin.getByLabel("Password", { exact: true }).fill("second credential secret");
+  await extraLogin.getByRole("button", { name: "Show password", exact: true }).click();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.evaluate(() => {
-    window.retainedPassword = document.querySelector('input[type="password"]');
+    window.retainedPasswords = [...document.querySelectorAll(".vault-password input")];
   });
   await page.getByText("Close Vault", { exact: true }).click();
   await acceptDiscard();
-  assert.equal(await page.evaluate(() => window.retainedPassword.value), "");
+  assert.deepEqual(await page.evaluate(() => window.retainedPasswords.map(input => input.value)), ["", ""]);
+  await page.setViewportSize({ width: 1280, height: 900 });
   await showVaultNavigation(page);
   await page.getByRole("button", { name: "Vault 1", exact: true }).click();
   await title.waitFor();
