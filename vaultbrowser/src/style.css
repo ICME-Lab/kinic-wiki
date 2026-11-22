@@ -924,10 +924,19 @@ body {
 /* Credential form */
 .vault-credential {
   display: grid;
+  gap: 16px;
+  max-width: 760px;
+}
+.vault-credential-login {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 16px;
-  max-width: 760px;
+  min-width: 0;
+}
+.vault-credential-login legend {
+  margin-bottom: 8px;
+  font-weight: 600;
 }
 .vault-credential-wide {
   grid-column: 1 / -1;
@@ -1252,7 +1261,7 @@ body {
   .vault-editor-body {
     padding: 12px 14px 14px;
   }
-  .vault-credential {
+  .vault-credential-login {
     grid-template-columns: minmax(0, 1fr);
   }
   .vault-editor-bar-title {

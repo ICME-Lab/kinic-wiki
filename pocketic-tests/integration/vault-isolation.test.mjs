@@ -90,7 +90,10 @@ try {
     }
     if (path.endsWith("ii-alternative-origins"))
       assert.deepEqual(JSON.parse(new TextDecoder().decode(r.body)), {
-        alternativeOrigins: ["https://vault.kinic.xyz"],
+        alternativeOrigins: [
+          "https://vault.kinic.xyz",
+          "chrome-extension://dlbffglcocnllllhjaapackocgkaegak",
+        ],
       });
   }
   await pic.upgradeCanister({

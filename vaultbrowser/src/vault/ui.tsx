@@ -1,7 +1,7 @@
 import { Button } from "@kinic/ui/button";
 import { Input } from "@kinic/ui/input";
 import type {
-  ButtonHTMLAttributes,
+  ComponentPropsWithRef,
   InputHTMLAttributes,
   ReactNode,
 } from "react";
@@ -10,7 +10,7 @@ export function VaultButton({
   tone = "default",
   size = "md",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
+}: ComponentPropsWithRef<"button"> & {
   tone?: "default" | "primary" | "danger" | "ghost";
   size?: "sm" | "md" | "lg" | "icon";
 }) {

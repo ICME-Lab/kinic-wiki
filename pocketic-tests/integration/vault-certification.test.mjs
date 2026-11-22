@@ -35,7 +35,12 @@ try {
   });
   await pic.stopLive();
   const embed = "/embed/" + "01".repeat(16) + "/" + "02".repeat(16);
-  const paths = ["/", "/config.json", "/.well-known/ii-alternative-origins", "/pick", embed];
+  const iiWellKnown = [
+    "/.well-known/ii-alternative-origins",
+    "/.well-known/ii-app-metadata",
+    "/.well-known/ii-app-logo.png",
+  ];
+  const paths = ["/", "/config.json", ...iiWellKnown, "/pick", embed];
   for (let i = 0; i < paths.length; i++) {
     const path = paths[i];
     const request = {
@@ -88,10 +93,33 @@ try {
     assert.ok(
       headers["content-security-policy"].includes(`frame-ancestors ${path === embed ? "https://wiki.kinic.xyz" : "'none'"};`),
     );
+    // Internet Identity fetches these resources cross-origin from its own frontend.
+    assert.equal(
+      headers["access-control-allow-origin"],
+      iiWellKnown.includes(path) ? "*" : undefined,
+    );
+    if (path === "/.well-known/ii-app-metadata") {
+      assert.equal(headers["content-type"], "application/json; charset=utf-8");
+      assert.deepEqual(JSON.parse(new TextDecoder().decode(response.body)), {
+        name: "Kinic Vault",
+        description: "Private notes, credentials and files, encrypted in your browser.",
+        logo: "/.well-known/ii-app-logo.png",
+      });
+    }
+    if (path === "/.well-known/ii-app-logo.png") {
+      assert.equal(headers["content-type"], "image/png");
+      assert.deepEqual(
+        new Uint8Array(response.body).subarray(0, 4),
+        new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      );
+    }
     if (path === "/.well-known/ii-alternative-origins")
       assert.deepEqual(
         JSON.parse(new TextDecoder().decode(response.body)).alternativeOrigins,
-        ["https://vault.kinic.xyz"],
+        [
+          "https://vault.kinic.xyz",
+          "chrome-extension://dlbffglcocnllllhjaapackocgkaegak",
+        ],
       );
     const body = new Uint8Array(response.body);
     body[0] ^= 1;
@@ -112,6 +140,14 @@ try {
         k.toLowerCase() === "cross-origin-opener-policy" ? "same-origin" : v,
       ]),
     }));
+    if (iiWellKnown.includes(path))
+      assert.throws(() => verify({
+        ...response,
+        headers: response.headers.map(([k, v]) => [
+          k,
+          k.toLowerCase() === "access-control-allow-origin" ? "https://evil.example" : v,
+        ]),
+      }));
     assert.throws(() => verify({ ...response, status_code: 201 }));
     assert.throws(() =>
       verify(response, request, new Uint8Array(agent.rootKey.length)),

@@ -6,12 +6,19 @@ export type CredentialCustomField = {
   hidden?: boolean;
 };
 
+export type CredentialAdditionalLogin = {
+  username: string;
+  password: string;
+  URL: string;
+};
+
 export type CredentialRecord = {
   label: string;
   username: string;
   password: string;
   URL: string;
   urls: string[];
+  additionalLogins?: CredentialAdditionalLogin[];
   totp: string;
   notes: string;
   customFields: CredentialCustomField[];
@@ -200,12 +207,32 @@ export function parseCredential(text: string): CredentialRecord {
           obj.tags.filter((tag): tag is string => typeof tag === "string"),
         )
       : [];
+    const additionalLogins: CredentialAdditionalLogin[] = Array.isArray(
+      obj.additionalLogins,
+    )
+      ? obj.additionalLogins
+          .filter(
+            (entry): entry is Record<string, unknown> =>
+              !!entry && typeof entry === "object" && !Array.isArray(entry),
+          )
+          .map((entry) => ({
+            username: typeof entry.username === "string" ? entry.username : "",
+            password: typeof entry.password === "string" ? entry.password : "",
+            URL:
+              typeof entry.URL === "string"
+                ? entry.URL
+                : typeof entry.url === "string"
+                  ? entry.url
+                  : "",
+          }))
+      : [];
     return {
       label: typeof obj.label === "string" ? obj.label : "",
       username: typeof obj.username === "string" ? obj.username : "",
       password: typeof obj.password === "string" ? obj.password : "",
       URL: primaryUrl || urls[0] || "",
       urls,
+      ...(additionalLogins.length > 0 ? { additionalLogins } : {}),
       totp: typeof obj.totp === "string" ? obj.totp : "",
       notes: typeof obj.notes === "string" ? obj.notes : "",
       customFields,
@@ -250,6 +277,13 @@ export function serializeCredential(
   if (urls.length > 1 || (urls.length === 1 && urls[0] !== primaryUrl)) {
     payload.urls = urls;
   }
+  if (input.additionalLogins && input.additionalLogins.length > 0) {
+    payload.additionalLogins = input.additionalLogins.map((entry) => ({
+      username: entry.username ?? "",
+      password: entry.password ?? "",
+      URL: entry.URL ?? "",
+    }));
+  }
   if (totp) payload.totp = totp;
   if (customFields.length > 0) payload.customFields = customFields;
   if (input.favorite) payload.favorite = true;
@@ -265,6 +299,7 @@ export function buildCredentialMetadata(
   const urls = [
     ...(typeof record.URL === "string" ? [record.URL] : []),
     ...(record.urls ?? []),
+    ...(record.additionalLogins ?? []).map((entry) => entry.URL),
   ];
   const domains = extractDomains(urls);
   const username = truncateMetadataText((record.username ?? "").trim(), MAX_USERNAME_META_LENGTH);

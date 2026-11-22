@@ -7,8 +7,8 @@ import {
   useIsolatedVaultSession,
 } from "./private-session";
 import { decodeId, encodeId, type VaultIds } from "./routes";
+import { parseCredential } from "./credential";
 import {
-  parseCredential,
   VaultReadOnly,
   type ReadOnlyContent,
 } from "./read-only";
