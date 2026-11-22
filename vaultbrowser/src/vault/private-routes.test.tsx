@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
@@ -216,6 +217,27 @@ it("keeps passwords out of the DOM until explicitly revealed", async () => {
   expect(screen.getByText("member")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Hide credential" }));
   expect(screen.queryByText("Private password")).toBeNull();
+});
+
+it("reveals only the selected login in an embedded credential", async () => {
+  const { client, header, doc } = await privateDocument(
+    "credential",
+    JSON.stringify({
+      username: "first",
+      password: "First private password",
+      additionalLogins: [{ username: "second", password: "Second private password" }],
+    }),
+  );
+  render(<VaultEmbedDocument client={client} vault={bytes(header.id)} object={bytes(doc.object)} />);
+  const first = within(await screen.findByRole("group", { name: "Login 1" }));
+  const second = within(screen.getByRole("group", { name: "Login 2" }));
+  expect(screen.queryByText(/private password/)).toBeNull();
+  fireEvent.click(first.getByRole("button", { name: "Show credential" }));
+  expect(first.getByText("First private password")).toBeTruthy();
+  expect(screen.queryByText("Second private password")).toBeNull();
+  fireEvent.click(second.getByRole("button", { name: "Show credential" }));
+  expect(second.getByText("Second private password")).toBeTruthy();
+  expect(screen.queryByText("First private password")).toBeNull();
 });
 
 it("uses an explicit Vault-origin attachment download and clears late bytes", async () => {

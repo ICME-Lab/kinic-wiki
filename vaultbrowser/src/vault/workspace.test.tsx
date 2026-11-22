@@ -262,6 +262,40 @@ it("updates the label of downloaded credentials while preserving other fields", 
   await waitFor(() => expect(button).toHaveProperty("disabled", false));
   expect(screen.queryByRole("alert")).toBeNull();
 });
+it("adds another login to an existing credential and reloads both encrypted logins", async () => {
+  const x = await mounted();
+  await x.open();
+  await x.client.save(
+    { kind: "credential", title: "Logins" },
+    new TextEncoder().encode(JSON.stringify({ username: "alice", password: "first", URL: "https://first.test", notes: "memo" })),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Vaults" }));
+  const card = await screen.findByRole("button", { name: "Logins" });
+  await waitFor(() => expect(card).toHaveProperty("disabled", false));
+  fireEvent.click(card);
+  await waitFor(() => expect(screen.getByLabelText("Username")).toHaveProperty("value", "alice"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Add login" }));
+  const second = within(screen.getByRole("group", { name: "Login 2" }));
+  expect(document.activeElement).toBe(second.getByLabelText("Username"));
+  fireEvent.change(second.getByLabelText("Username"), { target: { value: "bob" } });
+  fireEvent.change(second.getByLabelText("Password"), { target: { value: "second" } });
+  fireEvent.change(second.getByLabelText("URL (stored as text)"), { target: { value: "https://second.test" } });
+  fireEvent.click(second.getByRole("button", { name: "Show password" }));
+  expect(second.getByLabelText("Password")).toHaveProperty("type", "text");
+  expect(within(screen.getByRole("group", { name: "Login 1" })).getByLabelText("Password")).toHaveProperty("type", "password");
+  fireEvent.click(screen.getByRole("button", { name: "Save document" }));
+  await screen.findByText("Saved.");
+  fireEvent.click(screen.getByRole("button", { name: "New document" }));
+  fireEvent.click(screen.getByRole("button", { name: "Logins" }));
+  await waitFor(() => expect(screen.getAllByLabelText("Password").map(input => (input as HTMLInputElement).value)).toEqual(["first", "second"]));
+  expect(screen.getAllByLabelText("URL (stored as text)").map(input => (input as HTMLInputElement).value)).toEqual(["https://first.test", "https://second.test"]);
+  expect(screen.getByLabelText("Credential notes")).toHaveProperty("value", "memo");
+  fireEvent.click(within(screen.getByRole("group", { name: "Login 1" })).getByRole("button", { name: "Remove login" }));
+  expect(screen.getByLabelText("Username")).toHaveProperty("value", "bob");
+  expect(screen.getByLabelText("Password")).toHaveProperty("type", "password");
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add login" }));
+});
 it.each(["Resume save", "Cancel save"])("reconciles an interrupted change name via %s without discarding edits", async (action) => {
   const x = await mounted();
   await x.open();

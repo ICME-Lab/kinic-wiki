@@ -4,7 +4,6 @@ import {
   Check,
   Download,
   Eye,
-  EyeOff,
   FileKey2,
   FileText,
   History,
@@ -32,13 +31,9 @@ import {
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
-import { CopyPasswordButton } from "../copy-button";
-import {
-  CopyValueButton,
-  PasswordGeneratorPanel,
-  PasswordStrengthBadge,
-  TotpLiveDisplay,
-} from "./credential-tools";
+import { emptyLogin, type CredentialLogin } from "./credential";
+import { CredentialLoginFields } from "./credential-login-fields";
+import { TotpLiveDisplay } from "./credential-tools";
 import { VaultPortabilityPanel } from "./portability";
 import { VaultPreview } from "./preview";
 import { VaultReadOnly } from "./read-only";
@@ -108,15 +103,14 @@ function Documents({
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [savedBody, setSavedBody] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [url, setUrl] = useState("");
+  const nextLoginId = useRef(1);
+  const addLoginButton = useRef<HTMLButtonElement>(null);
+  const [logins, setLogins] = useState<(CredentialLogin & { id: number; focusUsername?: boolean })[]>([{ ...emptyLogin, id: 0 }]);
   const [extraUrls, setExtraUrls] = useState("");
   const [totp, setTotp] = useState("");
   const [customFields, setCustomFields] = useState<CredentialCustomField[]>([]);
   const [favorite, setFavorite] = useState(false);
   const [tagsText, setTagsText] = useState("");
-  const [reveal, setReveal] = useState(false);
   const [file, setFile] = useState<File>();
   const [editorKey, setEditorKey] = useState(0);
   const [history, setHistory] = useState<{
@@ -146,15 +140,12 @@ function Documents({
     setTitle("");
     setBody("");
     setSavedBody("");
-    setUsername("");
-    setPassword("");
-    setUrl("");
+    setLogins([{ ...emptyLogin, id: 0 }]);
     setExtraUrls("");
     setTotp("");
     setCustomFields([]);
     setFavorite(false);
     setTagsText("");
-    setReveal(false);
     setFile(undefined);
     setHistory(undefined);
     setProgress(0);
@@ -186,6 +177,8 @@ function Documents({
     try {
       client.session.check(g);
       if (editorEpoch.current !== epoch) return;
+      const text = new TextDecoder().decode(doc.plaintext);
+      const record = doc.metadata.kind === "credential" ? parseCredential(text) : undefined;
       reset();
       setCurrent(item);
       setViewedRevision(revision);
@@ -193,12 +186,16 @@ function Documents({
       setHistory(retainedHistory);
       setTitle(doc.metadata.title);
       setKind(doc.metadata.kind);
-      const text = new TextDecoder().decode(doc.plaintext);
-      if (doc.metadata.kind === "credential") {
-        const record = parseCredential(text);
-        setUsername(record.username);
-        setPassword(record.password);
-        setUrl(record.URL);
+      if (record) {
+        const parsedLogins: CredentialLogin[] = [
+          { username: record.username, password: record.password, url: record.URL },
+          ...(record.additionalLogins ?? []).map((entry) => ({
+            username: entry.username,
+            password: entry.password,
+            url: entry.URL,
+          })),
+        ];
+        setLogins(parsedLogins.map((login) => ({ ...login, id: nextLoginId.current++ })));
         const others = record.urls.filter((entry) => entry !== record.URL);
         setExtraUrls(others.join("\n"));
         setTotp(record.totp);
@@ -300,16 +297,22 @@ function Documents({
           plain = new Uint8Array(await file.arrayBuffer());
           metadata = { ...metadata, filename: file.name, mime: file.type };
         } else if (kind === "credential") {
+          const [primary = emptyLogin, ...additional] = logins;
           const extraUrlList = extraUrls
             .split(/\r?\n/)
             .map((entry) => entry.trim())
             .filter(Boolean);
           const credentialPayload = {
             label: documentTitle,
-            username,
-            password,
-            URL: url,
-            urls: [url, ...extraUrlList].filter(Boolean),
+            username: primary.username,
+            password: primary.password,
+            URL: primary.url,
+            urls: [primary.url, ...extraUrlList].filter(Boolean),
+            additionalLogins: additional.map(({ username, password, url }) => ({
+              username,
+              password,
+              URL: url,
+            })),
             totp: totp.trim(),
             customFields,
             notes: body,
@@ -375,7 +378,7 @@ function Documents({
     matchesMetadataQuery(metadata, query)
   );
   const extractedDomains = extractDomains([
-    url,
+    ...logins.map((entry) => entry.url),
     ...extraUrls.split(/\r?\n/),
   ]);
   return (
@@ -803,7 +806,7 @@ function Documents({
                   <VaultReadOnly
                     key={editorKey}
                     content={kind === "note" ? { kind, body }
-                      : kind === "credential" ? { kind, username, password, url, notes: body }
+                      : kind === "credential" ? { kind, logins, notes: body }
                       : { kind }}
                   />
                 ) : null
@@ -848,84 +851,73 @@ function Documents({
                 </>
               ) : kind === "credential" ? (
                 <div className="vault-credential">
-                  <div className="vault-credential-row">
-                    <VaultField
-                      label="Username"
-                      value={username}
-                      disabled={readOnly}
-                      onChange={(e) => {
-                        setUsername(e.target.value);
+                  {logins.map(({ id, focusUsername, ...login }, index) => (
+                    <CredentialLoginFields
+                      key={`${editorKey}:${id}`}
+                      client={client}
+                      login={login}
+                      number={index + 1}
+                      focusUsername={focusUsername}
+                      readOnly={readOnly}
+                      disabled={disabled}
+                      onChange={(value) => {
+                        setLogins((current) =>
+                          current.map((entry) =>
+                            entry.id === id ? { ...entry, ...value } : entry,
+                          ),
+                        );
                         changed();
                       }}
+                      onRemove={
+                        !historical && logins.length > 1
+                          ? () => {
+                              addLoginButton.current?.focus();
+                              setLogins((current) =>
+                                current.filter((entry) => entry.id !== id),
+                              );
+                              changed();
+                            }
+                          : undefined
+                      }
                     />
-                    <div className="vault-inline-actions">
-                      <CopyValueButton
-                        key={`user-${editorKey}`}
-                        value={username}
-                        label="Copy username"
-                        disabled={disabled}
-                      />
+                  ))}
+                  <div className="vault-inline-actions vault-credential-wide">
+                    {!historical ? (
                       <VaultButton
+                        ref={addLoginButton}
                         size="sm"
-                        tone={favorite ? "primary" : "default"}
-                        aria-pressed={favorite}
+                        tone="ghost"
                         disabled={readOnly}
                         onClick={() => {
-                          setFavorite((prev) => !prev);
+                          const id = nextLoginId.current++;
+                          setLogins((current) => [
+                            ...current,
+                            { ...emptyLogin, id, focusUsername: true },
+                          ]);
                           changed();
                         }}
                       >
-                        <Star size={14} aria-hidden />
-                        {favorite ? "Favorited" : "Favorite"}
+                        <Plus size={14} aria-hidden />
+                        Add login
                       </VaultButton>
-                    </div>
-                  </div>
-                  <div className="vault-password">
-                    <div className="vault-password-label-row">
-                      <VaultField
-                        label="Password"
-                        type={reveal ? "text" : "password"}
-                        value={password}
-                        disabled={readOnly}
-                        onChange={(e) => {
-                          setPassword(e.target.value);
-                          changed();
-                        }}
-                      />
-                    </div>
-                    <div className="vault-password-actions">
-                      <VaultButton
-                        size="sm"
-                        aria-pressed={reveal}
-                        disabled={disabled}
-                        onClick={() => setReveal(!reveal)}
-                      >
-                        {reveal ? (
-                          <EyeOff size={14} aria-hidden />
-                        ) : (
-                          <Eye size={14} aria-hidden />
-                        )}
-                        {reveal ? "Hide password" : "Show password"}
-                      </VaultButton>
-                      <CopyPasswordButton
-                        key={editorKey}
-                        value={password}
-                        disabled={disabled}
-                      />
-                      <PasswordStrengthBadge password={password} />
-                    </div>
-                    <PasswordGeneratorPanel
-                      client={client}
+                    ) : null}
+                    <VaultButton
+                      size="sm"
+                      tone={favorite ? "primary" : "default"}
+                      aria-pressed={favorite}
                       disabled={readOnly}
-                      onUse={(generated) => {
-                        setPassword(generated);
+                      onClick={() => {
+                        setFavorite((prev) => !prev);
                         changed();
                       }}
-                    />
-                    <p className="vault-field-hint">
-                      The clipboard is not cleared automatically.
-                    </p>
+                    >
+                      <Star size={14} aria-hidden />
+                      {favorite ? "Favorited" : "Favorite"}
+                    </VaultButton>
                   </div>
+                  <p className="vault-field-hint vault-credential-wide">
+                    The clipboard is not cleared automatically.
+                  </p>
                   <div className="vault-credential-wide vault-totp-section">
                     <VaultField
                       label="Authenticator key (TOTP)"
@@ -943,17 +935,6 @@ function Documents({
                       disabled={disabled}
                     />
                   </div>
-                  <VaultField
-                    fieldClassName="vault-credential-wide"
-                    label="URL (stored as text)"
-                    placeholder="https://example.com"
-                    value={url}
-                    disabled={readOnly}
-                    onChange={(e) => {
-                      setUrl(e.target.value);
-                      changed();
-                    }}
-                  />
                   <label className="vault-field vault-credential-wide">
                     <span>Additional URLs (one per line)</span>
                     <textarea
