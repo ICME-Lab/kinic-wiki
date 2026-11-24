@@ -102,7 +102,12 @@ pub(super) fn beneficiary_payment_status_for(
     now: u64,
 ) -> vault_types::Result<Option<Payment>> {
     auth(caller)?;
-    Ok(payment_status_for(wallet, operation, now)?.filter(|p| p.request.beneficiary == caller))
+    match payment_status_for(wallet, operation, now) {
+        Ok(found) => Ok(found.filter(|p| p.request.beneficiary == caller)),
+        // A row of another kind under this key is not the caller's payment.
+        Err(Error::Conflict) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 #[ic_cdk::update]
 async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment> {
@@ -157,7 +162,11 @@ pub(super) fn payable_ledger(
         return Err(Error::InvalidInput);
     }
     transaction(|db| {
-        let p = load(db, wallet, operation)?.ok_or(Error::NotFound)?;
+        let p = match (load(db, wallet, operation), beneficiary) {
+            // A row of another kind under this key is not the beneficiary's payment.
+            (Err(Error::Conflict), Some(_)) => return Err(Error::NotFound),
+            (loaded, _) => loaded?.ok_or(Error::NotFound)?,
+        };
         // Another principal cannot learn whether this wallet's operation exists.
         if beneficiary.is_some_and(|caller| p.request.beneficiary != caller) {
             return Err(Error::NotFound);

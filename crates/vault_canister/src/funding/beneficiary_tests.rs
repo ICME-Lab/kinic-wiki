@@ -130,3 +130,29 @@ fn only_the_beneficiary_can_act_on_its_payers_quote() {
     let cancelled = cancel_quote_for(principal(51), operation).unwrap();
     assert_eq!(cancelled.status, Status::Expired);
 }
+
+#[test]
+fn a_bridge_row_under_the_same_key_reads_as_absent_to_a_beneficiary() {
+    // The bridge and funding share the payments key space; the payer sees Conflict.
+    crate::bridge::link_row_for_test(principal(61), vec![9; 16]);
+    assert_eq!(
+        beneficiary_payment_status_for(principal(62), principal(61), &[9; 16], NOW),
+        Ok(None)
+    );
+    assert_eq!(
+        payable_ledger(principal(61), &[9; 16], Some(principal(62))),
+        Err(Error::NotFound)
+    );
+    assert_eq!(
+        require_beneficiary(principal(61), &[9; 16], principal(62)),
+        Err(Error::NotFound)
+    );
+    assert_eq!(
+        payable_ledger(principal(61), &[9; 16], None),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        beneficiary_payments_for(principal(62), principal(61), NOW),
+        Ok(vec![])
+    );
+}

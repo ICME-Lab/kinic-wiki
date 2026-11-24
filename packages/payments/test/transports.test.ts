@@ -90,6 +90,14 @@ describe("funding transports", () => {
       await expect(lost).rejects.toMatchObject({ code: "Unknown" });
       next();
       expect(manager.getSnapshot().state).toBe("connected");
+
+      // A blocked tab is reported as such, before anything is dispatched, and keeps the session.
+      openSigner.mockImplementationOnce(() => Promise.reject(new Error("Unable to open the signer window.")))
+        .mockImplementationOnce(() => Promise.reject(new Error("Unable to open the signer window.")));
+      const blocked = manager.holdSigner();
+      await expect(transport.call(call)).rejects.toMatchObject({ code: "SignerBlocked" });
+      blocked();
+      expect(manager.getSnapshot().state).toBe("connected");
       await manager.disconnect();
       expect(manager.getSnapshot().state).toBe("disconnected");
     } finally { verification.mockRestore(); }

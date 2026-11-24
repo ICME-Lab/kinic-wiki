@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { VaultClient } from "@kinic/vault-client";
 import type { FundingConfig, Payment, ReconciliationProgress } from "@kinic/vault-candid";
 import { formatKinicExact, parseKinic } from "@kinic/payments/amounts";
-import { classifyPaymentFailure, formatPaymentFailure, PaymentFailure } from "@kinic/payments/errors";
+import { classifyPaymentFailure, formatPaymentFailure, PaymentFailure, paymentFailureMessage } from "@kinic/payments/errors";
 import { readLedgerTerms } from "@kinic/payments/ledger";
 import { browserRecoveryStore, fundingSources, paymentPresentation, useFundingProvider, usePaymentFlow,
   type FlowBinding, type SourceId } from "@kinic/payments/use-payment-flow";
@@ -150,7 +150,12 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     balance:id => id === source ? balance : null, connect:id => {
       if (!grantReady) return;
       const result = manager.connect(id,scopes);
-      void result.catch(() => { if (lifecycle.current()) setNotice("Wallet connection failed. Connect the selected wallet to continue."); });
+      void result.catch((error: unknown) => {
+        if (!lifecycle.current()) return;
+        setNotice(error instanceof PaymentFailure && error.code === "SignerBlocked"
+          ? paymentFailureMessage("SignerBlocked")
+          : "Wallet connection failed. Connect the selected wallet to continue.");
+      });
     },disconnect:() => { void manager.disconnect().catch(() => setNotice("Could not disconnect the wallet.")); }}).map(item => ({
       ...item, connectDisabled: item.id !== "ii" && !grantReady,
     }));

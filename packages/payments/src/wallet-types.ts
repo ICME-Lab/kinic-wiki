@@ -33,7 +33,8 @@ export type WalletIssue = "account-changed" | "empty-accounts" | "unsupported-ac
 export class WalletFailure extends PaymentFailure {
   constructor(readonly reason: WalletIssue) {
     super(reason === "account-changed" ? "AccountChanged"
-      : reason === "unsupported-account" || reason === "empty-accounts" ? "UnsupportedAccount" : "Unavailable");
+      : reason === "unsupported-account" || reason === "empty-accounts" ? "UnsupportedAccount"
+      : reason === "popup-blocked" ? "SignerBlocked" : "Unavailable");
   }
 }
 export type OisySigner = Pick<RelyingParty, "permissions" | "requestPermissions" | "accounts" | "disconnect"> & {
