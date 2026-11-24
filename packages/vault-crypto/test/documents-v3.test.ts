@@ -334,3 +334,39 @@ it("wipes decrypted metadata and earlier chunks after a later chunk fails", asyn
     spy.mockRestore();
   }
 });
+
+it("round trips extended password-manager metadata and rejects malformed optional fields", async () => {
+  const root = await importKey(new Uint8Array(32).fill(9));
+  const metadata = {
+    kind: "credential" as const,
+    title: "GitHub",
+    username: "alice@example.com",
+    domains: ["github.com", "gist.github.com"],
+    hasTotp: true,
+    favorite: true,
+    tags: ["work", "dev"],
+  };
+  const doc = await encryptDocumentV3(
+    root,
+    context,
+    object,
+    1n,
+    metadata,
+    utf8.encode("{}"),
+  );
+  const parsed = await readManifestV3(root, context, object, 1n, doc.manifest);
+  expect(parsed.metadata).toEqual(metadata);
+
+  for (const invalid of [
+    { kind: "credential", title: "a", username: 123 },
+    { kind: "credential", title: "a", domains: ["ok.com", ""] },
+    { kind: "credential", title: "a", domains: Array(33).fill("a.com") },
+    { kind: "credential", title: "a", hasTotp: "yes" },
+    { kind: "credential", title: "a", favorite: 1 },
+    { kind: "credential", title: "a", tags: [42] },
+  ]) {
+    await expect(
+      encryptDocumentV3(root, context, object, 1n, invalid as any, utf8.encode("{}")),
+    ).rejects.toThrow();
+  }
+});
