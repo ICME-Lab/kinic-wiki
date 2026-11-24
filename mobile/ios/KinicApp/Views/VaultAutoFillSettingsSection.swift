@@ -7,27 +7,21 @@ import SwiftUI
 
 struct VaultAutoFillSettingsSection: View {
     @Bindable var model: VaultWorkspaceModel
+    @State private var autoCopyTOTP: Bool = Self.loadAutoCopyTOTP()
 
     private static let autoCopyTOTPKey = "vault.autofill.autoCopyTOTP"
-    private var sharedDefaults: UserDefaults? {
+    private static var sharedDefaults: UserDefaults? {
         let appGroupID = (Bundle.main.object(forInfoDictionaryKey: "APP_GROUP_ID") as? String)
             ?? "group.xyz.kinic.ios.KinicWiki"
         return UserDefaults(suiteName: appGroupID)
     }
 
-    private var autoCopyTOTPBinding: Binding<Bool> {
-        Binding(
-            get: {
-                guard let defaults = sharedDefaults else { return true }
-                if defaults.object(forKey: Self.autoCopyTOTPKey) == nil {
-                    return true
-                }
-                return defaults.bool(forKey: Self.autoCopyTOTPKey)
-            },
-            set: { newValue in
-                sharedDefaults?.set(newValue, forKey: Self.autoCopyTOTPKey)
-            }
-        )
+    private static func loadAutoCopyTOTP() -> Bool {
+        guard let defaults = sharedDefaults else { return true }
+        if defaults.object(forKey: autoCopyTOTPKey) == nil {
+            return true
+        }
+        return defaults.bool(forKey: autoCopyTOTPKey)
     }
 
     private var sectionTitle: String {
@@ -88,7 +82,10 @@ struct VaultAutoFillSettingsSection: View {
                     }
                     .font(.footnote)
 
-                    Toggle("Auto-copy 2FA code on AutoFill", isOn: autoCopyTOTPBinding)
+                    Toggle("Auto-copy 2FA code on AutoFill", isOn: $autoCopyTOTP)
+                        .onChange(of: autoCopyTOTP) { _, newValue in
+                            Self.sharedDefaults?.set(newValue, forKey: Self.autoCopyTOTPKey)
+                        }
                 }
 
                 if model.principal != nil || model.hasOfflineSnapshot {
