@@ -22,7 +22,9 @@ const kinic = 100_000_000n;
 const minCredits = 20_000_000n;
 const maxI64 = (1n << 63n) - 1n;
 const maxU64 = (1n << 64n) - 1n;
-const vaultMethods = ["list_payments", "payment_status", "quote_purchase", "pay_purchase", "cancel_quote", "reconcile_purchase"] as const;
+// Only the quote needs the payer's Vault signature (the approval is a ledger call).
+// The beneficiary reads, submits, cancels and reconciles with its own session.
+const vaultMethods = ["quote_purchase"] as const;
 const service = idlFactory({IDL});
 type Method = typeof vaultMethods[number];
 type Success<M extends Method> = Extract<Awaited<ReturnType<_SERVICE[M]>>, {Ok: unknown}>["Ok"];
@@ -102,9 +104,18 @@ export function vaultFundingScopes(canister: string, ledger?: string): WalletAcc
 
 type FundingSession = Pick<WalletSessionManager, "getSnapshot" | "getIdentityTransport" | "revalidate" | "capture" | "isCurrent">;
 type PrincipalIdentity = Pick<Identity, "getPrincipal">;
+/** The beneficiary's authenticated Vault actor, bound to `beneficiaryIdentity`. */
+export interface VaultPaymentReader {
+  beneficiary_cancel_quote(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_cancel_quote"]>;
+  beneficiary_reconcile_purchase(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_reconcile_purchase"]>;
+  beneficiary_payments(wallet: Principal): ReturnType<_SERVICE["beneficiary_payments"]>;
+  beneficiary_payment_status(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_payment_status"]>;
+  beneficiary_pay_purchase(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_pay_purchase"]>;
+}
 export interface VaultHistoryOptions {
   config: BrowserConfig;
   beneficiaryIdentity: PrincipalIdentity;
+  reader: VaultPaymentReader;
   source: FundingAccount["provider"];
   walletSession: FundingSession;
   isCurrent(): boolean;
@@ -113,7 +124,7 @@ export interface VaultHistoryOptions {
 }
 
 function payerAccess(options: VaultHistoryOptions, config: BrowserConfig, ledger?: string) {
-  const {walletSession, source, beneficiaryIdentity, isCurrent} = options;
+  const {walletSession, source, beneficiaryIdentity, isCurrent, reader} = options;
   const beneficiary = owner(beneficiaryIdentity.getPrincipal().toText());
   const token = walletSession.capture();
   const scopes = vaultFundingScopes(config.canister, ledger);
@@ -147,12 +158,28 @@ function payerAccess(options: VaultHistoryOptions, config: BrowserConfig, ledger
     checkCurrent(current);
     let result;
     try { [result] = IDL.decode(fn.retTypes, reply); } catch { return invalid(); }
-    return result as {Ok: Success<M>} | {Err: VaultError};
+    return result as unknown as {Ok: Success<M>} | {Err: VaultError};
   }
   async function call<M extends Method>(method: M, ...args: Parameters<_SERVICE[M]>): Promise<Success<M>> {
     return unwrap(await callResult(method, args));
   }
-  return {transport, account, current, validate, call, callResult, beneficiary};
+  const wallet = Principal.fromText(account.owner);
+  async function read<T>(dispatch: () => Promise<{Ok: T} | {Err: VaultError}>, dispatchCurrent = current): Promise<T> {
+    checkCurrent(current);
+    checkCurrent(dispatchCurrent);
+    const result = await dispatch();
+    checkCurrent(current);
+    return unwrap(result);
+  }
+  const beneficiaryCalls = {
+    payments: () => read(() => reader.beneficiary_payments(wallet)),
+    status: (operation: Uint8Array | number[]) => read(() => reader.beneficiary_payment_status(wallet, operation)),
+    pay: (operation: Uint8Array | number[], dispatchCurrent: () => boolean) =>
+      read(() => reader.beneficiary_pay_purchase(wallet, operation), dispatchCurrent),
+    cancel: (operation: Uint8Array | number[]) => read(() => reader.beneficiary_cancel_quote(wallet, operation)),
+    reconcile: (operation: Uint8Array | number[]) => read(() => reader.beneficiary_reconcile_purchase(wallet, operation)),
+  };
+  return {transport, account, current, validate, call, callResult, beneficiary, ...beneficiaryCalls};
 }
 
 function encodeRequest(req: PurchaseRequest) {
@@ -223,8 +250,7 @@ function makeScope(config: BrowserConfig, payer: FundingAccount, beneficiary: st
   return Object.freeze(scope);
 }
 async function history(config: BrowserConfig, access: ReturnType<typeof payerAccess>) {
-  await access.validate();
-  const payments = await access.call("list_payments");
+  const payments = await access.payments();
   return payments.filter(p => {
     if (p.wallet.toText() !== access.account.owner) return invalid();
     if (p.request.beneficiary.toText() !== access.beneficiary) return false;
@@ -245,8 +271,7 @@ export async function readVaultHistoryStatus(options: VaultHistoryOptions, origi
   const access = payerAccess(options, config);
   const scope = makeScope(config, access.account, access.beneficiary, original.config.ledger.toText());
   verifyPayment(original, scope);
-  await access.validate();
-  const found = (await access.call("payment_status", original.request.operation))[0];
+  const found = (await access.status(original.request.operation))[0];
   if (!found) return pending(paymentId(original));
   verifyPayment(found, scope, {request:original.request, quote:encodeQuote(original)});
   const result = outcome(found);
@@ -303,7 +328,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
   const rootGuard = options.isCurrent;
   const access = payerAccess({...options, isCurrent: () => rootGuard() && ownerClient.session.capture() === session
     && ownerClient.identity.getPrincipal().toText() === beneficiary && ownerClient.canister === config.canister}, config, ledger);
-  const {current, call, validate} = access;
+  const {current, validate} = access;
   checkCurrent(current);
   const scope = makeScope(config, access.account, beneficiary, ledger);
   const fundingEnabled = enabled(config) && active?.ledger.toText() === ledger;
@@ -327,8 +352,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
   }
   async function status(record: RecoveryRecord) {
     const previous = decodeVaultRecoveryRecord(record, scope);
-    await validate();
-    const p = (await call("payment_status", previous.request.operation))[0];
+    const p = (await access.status(previous.request.operation))[0];
     if (p) verifyPayment(p, scope, previous);
     return p;
   }
@@ -367,7 +391,8 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
   }
   return {
     scope, fundingEnabled,
-    capabilities: {get silentCheck() {return current() && access.transport.silentCheck;}, cancelUnsubmitted: true, scan: true},
+    // Status checks and scans use the beneficiary session, so no wallet prompt is involved.
+    capabilities: {get silentCheck() {return current();}, cancelUnsubmitted: true, scan: true},
     list: () => history(config, access),
     recordFor,
     async prepare(amount) {
@@ -381,6 +406,8 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
         if (outstanding.config.ledger.toText() === ledger) store.put(recordFor(outstanding));
         throw new PaymentFailure("Unavailable");
       }
+      // Confirm the connected payer before asking it to sign the quote.
+      await validate();
       checkCurrent(current);
       const request: PurchaseRequest = {
         operation: crypto.getRandomValues(new Uint8Array(16)), beneficiary: Principal.fromText(beneficiary),
@@ -419,6 +446,9 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
     async revalidate(prepared) {
       allowMoney();
       const record = savedPayment(prepared, ["quote-dispatched", "approved"]);
+      const needsApproval = prepared.approvalRequired && record.stage !== "approved";
+      // Only the approval needs the payer's wallet. Submission uses the beneficiary session.
+      if (needsApproval) await validate();
       const p = await status(record);
       if (!p || outcome(p).kind !== "unsubmitted") return "changed";
       allowMoney(p);
@@ -429,7 +459,6 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       if (live.ledger.toText() !== ledger || live.recipient.toText() !== activeRecipient || live.cycles_per_kinic !== activeRate)
         return "changed";
       const t = await terms(p);
-      const needsApproval = prepared.approvalRequired && record.stage !== "approved";
       if (needsApproval ? t.allowanceE8s !== prepared.context.expectedAllowance : !enoughAllowance(p, t))
         return "changed";
       preflight(p, t, needsApproval);
@@ -453,7 +482,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       const record = savedPayment(prepared, ["purchase-dispatched"]);
       const previous = decodeVaultRecoveryRecord(record, scope);
       const deadline = prepared.context.payment.created_at_time + lifetimeNs;
-      const p = unwrap(await access.callResult("pay_purchase", [previous.request.operation], () => current() && nowNs() < deadline));
+      const p = await access.pay(previous.request.operation, () => current() && nowNs() < deadline);
       verifyPayment(p, scope, previous);
       const result = outcome(p);
       return result.kind === "unsubmitted" ? pending(record.id) : result;
@@ -487,7 +516,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
     async cancel(prepared) {
       const r = savedPayment(prepared, ["quote-dispatched", "approved"]);
       const saved = decodeVaultRecoveryRecord(r, scope);
-      const p = await call("cancel_quote", saved.request.operation);
+      const p = await access.cancel(saved.request.operation);
       verifyPayment(p, scope, saved);
       if (!("Expired" in p.status) || p.uncertain || p.preparing) return invalid();
     },
@@ -495,7 +524,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       const saved = decodeVaultRecoveryRecord(record, scope);
       const before = await status(record);
       if (!before || (!("Unknown" in before.status) && !("InFlight" in before.status) && !("Paid" in before.status))) return unavailable();
-      const progress = await call("reconcile_purchase", saved.request.operation);
+      const progress = await access.reconcile(saved.request.operation);
       verifyPayment(progress.payment, scope, {request: before.request, quote: encodeQuote(before)});
       return progress;
     },

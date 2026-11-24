@@ -4,18 +4,18 @@ use kinic_sqlite_compat::{self as sql, Connection, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
 use vault_types::*;
 pub const SCHEMA: &str = concat!(
-    include_str!("schema.sql"),
-    include_str!("key-capacity-schema.sql"),
-    include_str!("key-owner-count-trigger.sql")
+    include_str!("sql/schema.sql"),
+    include_str!("sql/key-capacity-schema.sql"),
+    include_str!("sql/key-owner-count-trigger.sql")
 );
-pub const KEY_OWNER_COUNT_TRIGGER: &str = include_str!("key-owner-count-trigger.sql");
-pub const SHARING_SCHEMA: &str = include_str!("sharing-schema.sql");
+pub const KEY_OWNER_COUNT_TRIGGER: &str = include_str!("sql/key-owner-count-trigger.sql");
+pub const SHARING_SCHEMA: &str = include_str!("sql/sharing-schema.sql");
 pub const CONTENT_SCHEMA: &str = concat!(
-    include_str!("content-schema.sql"),
-    include_str!("sharing-schema.sql")
+    include_str!("sql/content-schema.sql"),
+    include_str!("sql/sharing-schema.sql")
 );
 pub mod sharing;
-pub const EXPIRY_SCHEMA: &str = include_str!("expiry-schema.sql");
+pub const EXPIRY_SCHEMA: &str = include_str!("sql/expiry-schema.sql");
 pub mod content;
 pub mod keys;
 mod mutation_digest;

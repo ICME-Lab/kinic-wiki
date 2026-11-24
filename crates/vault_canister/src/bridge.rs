@@ -131,6 +131,12 @@ pub(crate) fn decode(raw: &str) -> Result<Option<Record>> {
         Ok(None)
     }
 }
+/// Initializes state with the bridge enabled and stores one Wiki link row.
+#[cfg(test)]
+pub(crate) fn link_row_for_test(owner: Principal, operation: Vec<u8>) {
+    tests::setup();
+    begin_link(owner, operation, 0).unwrap();
+}
 #[cfg(test)]
 fn rows(db: &sql::Connection) -> Result<Vec<(Principal, Vec<u8>, Record)>> {
     let mut q = db

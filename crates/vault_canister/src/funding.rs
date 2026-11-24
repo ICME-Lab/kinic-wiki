@@ -1,6 +1,10 @@
-//! Durable ICRC-2 quotes. Only the authenticated wallet can debit its own allowance.
+//! Durable ICRC-2 quotes. Only the authenticated wallet can quote against its own
+//! allowance; the wallet or the quote's beneficiary can submit that signed quote.
 use crate::state::transaction;
 mod api;
+#[cfg(test)]
+#[path = "funding/beneficiary_tests.rs"]
+mod beneficiary_tests;
 mod consent;
 #[cfg(test)]
 #[path = "funding/consent_tests.rs"]

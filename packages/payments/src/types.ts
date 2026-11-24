@@ -24,6 +24,7 @@ export type PaymentErrorCode =
   | "Unavailable"
   | "AccountChanged"
   | "UnsupportedAccount"
+  | "SignerBlocked"
   | "InvalidReply"
   | "CoordinationUnavailable"
   | "StorageUnavailable"

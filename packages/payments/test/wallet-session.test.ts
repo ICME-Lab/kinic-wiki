@@ -90,7 +90,7 @@ it("handles missing extension, denied permission, popup failure and closure", as
   expect(active.isCurrent(token)).toBe(false);
   expect(active.getSnapshot().reason).toBe("disconnected");
   const blocked = createWalletSessionManager({ ...config, transports: { openSigner: async () => { throw new Error("Unable to open the signer window."); } } });
-  await expect(blocked.connect("oisy", [])).rejects.toBeDefined();
+  await expect(blocked.connect("oisy", [])).rejects.toMatchObject({ code: "SignerBlocked", reason: "popup-blocked" });
   expect(blocked.getSnapshot().reason).toBe("popup-blocked");
 });
 it("binds and replaces II explicitly and invalidates in-flight work on sign-out", async () => {

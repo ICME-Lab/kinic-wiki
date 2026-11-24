@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { VaultClient } from "@kinic/vault-client";
 import type { FundingConfig, Payment, ReconciliationProgress } from "@kinic/vault-candid";
 import { formatKinicExact, parseKinic } from "@kinic/payments/amounts";
-import { classifyPaymentFailure, formatPaymentFailure, PaymentFailure } from "@kinic/payments/errors";
+import { classifyPaymentFailure, formatPaymentFailure, PaymentFailure, paymentFailureMessage } from "@kinic/payments/errors";
 import { readLedgerTerms } from "@kinic/payments/ledger";
 import { browserRecoveryStore, fundingSources, paymentPresentation, useFundingProvider, usePaymentFlow,
   type FlowBinding, type SourceId } from "@kinic/payments/use-payment-flow";
@@ -89,12 +89,19 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
   const create = useCallback(({store, isCurrent}: FlowBinding) => {
     if (!connected || funding === undefined || !journal || journal.error || (!ledger && config.local)) return null;
     return createVaultPaymentAdapter({config, fundingConfig:funding, recoveryLedger:ledger, source, beneficiaryIdentity:identity,
-      walletSession:manager, authorizedPlug, isCurrent:() => lifecycle.current() && isCurrent(), store, ownerClient:client});
+      reader:client.actor, walletSession:manager, authorizedPlug, isCurrent:() => lifecycle.current() && isCurrent(), store, ownerClient:client});
   }, [connected, funding,journal, ledger, config,source,identity,manager,authorizedPlug,client]);
   const flowSession = useMemo(() => ({capture: manager.capture,
     isCurrent: (token: unknown) => lifecycle.current() && manager.isCurrent(token)}), [manager]);
   const flow = usePaymentFlow(create,flowSession);
   const {state} = flow;
+  // OISY signs in its own tab. Open it in the click, before any await, and
+  // close it when the action settles. Other sources never prompt here.
+  const holdWallet = () => source === "oisy" ? manager.holdSigner() : () => {};
+  const withWallet = (run: () => Promise<unknown> | undefined) => {
+    const release = holdWallet();
+    void Promise.resolve(run()).finally(release);
+  };
   // A reviewed summary remains the operation the user can see, even if another
   // tab replaces the durable slot before this component renders again.
   const displayedId = state.summary?.id ?? journalId ?? (chosen && paymentId(chosen));
@@ -115,16 +122,17 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     setReading(true);
     try {
       const payments = await listVaultFundingHistory({config,source,walletSession:manager,authorizedPlug,
-        beneficiaryIdentity:identity,isCurrent:current});
+        beneficiaryIdentity:identity,reader:client.actor,isCurrent:current});
       if (current()) {
         setHistory(payments.filter(isPendingPayment).sort((a,b) => Number("Quoted" in a.status) - Number("Quoted" in b.status)));
         setNotice("");
       }
     } catch { if (current()) setNotice("Could not load previous payments. Check payment history before funding."); }
     finally { if (current()) setReading(false); }
-  }, [config,source,manager,authorizedPlug,identity]);
+  }, [config,source,manager,authorizedPlug,identity,client]);
   const canList = source === "ii" ? connected : external?.provider === source && snapshot.state === "connected" && historyGranted;
-  useEffect(() => { if (canList && source !== "oisy") void loadHistory(); }, [canList,source,loadHistory]);
+  // History is read with the beneficiary session, so no wallet prompt is involved.
+  useEffect(() => { if (canList) void loadHistory(); }, [canList,loadHistory]);
   const paymentComplete = state.phase === "complete";
   useEffect(() => {
     let live = true;
@@ -142,7 +150,12 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     balance:id => id === source ? balance : null, connect:id => {
       if (!grantReady) return;
       const result = manager.connect(id,scopes);
-      void result.catch(() => { if (lifecycle.current()) setNotice("Wallet connection failed. Connect the selected wallet to continue."); });
+      void result.catch((error: unknown) => {
+        if (!lifecycle.current()) return;
+        setNotice(error instanceof PaymentFailure && error.code === "SignerBlocked"
+          ? paymentFailureMessage("SignerBlocked")
+          : "Wallet connection failed. Connect the selected wallet to continue.");
+      });
     },disconnect:() => { void manager.disconnect().catch(() => setNotice("Could not disconnect the wallet.")); }}).map(item => ({
       ...item, connectDisabled: item.id !== "ii" && !grantReady,
     }));
@@ -152,7 +165,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
       setReading(true);
       try {
         const result = await readVaultHistoryStatus({config,source,walletSession:manager,
-          authorizedPlug:source === "plug" ? snapshot.transport : undefined,beneficiaryIdentity:identity,isCurrent:current},selected);
+          authorizedPlug:source === "plug" ? snapshot.transport : undefined,beneficiaryIdentity:identity,reader:client.actor,isCurrent:current},selected);
         if (current()) setNotice(readOnlyStatusLabel(result));
       } catch (error) {
         if (current()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error)));
@@ -183,7 +196,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
       const record = flow.store.list(binding.adapter.scope)[0] ?? (selected && binding.adapter.recordFor(selected));
       if (!record) return;
       if (displayedId && record.id !== displayedId) throw new PaymentFailure("AccountChanged");
-      // Each OISY gesture permits a single batch. Silent transports may continue up to ten.
+      // Scans run in the beneficiary session, so up to ten batches continue without prompts.
       for (let batch = 0; batch < (binding.adapter.capabilities.silentCheck ? 10 : 1); batch++) {
         if (!current() || stopScan.current) break;
         const result = await binding.adapter.scan(record);
@@ -249,9 +262,21 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     <PaymentForm sources={sources} selectedSource={source} amount={state.summary ? formatKinicExact(state.summary.amountE8s) : journalAmount ?? (hasHistory && selected ? formatKinicExact(selected.request.amount_e8s) : amount)}
       targetLabel={`Vault prepaid account · ${beneficiary}`} summary={presentation.summary}
       status={{...presentation.status,recoveryActions:actions}} actions={{onSource:select,onAmount:setAmount,locked:busy || state.phase === "ready",
-        canPay:enabled && connected && !busy,onPay:() => {if (state.summary) void flow.active.current?.controller.pay(state.summary.termsKey);},
-        canReview:enabled && connected && !busy && !!amountE8s && !hasHistory && (source === "oisy" || !!history),
-        onReview:() => {if (amountE8s) void flow.active.current?.controller.prepare(amountE8s);},
+        canPay:enabled && connected && !busy,onPay:() => {
+          const summary = state.summary;
+          if (!summary) return;
+          // Only the approval needs OISY. A recorded approval is submitted by the signed-in beneficiary.
+          if (flow.approvalPaid) void flow.active.current?.controller.pay(summary.termsKey);
+          else withWallet(() => flow.active.current?.controller.pay(summary.termsKey));
+        },
+        canReview:enabled && connected && !busy && !!amountE8s && !hasHistory && !!history,
+        onReview:() => {
+          const amount = amountE8s;
+          if (!amount) return;
+          // A saved operation is recovered instead of quoted, so OISY is not opened for it.
+          if (journalId) void flow.active.current?.controller.prepare(amount);
+          else withWallet(() => flow.active.current?.controller.prepare(amount));
+        },
         amountError:!amountE8s ? "Enter a positive KINIC amount with up to 8 decimal places." : undefined}}/>
     {cursor && <output aria-live="polite">Ledger scan: next {cursor.next.toString()} of {cursor.end.toString()}.</output>}
     {notice && <output>{notice}</output>}
