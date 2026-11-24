@@ -17,6 +17,15 @@ importers:
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../../packages/source-contracts
+      '@kinic/vault-candid':
+        specifier: workspace:*
+        version: link:../../packages/vault-candid
+      '@kinic/vault-client':
+        specifier: workspace:*
+        version: link:../../packages/vault-client
+      '@kinic/vault-crypto':
+        specifier: workspace:*
+        version: link:../../packages/vault-crypto
       '@kinic/vfs-client-core':
         specifier: workspace:*
         version: link:../../packages/vfs-client-core
