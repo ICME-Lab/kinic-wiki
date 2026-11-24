@@ -138,8 +138,14 @@ func localReplicaRoundTrip() async throws {
     let refreshed = try await client.fetchSnapshot(header: renamed, identity: identity)
     #expect(refreshed.snapshot.records.count == 2)
     let refreshedItems = try refreshed.snapshot.listItems(rootKey: refreshed.rootKey)
-    #expect(refreshedItems.contains(where: { $0.title == "Swift Created Login" && $0.revision == 2 }))
-    #expect(!refreshedItems.contains(where: { $0.title == "Temporary Note" }))
+    let hasUpdatedLogin = refreshedItems.contains(where: { item in
+        item.title == "Swift Created Login" && item.revision == 2
+    })
+    let hasDeletedTempNote = refreshedItems.contains(where: { item in
+        item.title == "Temporary Note"
+    })
+    #expect(hasUpdatedLogin)
+    #expect(!hasDeletedTempNote)
 
     // Return ciphertext only; Node decrypts it with the existing non-extractable Web key.
     let object = Data(repeating: 44, count: 16)

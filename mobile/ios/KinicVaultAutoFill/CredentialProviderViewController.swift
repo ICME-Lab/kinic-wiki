@@ -21,6 +21,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         Bundle.main.object(forInfoDictionaryKey: "KINIC_VAULT_KEYCHAIN_ACCESS_GROUP") as? String
     }
 
+    private var autoCopyTOTPOnFill: Bool {
+        guard let defaults = UserDefaults(suiteName: appGroupID) else { return true }
+        if defaults.object(forKey: "vault.autofill.autoCopyTOTP") == nil {
+            return true
+        }
+        return defaults.bool(forKey: "vault.autofill.autoCopyTOTP")
+    }
+
     private func makeSnapshotStore() -> VaultAutoFillSnapshotStore? {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupID
@@ -162,7 +170,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         }
 
-        if let totpCode = decrypted.totpCode {
+        if autoCopyTOTPOnFill, let totpCode = decrypted.totpCode {
             let expiry = Date().addingTimeInterval(90)
             UIPasteboard.general.setItems(
                 [[UIPasteboard.typeAutomatic: totpCode]],
