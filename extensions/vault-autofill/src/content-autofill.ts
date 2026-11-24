@@ -374,6 +374,41 @@ function captureAndReportLogin(
   })();
 }
 
+export function handleContentFillMessage(
+  message: Record<string, unknown>,
+  doc: Document = document,
+  win: { top: unknown; location: { origin: string; href: string } } = window
+): { ok: boolean; error?: string; result?: unknown } | null {
+  if (message?.type !== "fill-credentials" && message?.type !== "fill-generated-password") {
+    return null;
+  }
+  if (win.top !== win) {
+    return { ok: false, error: "ORIGIN_MISMATCH" };
+  }
+  if (
+    typeof message.expectedOrigin !== "string" ||
+    !message.expectedOrigin ||
+    win.location.origin !== message.expectedOrigin ||
+    !isWebOriginFillable(win.location.href)
+  ) {
+    return { ok: false, error: "ORIGIN_MISMATCH" };
+  }
+  if (message.type === "fill-credentials") {
+    const result = fillLoginFields(doc, {
+      username: typeof message.username === "string" ? message.username : undefined,
+      password: typeof message.password === "string" ? message.password : undefined,
+      totp: typeof message.totp === "string" ? message.totp : undefined
+    });
+    removeInlinePicker();
+    return { ok: true, result };
+  }
+  const result = fillGeneratedPassword(
+    doc,
+    typeof message.password === "string" ? message.password : ""
+  );
+  return { ok: true, result };
+}
+
 function initContentAutofill(): void {
   if (!isWebOriginFillable(window.location.href)) return;
 
@@ -385,25 +420,9 @@ function initContentAutofill(): void {
         _sender: unknown,
         sendResponse: (response: unknown) => void
       ) => {
-        if (message?.type === "fill-credentials") {
-          const result = fillLoginFields(document, {
-            username:
-              typeof message.username === "string" ? message.username : undefined,
-            password:
-              typeof message.password === "string" ? message.password : undefined,
-            totp: typeof message.totp === "string" ? message.totp : undefined
-          });
-          removeInlinePicker();
-          sendResponse({ ok: true, result });
-          return false;
-        }
-        if (message?.type === "fill-generated-password") {
-          const result = fillGeneratedPassword(
-            document,
-            typeof message.password === "string" ? message.password : ""
-          );
-          sendResponse({ ok: true, result });
-          return false;
+        const handled = handleContentFillMessage(message);
+        if (handled) {
+          sendResponse(handled);
         }
         return false;
       }

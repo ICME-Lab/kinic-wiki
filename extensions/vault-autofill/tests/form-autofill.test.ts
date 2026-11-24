@@ -7,6 +7,7 @@ import {
   isWebOriginFillable
 } from "../src/form-detector.ts";
 import { fillGeneratedPassword, fillLoginFields } from "../src/form-filler.ts";
+import { handleContentFillMessage } from "../src/content-autofill.ts";
 
 describe("Origin eligibility", () => {
   it("allows HTTPS sites and local development origins, and blocks privileged/auth origins", () => {
@@ -181,5 +182,68 @@ describe("DOM form detection and autofill", () => {
     expect(isLikelyLoginSubmitTrigger(doc.getElementById("submit-explicit")!, form)).toBe(true);
     expect(isLikelyLoginSubmitTrigger(doc.getElementById("cookie")!, null)).toBe(false);
     expect(isLikelyLoginSubmitTrigger(doc.getElementById("spa-login")!, null)).toBe(true);
+  });
+
+  it("refuses popup fill messages when page origin mismatches expectedOrigin or frame is not top", () => {
+    const dom = new JSDOM(
+      `<!doctype html><form><input id="u" autocomplete="username" /><input id="p" type="password" /></form>`,
+      { url: "https://attacker.example/login" }
+    );
+    const doc = dom.window.document;
+    const u = doc.getElementById("u") as HTMLInputElement;
+    const p = doc.getElementById("p") as HTMLInputElement;
+
+    const mismatched = handleContentFillMessage(
+      {
+        type: "fill-credentials",
+        expectedOrigin: "https://github.com",
+        username: "alice",
+        password: "secret"
+      },
+      doc,
+      dom.window
+    );
+    expect(mismatched).toEqual({ ok: false, error: "ORIGIN_MISMATCH" });
+    expect(u.value).toBe("");
+    expect(p.value).toBe("");
+
+    const missingOrigin = handleContentFillMessage(
+      {
+        type: "fill-credentials",
+        username: "alice",
+        password: "secret"
+      },
+      doc,
+      dom.window
+    );
+    expect(missingOrigin).toEqual({ ok: false, error: "ORIGIN_MISMATCH" });
+    expect(p.value).toBe("");
+
+    const subframe = handleContentFillMessage(
+      {
+        type: "fill-credentials",
+        expectedOrigin: "https://attacker.example",
+        username: "alice",
+        password: "secret"
+      },
+      doc,
+      { top: {}, location: dom.window.location }
+    );
+    expect(subframe).toEqual({ ok: false, error: "ORIGIN_MISMATCH" });
+    expect(p.value).toBe("");
+
+    const matched = handleContentFillMessage(
+      {
+        type: "fill-credentials",
+        expectedOrigin: "https://attacker.example",
+        username: "alice",
+        password: "secret"
+      },
+      doc,
+      dom.window
+    );
+    expect(matched?.ok).toBe(true);
+    expect(u.value).toBe("alice");
+    expect(p.value).toBe("secret");
   });
 });

@@ -364,6 +364,25 @@ describe("Service worker security boundaries and save-banner workflow", () => {
         { id: EXT_ID }
       )
     ).rejects.toThrow("No login form found on this page.");
+    expect(sendToTabSpy).toHaveBeenLastCalledWith(
+      7,
+      expect.objectContaining({
+        type: "fill-credentials",
+        expectedOrigin: "https://github.com"
+      })
+    );
+
+    // Rejects fill if the page navigated to a different origin before delivery
+    sendToTabSpy.mockResolvedValueOnce({
+      ok: false,
+      error: "ORIGIN_MISMATCH"
+    });
+    await expect(
+      handleMessage(
+        { type: "fill-active-tab", objectIdHex: GITHUB_ITEM.objectIdHex },
+        { id: EXT_ID }
+      )
+    ).rejects.toThrow("Page origin changed before autofill completed. Try again.");
 
     // save-settings reschedules active auto-lock alarm and clamps > 30 min to default 30
     const saved = await handleMessage(

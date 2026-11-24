@@ -137,7 +137,7 @@ function createDefaultDeps(): ServiceWorkerDeps {
       }
     },
     sendToTab: async (tabId, message) => {
-      return chrome.tabs.sendMessage(tabId, message);
+      return chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
     },
     queryActiveTab: async () => {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -716,14 +716,17 @@ export async function handleMessage(
       ) {
         throw new Error("CROSS_DOMAIN_CONFIRM_REQUIRED");
       }
+      const expectedOrigin = new URL(tab.url).origin;
       const response = (await deps.sendToTab(tab.id, {
         type: "fill-credentials",
+        expectedOrigin,
         username: decrypted.username,
         password: decrypted.password,
         totp: decrypted.totp?.code ?? ""
       })) as
         | {
             ok?: boolean;
+            error?: string;
             result?: {
               filledUsername?: boolean;
               filledPassword?: boolean;
@@ -731,6 +734,9 @@ export async function handleMessage(
             };
           }
         | undefined;
+      if (response?.error === "ORIGIN_MISMATCH") {
+        throw new Error("Page origin changed before autofill completed. Try again.");
+      }
       const filledAny = Boolean(
         response?.ok &&
           (response.result?.filledUsername ||
@@ -757,10 +763,15 @@ export async function handleMessage(
       const password =
         typeof message.password === "string" ? message.password : "";
       if (!password) throw new Error("Password is required.");
+      const expectedOrigin = new URL(tab.url).origin;
       const response = (await deps.sendToTab(tab.id, {
         type: "fill-generated-password",
+        expectedOrigin,
         password
-      })) as { ok?: boolean; result?: { filledCount?: number } } | undefined;
+      })) as { ok?: boolean; error?: string; result?: { filledCount?: number } } | undefined;
+      if (response?.error === "ORIGIN_MISMATCH") {
+        throw new Error("Page origin changed before password fill completed. Try again.");
+      }
       if (!response?.ok || !(response.result?.filledCount && response.result.filledCount > 0)) {
         throw new Error("No password field found on this page.");
       }
