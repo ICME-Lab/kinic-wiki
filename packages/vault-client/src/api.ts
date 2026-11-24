@@ -169,10 +169,13 @@ export class VaultClient {
       /* All later opens must still pass live authorization. */
     }
   }
-  private context(h: Header): VaultContext {
+  private context(
+    h: Header,
+    owner = this.access?.owner ?? this.identity.getPrincipal(),
+  ): VaultContext {
     return copyVaultContext({
       canister: this.canister,
-      owner: (this.access?.owner ?? this.identity.getPrincipal()).toText(),
+      owner: owner.toText(),
       vault: bytes(h.id),
       nonce: bytes(h.nonce),
       key_name: h.key_name,
@@ -448,7 +451,7 @@ export class VaultClient {
       const epoch = await this.deviceKeys.epoch();
       if (epoch === undefined) return false;
       const binding = JSON.stringify([
-        Array.from(contextInput(this.context(header))),
+        Array.from(contextInput(this.context(header, this.identity.getPrincipal()))),
         Array.from(bytes(header.public_key)),
         "root/v3",
       ]);
