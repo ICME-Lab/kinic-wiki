@@ -386,9 +386,12 @@ try {
                 exact: true,
               }),
             ).toBeVisible();
-            if (provider !== "Internet Identity")
+            if (provider !== "Internet Identity") {
               await button(page, "Connect " + provider).click();
+              await expect(button(page, "Disconnect " + provider)).toBeVisible();
+            }
             for (let i = 0; i < 2; i++) {
+              await expect(button(page, "Review payment")).toBeEnabled();
               const before = { ...counts };
               await button(page, "Review payment").click();
               const pay = button(page, "Pay 1 KINIC");
