@@ -347,6 +347,7 @@ function Workspace({ client }: { client: VaultClient }) {
       select(h);
     } else if (selectionChanged) client.session.lock();
     else if (listed) select(listed);
+    return list;
   }, [client, select]);
   const refreshOwnerUploads = useCallback(async () => {
     const ticket = client.session.capture();
@@ -420,13 +421,22 @@ function Workspace({ client }: { client: VaultClient }) {
     if (!alive.current || request !== configurationRequest.current) return;
     setAccountReady(true);
   }, [client, refreshBalance]);
+  // On load, reopen the first owned Vault whose key is saved in this browser.
+  const [restoreTargets, setRestoreTargets] = useState<Header[]>();
   useEffect(() => {
     const ticket = client.session.capture();
-    void refreshOwnerWorkspace().catch((cause) => {
-      if (alive.current && ticket === client.session.capture())
-        setError(vaultError(cause));
-    });
-  }, [client, refreshOwnerWorkspace]);
+    void Promise.all([refreshLists(), refreshOwnerUploads()])
+      .then(([list]) => {
+        if (!list || !alive.current || ticket !== client.session.capture()) return;
+        if (workspaceRef.current.selection.kind !== "none") return;
+        const owned = list.filter(({ header, role }) => "Owner" in role && "Active" in header.state);
+        if (owned.length) setRestoreTargets(owned.map(({ header }) => header));
+      })
+      .catch((cause) => {
+        if (alive.current && ticket === client.session.capture())
+          setError(vaultError(cause));
+      });
+  }, [client, refreshLists, refreshOwnerUploads]);
   useEffect(() => {
     const ticket = client.session.capture();
     const refresh = refreshConfiguration();
@@ -451,13 +461,14 @@ function Workspace({ client }: { client: VaultClient }) {
       window.removeEventListener("focus", revalidate);
     };
   }, [client, generation, opened, role]);
-  const open = async (header: Header, owner: boolean) => {
+  const open = async (header: Header, owner: boolean, restore = false) => {
     if (!("Active" in header.state)) {
       client.session.lock();
       select(header, "selected", owner);
       return;
     }
     const pending = owner ? client.open(header, {
+      allowDerive: !restore,
       beforeDerive: async (currentHeader) => {
         const ticket = client.session.capture();
         const cost = ok(await client.actor.vault_key_cost([currentHeader.key_name]));
@@ -496,6 +507,29 @@ function Workspace({ client }: { client: VaultClient }) {
       throw cause;
     }
   };
+  useEffect(() => {
+    if (!restoreTargets) return;
+    setRestoreTargets(undefined);
+    const targets = restoreTargets;
+    const ticket = client.session.capture();
+    const idle = () =>
+      alive.current &&
+      ticket === client.session.capture() &&
+      !busyRef.current &&
+      workspaceRef.current.selection.kind === "none";
+    // Only a key saved on this device is reused; never derive (and charge) here.
+    void (async () => {
+      for (const target of targets) {
+        if (!idle()) return;
+        if (await client.hasSavedKey(target)) {
+          if (idle()) run(() => open(target, true, true));
+          return;
+        }
+      }
+    })();
+    // open and run read current refs; only new restore targets start work.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, restoreTargets]);
   const createVault = () =>
     run(async () => {
       updateWorkspace((state) => ({ ...state, creation: "unresolved" }));

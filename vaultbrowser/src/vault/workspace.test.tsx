@@ -18,6 +18,8 @@ vi.mock("../../../packages/vault-crypto/src/context.ts", async (load) => ({
     typeof import("../../../packages/vault-crypto/src/context.ts")
   >()),
   verifiedRoot: async () => importKey(new Uint8Array(32).fill(8)),
+  // Fixture public keys are synthetic; only saved-key reuse checks them.
+  validateRootHeader: () => {},
 }));
 vi.mock("../config", () => ({
   loadConfig: async () => ({ fundingMode: "disabled" }),
@@ -2287,4 +2289,38 @@ it("offers inline funding when an Available snapshot has insufficient latest bal
   await screen.findByLabelText("Prepaid balance: 15,000,000 cycles");
   expect(screen.getByRole("button", {name:"Create Vault"})).toHaveProperty("disabled", true);
   expect(within(screen.getByRole("region", {name:"Choose a Vault"})).getByLabelText("KINIC amount")).toBeTruthy();
+});
+function memoryDeviceKeys() {
+  const keys = new Map<string, CryptoKey>();
+  return {
+    epoch: async () => 0,
+    get: async (binding: string) => keys.get(binding),
+    put: async (binding: string, key: CryptoKey) => { keys.set(binding, key); return true; },
+    forget: async () => keys.clear(),
+    removeVault: async () => {},
+    rollback: async () => {},
+    subscribe: () => () => {},
+  };
+}
+it("reopens the first owned Vault whose key is saved on this device", async () => {
+  const identity = Ed25519KeyIdentity.generate();
+  const network = fixtureNetwork(identity.getPrincipal(), Ed25519KeyIdentity.generate().getPrincipal());
+  const deviceKeys = memoryDeviceKeys();
+  const derive = vi.spyOn(network.actor, "derive_vault_key");
+  const create = () => new VaultClient({ actor: network.actor, identity, canister: "rrkah-fqaaa-aaaaa-aaaaq-cai", local: true, deviceKeys });
+  const first = create();
+  const view = render(workspace(first));
+  await screen.findByText("Vault 1");
+  expect(screen.queryByLabelText("Document title")).toBeNull();
+  expect(derive).not.toHaveBeenCalled();
+  clickAndDiscard(screen.getByText("Vault 2"));
+  await screen.findByLabelText("Document title");
+  expect(derive).toHaveBeenCalledTimes(1);
+  view.unmount();
+  first.destroy();
+  render(workspace(create()));
+  await screen.findByLabelText("Document title");
+  expect(screen.getByText("Vault 1").closest("button")?.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByText("Vault 2").closest("button")?.getAttribute("aria-pressed")).toBe("true");
+  expect(derive).toHaveBeenCalledTimes(1);
 });

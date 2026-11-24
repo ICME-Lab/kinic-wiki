@@ -440,6 +440,23 @@ export class VaultClient {
     }
     this.selectedOwnerVault = bytes(header.id);
   }
+  /** Whether this browser holds a saved root for the listed owner header. Never locks or derives. */
+  async hasSavedKey(header: Header): Promise<boolean> {
+    this.checkLive();
+    if (!("Active" in header.state)) return false;
+    try {
+      const epoch = await this.deviceKeys.epoch();
+      if (epoch === undefined) return false;
+      const binding = JSON.stringify([
+        Array.from(contextInput(this.context(header))),
+        Array.from(bytes(header.public_key)),
+        "root/v3",
+      ]);
+      return !!(await this.deviceKeys.get(binding, epoch));
+    } catch {
+      return false;
+    }
+  }
   async open(header: Header, options: OpenOptions = {}): Promise<void> {
     this.selectOwnedVault(header);
     const t = this.session.capture();
