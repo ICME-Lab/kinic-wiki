@@ -2,7 +2,7 @@
 set -euo pipefail
 TASK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$TASK_ROOT"
-if [[ -n "${VAULT_LOCAL_ORIGIN:-}${VAULT_LOCAL_HOST:-}${VAULT_LOCAL_II:-}${VAULT_LOCAL_WIKI_ORIGIN:-}" && "${ICP_ENVIRONMENT:-}" != "local-vault" ]]; then
+if [[ -n "${VAULT_LOCAL_ORIGIN:-}${VAULT_LOCAL_HOST:-}${VAULT_LOCAL_II:-}${VAULT_LOCAL_WIKI_ORIGIN:-}${VAULT_LOCAL_NATIVE_CALLBACK:-}" && "${ICP_ENVIRONMENT:-}" != "local-vault" ]]; then
   echo 'Local Vault origins require ICP_ENVIRONMENT=local-vault' >&2
   exit 1
 fi
