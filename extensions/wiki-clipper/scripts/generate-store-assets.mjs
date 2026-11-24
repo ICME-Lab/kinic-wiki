@@ -14,6 +14,7 @@ await mkdir(resolve(root, "store-listing/screenshots"), { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,
+  args: ["--disable-gpu", "--disable-dev-shm-usage"],
   ...(process.env.CHROME_EXECUTABLE_PATH ? { executablePath: process.env.CHROME_EXECUTABLE_PATH } : {})
 });
 try {
