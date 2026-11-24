@@ -31,6 +31,7 @@ struct AppConfiguration: Equatable, Sendable {
     let callbackDomain: String
     let appGroupId: String?
     let keychainAccessGroup: String?
+    let vaultKeychainAccessGroup: String?
     let iapProductIds: [String]
     let askAIURL: URL
     let deploymentEnvironment: AppDeploymentEnvironment
@@ -46,6 +47,7 @@ struct AppConfiguration: Equatable, Sendable {
         callbackDomain: String,
         appGroupId: String?,
         keychainAccessGroup: String?,
+        vaultKeychainAccessGroup: String? = nil,
         iapProductIds: [String],
         askAIURL: URL,
         deploymentEnvironment: AppDeploymentEnvironment,
@@ -60,6 +62,7 @@ struct AppConfiguration: Equatable, Sendable {
         self.callbackDomain = callbackDomain
         self.appGroupId = appGroupId
         self.keychainAccessGroup = keychainAccessGroup
+        self.vaultKeychainAccessGroup = vaultKeychainAccessGroup
         self.iapProductIds = iapProductIds
         self.askAIURL = askAIURL
         self.deploymentEnvironment = deploymentEnvironment
@@ -140,6 +143,7 @@ struct AppConfiguration: Equatable, Sendable {
             callbackDomain: bundle.requiredString("KINIC_CALLBACK_DOMAIN"),
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
             keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
+            vaultKeychainAccessGroup: bundle.optionalString("KINIC_VAULT_KEYCHAIN_ACCESS_GROUP"),
             iapProductIds: Self.iapProductIds(from: bundle.optionalString("KINIC_IAP_PRODUCT_IDS")),
             askAIURL: bundle.requiredURL("KINIC_ASK_AI_URL"),
             deploymentEnvironment: Self.deploymentEnvironment(

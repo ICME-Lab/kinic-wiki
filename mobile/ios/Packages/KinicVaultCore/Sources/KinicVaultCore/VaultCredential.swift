@@ -120,15 +120,41 @@ public enum VaultCredentialCodec {
         return result
     }
 
+    private static let nonMatchableParentDomains: Set<String> = [
+        // Common multi-label public suffixes
+        "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp",
+        "co.uk", "org.uk", "ac.uk", "gov.uk",
+        "com.au", "net.au", "org.au",
+        "com.br", "com.cn", "com.hk", "com.sg", "com.tw",
+        "co.kr", "co.in", "co.nz", "co.za",
+        // Shared multi-tenant hosting & IC canister domains
+        "github.io", "gitlab.io", "pages.dev", "workers.dev",
+        "vercel.app", "netlify.app", "herokuapp.com", "appspot.com",
+        "web.app", "firebaseapp.com", "cloudfront.net",
+        "amazonaws.com", "s3.amazonaws.com", "azurewebsites.net",
+        "icp0.io", "ic0.app", "raw.icp0.io",
+    ]
+
+    private static func isIpOrLocalhost(_ host: String) -> Bool {
+        if host == "localhost" { return true }
+        if host.hasPrefix("[") && host.hasSuffix("]") { return true }
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { !$0.isEmpty && $0.count <= 3 && $0.allSatisfy(\.isNumber) }
+    }
+
+    private static func canMatchAsParentDomain(_ domain: String) -> Bool {
+        guard domain.contains("."), !isIpOrLocalhost(domain) else { return false }
+        return !nonMatchableParentDomains.contains(domain)
+    }
+
     public static func matchesDomain(domains: [String]?, queryHost: String) -> Bool {
         guard let target = normalizeDomain(queryHost), let domains, !domains.isEmpty else {
             return false
         }
         return domains.contains { raw in
-            let domain = raw.lowercased()
-            return domain == target
-                || target.hasSuffix(".\(domain)")
-                || domain.hasSuffix(".\(target)")
+            guard let domain = normalizeDomain(raw) else { return false }
+            if domain == target { return true }
+            return canMatchAsParentDomain(domain) && target.hasSuffix(".\(domain)")
         }
     }
 

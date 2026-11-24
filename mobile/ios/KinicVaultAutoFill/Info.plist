@@ -6,8 +6,8 @@
 	<string>Unlock your saved passwords with Face ID.</string>
 	<key>APP_GROUP_ID</key>
 	<string>$(APP_GROUP_ID)</string>
-	<key>KINIC_KEYCHAIN_ACCESS_GROUP</key>
-	<string>$(KINIC_KEYCHAIN_ACCESS_GROUP)</string>
+	<key>KINIC_VAULT_KEYCHAIN_ACCESS_GROUP</key>
+	<string>$(KINIC_VAULT_KEYCHAIN_ACCESS_GROUP)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

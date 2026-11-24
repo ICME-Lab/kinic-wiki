@@ -1,11 +1,19 @@
 import CryptoKit
 import Foundation
 import KinicVaultCore
+import LocalAuthentication
 
 @MainActor public protocol VaultRootKeyStoring {
     func save(_ key: SymmetricKey, context: VaultContext) throws
     func load(context: VaultContext) throws -> SymmetricKey
+    func load(context: VaultContext, authenticationContext: LAContext?) throws -> SymmetricKey
     func clear() throws
+}
+
+public extension VaultRootKeyStoring {
+    func load(context: VaultContext, authenticationContext: LAContext?) throws -> SymmetricKey {
+        try load(context: context)
+    }
 }
 @MainActor public protocol VaultIdentityRegistering {
     var isEnabled: Bool { get async }
@@ -43,9 +51,9 @@ public struct VaultAutoFillSyncPayload: Sendable {
         (try? snapshotStore.load())?.context.vault
     }
 
-    public func loadOfflineSnapshot() throws -> (VaultAutoFillSnapshot, SymmetricKey)? {
+    public func loadOfflineSnapshot(authenticationContext: LAContext? = nil) throws -> (VaultAutoFillSnapshot, SymmetricKey)? {
         guard let snapshot = try snapshotStore.load() else { return nil }
-        let key = try keys.load(context: snapshot.context)
+        let key = try keys.load(context: snapshot.context, authenticationContext: authenticationContext)
         return (snapshot, key)
     }
 

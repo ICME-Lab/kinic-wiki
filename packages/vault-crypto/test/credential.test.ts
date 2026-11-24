@@ -45,6 +45,21 @@ describe("credential schema and domain helpers", () => {
     expect(matchesDomain(domains, "https://api.github.com/v1")).toBe(true);
     expect(matchesDomain(domains, "https://github.com")).toBe(true);
     expect(matchesDomain(domains, "https://notgithub.com")).toBe(false);
+    // Stored subdomain must not match its parent domain or sibling subdomains.
+    expect(matchesDomain(["accounts.example.com"], "https://example.com")).toBe(
+      false,
+    );
+    expect(
+      matchesDomain(["accounts.example.com"], "https://mail.example.com"),
+    ).toBe(false);
+    expect(
+      matchesDomain(["accounts.example.com"], "https://accounts.example.com"),
+    ).toBe(true);
+    // Public suffixes and shared multi-tenant hosts must not act as wildcard parents.
+    expect(matchesDomain(["co.uk"], "https://bank.co.uk")).toBe(false);
+    expect(matchesDomain(["github.io"], "https://victim.github.io")).toBe(false);
+    expect(matchesDomain(["icp0.io"], "https://canister.icp0.io")).toBe(false);
+    expect(matchesDomain(["127.0.0.1"], "https://127.0.0.1")).toBe(true);
   });
 
   it("round-trips legacy and extended credential payloads", () => {
