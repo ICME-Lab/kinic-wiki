@@ -116,7 +116,10 @@ try {
     if (path === "/.well-known/ii-alternative-origins")
       assert.deepEqual(
         JSON.parse(new TextDecoder().decode(response.body)).alternativeOrigins,
-        ["https://vault.kinic.xyz"],
+        [
+          "https://vault.kinic.xyz",
+          "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj",
+        ],
       );
     const body = new Uint8Array(response.body);
     body[0] ^= 1;
