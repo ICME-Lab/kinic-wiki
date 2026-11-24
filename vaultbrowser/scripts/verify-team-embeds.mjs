@@ -390,6 +390,7 @@ try {
       await new Promise((resolve, reject) => {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted"));
       });
     }
     db.close();
@@ -397,6 +398,9 @@ try {
   await owner.page.reload();
   // Reload preserves /vault-settings but drops its in-memory Vault selection.
   await action(owner.page, "Back to Vault");
+  // Wait for the initial saved-key restore probe to finish before measuring
+  // reads during member removal.
+  await owner.page.waitForFunction(() => window.ownerKeyCacheReads >= 1);
   await manageMembers(owner.page);
   await expect(owner.page.getByLabel("Document title")).toHaveCount(0);
   const readsBeforeRemove = await owner.page.evaluate(() => window.ownerKeyCacheReads);
