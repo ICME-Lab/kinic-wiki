@@ -7,10 +7,19 @@ import { createWalletSessionManager } from "@kinic/payments/wallet-session";
 import { createRecoveryStore } from "@kinic/payments/recovery-store";
 import type { VaultClient } from "@kinic/vault-client";
 import type { Payment, PurchaseRequest } from "@kinic/vault-candid";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { Funding } from "./funding";
 import { VaultFundingProvider, useVaultFundingSession } from "./funding/session";
 import { encodeVaultRecoveryContext, vaultFundingScopes } from "./funding/adapter";
+import { IDL } from "@icp-sdk/core/candid";
+import { idlFactory as vaultIdl } from "@kinic/vault-candid";
+import type { OisySigner, OpenSigner } from "@kinic/payments/wallet-types";
+
+// The OISY signer returns a certified ingress reply; this test answers with the mocked canisters' reply.
+const signed = vi.hoisted(() => ({reply: undefined as undefined | ((params:{method:string;arg:string}) => Promise<Uint8Array>)}));
+vi.mock("../../packages/payments/src/transports/certified-reply.ts", () => ({
+  certifiedReply: (_host:string, params:{method:string;arg:string}) => signed.reply!(params),
+}));
 
 const identity = Ed25519KeyIdentity.generate(), owner = identity.getPrincipal();
 const ledger = Principal.fromUint8Array(Uint8Array.of(5,1));
@@ -28,7 +37,9 @@ const payment: Payment = {...quoted(),status:{Unknown:null},uncertain:true};
 let saved: Payment[];
 let allowance: bigint, generation: number, funds: bigint;
 const actor = {list_payments:vi.fn(),payment_status:vi.fn(),quote_purchase:vi.fn(),pay_purchase:vi.fn(),cancel_quote:vi.fn(),
-  reconcile_purchase:vi.fn(), account_balance:vi.fn(), get_funding_config:vi.fn(), icrc2_approve:vi.fn(),
+  reconcile_purchase:vi.fn(), account_balance:vi.fn(),
+  beneficiary_payments:vi.fn(), beneficiary_payment_status:vi.fn(), beneficiary_pay_purchase:vi.fn(),
+  beneficiary_cancel_quote:vi.fn(), beneficiary_reconcile_purchase:vi.fn(), get_funding_config:vi.fn(), icrc2_approve:vi.fn(),
   icrc1_decimals:async()=>8,icrc1_fee:async()=>10n,icrc1_balance_of:async()=>funds,
   icrc2_allowance:async()=>({allowance,expires_at:[]})};
 const manager = () => createWalletSessionManager({origin:location.origin,host:config.host,signerUrl:location.origin + "/sign",identity});
@@ -66,6 +77,15 @@ beforeEach(()=>{
   actor.pay_purchase.mockImplementation(async()=>{saved[0].status={Paid:8n};return {Ok:saved[0]};});
   actor.cancel_quote.mockImplementation(async()=>{saved[0].status={Expired:null};return {Ok:saved[0]};});
   actor.account_balance.mockResolvedValue({Ok:1_000_000_000n});
+  // The signed-in beneficiary reads and submits payer-signed quotes; reuse the
+  // payer-side mocks so each test still counts one logical operation.
+  const mine = (payer:Principal) => (result:{Ok:Payment[]}) =>
+    ({Ok:result.Ok.filter(p=>p.wallet.toText()===payer.toText() && p.request.beneficiary.toText()===owner.toText())});
+  actor.beneficiary_payments.mockImplementation(async(payer:Principal)=>mine(payer)(await actor.list_payments()));
+  actor.beneficiary_payment_status.mockImplementation(async(payer:Principal,id:Uint8Array)=>mine(payer)(await actor.payment_status(id)));
+  actor.beneficiary_pay_purchase.mockImplementation(async(_payer:Principal,id:Uint8Array)=>actor.pay_purchase(id));
+  actor.beneficiary_cancel_quote.mockImplementation(async(_payer:Principal,id:Uint8Array)=>actor.cancel_quote(id));
+  actor.beneficiary_reconcile_purchase.mockImplementation(async(_payer:Principal,id:Uint8Array)=>actor.reconcile_purchase(id));
   wallet=manager();
 });
 afterEach(()=>{cleanup();wallet.destroy();vi.restoreAllMocks();});
@@ -428,4 +448,82 @@ it("opens the SDK local signer at the verified replica gateway", async () => {
   fireEvent.click(screen.getByRole("button",{name:"Connect test signer"}));
   await waitFor(()=>expect(open).toHaveBeenCalledWith(new URL("/sign",config.host).href,
     "relyingPartyWindow",expect.any(String)));
+});
+
+describe("OISY tab", () => {
+  const payer = Principal.fromUint8Array(Uint8Array.of(9,1));
+  let opened: Parameters<OpenSigner>[0][];
+  let closed: Mock<() => void>;
+  const approveArgs = IDL.Record({spender:IDL.Record({owner:IDL.Principal,subaccount:IDL.Opt(IDL.Vec(IDL.Nat8))}),
+    from_subaccount:IDL.Opt(IDL.Vec(IDL.Nat8)),amount:IDL.Nat,expected_allowance:IDL.Opt(IDL.Nat),fee:IDL.Opt(IDL.Nat),
+    memo:IDL.Opt(IDL.Vec(IDL.Nat8)),created_at_time:IDL.Opt(IDL.Nat64),expires_at:IDL.Opt(IDL.Nat64)});
+  beforeEach(() => {
+    opened = []; closed = vi.fn();
+    wallet.destroy();
+    wallet = createWalletSessionManager({origin:location.origin,host:config.host,signerUrl:location.origin + "/sign",identity,
+      oisy:{closeWhenIdle:true,windowOptions:""},transports:{openSigner:async options => {
+        opened.push(options);
+        const granted = ["icrc27_accounts","icrc49_call_canister"].map(method => ({scope:{method},state:"granted"}));
+        return {permissions:async () => granted, requestPermissions:async () => granted, accounts:async () => [{owner:payer.toText()}],
+          callCanister:async () => ({certificate:"",contentMap:""}),
+          disconnect:async () => { closed(); options.onDisconnect?.(); }} as unknown as OisySigner;
+      }}});
+    actor.quote_purchase.mockImplementation(async(req:PurchaseRequest)=>{saved=[{...quoted(req),wallet:payer}];return {Ok:saved[0]};});
+    signed.reply = async ({method,arg}) => {
+      const bytes = Uint8Array.from(Buffer.from(arg,"base64"));
+      if (method === "icrc2_approve") {
+        const [args] = IDL.decode([approveArgs],bytes) as unknown as [{amount:bigint}];
+        const result = await actor.icrc2_approve(args) as {Ok:bigint};
+        return IDL.encode([IDL.Variant({Ok:IDL.Nat})],[result]);
+      }
+      const fn = vaultIdl({IDL})._fields.find(([name]) => name === method)![1];
+      const call = actor[method as "quote_purchase"] as (...args: unknown[]) => Promise<unknown>;
+      return IDL.encode(fn.retTypes,[await call(...IDL.decode(fn.argTypes,bytes))]);
+    };
+  });
+  afterEach(() => { signed.reply = undefined; });
+  async function connectOisy() {
+    mount();
+    fireEvent.click(await screen.findByRole("radio",{name:"OISY"}));
+    await click("Connect OISY");
+    // The account is known, so the connection tab closes instead of staying open.
+    await waitFor(()=>expect(closed).toHaveBeenCalledTimes(1));
+    expect(opened.map(options => options.windowOptions)).toEqual([""]);
+  }
+  it("opens a tab in the Review and Pay clicks and closes it after each signature", async()=>{
+    await connectOisy();
+    await click("Review payment");
+    expect(opened).toHaveLength(2); // opened in the click, before any await
+    await button("Pay 1 KINIC");
+    await waitFor(()=>expect(closed).toHaveBeenCalledTimes(2));
+    await click("Pay 1 KINIC");
+    expect(opened).toHaveLength(3);
+    expect(await screen.findByText("Payment complete")).toBeTruthy();
+    await waitFor(()=>expect(closed).toHaveBeenCalledTimes(3));
+    expect(actor.quote_purchase).toHaveBeenCalledOnce();
+    expect(actor.icrc2_approve).toHaveBeenCalledOnce();
+    // The signed-in beneficiary submits the purchase; OISY never signs it.
+    expect(actor.beneficiary_pay_purchase).toHaveBeenCalledOnce();
+    expect(actor.beneficiary_pay_purchase.mock.calls[0][0].toText()).toBe(payer.toText());
+    expect(opened).toHaveLength(3);
+  });
+  it("scans the ledger without opening OISY", async()=>{
+    saved=[{...payment,wallet:payer}];
+    actor.reconcile_purchase.mockResolvedValue({Ok:{payment:saved[0],next:1n,end:2n,scanned:1n,can_continue:false}});
+    await connectOisy();
+    await click("Scan ledger for this payment");
+    await screen.findByText("Ledger scan: next 1 of 2.");
+    expect(actor.beneficiary_reconcile_purchase).toHaveBeenCalledOnce();
+    expect(opened).toHaveLength(1);
+  });
+  it("cancels an unpaid quote without opening OISY", async()=>{
+    const unpaid=quoted();unpaid.created_at_time-=301_000_000_000n;saved=[{...unpaid,wallet:payer}];
+    await connectOisy();
+    await click("Check payment status");
+    expect(await screen.findByText(/quote has expired/)).toBeTruthy();
+    await click("Cancel unpaid payment");
+    expect(await screen.findByText(/existing ledger allowance remains active/)).toBeTruthy();
+    expect(actor.beneficiary_cancel_quote).toHaveBeenCalledOnce();
+    expect(opened).toHaveLength(1);
+  });
 });

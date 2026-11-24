@@ -375,15 +375,43 @@ try {
       derived++;
   };
   owner.page.on("request", observeOwner);
+  // Clear saved browser keys so reload exercises a cold closed Vault rather
+  // than PR #206's automatic reopen from a saved device key.
+  await owner.page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open("kinic-vault-device-keys-v1");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const names = Array.from(db.objectStoreNames);
+    if (names.length) {
+      const tx = db.transaction(names, "readwrite");
+      for (const name of names) tx.objectStore(name).clear();
+      await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted"));
+      });
+    }
+    db.close();
+  });
   await owner.page.reload();
   // Reload preserves /vault-settings but drops its in-memory Vault selection.
   await action(owner.page, "Back to Vault");
+  // Wait for the initial saved-key restore probe to finish before measuring
+  // reads during member removal.
+  await owner.page.waitForFunction(() => window.ownerKeyCacheReads >= 1);
   await manageMembers(owner.page);
   await expect(owner.page.getByLabel("Document title")).toHaveCount(0);
+  const readsBeforeRemove = await owner.page.evaluate(() => window.ownerKeyCacheReads);
   await row.getByRole("button", { name: "Remove member" }).click();
   await expect(row).toHaveCount(0);
   assert.equal(derived, 0);
-  assert.equal(await owner.page.evaluate(() => window.ownerKeyCacheReads), 0, "member removal must not fetch even a saved root");
+  assert.equal(
+    (await owner.page.evaluate(() => window.ownerKeyCacheReads)) - readsBeforeRemove,
+    0,
+    "member removal must not fetch even a saved root",
+  );
   owner.page.off("request", observeOwner);
   console.log(
     "PASS cold owner removed an Editor from a closed Vault without any key derivation",

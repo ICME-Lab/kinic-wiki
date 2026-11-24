@@ -502,7 +502,20 @@ async fn scan_ledger(p: &Payment) -> Result<ScanBatch> {
 }
 #[ic_cdk::update]
 async fn reconcile_purchase(operation: Vec<u8>) -> Result<ReconciliationProgress> {
-    let p = begin_scan(ic_cdk::api::msg_caller(), &operation, crate::now_nanos())?;
+    reconcile_as(ic_cdk::api::msg_caller(), operation).await
+}
+/// The beneficiary checks ledger history for its payer's operation. A scan never
+/// sends a transfer; it only credits a transfer the ledger already recorded.
+#[ic_cdk::update]
+async fn beneficiary_reconcile_purchase(
+    wallet: Principal,
+    operation: Vec<u8>,
+) -> Result<ReconciliationProgress> {
+    super::api::require_beneficiary(wallet, &operation, ic_cdk::api::msg_caller())?;
+    reconcile_as(wallet, operation).await
+}
+async fn reconcile_as(wallet: Principal, operation: Vec<u8>) -> Result<ReconciliationProgress> {
+    let p = begin_scan(wallet, &operation, crate::now_nanos())?;
     if matches!(p.status, Status::Paid(_) | Status::Quoted) {
         return Ok(progress(p, 0, false));
     }
