@@ -55,10 +55,24 @@ struct VaultAutoFillSettingsSection: View {
                     .disabled(model.busy || model.selectedVault == nil)
                 }
 
-                Button("Disable AutoFill and sign out", role: .destructive) {
-                    model.signOut()
+                if model.hasOfflineSnapshot {
+                    let activeVaultName = model.vaults.first(where: { $0.id == model.selectedVault })?.name
+                    HStack {
+                        Label("Offline AutoFill Vault", systemImage: "checkmark.shield")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(activeVaultName ?? "Synced")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.footnote)
                 }
-                .disabled(model.busy)
+
+                if model.principal != nil || model.hasOfflineSnapshot {
+                    Button("Disable AutoFill and sign out", role: .destructive) {
+                        model.signOut()
+                    }
+                    .disabled(model.busy)
+                }
 
                 if model.busy {
                     ProgressView("Updating Vault")
