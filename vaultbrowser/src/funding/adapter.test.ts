@@ -72,11 +72,6 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
           reply = state.payment;
           break;
         }
-        case "cancel_quote": state.payment!.status = { Expired: null }; reply = state.payment; break;
-        case "reconcile_purchase":
-          state.scan++;
-          reply = { payment: state.payment, next: state.scan, end: 2n, scanned: 1n, can_continue: state.scan < 2n };
-          break;
         default: throw Error("unexpected method");
       }
       return IDL.encode(fn.retTypes, [{Ok: reply}]);
@@ -124,6 +119,20 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
         state.payment!.status = state.rejectPay ? { Rejected: null } : { Paid: 351n };
         if (state.lostPay) throw Error("lost payment");
         return state.payment!;
+      })),
+    beneficiary_cancel_quote: vi.fn((payer: Principal, operation: Uint8Array | number[]) =>
+      read("beneficiary_cancel_quote", () => {
+        expect(visible(payer)).toBe(true);
+        expect(operation).toEqual(state.payment!.request.operation);
+        state.payment!.status = { Expired: null };
+        return state.payment!;
+      })),
+    beneficiary_reconcile_purchase: vi.fn((payer: Principal, operation: Uint8Array | number[]) =>
+      read("beneficiary_reconcile_purchase", () => {
+        expect(visible(payer)).toBe(true);
+        expect(operation).toEqual(state.payment!.request.operation);
+        state.scan++;
+        return { payment: state.payment!, next: state.scan, end: 2n, scanned: 1n, can_continue: state.scan < 2n };
       })),
   };
   const ownerClient = {
@@ -285,6 +294,10 @@ it.each(["Unknown", "InFlight"] as const)("adopts a server %s operation into a f
   const record = f.store.list(f.adapter.scope)[0];
   expect((await f.adapter.scan(record)).next).toBe(1n);
   expect((await createVaultPaymentAdapter(f.options).scan(record)).next).toBe(2n);
+  // Ledger scans run in the beneficiary session; the payer only signed the quote.
+  expect(f.calls.filter(x => x.owner === wallet.toText()).map(x => x.method)).toEqual(["quote_purchase"]);
+  expect(f.calls.filter(x => x.method === "beneficiary_reconcile_purchase")).toHaveLength(2);
+  expect(f.adapter.capabilities.silentCheck).toBe(true);
   expect(f.approvals).toHaveLength(0);
   expect(f.calls.filter(x=>x.method==="beneficiary_pay_purchase")).toHaveLength(0);
   c.destroy();
@@ -484,4 +497,15 @@ it("preserves a modified partial request if a refusal arrives for its predecesso
   expect(f.calls.filter(x => x.method === "quote_purchase")).toHaveLength(1);
   expect(f.approvals).toEqual([]);
   c.destroy();
+});
+
+it("cancels an external payer's unpaid quote in the beneficiary session", async () => {
+  const f = fixture("oisy");
+  const prepared = await f.adapter.prepare(amount);
+  await f.adapter.cancel!(prepared);
+  expect(f.state.payment!.status).toEqual({Expired: null});
+  expect(f.calls.filter(x => x.method === "beneficiary_cancel_quote")).toEqual([
+    {method: "beneficiary_cancel_quote", owner: beneficiary.toText()},
+  ]);
+  expect(f.calls.filter(x => x.owner === wallet.toText()).map(x => x.method)).toEqual(["quote_purchase"]);
 });

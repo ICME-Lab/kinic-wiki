@@ -29,7 +29,8 @@ let saved: Payment[];
 let allowance: bigint, generation: number, funds: bigint;
 const actor = {list_payments:vi.fn(),payment_status:vi.fn(),quote_purchase:vi.fn(),pay_purchase:vi.fn(),cancel_quote:vi.fn(),
   reconcile_purchase:vi.fn(), account_balance:vi.fn(),
-  beneficiary_payments:vi.fn(), beneficiary_payment_status:vi.fn(), beneficiary_pay_purchase:vi.fn(), get_funding_config:vi.fn(), icrc2_approve:vi.fn(),
+  beneficiary_payments:vi.fn(), beneficiary_payment_status:vi.fn(), beneficiary_pay_purchase:vi.fn(),
+  beneficiary_cancel_quote:vi.fn(), beneficiary_reconcile_purchase:vi.fn(), get_funding_config:vi.fn(), icrc2_approve:vi.fn(),
   icrc1_decimals:async()=>8,icrc1_fee:async()=>10n,icrc1_balance_of:async()=>funds,
   icrc2_allowance:async()=>({allowance,expires_at:[]})};
 const manager = () => createWalletSessionManager({origin:location.origin,host:config.host,signerUrl:location.origin + "/sign",identity});
@@ -74,6 +75,8 @@ beforeEach(()=>{
   actor.beneficiary_payments.mockImplementation(async(payer:Principal)=>mine(payer)(await actor.list_payments()));
   actor.beneficiary_payment_status.mockImplementation(async(payer:Principal,id:Uint8Array)=>mine(payer)(await actor.payment_status(id)));
   actor.beneficiary_pay_purchase.mockImplementation(async(_payer:Principal,id:Uint8Array)=>actor.pay_purchase(id));
+  actor.beneficiary_cancel_quote.mockImplementation(async(_payer:Principal,id:Uint8Array)=>actor.cancel_quote(id));
+  actor.beneficiary_reconcile_purchase.mockImplementation(async(_payer:Principal,id:Uint8Array)=>actor.reconcile_purchase(id));
   wallet=manager();
 });
 afterEach(()=>{cleanup();wallet.destroy();vi.restoreAllMocks();});

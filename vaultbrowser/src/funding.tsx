@@ -187,12 +187,11 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     if (!binding || scanning) return;
     const current = binding.isCurrent;
     setScanning(true); setNotice(""); stopScan.current = false;
-    const release = holdWallet();
     try {
       const record = flow.store.list(binding.adapter.scope)[0] ?? (selected && binding.adapter.recordFor(selected));
       if (!record) return;
       if (displayedId && record.id !== displayedId) throw new PaymentFailure("AccountChanged");
-      // Each OISY gesture permits a single batch. Silent transports may continue up to ten.
+      // Scans run in the beneficiary session, so up to ten batches continue without prompts.
       for (let batch = 0; batch < (binding.adapter.capabilities.silentCheck ? 10 : 1); batch++) {
         if (!current() || stopScan.current) break;
         const result = await binding.adapter.scan(record);
@@ -202,7 +201,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
         if (!result.can_continue) break;
       }
     } catch(error) { if (current()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error))); }
-    finally { release(); if (current()) setScanning(false); }
+    finally { if (current()) setScanning(false); }
   };
   const busy = reading || scanning || ["preparing","paying","approving","checking","refreshing"].includes(state.phase);
   const enabled = !storageError && !!flow.active.current?.adapter.fundingEnabled;
@@ -232,8 +231,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
   if (!storageError && state.canCancelUnsubmitted)
     actions.push({label:"Cancel unpaid payment",disabled:busy,run:async () => {
       const binding = flow.active.current;
-      const release = holdWallet();
-      try { await binding?.controller.cancelUnsubmitted(); } finally { release(); }
+      await binding?.controller.cancelUnsubmitted();
       if (binding?.isCurrent() && binding.controller.getState().phase === "editing") {
         setProgress(undefined); await loadHistory(); setNotice("Unpaid payment cancelled. Any existing ledger allowance remains active.");
       }

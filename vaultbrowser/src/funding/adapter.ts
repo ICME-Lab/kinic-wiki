@@ -22,10 +22,9 @@ const kinic = 100_000_000n;
 const minCredits = 20_000_000n;
 const maxI64 = (1n << 63n) - 1n;
 const maxU64 = (1n << 64n) - 1n;
-// Only these calls need the payer's signature. The beneficiary reads payments and
-// submits the payer-signed quote with its own session, so OISY prompts only to
-// quote and approve.
-const vaultMethods = ["quote_purchase", "cancel_quote", "reconcile_purchase"] as const;
+// Only the quote needs the payer's Vault signature (the approval is a ledger call).
+// The beneficiary reads, submits, cancels and reconciles with its own session.
+const vaultMethods = ["quote_purchase"] as const;
 const service = idlFactory({IDL});
 type Method = typeof vaultMethods[number];
 type Success<M extends Method> = Extract<Awaited<ReturnType<_SERVICE[M]>>, {Ok: unknown}>["Ok"];
@@ -107,6 +106,8 @@ type FundingSession = Pick<WalletSessionManager, "getSnapshot" | "getIdentityTra
 type PrincipalIdentity = Pick<Identity, "getPrincipal">;
 /** The beneficiary's authenticated Vault actor, bound to `beneficiaryIdentity`. */
 export interface VaultPaymentReader {
+  beneficiary_cancel_quote(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_cancel_quote"]>;
+  beneficiary_reconcile_purchase(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_reconcile_purchase"]>;
   beneficiary_payments(wallet: Principal): ReturnType<_SERVICE["beneficiary_payments"]>;
   beneficiary_payment_status(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_payment_status"]>;
   beneficiary_pay_purchase(wallet: Principal, operation: Uint8Array | number[]): ReturnType<_SERVICE["beneficiary_pay_purchase"]>;
@@ -175,6 +176,8 @@ function payerAccess(options: VaultHistoryOptions, config: BrowserConfig, ledger
     status: (operation: Uint8Array | number[]) => read(() => reader.beneficiary_payment_status(wallet, operation)),
     pay: (operation: Uint8Array | number[], dispatchCurrent: () => boolean) =>
       read(() => reader.beneficiary_pay_purchase(wallet, operation), dispatchCurrent),
+    cancel: (operation: Uint8Array | number[]) => read(() => reader.beneficiary_cancel_quote(wallet, operation)),
+    reconcile: (operation: Uint8Array | number[]) => read(() => reader.beneficiary_reconcile_purchase(wallet, operation)),
   };
   return {transport, account, current, validate, call, callResult, beneficiary, ...beneficiaryCalls};
 }
@@ -325,7 +328,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
   const rootGuard = options.isCurrent;
   const access = payerAccess({...options, isCurrent: () => rootGuard() && ownerClient.session.capture() === session
     && ownerClient.identity.getPrincipal().toText() === beneficiary && ownerClient.canister === config.canister}, config, ledger);
-  const {current, call, validate} = access;
+  const {current, validate} = access;
   checkCurrent(current);
   const scope = makeScope(config, access.account, beneficiary, ledger);
   const fundingEnabled = enabled(config) && active?.ledger.toText() === ledger;
@@ -388,7 +391,8 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
   }
   return {
     scope, fundingEnabled,
-    capabilities: {get silentCheck() {return current() && access.transport.silentCheck;}, cancelUnsubmitted: true, scan: true},
+    // Status checks and scans use the beneficiary session, so no wallet prompt is involved.
+    capabilities: {get silentCheck() {return current();}, cancelUnsubmitted: true, scan: true},
     list: () => history(config, access),
     recordFor,
     async prepare(amount) {
@@ -512,7 +516,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
     async cancel(prepared) {
       const r = savedPayment(prepared, ["quote-dispatched", "approved"]);
       const saved = decodeVaultRecoveryRecord(r, scope);
-      const p = await call("cancel_quote", saved.request.operation);
+      const p = await access.cancel(saved.request.operation);
       verifyPayment(p, scope, saved);
       if (!("Expired" in p.status) || p.uncertain || p.preparing) return invalid();
     },
@@ -520,7 +524,7 @@ export function createVaultPaymentAdapter(options: VaultAdapterOptions): VaultPa
       const saved = decodeVaultRecoveryRecord(record, scope);
       const before = await status(record);
       if (!before || (!("Unknown" in before.status) && !("InFlight" in before.status) && !("Paid" in before.status))) return unavailable();
-      const progress = await call("reconcile_purchase", saved.request.operation);
+      const progress = await access.reconcile(saved.request.operation);
       verifyPayment(progress.payment, scope, {request: before.request, quote: encodeQuote(before)});
       return progress;
     },

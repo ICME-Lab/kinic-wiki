@@ -296,44 +296,44 @@ export type Result = { 'Ok' : bigint } |
   { 'Err' : Error };
 export type Result_1 = { 'Ok' : null } |
   { 'Err' : BridgeError };
-export type Result_10 = { 'Ok' : [] | [VaultConfig] } |
+export type Result_10 = { 'Ok' : Uint8Array | number[] } |
   { 'Err' : Error };
-export type Result_11 = { 'Ok' : [] | [FundingConfig] } |
+export type Result_11 = { 'Ok' : [] | [VaultConfig] } |
   { 'Err' : Error };
-export type Result_12 = { 'Ok' : Revision } |
+export type Result_12 = { 'Ok' : [] | [FundingConfig] } |
   { 'Err' : Error };
-export type Result_13 = { 'Ok' : Quota } |
+export type Result_13 = { 'Ok' : Revision } |
   { 'Err' : Error };
-export type Result_14 = { 'Ok' : SpendingStatus } |
+export type Result_14 = { 'Ok' : Quota } |
   { 'Err' : Error };
-export type Result_15 = { 'Ok' : UploadStatus } |
+export type Result_15 = { 'Ok' : SpendingStatus } |
   { 'Err' : Error };
-export type Result_16 = { 'Ok' : VaultAccess } |
+export type Result_16 = { 'Ok' : UploadStatus } |
   { 'Err' : Error };
-export type Result_17 = { 'Ok' : GlobalCapacity } |
+export type Result_17 = { 'Ok' : VaultAccess } |
   { 'Err' : Error };
-export type Result_18 = { 'Ok' : AccountInitialization } |
+export type Result_18 = { 'Ok' : GlobalCapacity } |
   { 'Err' : Error };
-export type Result_19 = { 'Ok' : VaultAccessPage } |
+export type Result_19 = { 'Ok' : AccountInitialization } |
   { 'Err' : Error };
 export type Result_2 = { 'Ok' : LinkChallenge } |
   { 'Err' : BridgeError };
-export type Result_20 = { 'Ok' : RevisionPage } |
+export type Result_20 = { 'Ok' : VaultAccessPage } |
   { 'Err' : Error };
-export type Result_21 = { 'Ok' : ObjectPage } |
+export type Result_21 = { 'Ok' : RevisionPage } |
   { 'Err' : Error };
-export type Result_22 = { 'Ok' : PendingUploads } |
+export type Result_22 = { 'Ok' : ObjectPage } |
   { 'Err' : Error };
-export type Result_23 = { 'Ok' : Array<VaultMember> } |
+export type Result_23 = { 'Ok' : PendingUploads } |
   { 'Err' : Error };
-export type Result_24 = { 'Ok' : Array<Header> } |
+export type Result_24 = { 'Ok' : Array<VaultMember> } |
   { 'Err' : Error };
-export type Result_25 = { 'Ok' : MutationResult } |
+export type Result_25 = { 'Ok' : Array<Header> } |
   { 'Err' : Error };
-export type Result_26 = { 'Ok' : CreditReceipt } |
+export type Result_26 = { 'Ok' : MutationResult } |
+  { 'Err' : Error };
+export type Result_27 = { 'Ok' : CreditReceipt } |
   { 'Err' : BridgeError };
-export type Result_27 = { 'Ok' : ReconciliationProgress } |
-  { 'Err' : Error };
 export type Result_28 = { 'Ok' : null } |
   { 'Err' : Error };
 export type Result_29 = { 'Ok' : BridgeRevocation } |
@@ -348,13 +348,13 @@ export type Result_4 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
 export type Result_5 = { 'Ok' : Array<Payment> } |
   { 'Err' : Error };
-export type Result_6 = { 'Ok' : LinkProof } |
+export type Result_6 = { 'Ok' : ReconciliationProgress } |
+  { 'Err' : Error };
+export type Result_7 = { 'Ok' : LinkProof } |
   { 'Err' : BridgeError };
-export type Result_7 = { 'Ok' : Header } |
+export type Result_8 = { 'Ok' : Header } |
   { 'Err' : Error };
-export type Result_8 = { 'Ok' : KeyReply } |
-  { 'Err' : Error };
-export type Result_9 = { 'Ok' : Uint8Array | number[] } |
+export type Result_9 = { 'Ok' : KeyReply } |
   { 'Err' : Error };
 export interface Revision {
   'deleted' : boolean,
@@ -424,6 +424,13 @@ export interface _SERVICE {
   'acknowledge_wiki_link' : ActorMethod<[LinkProof], Result_1>,
   'begin_wiki_link' : ActorMethod<[Uint8Array | number[]], Result_2>,
   /**
+   * The beneficiary withdraws an unpaid quote its payer signed. This never moves funds.
+   */
+  'beneficiary_cancel_quote' : ActorMethod<
+    [Principal, Uint8Array | number[]],
+    Result_3
+  >,
+  /**
    * The beneficiary submits a quote its payer signed. The payer's quote fixes the
    * amount, recipient and beneficiary, and its ICRC-2 allowance bounds the debit,
    * so the payer does not need to sign this dispatch as well.
@@ -443,30 +450,38 @@ export interface _SERVICE {
    * The wallet's 16 most recent payments, keeping only those whose beneficiary is the caller.
    */
   'beneficiary_payments' : ActorMethod<[Principal], Result_5>,
+  /**
+   * The beneficiary checks ledger history for its payer's operation. A scan never
+   * sends a transfer; it only credits a transfer the ledger already recorded.
+   */
+  'beneficiary_reconcile_purchase' : ActorMethod<
+    [Principal, Uint8Array | number[]],
+    Result_6
+  >,
   'cancel_quote' : ActorMethod<[Uint8Array | number[]], Result_3>,
   'consume_wiki_link' : ActorMethod<
     [Uint8Array | number[], Principal],
-    Result_6
+    Result_7
   >,
-  'create_vault' : ActorMethod<[CreateVault], Result_7>,
+  'create_vault' : ActorMethod<[CreateVault], Result_8>,
   'cycles_balance_for_wiki' : ActorMethod<[], RefillResult>,
-  'derive_vault_key' : ActorMethod<[DeriveKey], Result_8>,
+  'derive_vault_key' : ActorMethod<[DeriveKey], Result_9>,
   'get_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
-    Result_9
+    Result_10
   >,
-  'get_config' : ActorMethod<[], Result_10>,
-  'get_funding_config' : ActorMethod<[], Result_11>,
+  'get_config' : ActorMethod<[], Result_11>,
+  'get_funding_config' : ActorMethod<[], Result_12>,
   'get_manifest' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_12
+    Result_13
   >,
-  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_13>,
-  'get_spending_status' : ActorMethod<[], Result_14>,
-  'get_upload_status' : ActorMethod<[Uint8Array | number[]], Result_15>,
-  'get_vault_access' : ActorMethod<[Uint8Array | number[]], Result_16>,
-  'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result_7>,
-  'global_capacity' : ActorMethod<[], Result_17>,
+  'get_quota' : ActorMethod<[Uint8Array | number[]], Result_14>,
+  'get_spending_status' : ActorMethod<[], Result_15>,
+  'get_upload_status' : ActorMethod<[Uint8Array | number[]], Result_16>,
+  'get_vault_access' : ActorMethod<[Uint8Array | number[]], Result_17>,
+  'get_vault_header' : ActorMethod<[Uint8Array | number[]], Result_8>,
+  'global_capacity' : ActorMethod<[], Result_18>,
   'http_request' : ActorMethod<[HttpRequest], HttpResponse>,
   'icrc10_supported_standards' : ActorMethod<
     [],
@@ -476,28 +491,28 @@ export interface _SERVICE {
     [Icrc21ConsentMessageRequest],
     Icrc21ConsentMessageResponse
   >,
-  'initialize_vault_account' : ActorMethod<[], Result_18>,
+  'initialize_vault_account' : ActorMethod<[], Result_19>,
   'inspect_wiki_link' : ActorMethod<[Uint8Array | number[]], Result_2>,
-  'list_accessible_vaults' : ActorMethod<[Uint8Array | number[]], Result_19>,
+  'list_accessible_vaults' : ActorMethod<[Uint8Array | number[]], Result_20>,
   'list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_20
+    Result_21
   >,
   'list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_21
+    Result_22
   >,
   'list_payments' : ActorMethod<[], Result_5>,
-  'list_pending_uploads' : ActorMethod<[Uint8Array | number[]], Result_22>,
-  'list_vault_members' : ActorMethod<[Uint8Array | number[]], Result_23>,
-  'list_vaults' : ActorMethod<[], Result_24>,
-  'mutate' : ActorMethod<[Mutation], Result_25>,
+  'list_pending_uploads' : ActorMethod<[Uint8Array | number[]], Result_23>,
+  'list_vault_members' : ActorMethod<[Uint8Array | number[]], Result_24>,
+  'list_vaults' : ActorMethod<[], Result_25>,
+  'mutate' : ActorMethod<[Mutation], Result_26>,
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_3>,
   'payment_status' : ActorMethod<[Uint8Array | number[]], Result_4>,
-  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_26>,
+  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_27>,
   'quote_purchase' : ActorMethod<[PurchaseRequest], Result_3>,
-  'receive_wiki_credit' : ActorMethod<[CreditOffer], Result_26>,
-  'reconcile_purchase' : ActorMethod<[Uint8Array | number[]], Result_27>,
+  'receive_wiki_credit' : ActorMethod<[CreditOffer], Result_27>,
+  'reconcile_purchase' : ActorMethod<[Uint8Array | number[]], Result_6>,
   'remove_vault_member' : ActorMethod<
     [Uint8Array | number[], Principal],
     Result_28
@@ -511,36 +526,36 @@ export interface _SERVICE {
     Result_28
   >,
   'set_wiki_bridge_config' : ActorMethod<[BridgeConfig], Result_1>,
-  'shared_derive_vault_key' : ActorMethod<[DeriveKey], Result_8>,
+  'shared_derive_vault_key' : ActorMethod<[DeriveKey], Result_9>,
   'shared_get_chunk' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint, number],
-    Result_9
+    Result_10
   >,
   'shared_get_manifest' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_12
+    Result_13
   >,
-  'shared_get_quota' : ActorMethod<[Uint8Array | number[]], Result_13>,
+  'shared_get_quota' : ActorMethod<[Uint8Array | number[]], Result_14>,
   'shared_get_upload_status' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_15
+    Result_16
   >,
   'shared_list_history' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[], bigint],
-    Result_20
+    Result_21
   >,
   'shared_list_objects' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_21
+    Result_22
   >,
   'shared_list_pending_uploads' : ActorMethod<
     [Uint8Array | number[], Uint8Array | number[]],
-    Result_22
+    Result_23
   >,
-  'shared_mutate' : ActorMethod<[Uint8Array | number[], Mutation], Result_25>,
+  'shared_mutate' : ActorMethod<[Uint8Array | number[], Mutation], Result_26>,
   'vault_key_cost' : ActorMethod<[[] | [string]], Result_30>,
   'wiki_bridge_config' : ActorMethod<[], [] | [BridgeConfig]>,
-  'wiki_credit_status' : ActorMethod<[CreditOffer], Result_26>,
+  'wiki_credit_status' : ActorMethod<[CreditOffer], Result_27>,
   'wiki_link_status' : ActorMethod<[], Result_31>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;

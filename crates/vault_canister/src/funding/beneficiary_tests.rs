@@ -1,4 +1,7 @@
-use super::api::{beneficiary_payment_status_for, beneficiary_payments_for, payable_ledger};
+use super::api::{
+    beneficiary_payment_status_for, beneficiary_payments_for, cancel_quote_for, payable_ledger,
+    require_beneficiary,
+};
 use super::*;
 
 const NOW: u64 = 1_000_000_000;
@@ -98,4 +101,32 @@ fn only_the_wallet_or_its_beneficiary_can_submit_a_signed_quote() {
         payable_ledger(principal(41), &[5; 15], Some(principal(42))),
         Err(Error::InvalidInput)
     );
+}
+
+#[test]
+fn only_the_beneficiary_can_act_on_its_payers_quote() {
+    crate::state::initialize().unwrap();
+    let payment = quote(51, 52, 6);
+    let operation = &payment.request.operation;
+    assert_eq!(
+        require_beneficiary(principal(51), operation, principal(52)),
+        Ok(())
+    );
+    for caller in [principal(51), principal(53)] {
+        assert_eq!(
+            require_beneficiary(principal(51), operation, caller),
+            Err(Error::NotFound)
+        );
+    }
+    assert_eq!(
+        require_beneficiary(principal(51), operation, Principal::anonymous()),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        require_beneficiary(principal(51), &[6; 16][..15], principal(52)),
+        Err(Error::InvalidInput)
+    );
+    // The guarded cancellation expires the quote without moving funds.
+    let cancelled = cancel_quote_for(principal(51), operation).unwrap();
+    assert_eq!(cancelled.status, Status::Expired);
 }

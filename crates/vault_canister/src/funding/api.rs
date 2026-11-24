@@ -243,6 +243,24 @@ fn cancel_quote(operation: Vec<u8>) -> vault_types::Result<Payment> {
     cancel_quote_for(ic_cdk::api::msg_caller(), &operation)
 }
 
+/// The beneficiary withdraws an unpaid quote its payer signed. This never moves funds.
+#[ic_cdk::update]
+fn beneficiary_cancel_quote(wallet: Principal, operation: Vec<u8>) -> vault_types::Result<Payment> {
+    require_beneficiary(wallet, &operation, ic_cdk::api::msg_caller())?;
+    cancel_quote_for(wallet, &operation)
+}
+
+/// Fails with `NotFound` unless `caller` is the beneficiary of the wallet's operation,
+/// so another principal cannot learn whether that operation exists.
+pub(super) fn require_beneficiary(
+    wallet: Principal,
+    operation: &[u8],
+    caller: Principal,
+) -> vault_types::Result<()> {
+    auth(caller)?;
+    payable_ledger(wallet, operation, Some(caller)).map(|_| ())
+}
+
 pub(super) fn cancel_quote_for(
     caller: Principal,
     operation: &[u8],
