@@ -167,6 +167,50 @@ test("official ledger charges the wallet, credits an independent beneficiary onc
       await ledger.actor.icrc1_balance_of(account(vault.canisterId)),
       amount,
     );
+
+    // The beneficiary reads and submits a quote the payer signed and approved.
+    const third = await quote();
+    await approve((await now()) + 60_000_000_000n);
+    const stranger = pic.createActor(idlFactory, vault.canisterId);
+    stranger.setPrincipal(Principal.selfAuthenticating(randomBytes(32)));
+    assert.deepEqual(
+      ok(await stranger.beneficiary_payment_status(payer, third.request.operation)),
+      [],
+    );
+    assert.deepEqual(ok(await stranger.beneficiary_payments(payer)), []);
+    assert.deepEqual(
+      await stranger.beneficiary_pay_purchase(payer, third.request.operation),
+      { Err: { NotFound: null } },
+    );
+    assert.deepEqual(
+      stable(
+        ok(await beneficiary.beneficiary_payment_status(payer, third.request.operation))[0],
+      ),
+      stable(third),
+    );
+    assert.ok(
+      ok(await beneficiary.beneficiary_payments(payer)).some((p) =>
+        Buffer.from(p.request.operation).equals(Buffer.from(third.request.operation)),
+      ),
+    );
+    const submitted = ok(
+      await beneficiary.beneficiary_pay_purchase(payer, third.request.operation),
+    );
+    assert.ok("Paid" in submitted.status);
+    assert.deepEqual(stable(submitted), stable(third));
+    assert.deepEqual(
+      await beneficiary.beneficiary_pay_purchase(payer, third.request.operation),
+      { Err: { Conflict: null } },
+    );
+    assert.equal(await walletBalance(), initial - 2n * amount - fee * 5n);
+    assert.equal(
+      ok(await beneficiary.account_balance()),
+      initialCredit + 2n * credits,
+    );
+    assert.equal(
+      await ledger.actor.icrc1_balance_of(account(vault.canisterId)),
+      2n * amount,
+    );
   } finally {
     try {
       await pic?.tearDown();

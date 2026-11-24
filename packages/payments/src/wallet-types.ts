@@ -22,6 +22,11 @@ export interface FundingTransport {
   call(request: WalletCall): Promise<Uint8Array>;
   revalidate(): Promise<void>;
   disconnect(): Promise<void>;
+  /**
+   * Keeps an interactive signer open until the returned release runs. Call it
+   * synchronously from a click before awaiting, so its window may open.
+   */
+  holdSigner?(): () => void;
 }
 export type WalletIssue = "account-changed" | "empty-accounts" | "unsupported-account" | "permission-denied"
   | "extension-missing" | "popup-blocked" | "unsupported-network" | "connection-failed" | "disconnected" | "scope-required";

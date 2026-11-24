@@ -89,12 +89,19 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
   const create = useCallback(({store, isCurrent}: FlowBinding) => {
     if (!connected || funding === undefined || !journal || journal.error || (!ledger && config.local)) return null;
     return createVaultPaymentAdapter({config, fundingConfig:funding, recoveryLedger:ledger, source, beneficiaryIdentity:identity,
-      walletSession:manager, authorizedPlug, isCurrent:() => lifecycle.current() && isCurrent(), store, ownerClient:client});
+      reader:client.actor, walletSession:manager, authorizedPlug, isCurrent:() => lifecycle.current() && isCurrent(), store, ownerClient:client});
   }, [connected, funding,journal, ledger, config,source,identity,manager,authorizedPlug,client]);
   const flowSession = useMemo(() => ({capture: manager.capture,
     isCurrent: (token: unknown) => lifecycle.current() && manager.isCurrent(token)}), [manager]);
   const flow = usePaymentFlow(create,flowSession);
   const {state} = flow;
+  // OISY signs in its own tab. Open it in the click, before any await, and
+  // close it when the action settles. Other sources never prompt here.
+  const holdWallet = () => source === "oisy" ? manager.holdSigner() : () => {};
+  const withWallet = (run: () => Promise<unknown> | undefined) => {
+    const release = holdWallet();
+    void Promise.resolve(run()).finally(release);
+  };
   // A reviewed summary remains the operation the user can see, even if another
   // tab replaces the durable slot before this component renders again.
   const displayedId = state.summary?.id ?? journalId ?? (chosen && paymentId(chosen));
@@ -115,16 +122,17 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     setReading(true);
     try {
       const payments = await listVaultFundingHistory({config,source,walletSession:manager,authorizedPlug,
-        beneficiaryIdentity:identity,isCurrent:current});
+        beneficiaryIdentity:identity,reader:client.actor,isCurrent:current});
       if (current()) {
         setHistory(payments.filter(isPendingPayment).sort((a,b) => Number("Quoted" in a.status) - Number("Quoted" in b.status)));
         setNotice("");
       }
     } catch { if (current()) setNotice("Could not load previous payments. Check payment history before funding."); }
     finally { if (current()) setReading(false); }
-  }, [config,source,manager,authorizedPlug,identity]);
+  }, [config,source,manager,authorizedPlug,identity,client]);
   const canList = source === "ii" ? connected : external?.provider === source && snapshot.state === "connected" && historyGranted;
-  useEffect(() => { if (canList && source !== "oisy") void loadHistory(); }, [canList,source,loadHistory]);
+  // History is read with the beneficiary session, so no wallet prompt is involved.
+  useEffect(() => { if (canList) void loadHistory(); }, [canList,loadHistory]);
   const paymentComplete = state.phase === "complete";
   useEffect(() => {
     let live = true;
@@ -152,7 +160,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
       setReading(true);
       try {
         const result = await readVaultHistoryStatus({config,source,walletSession:manager,
-          authorizedPlug:source === "plug" ? snapshot.transport : undefined,beneficiaryIdentity:identity,isCurrent:current},selected);
+          authorizedPlug:source === "plug" ? snapshot.transport : undefined,beneficiaryIdentity:identity,reader:client.actor,isCurrent:current},selected);
         if (current()) setNotice(readOnlyStatusLabel(result));
       } catch (error) {
         if (current()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error)));
@@ -179,6 +187,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     if (!binding || scanning) return;
     const current = binding.isCurrent;
     setScanning(true); setNotice(""); stopScan.current = false;
+    const release = holdWallet();
     try {
       const record = flow.store.list(binding.adapter.scope)[0] ?? (selected && binding.adapter.recordFor(selected));
       if (!record) return;
@@ -193,7 +202,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
         if (!result.can_continue) break;
       }
     } catch(error) { if (current()) setNotice(formatPaymentFailure(classifyPaymentFailure("checking",error))); }
-    finally { if (current()) setScanning(false); }
+    finally { release(); if (current()) setScanning(false); }
   };
   const busy = reading || scanning || ["preparing","paying","approving","checking","refreshing"].includes(state.phase);
   const enabled = !storageError && !!flow.active.current?.adapter.fundingEnabled;
@@ -223,7 +232,8 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
   if (!storageError && state.canCancelUnsubmitted)
     actions.push({label:"Cancel unpaid payment",disabled:busy,run:async () => {
       const binding = flow.active.current;
-      await binding?.controller.cancelUnsubmitted();
+      const release = holdWallet();
+      try { await binding?.controller.cancelUnsubmitted(); } finally { release(); }
       if (binding?.isCurrent() && binding.controller.getState().phase === "editing") {
         setProgress(undefined); await loadHistory(); setNotice("Unpaid payment cancelled. Any existing ledger allowance remains active.");
       }
@@ -249,9 +259,21 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     <PaymentForm sources={sources} selectedSource={source} amount={state.summary ? formatKinicExact(state.summary.amountE8s) : journalAmount ?? (hasHistory && selected ? formatKinicExact(selected.request.amount_e8s) : amount)}
       targetLabel={`Vault prepaid account · ${beneficiary}`} summary={presentation.summary}
       status={{...presentation.status,recoveryActions:actions}} actions={{onSource:select,onAmount:setAmount,locked:busy || state.phase === "ready",
-        canPay:enabled && connected && !busy,onPay:() => {if (state.summary) void flow.active.current?.controller.pay(state.summary.termsKey);},
-        canReview:enabled && connected && !busy && !!amountE8s && !hasHistory && (source === "oisy" || !!history),
-        onReview:() => {if (amountE8s) void flow.active.current?.controller.prepare(amountE8s);},
+        canPay:enabled && connected && !busy,onPay:() => {
+          const summary = state.summary;
+          if (!summary) return;
+          // Only the approval needs OISY. A recorded approval is submitted by the signed-in beneficiary.
+          if (flow.approvalPaid) void flow.active.current?.controller.pay(summary.termsKey);
+          else withWallet(() => flow.active.current?.controller.pay(summary.termsKey));
+        },
+        canReview:enabled && connected && !busy && !!amountE8s && !hasHistory && !!history,
+        onReview:() => {
+          const amount = amountE8s;
+          if (!amount) return;
+          // A saved operation is recovered instead of quoted, so OISY is not opened for it.
+          if (journalId) void flow.active.current?.controller.prepare(amount);
+          else withWallet(() => flow.active.current?.controller.prepare(amount));
+        },
         amountError:!amountE8s ? "Enter a positive KINIC amount with up to 8 decimal places." : undefined}}/>
     {cursor && <output aria-live="polite">Ledger scan: next {cursor.next.toString()} of {cursor.end.toString()}.</output>}
     {notice && <output>{notice}</output>}

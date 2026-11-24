@@ -80,6 +80,30 @@ pub(super) fn payment_status_for(
     }
     crate::state::read(|db| Ok(load(db, caller, operation)?.map(|p| p.with_effective_status(now))))
 }
+
+/// The beneficiary reads a payment funded by an external wallet without that wallet's signature.
+#[ic_cdk::query]
+fn beneficiary_payment_status(
+    wallet: Principal,
+    operation: Vec<u8>,
+) -> vault_types::Result<Option<Payment>> {
+    beneficiary_payment_status_for(
+        ic_cdk::api::msg_caller(),
+        wallet,
+        &operation,
+        crate::now_nanos(),
+    )
+}
+
+pub(super) fn beneficiary_payment_status_for(
+    caller: Principal,
+    wallet: Principal,
+    operation: &[u8],
+    now: u64,
+) -> vault_types::Result<Option<Payment>> {
+    auth(caller)?;
+    Ok(payment_status_for(wallet, operation, now)?.filter(|p| p.request.beneficiary == caller))
+}
 #[ic_cdk::update]
 async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment> {
     let caller = ic_cdk::api::msg_caller();
@@ -105,17 +129,49 @@ async fn quote_purchase(request: PurchaseRequest) -> vault_types::Result<Payment
 }
 #[ic_cdk::update]
 async fn pay_purchase(operation: Vec<u8>) -> vault_types::Result<Payment> {
+    let caller = ic_cdk::api::msg_caller();
+    auth(caller)?;
+    pay_purchase_as(caller, operation, None).await
+}
+
+/// The beneficiary submits a quote its payer signed. The payer's quote fixes the
+/// amount, recipient and beneficiary, and its ICRC-2 allowance bounds the debit,
+/// so the payer does not need to sign this dispatch as well.
+#[ic_cdk::update]
+async fn beneficiary_pay_purchase(
+    wallet: Principal,
+    operation: Vec<u8>,
+) -> vault_types::Result<Payment> {
+    let caller = ic_cdk::api::msg_caller();
+    auth(caller)?;
+    pay_purchase_as(wallet, operation, Some(caller)).await
+}
+
+pub(super) fn payable_ledger(
+    wallet: Principal,
+    operation: &[u8],
+    beneficiary: Option<Principal>,
+) -> vault_types::Result<Principal> {
+    auth(wallet)?;
     if operation.len() != 16 {
         return Err(Error::InvalidInput);
     }
-    let caller = ic_cdk::api::msg_caller();
-    auth(caller)?;
-    let ledger = transaction(|db| {
-        Ok(load(db, caller, &operation)?
-            .ok_or(Error::NotFound)?
-            .config
-            .ledger)
-    })?;
+    transaction(|db| {
+        let p = load(db, wallet, operation)?.ok_or(Error::NotFound)?;
+        // Another principal cannot learn whether this wallet's operation exists.
+        if beneficiary.is_some_and(|caller| p.request.beneficiary != caller) {
+            return Err(Error::NotFound);
+        }
+        Ok(p.config.ledger)
+    })
+}
+
+async fn pay_purchase_as(
+    caller: Principal,
+    operation: Vec<u8>,
+    beneficiary: Option<Principal>,
+) -> vault_types::Result<Payment> {
+    let ledger = payable_ledger(caller, &operation, beneficiary)?;
     require_ledger(ledger)?;
     let p = begin_payment(caller, &operation, crate::now_nanos())?;
     // Persist the history lower bound and spender before the first possible debit.
@@ -140,6 +196,23 @@ async fn pay_purchase(operation: Vec<u8>) -> vault_types::Result<Payment> {
 #[ic_cdk::query]
 fn list_payments() -> vault_types::Result<Vec<Payment>> {
     list_payments_for(ic_cdk::api::msg_caller(), crate::now_nanos())
+}
+
+/// The wallet's 16 most recent payments, keeping only those whose beneficiary is the caller.
+#[ic_cdk::query]
+fn beneficiary_payments(wallet: Principal) -> vault_types::Result<Vec<Payment>> {
+    beneficiary_payments_for(ic_cdk::api::msg_caller(), wallet, crate::now_nanos())
+}
+
+pub(super) fn beneficiary_payments_for(
+    caller: Principal,
+    wallet: Principal,
+    now: u64,
+) -> vault_types::Result<Vec<Payment>> {
+    auth(caller)?;
+    let mut payments = list_payments_for(wallet, now)?;
+    payments.retain(|p| p.request.beneficiary == caller);
+    Ok(payments)
 }
 
 pub(super) fn list_payments_for(caller: Principal, now: u64) -> vault_types::Result<Vec<Payment>> {

@@ -130,6 +130,7 @@ const browser = await chromium.launch({
 const rows = [];
 const file = join(project, "shared-payment-results.json");
 const money = [
+  "beneficiary_pay_purchase",
   "icrc2_approve",
   "pay_purchase",
   "purchase_database_cycles",
@@ -175,18 +176,23 @@ const button = (page, name) => {
       : page;
   return root.getByRole("button", { name, exact: true });
 };
-const vaultStatus = vaultIdl({ IDL })._fields.find(([name]) => name === "payment_status")[1];
+// Vault payment reads and submissions use the signed-in beneficiary, not the payer wallet.
+const vaultPurchase = "beneficiary_pay_purchase";
+const vaultStatus = vaultIdl({ IDL })._fields.find(([name]) => name === "beneficiary_payment_status")[1];
 // The installed Candid reader starts at the backing buffer origin. Copy pooled Node/CBOR views.
 const decodeCandid = (types, bytes) => IDL.decode(types, Uint8Array.from(bytes));
 const wikiPendingResult = IDL.Variant({Ok: IDL.Vec(IDL.Reserved), Err: IDL.Text});
 
 async function observeRecovery(route, content, record) {
   const {scope, id} = record;
-  if (Principal.fromUint8Array(content.sender).toText() !== scope.payer.owner ||
-      Principal.fromUint8Array(content.canister_id).toText() !== scope.spender) return null;
   const wiki = scope.target.kind === "wiki";
-  if (content.method_name !== (wiki ? "list_database_cycles_pending_purchases" : "payment_status")) return null;
-  const [arg] = decodeCandid(wiki ? [IDL.Text] : vaultStatus.argTypes, content.arg);
+  const reader = wiki ? scope.payer.owner : scope.target.beneficiary;
+  if (Principal.fromUint8Array(content.sender).toText() !== reader ||
+      Principal.fromUint8Array(content.canister_id).toText() !== scope.spender) return null;
+  if (content.method_name !== (wiki ? "list_database_cycles_pending_purchases" : "beneficiary_payment_status")) return null;
+  const args = decodeCandid(wiki ? [IDL.Text] : vaultStatus.argTypes, content.arg);
+  const arg = wiki ? args[0] : args[1];
+  if (!wiki && args[0].toText() !== scope.payer.owner) return null;
   if (wiki ? arg !== scope.target.databaseId : Buffer.from(arg).toString("hex") !== id) return null;
   const response = await route.fetch();
   const envelope = Cbor.decode(await response.body());
@@ -299,7 +305,7 @@ try {
         if (/\/api\/v\d+\/canister\/[^/]+\/(call|query)$/.test(url.pathname)) {
           const content = Cbor.decode(req.postDataBuffer()).content;
           if (recoveryRecord && url.pathname.endsWith("/query") &&
-              ["payment_status", "list_database_cycles_pending_purchases"].includes(content.method_name)) {
+              ["beneficiary_payment_status", "list_database_cycles_pending_purchases"].includes(content.method_name)) {
             try {
               const observation = await observeRecovery(route, content, recoveryRecord);
               if (observation) { observations.push(observation); return; }
@@ -395,8 +401,9 @@ try {
                 page.getByText("Payment complete", { exact: true }),
               ).toBeVisible({ timeout: 30_000 });
               const purchase =
-                app === "Wiki" ? "purchase_database_cycles" : "pay_purchase";
+                app === "Wiki" ? "purchase_database_cycles" : vaultPurchase;
               assert.equal(counts[purchase] - (before[purchase] ?? 0), 1);
+              if (app === "Vault") assert.equal(counts.pay_purchase ?? 0, 0, "Vault never asks the payer to sign the purchase");
               assert.equal(
                 counts.icrc2_approve - (before.icrc2_approve ?? 0),
                 1,
@@ -405,6 +412,15 @@ try {
                 const reads = "consent:list_database_cycles_pending_purchases";
                 assert.ok(counts[reads] - (before[reads] ?? 0) >= 3, "review and both revalidations obtained Wiki consent");
                 assert.equal(counts["consent:purchase_database_cycles"] - (before["consent:purchase_database_cycles"] ?? 0), 1);
+              }
+              if (app === "Vault" && provider === "OISY") {
+                // OISY is asked only to quote and approve. Reads and submission use the beneficiary.
+                const delta = (k) => (counts[k] ?? 0) - (before[k] ?? 0);
+                assert.equal(delta("consent:quote_purchase"), 1);
+                for (const read of ["list_payments", "payment_status", "pay_purchase"])
+                  assert.equal(delta("consent:" + read), 0, "OISY was asked to sign " + read);
+                assert.equal(delta("signed:quote_purchase") + delta("signed:icrc2_approve"), 2);
+                assert.equal(delta("signerPopup"), 2, "Review and Pay each open one OISY tab");
               }
               row.paid++;
               if (app === "Wiki") {
@@ -425,7 +441,8 @@ try {
               const grant = provider === "OISY" ? "signerPopup" : "plugGrant";
               assert.equal(
                 counts[grant] - (row.before[grant] ?? 0),
-                1,
+                // Vault closes OISY after each signature: Connect plus Review and Pay twice.
+                app === "Vault" && provider === "OISY" ? 5 : 1,
                 "Two payments share the connected wallet",
               );
               if (provider === "OISY")
@@ -462,7 +479,7 @@ try {
                     ? "icrc2_approve"
                     : app === "Wiki"
                       ? "purchase_database_cycles"
-                      : "pay_purchase";
+                      : vaultPurchase;
                 const beforeLoss = { ...counts };
                 await button(page, "Review payment").click();
                 await button(page, "Pay 1 KINIC").click();
@@ -489,7 +506,7 @@ try {
                 const complete = page.getByText("Payment complete", {exact:true});
                 const readMarker = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), original.key);
                 let outcome;
-                if (dropMethod === "pay_purchase") {
+                if (dropMethod === vaultPurchase) {
                   await expect(complete).toBeVisible({timeout:20_000});
                   await expect.poll(() => observations.some(read => read.status === "Paid")).toBe(true);
                   const paid = observations.find(read => read.status === "Paid");
@@ -522,7 +539,7 @@ try {
                   1,
                 );
                 const purchase =
-                  app === "Wiki" ? "purchase_database_cycles" : "pay_purchase";
+                  app === "Wiki" ? "purchase_database_cycles" : vaultPurchase;
                 assert.equal(
                   (counts[purchase] ?? 0) - (beforeLoss[purchase] ?? 0),
                   dropMethod === purchase ? 1 : 0,

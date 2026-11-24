@@ -76,6 +76,7 @@ export type ScopedTransport = FundingTransport & { withScopes(scopes: readonly W
 export function fundingTransport(options: {
   account: FundingAccount; silentCheck: boolean; scopes: readonly WalletAccess[];
   dispatch(request: WalletCall): Promise<Uint8Array>; revalidate(): Promise<void>; disconnect(): Promise<void>;
+  holdSigner?(): () => void;
 }): ScopedTransport {
   const allowed = scopeMap(options.scopes);
   async function call(input: WalletCall) {
@@ -94,6 +95,7 @@ export function fundingTransport(options: {
   return Object.freeze({
     account: Object.freeze({ ...options.account }), silentCheck: options.silentCheck, call,
     revalidate: options.revalidate, disconnect: options.disconnect,
+    ...(options.holdSigner ? { holdSigner: options.holdSigner } : {}),
     withScopes: (scopes: readonly WalletAccess[]) => fundingTransport({ ...options, scopes }),
     async approve(ledger: string, args: ApproveArgs, guard?: DispatchGuard) {
       for (const sub of [args.from_subaccount[0], args.spender.subaccount[0]]) {

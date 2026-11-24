@@ -1,7 +1,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FundingAccount } from "./types";
 import { createIdentityTransport } from "./transports/identity";
-import { openOisyTransport } from "./transports/oisy";
+import { openOisyTransport, type OisyWindowPolicy } from "./transports/oisy";
 import { browserPlug, openPlugTransport } from "./transports/plug";
 import { includesScopes, ownerPrincipal, type Lifetime, type ScopedTransport } from "./transports/common";
 import { WalletFailure, type DispatchGuard, type FundingTransport, type OpenSigner, type PlugWallet, type WalletAccess, type WalletIssue } from "./wallet-types";
@@ -16,6 +16,8 @@ export interface WalletSessionOptions {
   legacyStorage?: PreferenceStorage | null;
   identity?: Identity;
   scopes?: readonly WalletAccess[];
+  /** How the OISY signer window opens and whether it stays open between signatures. */
+  oisy?: OisyWindowPolicy;
   transports?: { openSigner?: OpenSigner; getPlug?: () => PlugWallet | undefined };
 }
 export interface WalletSessionSnapshot {
@@ -166,6 +168,10 @@ export function createWalletSessionManager({ identity: suppliedIdentity, ...opti
         assertCurrent();
         await close();
       },
+      ...(raw.holdSigner ? { holdSigner() {
+        assertCurrent();
+        return raw.holdSigner!();
+      } } : {}),
     } satisfies FundingTransport);
   }
   function attach(raw: ScopedTransport, scopes: readonly WalletAccess[], lifetime: Lifetime) {
@@ -218,7 +224,7 @@ export function createWalletSessionManager({ identity: suppliedIdentity, ...opti
             restoreOwner: restoring ? preferred?.owner : undefined,
           })
         : await openOisyTransport({
-            host, scopes: requested, signerUrl: options.signerUrl, openSigner: options.transports?.openSigner,
+            host, scopes: requested, signerUrl: options.signerUrl, openSigner: options.transports?.openSigner, ...options.oisy,
             preferredOwner: preferred?.owner, lifetime,
             onOpen(close) {
               if (generation === connection) closeOpening = close;
@@ -342,7 +348,11 @@ export function createWalletSessionManager({ identity: suppliedIdentity, ...opti
     listeners.clear();
   }
   useIdentity();
-  return { connect, restore, revalidate, hasScopes: (scopes: readonly WalletAccess[]) => !!active && includesScopes(grants, scopes), setIdentity, getIdentityTransport, capture, isCurrent, disconnect, suspend, destroy,
+  // Synchronously opens an idle-closing signer for the duration of a user action.
+  function holdSigner(): () => void {
+    try { return current.transport?.holdSigner?.() ?? (() => {}); } catch { return () => {}; }
+  }
+  return { connect, restore, revalidate, holdSigner, hasScopes: (scopes: readonly WalletAccess[]) => !!active && includesScopes(grants, scopes), setIdentity, getIdentityTransport, capture, isCurrent, disconnect, suspend, destroy,
     getSnapshot: () => current, subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; } };
 }
 export type WalletSessionManager = ReturnType<typeof createWalletSessionManager>;
