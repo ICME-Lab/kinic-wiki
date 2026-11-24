@@ -5,6 +5,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { createWalletSessionManager } from "../src/wallet-session";
 import { createIdentityTransport } from "../src/transports/identity";
 import * as certified from "../src/transports/certified-reply";
+import type { RelyingPartyOptions } from "@dfinity/oisy-wallet-signer";
 import type { ApproveArgs, OisySigner, PlugWallet } from "../src/wallet-types";
 
 export const owner = Principal.fromUint8Array(Uint8Array.of(2)).toText();
@@ -49,6 +50,68 @@ describe("funding transports", () => {
       await manager.disconnect();
       expect(wallet.disconnect).toHaveBeenCalledTimes(1);
     } finally { verification.mockRestore(); }
+  });
+  it("opens an idle-closing OISY signer in a tab only while an action holds it", async () => {
+    const opened: Array<{ wallet: ReturnType<typeof signer>; options: RelyingPartyOptions }> = [];
+    const openSigner = vi.fn((options: RelyingPartyOptions) => {
+      const wallet = signer();
+      wallet.disconnect.mockImplementation(async () => { options.onDisconnect?.(); });
+      opened.push({ wallet, options });
+      return Promise.resolve(wallet as OisySigner);
+    });
+    const verification = vi.spyOn(certified, "certifiedReply").mockResolvedValue(Uint8Array.of(7));
+    try {
+      const manager = createWalletSessionManager({ ...config, oisy: { closeWhenIdle: true, windowOptions: "" }, transports: { openSigner } });
+      const transport = await manager.connect("oisy", scopes);
+      expect(opened).toHaveLength(1);
+      expect(opened[0].options.windowOptions).toBe("");
+      // The account is known; the connection tab closes instead of staying open.
+      await vi.waitFor(() => expect(opened[0].wallet.disconnect).toHaveBeenCalledTimes(1));
+      expect(manager.getSnapshot()).toMatchObject({ state: "connected", account: { provider: "oisy", owner } });
+
+      const release = manager.holdSigner();
+      // The window opens inside the click, before anything is awaited.
+      expect(opened).toHaveLength(2);
+      await transport.call(call);
+      await transport.call({ ...call, method: "read", mode: "query", arg: IDL.encode([], []) });
+      expect(opened).toHaveLength(2);
+      expect(opened[1].wallet.callCanister).toHaveBeenCalledTimes(2);
+      expect(opened[1].wallet.disconnect).not.toHaveBeenCalled();
+      release();
+      await vi.waitFor(() => expect(opened[1].wallet.disconnect).toHaveBeenCalledTimes(1));
+      expect(manager.getSnapshot().state).toBe("connected");
+
+      // Closing the tab mid-signature fails that call promptly without ending the session.
+      const next = manager.holdSigner();
+      opened[2].wallet.callCanister.mockImplementationOnce(() => new Promise(() => {}));
+      const lost = transport.call(call);
+      await vi.waitFor(() => expect(opened[2].wallet.callCanister).toHaveBeenCalledTimes(1));
+      opened[2].options.onDisconnect?.();
+      await expect(lost).rejects.toMatchObject({ code: "Unknown" });
+      next();
+      expect(manager.getSnapshot().state).toBe("connected");
+
+      // A blocked tab is reported as such, before anything is dispatched, and keeps the session.
+      openSigner.mockImplementationOnce(() => Promise.reject(new Error("Unable to open the signer window.")))
+        .mockImplementationOnce(() => Promise.reject(new Error("Unable to open the signer window.")));
+      const blocked = manager.holdSigner();
+      await expect(transport.call(call)).rejects.toMatchObject({ code: "SignerBlocked" });
+      blocked();
+      expect(manager.getSnapshot().state).toBe("connected");
+      await manager.disconnect();
+      expect(manager.getSnapshot().state).toBe("disconnected");
+    } finally { verification.mockRestore(); }
+  });
+  it("keeps the default OISY signer open between payments and ends the session when it closes", async () => {
+    let options!: RelyingPartyOptions;
+    const wallet = signer();
+    const manager = createWalletSessionManager({ ...config, transports: { openSigner: async value => { options = value; return wallet as OisySigner; } } });
+    await manager.connect("oisy", scopes);
+    expect(options.windowOptions).toBeUndefined();
+    manager.holdSigner()();
+    expect(wallet.disconnect).not.toHaveBeenCalled();
+    options.onDisconnect?.();
+    expect(manager.getSnapshot().state).toBe("reconnect-required");
   });
   it("serializes signer requests and invalidates queued dispatch on owner change", async () => {
     const wallet = signer();

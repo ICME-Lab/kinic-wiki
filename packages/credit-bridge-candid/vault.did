@@ -36,12 +36,12 @@ type LinkStatus = record {
   vault_owner : principal;
 };
 type Result_2 = variant { Ok : LinkChallenge; Err : BridgeError };
-type Result_26 = variant { Ok : CreditReceipt; Err : BridgeError };
+type Result_27 = variant { Ok : CreditReceipt; Err : BridgeError };
 type Result_29 = variant { Ok : BridgeRevocation; Err : BridgeError };
 type Result_31 = variant { Ok : opt LinkStatus; Err : BridgeError };
 service : {
   begin_wiki_link : (blob) -> (Result_2);
-  prepare_wiki_credit : (blob) -> (Result_26);
+  prepare_wiki_credit : (blob) -> (Result_27);
   revoke_wiki_link : () -> (Result_29);
   wiki_link_status : () -> (Result_31);
 }

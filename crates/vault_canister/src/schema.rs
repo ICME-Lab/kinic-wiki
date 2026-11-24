@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use vault_types::{Error, Result};
 
 const CURRENT_VERSION: i64 = 14;
-const CAPACITY: &str = include_str!("capacity-schema-v14.sql");
+const CAPACITY: &str = include_str!("sql/capacity-schema-v14.sql");
 const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
 
 // Historical DDL from 3a536a54, dec6eac2 (team) and 41db6180 (grants/subsidies).
@@ -187,7 +187,7 @@ fn latest_statements() -> Vec<String> {
             vault_store::SCHEMA,
             vault_store::CONTENT_SCHEMA,
             vault_store::EXPIRY_SCHEMA,
-            include_str!("accounts.sql"),
+            include_str!("sql/accounts.sql"),
             INDEXES,
             CAPACITY,
         ]

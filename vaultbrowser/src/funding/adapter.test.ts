@@ -22,7 +22,14 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
   const store = createRecoveryStore({
     get length() {return values.size;}, key: (i: number) => [...values.keys()][i] ?? null,
     getItem: key => values.get(key) ?? null,
-    setItem: (key, value) => { values.set(key, value); }, removeItem: key => { values.delete(key); },
+    setItem: (key, value) => {
+      values.set(key, value);
+      // The submission marker is durable before the beneficiary dispatches the purchase.
+      if (JSON.parse(value)?.stage === "purchase-dispatched") {
+        if (state.invalidateBeforePay) state.live = false;
+        if (state.expireAtPay) state.time = state.payment!.created_at_time + 300_000_000_000n;
+      }
+    }, removeItem: key => { values.delete(key); },
   });
   const state = {
     quoteError: null as "Busy" | "QuotaExceeded" | "Unauthorized" | "InvalidInput" | "KeyService" | "Conflict" | "Expired" | "Storage" | null,
@@ -39,8 +46,6 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
     revalidate: async () => {}, disconnect: async () => {},
     async call(request: WalletCall) {
       await Promise.resolve();
-      if (request.method === "pay_purchase" && state.invalidateBeforePay) state.live = false;
-      if (request.method === "pay_purchase" && state.expireAtPay) state.time = state.payment!.created_at_time + 300_000_000_000n;
       expect(request.canisterId).toBe(vault.toText());
       if (!request.isCurrent?.()) throw Error("stale dispatch");
       calls.push({method: request.method, owner: owner.toText()});
@@ -48,7 +53,6 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
       const [arg] = IDL.decode(fn.argTypes, request.arg);
       let reply: unknown;
       switch (request.method) {
-        case "list_payments": reply = state.payment?.wallet.toText() === owner.toText() ? [state.payment] : []; break;
         case "quote_purchase": {
           const req = arg as unknown as PurchaseRequest;
           const record = [...values.values()].map(value => JSON.parse(value))
@@ -68,17 +72,6 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
           reply = state.payment;
           break;
         }
-        case "payment_status": reply = state.absent || !state.payment ? [] : [state.payment]; break;
-        case "pay_purchase":
-          expect(arg).toEqual(state.payment!.request.operation);
-          state.payment!.status = state.rejectPay ? { Rejected: null } : { Paid: 351n };
-          if (state.lostPay) throw Error("lost payment");
-          reply = state.payment; break;
-        case "cancel_quote": state.payment!.status = { Expired: null }; reply = state.payment; break;
-        case "reconcile_purchase":
-          state.scan++;
-          reply = { payment: state.payment, next: state.scan, end: 2n, scanned: 1n, can_continue: state.scan < 2n };
-          break;
         default: throw Error("unexpected method");
       }
       return IDL.encode(fn.retTypes, [{Ok: reply}]);
@@ -103,12 +96,51 @@ function fixture(provider: "ii" | "oisy" | "plug" = "oisy") {
     revalidate: vi.fn(async () => external),
   };
   const identity = { getPrincipal: () => state.owner };
+  // The beneficiary's own Vault actor. Its caller is the signed-in identity, never the payer.
+  const visible = (payer: Principal) => !!state.payment && state.payment.wallet.toText() === payer.toText()
+    && state.payment.request.beneficiary.toText() === state.owner.toText();
+  async function read<T>(method: string, run: () => T): Promise<{Ok: T}> {
+    await Promise.resolve();
+    calls.push({method, owner: state.owner.toText()});
+    return {Ok: run()};
+  }
+  const reader = {
+    beneficiary_payments: vi.fn((payer: Principal) =>
+      read("beneficiary_payments", () => visible(payer) ? [state.payment!] : [])),
+    beneficiary_payment_status: vi.fn((payer: Principal, operation: Uint8Array | number[]) =>
+      read("beneficiary_payment_status", () => {
+        if (!state.absent && state.payment) expect(operation).toEqual(state.payment.request.operation);
+        return !state.absent && visible(payer) ? [state.payment!] as [Payment] : [] as [];
+      })),
+    beneficiary_pay_purchase: vi.fn((payer: Principal, operation: Uint8Array | number[]) =>
+      read("beneficiary_pay_purchase", () => {
+        expect(visible(payer)).toBe(true);
+        expect(operation).toEqual(state.payment!.request.operation);
+        state.payment!.status = state.rejectPay ? { Rejected: null } : { Paid: 351n };
+        if (state.lostPay) throw Error("lost payment");
+        return state.payment!;
+      })),
+    beneficiary_cancel_quote: vi.fn((payer: Principal, operation: Uint8Array | number[]) =>
+      read("beneficiary_cancel_quote", () => {
+        expect(visible(payer)).toBe(true);
+        expect(operation).toEqual(state.payment!.request.operation);
+        state.payment!.status = { Expired: null };
+        return state.payment!;
+      })),
+    beneficiary_reconcile_purchase: vi.fn((payer: Principal, operation: Uint8Array | number[]) =>
+      read("beneficiary_reconcile_purchase", () => {
+        expect(visible(payer)).toBe(true);
+        expect(operation).toEqual(state.payment!.request.operation);
+        state.scan++;
+        return { payment: state.payment!, next: state.scan, end: 2n, scanned: 1n, can_continue: state.scan < 2n };
+      })),
+  };
   const ownerClient = {
     identity, canister: config.canister, session: {capture: () => 7},
     actor: {get_funding_config: vi.fn(async (): Promise<{Ok: [] | [FundingConfig]}> => ({Ok:[fundingConfig]})), account_balance: vi.fn(async () => ({ Ok: 351n }))},
   };
   const options = {
-    config, fundingConfig, source: provider, beneficiaryIdentity: identity, walletSession, ownerClient, store,
+    config, fundingConfig, source: provider, beneficiaryIdentity: identity, reader, walletSession, ownerClient, store,
     isCurrent: () => state.live, nowNs: () => state.time, authorizedPlug: external,
     readTerms: vi.fn(async () => ({
       decimals: state.decimals, feeE8s: state.fee, balanceE8s: state.balance,
@@ -137,8 +169,13 @@ it.each(["oisy", "plug"] as const)("external_payer_credits_captured_vault_owner 
     expected_allowance: [0n], fee: [fee], memo: [f.state.payment!.memo],
     created_at_time: [now + 9n], expires_at: [now + 9n + 300_000_000_000n],
   });
-  expect(f.calls.every(c => c.owner === wallet.toText())).toBe(true);
-  expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(1);
+  // The external wallet signs only the quote and the ledger approval.
+  expect(f.calls.filter(c => c.owner === wallet.toText()).map(c => c.method)).toEqual(["quote_purchase"]);
+  expect(f.calls.filter(c => c.owner !== wallet.toText()).every(c => c.owner === beneficiary.toText()
+    && c.method.startsWith("beneficiary_"))).toBe(true);
+  expect(f.calls.filter(c => c.method === "beneficiary_pay_purchase")).toHaveLength(1);
+  // The payer session is confirmed only before the quote and before the approval.
+  expect(f.options.walletSession.revalidate).toHaveBeenCalledTimes(2);
   expect(f.ownerClient.actor.account_balance).toHaveBeenCalledTimes(1);
   c.destroy();
 });
@@ -166,7 +203,7 @@ it.each([false, true])("fences payment when funding is paused after approval=%s"
   discovery.mockResolvedValue({Ok:[]});
   await c.pay(c.getState().summary!.termsKey);
   expect(f.approvals).toHaveLength(afterApproval ? 1 : 0);
-  expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(c => c.method === "beneficiary_pay_purchase")).toHaveLength(0);
   const [original] = f.store.list(f.adapter.scope);
   expect(original.stage).toBe(afterApproval ? "approved" : "quote-dispatched");
   expect(await f.adapter.check(original)).toMatchObject({kind:"unsubmitted"});
@@ -188,7 +225,7 @@ it("blocks a different payer and rotated ledger for the same synthetic beneficia
   await expect(rotated.prepare(amount)).rejects.toThrow();
   expect(f.calls.filter(c => c.method === "quote_purchase")).toHaveLength(1);
   expect(f.approvals).toHaveLength(0);
-  expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(c => c.method === "beneficiary_pay_purchase")).toHaveLength(0);
 });
 
 it("recovers only the original operation after a lost quote and lost payment", async () => {
@@ -215,7 +252,7 @@ it("recovers only the original operation after a lost quote and lost payment", a
   await restored.check();
   expect(restored.getState().phase).toBe("complete");
   expect(f.calls.filter(c => c.method === "quote_purchase")).toHaveLength(1);
-  expect(f.calls.filter(c => c.method === "pay_purchase")).toHaveLength(1);
+  expect(f.calls.filter(c => c.method === "beneficiary_pay_purchase")).toHaveLength(1);
   expect(f.approvals).toHaveLength(1);
   restored.destroy();
 });
@@ -226,7 +263,7 @@ it("does not treat a matching allowance as proof of a lost approval", async () =
   await c.pay(c.getState().summary!.termsKey); await c.check();
   expect(c.getState().phase).toBe("unresolved");
   expect(f.store.list(f.adapter.scope)[0].stage).toBe("approval-dispatched");
-  expect(f.calls.filter(x=>x.method==="pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(x=>x.method==="beneficiary_pay_purchase")).toHaveLength(0);
   f.state.payment!.status = {Expired: null};
   await c.check();
   expect(c.getState()).toMatchObject({phase: "failed", error: {code: "Expired"}});
@@ -239,7 +276,7 @@ it.each(["invalidateAtApprove", "invalidateBeforePay", "invalidateAfterApprove"]
     const f = fixture(), c = f.control();
     await c.prepare(amount); f.state[event] = true;
     await c.pay(c.getState().summary!.termsKey);
-    expect(f.calls.filter(x => x.method === "pay_purchase")).toHaveLength(0);
+    expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toHaveLength(0);
     expect(f.approvals).toHaveLength(event === "invalidateAtApprove" ? 0 : 1);
     c.destroy();
   },
@@ -257,8 +294,12 @@ it.each(["Unknown", "InFlight"] as const)("adopts a server %s operation into a f
   const record = f.store.list(f.adapter.scope)[0];
   expect((await f.adapter.scan(record)).next).toBe(1n);
   expect((await createVaultPaymentAdapter(f.options).scan(record)).next).toBe(2n);
+  // Ledger scans run in the beneficiary session; the payer only signed the quote.
+  expect(f.calls.filter(x => x.owner === wallet.toText()).map(x => x.method)).toEqual(["quote_purchase"]);
+  expect(f.calls.filter(x => x.method === "beneficiary_reconcile_purchase")).toHaveLength(2);
+  expect(f.adapter.capabilities.silentCheck).toBe(true);
   expect(f.approvals).toHaveLength(0);
-  expect(f.calls.filter(x=>x.method==="pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(x=>x.method==="beneficiary_pay_purchase")).toHaveLength(0);
   c.destroy();
 });
 
@@ -296,7 +337,7 @@ it("checks the displayed deadline when the queued purchase is actually dispatche
   f.state.expireAtPay = true;
   await c.pay(c.getState().summary!.termsKey);
   expect(f.approvals).toHaveLength(1);
-  expect(f.calls.filter(x => x.method === "pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toHaveLength(0);
   expect(f.store.list(f.adapter.scope)[0].stage).toBe("purchase-dispatched");
   c.destroy();
 });
@@ -316,7 +357,7 @@ it("keeps a legacy II quote discoverable when a connected external wallet is sel
   await c.pay(c.getState().summary!.termsKey);
   expect(c.getState().phase).toBe("complete");
   expect(f.calls.filter(x => x.method === "quote_purchase")).toEqual([{method: "quote_purchase", owner: beneficiary.toText()}]);
-  expect(f.calls.filter(x => x.method === "pay_purchase")).toEqual([{method: "pay_purchase", owner: beneficiary.toText()}]);
+  expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toEqual([{method: "beneficiary_pay_purchase", owner: beneficiary.toText()}]);
   expect(f.approvals).toHaveLength(1);
   c.destroy();
 });
@@ -339,7 +380,7 @@ it("restores a durable approved quote with only principal and transfer fee remai
   await c.pay(c.getState().summary!.termsKey);
   expect(c.getState().phase).toBe("complete");
   expect(f.calls.filter(x => x.method === "quote_purchase")).toHaveLength(1);
-  expect(f.calls.filter(x => x.method === "pay_purchase")).toHaveLength(1);
+  expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toHaveLength(1);
   expect(f.approvals).toHaveLength(1);
   c.destroy();
 });
@@ -352,7 +393,7 @@ it("releases an authoritatively expired original quote without approval", async 
   expect(c.getState()).toMatchObject({phase: "failed", error: {code: "Expired"}});
   expect(f.store.list(f.adapter.scope)).toEqual([]);
   expect(f.approvals).toEqual([]);
-  expect(f.calls.filter(x => x.method === "pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toHaveLength(0);
   c.destroy();
 });
 
@@ -391,7 +432,7 @@ it("checks historical payments with no active funding configuration", async () =
   await expect(a.revalidate(original)).rejects.toMatchObject({code: "Unavailable"});
   expect(f.calls.filter(x => x.method === "quote_purchase")).toHaveLength(1);
   expect(f.approvals).toHaveLength(0);
-  expect(f.calls.filter(x => x.method === "pay_purchase")).toHaveLength(0);
+  expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toHaveLength(0);
 });
 
 it("disables synthetic funding on the production host with a pinned ledger", async () => {
@@ -424,7 +465,7 @@ it.each([["fee", "BadFee"], ["decimals", "InvalidReply"], ["allowance", "TermsCh
     await c.pay(c.getState().summary!.termsKey);
     expect(c.getState()).toMatchObject({phase: "failed", error: {code}});
     expect(f.approvals).toEqual([]);
-    expect(f.calls.filter(x => x.method === "pay_purchase")).toHaveLength(0);
+    expect(f.calls.filter(x => x.method === "beneficiary_pay_purchase")).toHaveLength(0);
     c.destroy();
   },
 );
@@ -456,4 +497,15 @@ it("preserves a modified partial request if a refusal arrives for its predecesso
   expect(f.calls.filter(x => x.method === "quote_purchase")).toHaveLength(1);
   expect(f.approvals).toEqual([]);
   c.destroy();
+});
+
+it("cancels an external payer's unpaid quote in the beneficiary session", async () => {
+  const f = fixture("oisy");
+  const prepared = await f.adapter.prepare(amount);
+  await f.adapter.cancel!(prepared);
+  expect(f.state.payment!.status).toEqual({Expired: null});
+  expect(f.calls.filter(x => x.method === "beneficiary_cancel_quote")).toEqual([
+    {method: "beneficiary_cancel_quote", owner: beneficiary.toText()},
+  ]);
+  expect(f.calls.filter(x => x.owner === wallet.toText()).map(x => x.method)).toEqual(["quote_purchase"]);
 });
