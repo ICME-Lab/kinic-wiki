@@ -3,6 +3,16 @@
 // Why: Mechanical split out of lib.rs; a child module keeps same-crate private access.
 use super::*;
 
+/// Number of leading `INDEX_SCHEMA_VERSIONS` that `FRESH_INDEX_SCHEMA_SQL` already contains.
+/// Later versions run their migration SQL on fresh databases as well.
+const FRESH_INDEX_SCHEMA_VERSION_COUNT: usize = 4;
+const _: () = assert!(
+    FRESH_INDEX_SCHEMA_VERSION_COUNT >= 1
+        && FRESH_INDEX_SCHEMA_VERSION_COUNT <= INDEX_SCHEMA_VERSIONS.len()
+);
+
+/// Migration SQL for every version after the initial one, in `INDEX_SCHEMA_VERSIONS` order:
+/// `INDEX_MIGRATIONS[i]` produces `INDEX_SCHEMA_VERSIONS[i + 1]`.
 const INDEX_MIGRATIONS: &[(&str, &str)] = &[
     (
         INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
@@ -88,15 +98,7 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     reject_existing_index_tables_without_migrations(conn)?;
     validate_cycles_billing_config(config)?;
     let tx = conn.transaction().map_err(|error| error.to_string())?;
-    create_schema_migrations(&tx)?;
-    create_fresh_index_schema(&tx)?;
-    insert_cycles_billing_config(&tx, config)?;
-    for version in &INDEX_SCHEMA_VERSIONS[..4] {
-        record_schema_migration(&tx, version)?;
-    }
-    for (version, sql) in &INDEX_MIGRATIONS[3..] {
-        apply_sql_migration(&tx, version, sql)?;
-    }
+    initialize_fresh_index(&tx, config)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -130,15 +132,7 @@ fn run_index_migrations_in_tx(
     }
     reject_existing_index_tables_without_migrations_tx(conn)?;
     validate_cycles_billing_config(config)?;
-    create_schema_migrations(conn)?;
-    create_fresh_index_schema(conn)?;
-    insert_cycles_billing_config(conn, config)?;
-    for version in &INDEX_SCHEMA_VERSIONS[..4] {
-        record_schema_migration(conn, version)?;
-    }
-    for (version, sql) in &INDEX_MIGRATIONS[3..] {
-        apply_sql_migration(conn, version, sql)?;
-    }
+    initialize_fresh_index(conn, config)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -210,7 +204,7 @@ fn apply_pending_index_migrations(
             versions.join(", ")
         ));
     }
-    for (version, sql) in &INDEX_MIGRATIONS[refs.len() - 1..] {
+    for (version, sql) in migrations_after(refs.len()) {
         if *version == INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS {
             let config = config.ok_or_else(|| {
                 format!(
@@ -228,6 +222,28 @@ fn apply_pending_index_migrations(
         }
     }
     Ok(())
+}
+
+/// Creates the current schema in an empty index database and records every version.
+fn initialize_fresh_index(
+    conn: &Transaction<'_>,
+    config: &CyclesBillingConfig,
+) -> Result<(), String> {
+    create_schema_migrations(conn)?;
+    create_fresh_index_schema(conn)?;
+    insert_cycles_billing_config(conn, config)?;
+    for version in &INDEX_SCHEMA_VERSIONS[..FRESH_INDEX_SCHEMA_VERSION_COUNT] {
+        record_schema_migration(conn, version)?;
+    }
+    for (version, sql) in migrations_after(FRESH_INDEX_SCHEMA_VERSION_COUNT) {
+        apply_sql_migration(conn, version, sql)?;
+    }
+    Ok(())
+}
+
+/// The migrations still pending once the first `applied` schema versions exist (`applied >= 1`).
+fn migrations_after(applied: usize) -> &'static [(&'static str, &'static str)] {
+    &INDEX_MIGRATIONS[applied - 1..]
 }
 
 fn apply_sql_migration(conn: &Transaction<'_>, version: &str, sql: &str) -> Result<(), String> {
@@ -679,4 +695,18 @@ fn sqlite_master_entry_exists(
     .optional()
     .map(|row| row.is_some())
     .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod migration_table_tests {
+    use super::*;
+
+    #[test]
+    fn index_migrations_follow_schema_versions() {
+        let versions: Vec<&str> = INDEX_MIGRATIONS
+            .iter()
+            .map(|(version, _)| *version)
+            .collect();
+        assert_eq!(versions, INDEX_SCHEMA_VERSIONS[1..]);
+    }
 }
