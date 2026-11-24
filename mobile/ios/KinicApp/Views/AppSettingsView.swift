@@ -31,6 +31,7 @@ struct AppSettingsView: View {
                 }
                 if let message = model.statusMessage { Text(message).font(.footnote).foregroundStyle(.secondary) }
             }
+            VaultAutoFillSettingsSection(model: model.vaultAutoFill)
             if let principal = account.principal {
                 Section("Account") {
                     VStack(alignment: .leading, spacing: 8) {

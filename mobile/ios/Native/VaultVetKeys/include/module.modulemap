@@ -1,0 +1,4 @@
+module CVaultVetKeys {
+    header "VaultVetKeys.h"
+    export *
+}

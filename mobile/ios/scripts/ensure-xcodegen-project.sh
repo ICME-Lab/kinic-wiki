@@ -19,6 +19,8 @@ fail() {
 command -v xcodegen >/dev/null 2>&1 || fail "xcodegen is required. Install with: brew install xcodegen"
 [[ -f "$spec" ]] || fail "XcodeGen spec not found: $spec"
 
+"$ios_dir/scripts/build-vault-native.sh"
+
 xcodegen --spec "$spec" --project "$ios_dir" --quiet
 
 [[ -f "$project/project.pbxproj" ]] || fail "Xcode project generation failed: $project"

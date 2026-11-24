@@ -10,6 +10,15 @@ enum AppDeploymentEnvironment: String, Equatable, Sendable {
     case sandbox
 }
 
+struct VaultBundleConfiguration: Equatable, Sendable {
+    let environment: String
+    let canisterId: String
+    let apiBaseURL: URL
+    let identityProvider: URL
+    let derivationOrigin: String?
+    let callbackDomain: String
+}
+
 struct AppConfiguration: Equatable, Sendable {
     static let privacyPolicyURL = URL(string: "https://wiki.kinic.xyz/privacy-policy")!
 
@@ -22,9 +31,43 @@ struct AppConfiguration: Equatable, Sendable {
     let callbackDomain: String
     let appGroupId: String?
     let keychainAccessGroup: String?
+    let vaultKeychainAccessGroup: String?
     let iapProductIds: [String]
     let askAIURL: URL
     let deploymentEnvironment: AppDeploymentEnvironment
+    let vault: VaultBundleConfiguration?
+
+    init(
+        canisterId: String,
+        apiBaseURL: URL,
+        identityProvider: URL,
+        derivationOrigin: String,
+        authOrigin: URL,
+        paymentBaseURL: URL,
+        callbackDomain: String,
+        appGroupId: String?,
+        keychainAccessGroup: String?,
+        vaultKeychainAccessGroup: String? = nil,
+        iapProductIds: [String],
+        askAIURL: URL,
+        deploymentEnvironment: AppDeploymentEnvironment,
+        vault: VaultBundleConfiguration? = nil
+    ) {
+        self.canisterId = canisterId
+        self.apiBaseURL = apiBaseURL
+        self.identityProvider = identityProvider
+        self.derivationOrigin = derivationOrigin
+        self.authOrigin = authOrigin
+        self.paymentBaseURL = paymentBaseURL
+        self.callbackDomain = callbackDomain
+        self.appGroupId = appGroupId
+        self.keychainAccessGroup = keychainAccessGroup
+        self.vaultKeychainAccessGroup = vaultKeychainAccessGroup
+        self.iapProductIds = iapProductIds
+        self.askAIURL = askAIURL
+        self.deploymentEnvironment = deploymentEnvironment
+        self.vault = vault
+    }
 
     func makeICClientConfiguration() throws -> ICClientConfiguration {
         try ICClientConfiguration(
@@ -100,11 +143,32 @@ struct AppConfiguration: Equatable, Sendable {
             callbackDomain: bundle.requiredString("KINIC_CALLBACK_DOMAIN"),
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
             keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
+            vaultKeychainAccessGroup: bundle.optionalString("KINIC_VAULT_KEYCHAIN_ACCESS_GROUP"),
             iapProductIds: Self.iapProductIds(from: bundle.optionalString("KINIC_IAP_PRODUCT_IDS")),
             askAIURL: bundle.requiredURL("KINIC_ASK_AI_URL"),
             deploymentEnvironment: Self.deploymentEnvironment(
                 from: bundle.requiredString("KINIC_DEPLOYMENT_ENVIRONMENT")
-            )
+            ),
+            vault: Self.vaultConfiguration(from: bundle)
+        )
+    }
+
+    private static func vaultConfiguration(from bundle: Bundle) -> VaultBundleConfiguration? {
+        guard let canisterId = bundle.optionalString("KINIC_VAULT_CANISTER_ID") else {
+            return nil
+        }
+        let environment = bundle.optionalString("KINIC_VAULT_ENVIRONMENT") ?? "production"
+        let apiBaseURL = bundle.optionalURL("KINIC_VAULT_API_BASE_URL") ?? URL(string: "https://icp0.io")!
+        let identityProvider = bundle.optionalURL("KINIC_VAULT_IDENTITY_PROVIDER") ?? URL(string: "https://id.ai/authorize")!
+        let derivationOrigin = bundle.optionalString("KINIC_VAULT_DERIVATION_ORIGIN")
+        let callbackDomain = bundle.optionalString("KINIC_VAULT_CALLBACK_DOMAIN") ?? "vault.kinic.xyz"
+        return VaultBundleConfiguration(
+            environment: environment,
+            canisterId: canisterId,
+            apiBaseURL: apiBaseURL,
+            identityProvider: identityProvider,
+            derivationOrigin: derivationOrigin,
+            callbackDomain: callbackDomain
         )
     }
 

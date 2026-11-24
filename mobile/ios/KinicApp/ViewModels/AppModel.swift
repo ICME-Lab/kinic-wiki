@@ -13,6 +13,7 @@ enum AppTab: Hashable {
     case home
     case browse
     case askAI
+    case vault
     case manage
 }
 
@@ -365,6 +366,9 @@ final class AppModel {
     private var pendingWorkItemSelection: PendingWorkItemSelection?
 
     let assistantConversation: AssistantConversationModel
+    @ObservationIgnored lazy var vaultAutoFill = VaultWorkspaceModel(configuration: configuration, onCleanupFailure: { [weak self] message in
+        self?.statusMessage = message
+    })
     let configuration: AppConfiguration
     var selectedDatabaseId: String
     var selectedBrowseDatabaseId: String {
@@ -1542,6 +1546,7 @@ final class AppModel {
     }
 
     func signOut() {
+        vaultAutoFill.signOut()
         pendingWorkItemSelection = nil
         requestedWorkItemDetail = nil
         requestedWorkItemCompose = nil
@@ -1729,6 +1734,7 @@ final class AppModel {
 
     func appDidBecomeActive() {
         startRecoverPendingDatabaseCreditPurchases()
+        vaultAutoFill.appDidBecomeActive()
     }
 
     func updateDatabaseMetadata(databaseId: String, name: String, description: String, tagsInput: String, llmSummary: String) async -> Bool {

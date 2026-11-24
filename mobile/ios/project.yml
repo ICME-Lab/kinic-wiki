@@ -28,6 +28,10 @@ packages:
   Textual:
     url: https://github.com/gonzalezreal/textual
     exactVersion: 0.5.0
+  KinicVaultCore:
+    path: Packages/KinicVaultCore
+  KinicVaultNative:
+    path: Packages/KinicVaultNative
 targets:
   Kinic:
     type: application
@@ -41,9 +45,13 @@ targets:
     dependencies:
       - package: ICNativeClient
       - package: Textual
+      - package: KinicVaultCore
+      - package: KinicVaultNative
       - target: KinicShareExtension
         embed: true
       - target: KinicWorkItemsWidget
+        embed: true
+      - target: KinicVaultAutoFill
         embed: true
     settings:
       base:
@@ -135,6 +143,24 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_WIDGET_BUNDLE_ID)"
         INFOPLIST_FILE: KinicWorkItemsWidget/Info.plist
         CODE_SIGN_ENTITLEMENTS: KinicWorkItemsWidget/KinicWorkItemsWidget.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: true
+  KinicVaultAutoFill:
+    type: app-extension
+    platform: iOS
+    configFiles:
+      Debug: Config/Kinic.xcconfig
+      Release: Config/Kinic.xcconfig
+    sources:
+      - KinicVaultAutoFill
+    dependencies:
+      - package: KinicVaultCore
+      - package: KinicVaultNative
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_AUTOFILL_EXTENSION_BUNDLE_ID)"
+        INFOPLIST_FILE: KinicVaultAutoFill/Info.plist
+        CODE_SIGN_ENTITLEMENTS: KinicVaultAutoFill/KinicVaultAutoFill.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: true
   KinicTests:
