@@ -169,10 +169,13 @@ export class VaultClient {
       /* All later opens must still pass live authorization. */
     }
   }
-  private context(h: Header): VaultContext {
+  private context(
+    h: Header,
+    owner = this.access?.owner ?? this.identity.getPrincipal(),
+  ): VaultContext {
     return copyVaultContext({
       canister: this.canister,
-      owner: (this.access?.owner ?? this.identity.getPrincipal()).toText(),
+      owner: owner.toText(),
       vault: bytes(h.id),
       nonce: bytes(h.nonce),
       key_name: h.key_name,
@@ -439,6 +442,23 @@ export class VaultClient {
       this.header = structuredClone(header);
     }
     this.selectedOwnerVault = bytes(header.id);
+  }
+  /** Whether this browser holds a saved root for the listed owner header. Never locks or derives. */
+  async hasSavedKey(header: Header): Promise<boolean> {
+    this.checkLive();
+    if (!("Active" in header.state)) return false;
+    try {
+      const epoch = await this.deviceKeys.epoch();
+      if (epoch === undefined) return false;
+      const binding = JSON.stringify([
+        Array.from(contextInput(this.context(header, this.identity.getPrincipal()))),
+        Array.from(bytes(header.public_key)),
+        "root/v3",
+      ]);
+      return !!(await this.deviceKeys.get(binding, epoch));
+    } catch {
+      return false;
+    }
   }
   async open(header: Header, options: OpenOptions = {}): Promise<void> {
     this.selectOwnedVault(header);

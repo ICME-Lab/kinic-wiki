@@ -494,3 +494,13 @@ it("fences a direct retry of an ambiguous document write after sibling forget", 
   expect(mutate).toHaveBeenCalledOnce();
   expect(client.session.root).toBeUndefined();
 });
+it("reports a saved key without locking or deriving",async()=>{
+  const f=fixture(),a=f.create();
+  expect(await a.hasSavedKey(h)).toBe(false);
+  await a.open(h);
+  const b=f.create(),generation=b.session.capture();
+  expect(await b.hasSavedKey(h)).toBe(true);
+  expect(await b.hasSavedKey({...h,nonce:new Uint8Array(32).fill(9)})).toBe(false);
+  expect(b.session.capture()).toBe(generation);
+  expect(f.actor.derive_vault_key).toHaveBeenCalledTimes(1);
+});
