@@ -15,6 +15,9 @@
   },
   "dependencies": {
     "@kinic/source-contracts": "workspace:*",
+    "@kinic/vault-candid": "workspace:*",
+    "@kinic/vault-client": "workspace:*",
+    "@kinic/vault-crypto": "workspace:*",
     "@kinic/vfs-client-core": "workspace:*",
     "@icp-sdk/auth": "^5.0.0",
     "@icp-sdk/core": "^5.4.0",
@@ -26,5 +29,16 @@
     "@kinic/jev-reranker": "workspace:*",
     "@playwright/test": "^1.59.1",
     "esbuild": "0.28.1"
-  }
+  },
+  "workspaces": [
+    "../../packages/ii-server",
+    "../../packages/jev-reranker",
+    "../../packages/source-contracts",
+    "../../packages/vault-candid",
+    "../../packages/vault-client",
+    "../../packages/vault-crypto",
+    "../../packages/vfs-candid",
+    "../../packages/vfs-client-core",
+    "../../tools/candid"
+  ]
 }

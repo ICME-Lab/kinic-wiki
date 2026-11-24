@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="action-popup.css" />
+    <title>Kinic</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <!-- Top Brand & Mode Switcher -->
+      <header class="topbar">
+        <div class="brand">
+          <img src="../icons/icon-32.png" alt="Kinic" class="brand-icon" />
+          <div class="brand-copy">
+            <strong class="brand-name">Kinic</strong>
+            <span id="site-subtitle" class="brand-sub">Wiki &amp; Vault</span>
+          </div>
+        </div>
+        <div class="mode-switch" role="tablist" aria-label="Workspace">
+          <button id="mode-wiki" class="mode-btn active" data-mode="wiki" role="tab" aria-selected="true" type="button">Wiki</button>
+          <button id="mode-vault" class="mode-btn" data-mode="vault" role="tab" aria-selected="false" type="button">Vault</button>
+        </div>
+      </header>
+
+      <!-- ===================== WIKI MODE ===================== -->
+      <section id="workspace-wiki" class="workspace-pane">
+        <div class="wiki-body">
+          <div class="hero-card">
+            <div class="hero-copy">
+              <h2>Save to Kinic Wiki</h2>
+              <p class="muted">Capture the current webpage as a structured knowledge page in your Wiki.</p>
+            </div>
+            <button id="btn-wiki-capture" class="btn pink full" type="button">
+              Save current page
+            </button>
+          </div>
+
+          <div class="surface-card">
+            <div class="card-row">
+              <span class="card-label">Latest capture</span>
+              <span id="wiki-status-badge" class="status-dot">Ready</span>
+            </div>
+            <p id="wiki-latest-status" class="muted small-copy">No capture run yet.</p>
+          </div>
+
+          <div class="wiki-footer-actions">
+            <button id="btn-wiki-open" class="btn secondary full" type="button">Open Kinic Wiki ↗</button>
+            <button id="btn-wiki-settings" class="btn ghost full" type="button">Wiki Clipper Settings</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== VAULT MODE ===================== -->
+      <section id="workspace-vault" class="workspace-pane" hidden>
+        <!-- Loading state -->
+        <section id="view-loading" class="center-state">
+          <div class="spinner" aria-hidden="true"></div>
+          <p class="muted">Checking Vault status…</p>
+        </section>
+
+        <!-- Signed-out state -->
+        <section id="view-signed-out" class="center-state" hidden>
+          <img src="../icons/icon-128.png" alt="" class="hero-icon" />
+          <h1>Kinic Vault</h1>
+          <p class="muted center-copy">
+            Autofill logins, generate strong passwords, and copy 2FA codes — end-to-end encrypted and synced with Web &amp; iOS.
+          </p>
+          <button id="btn-sign-in" class="btn pink full" type="button">Sign in with Internet Identity</button>
+          <p id="signed-out-error" class="error-text" hidden></p>
+        </section>
+
+        <!-- Locked state -->
+        <section id="view-locked" class="center-state" hidden>
+          <img src="../icons/icon-128.png" alt="" class="hero-icon" />
+          <h1>Vault is locked</h1>
+          <p class="muted center-copy">Unlock to view and autofill your saved logins.</p>
+          <div id="locked-vault-picker" class="field full" hidden>
+            <label for="locked-vault-select">Vault</label>
+            <select id="locked-vault-select"></select>
+          </div>
+          <button id="btn-unlock" class="btn primary full" type="button">Unlock Vault</button>
+          <button id="btn-create-first-vault" class="btn pink full" type="button" hidden>Create your first Vault</button>
+          <button id="btn-locked-sign-out" class="btn ghost full" type="button">Sign out</button>
+          <p id="locked-error" class="error-text" hidden></p>
+        </section>
+
+        <!-- Unlocked workspace -->
+        <div id="view-unlocked" class="vault-workspace" hidden>
+          <!-- Panel 1: Vault Browser / Detail / Editor -->
+          <main id="panel-vault" class="panel">
+            <!-- List screen -->
+            <div id="vault-list-screen" class="screen">
+              <div class="search-row">
+                <input
+                  id="search-input"
+                  class="search-input"
+                  type="search"
+                  placeholder="Search logins, sites, tags…"
+                  autocomplete="off"
+                />
+                <button id="btn-new-login" class="btn primary compact" type="button">+ New</button>
+              </div>
+
+              <div class="filter-pills" role="tablist" aria-label="Item categories">
+                <button class="pill active" data-filter="all" type="button">All</button>
+                <button class="pill" data-filter="logins" type="button">Logins</button>
+                <button class="pill" data-filter="favorites" type="button">Favorites</button>
+                <button class="pill" data-filter="notes" type="button">Notes</button>
+              </div>
+
+              <div class="scroll-body">
+                <section id="matches-section" class="list-section" hidden>
+                  <div class="section-label">
+                    <span>Suggested for</span>
+                    <strong id="matches-domain"></strong>
+                  </div>
+                  <div id="matches-list" class="item-list"></div>
+                </section>
+
+                <section class="list-section">
+                  <div class="section-label">
+                    <span id="all-items-label">All items</span>
+                    <span id="items-count" class="count-pill">0</span>
+                  </div>
+                  <div id="items-list" class="item-list"></div>
+                  <p id="items-empty" class="empty-copy" hidden>No matching items found.</p>
+                </section>
+              </div>
+            </div>
+
+            <!-- Detail screen -->
+            <div id="vault-detail-screen" class="screen" hidden>
+              <div class="subbar">
+                <button id="btn-detail-back" class="btn ghost compact" type="button">← Back</button>
+                <div class="subbar-actions">
+                  <button id="btn-detail-edit" class="btn secondary compact" type="button">Edit</button>
+                  <button id="btn-detail-delete" class="btn danger compact" type="button">Delete</button>
+                </div>
+              </div>
+              <div id="detail-content" class="scroll-body detail-body"></div>
+            </div>
+
+            <!-- Editor screen -->
+            <div id="vault-editor-screen" class="screen" hidden>
+              <div class="subbar">
+                <button id="btn-editor-cancel" class="btn ghost compact" type="button">Cancel</button>
+                <strong id="editor-heading" class="subbar-title">New Login</strong>
+                <button id="btn-editor-save" class="btn primary compact" type="button">Save</button>
+              </div>
+              <form id="editor-form" class="scroll-body editor-body">
+                <div class="field">
+                  <label for="ed-title">Title</label>
+                  <input id="ed-title" type="text" required placeholder="e.g. GitHub" />
+                </div>
+                <div class="field">
+                  <label for="ed-username">Username / Email</label>
+                  <input id="ed-username" type="text" placeholder="you@example.com" />
+                </div>
+                <div class="field">
+                  <label for="ed-password">Password</label>
+                  <div class="input-with-action">
+                    <input id="ed-password" type="password" autocomplete="new-password" />
+                    <button id="btn-ed-toggle-pw" class="btn secondary compact" type="button">Show</button>
+                    <button id="btn-ed-gen-pw" class="btn secondary compact" type="button">Gen</button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="ed-urls">Website URLs (one per line)</label>
+                  <textarea id="ed-urls" rows="2" placeholder="https://github.com"></textarea>
+                </div>
+                <div class="field">
+                  <label for="ed-totp">2FA / TOTP Secret or otpauth:// URI</label>
+                  <input id="ed-totp" type="text" placeholder="JBSWY3DPEHPK3PXP" />
+                </div>
+                <div class="field">
+                  <label for="ed-tags">Tags (comma-separated)</label>
+                  <input id="ed-tags" type="text" placeholder="work, dev" />
+                </div>
+                <label class="checkbox-row">
+                  <input id="ed-favorite" type="checkbox" />
+                  <span>Mark as favorite</span>
+                </label>
+                <div class="field">
+                  <label for="ed-notes">Notes</label>
+                  <textarea id="ed-notes" rows="3" placeholder="Optional notes…"></textarea>
+                </div>
+                <p id="editor-error" class="error-text" hidden></p>
+              </form>
+            </div>
+          </main>
+
+          <!-- Panel 2: Password Generator -->
+          <main id="panel-generator" class="panel" hidden>
+            <div class="scroll-body generator-body">
+              <div class="gen-output-card">
+                <code id="gen-output" class="gen-output"></code>
+                <div class="gen-meta">
+                  <span id="gen-strength" class="strength-badge">Strong</span>
+                  <div class="gen-actions">
+                    <button id="btn-gen-refresh" class="btn secondary compact" type="button">Regenerate</button>
+                    <button id="btn-gen-copy" class="btn primary compact" type="button">Copy</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="segmented" role="tablist">
+                <button class="seg-btn active" data-gen-mode="password" type="button">Password</button>
+                <button class="seg-btn" data-gen-mode="passphrase" type="button">Passphrase</button>
+              </div>
+
+              <div id="gen-password-opts" class="gen-opts">
+                <div class="range-row">
+                  <label for="gen-length">Length</label>
+                  <strong id="gen-length-val">20</strong>
+                </div>
+                <input id="gen-length" type="range" min="8" max="64" value="20" />
+                <label class="checkbox-row"><input id="gen-upper" type="checkbox" checked /><span>Uppercase (A–Z)</span></label>
+                <label class="checkbox-row"><input id="gen-lower" type="checkbox" checked /><span>Lowercase (a–z)</span></label>
+                <label class="checkbox-row"><input id="gen-digits" type="checkbox" checked /><span>Numbers (0–9)</span></label>
+                <label class="checkbox-row"><input id="gen-symbols" type="checkbox" checked /><span>Symbols (!@#$…)</span></label>
+                <label class="checkbox-row"><input id="gen-ambiguous" type="checkbox" /><span>Exclude ambiguous (Il1O0)</span></label>
+              </div>
+
+              <div id="gen-passphrase-opts" class="gen-opts" hidden>
+                <div class="range-row">
+                  <label for="gen-words">Words</label>
+                  <strong id="gen-words-val">5</strong>
+                </div>
+                <input id="gen-words" type="range" min="3" max="10" value="5" />
+                <div class="field">
+                  <label for="gen-separator">Separator</label>
+                  <input id="gen-separator" type="text" value="-" maxlength="3" />
+                </div>
+                <label class="checkbox-row"><input id="gen-capitalize" type="checkbox" checked /><span>Capitalize words</span></label>
+                <label class="checkbox-row"><input id="gen-include-number" type="checkbox" checked /><span>Include number</span></label>
+              </div>
+            </div>
+          </main>
+
+          <!-- Panel 3: Vault Settings -->
+          <main id="panel-settings" class="panel" hidden>
+            <div class="scroll-body settings-body">
+              <div class="field">
+                <label for="settings-vault-select">Active Vault</label>
+                <select id="settings-vault-select"></select>
+              </div>
+              <div class="field">
+                <label for="settings-autolock">Auto-lock after inactivity</label>
+                <select id="settings-autolock">
+                  <option value="5">5 minutes</option>
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                </select>
+              </div>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <span>Signed-in Principal</span>
+                  <code id="settings-principal" class="mono-small">—</code>
+                </div>
+              </div>
+              <div class="settings-actions">
+                <button id="btn-settings-sync" class="btn secondary full" type="button">Sync Vault Now</button>
+                <button id="btn-settings-open-web" class="btn secondary full" type="button">Open Kinic Vault Web ↗</button>
+                <button id="btn-settings-lock" class="btn secondary full" type="button">Lock Vault</button>
+                <button id="btn-settings-sign-out" class="btn danger full" type="button">Sign Out</button>
+              </div>
+            </div>
+          </main>
+
+          <!-- Vault Bottom Navigation -->
+          <nav class="bottom-nav" aria-label="Vault navigation">
+            <button class="nav-btn active" data-tab="vault" type="button">Vault</button>
+            <button class="nav-btn" data-tab="generator" type="button">Generator</button>
+            <button class="nav-btn" data-tab="settings" type="button">Settings</button>
+          </nav>
+        </div>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    </div>
+
+    <script type="module" src="../dist/action-popup.js"></script>
+  </body>
+</html>

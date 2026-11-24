@@ -3,6 +3,9 @@ packages:
   - ../../packages/ii-server
   - ../../packages/jev-reranker
   - ../../packages/source-contracts
+  - ../../packages/vault-candid
+  - ../../packages/vault-client
+  - ../../packages/vault-crypto
   - ../../packages/vfs-candid
   - ../../packages/vfs-client-core
   - ../../tools/candid

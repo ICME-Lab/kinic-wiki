@@ -58,9 +58,27 @@ const activeBadgeRefreshes = new Map();
 let nextBadgeRefreshGeneration = 0;
 let configSaveQueue = Promise.resolve();
 
+const VAULT_PASSTHROUGH_TYPES = new Set([
+  "get-inline-matches", "fill-inline-item", "login-submitted", "check-pending-save-banner",
+  "save-banner-confirm", "save-banner-dismiss", "get-state", "list-vaults", "create-vault",
+  "unlock-vault", "refresh-items", "lock-vault", "auth-signed-in", "auth-signed-out",
+  "list-items", "read-item", "save-credential", "delete-item", "fill-active-tab",
+  "fill-generated-password", "load-settings", "save-settings"
+]);
+
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.target === "offscreen") return false;
+    if (message?.target === "offscreen" || message?.target === "vault-offscreen") return false;
+    if (typeof message?.type === "string" && VAULT_PASSTHROUGH_TYPES.has(message.type)) return false;
+    if (message?.type === "wiki-capture-current-tab") {
+      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+        if (!tab) return sendResponse({ ok: false, error: "No active tab." });
+        return handleActionClick(tab).then(() => sendResponse({ ok: true }));
+      }).catch((error) => {
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      });
+      return true;
+    }
     handleMessage(message, sender).then(sendResponse, (error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
