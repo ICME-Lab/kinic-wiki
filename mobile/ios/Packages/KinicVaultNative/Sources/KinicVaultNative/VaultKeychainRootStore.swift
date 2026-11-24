@@ -1,10 +1,11 @@
 import CryptoKit
 import Foundation
 import KinicVaultCore
+import LocalAuthentication
 import Security
 
 public struct VaultKeychainRootStore: Sendable {
-    public enum StoreError: Error, Equatable { case keyNotFound, invalidKeyLength, osStatus(OSStatus) }
+    public enum StoreError: Error, Equatable { case keyNotFound, invalidKeyLength, accessControlCreationFailed, osStatus(OSStatus) }
     private static let service = "xyz.kinic.vault.root-key"
     private let accessGroup: String?
     private let account: String
@@ -17,19 +18,42 @@ public struct VaultKeychainRootStore: Sendable {
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         return query
     }
+    private static func makeAccessControl() throws -> SecAccessControl {
+        var error: Unmanaged<CFError>?
+        guard let accessControl = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            .userPresence,
+            &error
+        ) else {
+            throw StoreError.accessControlCreationFailed
+        }
+        return accessControl
+    }
     public func save(rootKey: SymmetricKey) throws {
         var raw = rootKey.withUnsafeBytes { Data($0) }
         defer { raw.resetBytes(in: 0..<raw.count) }
         guard raw.count == 32 else { throw StoreError.invalidKeyLength }
-        let value: [String: Any] = [kSecValueData as String: raw, kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
-        let updated = SecItemUpdate(query() as CFDictionary, value as CFDictionary)
-        if updated == errSecSuccess { return }
-        guard updated == errSecItemNotFound else { throw StoreError.osStatus(updated) }
-        let status = SecItemAdd(query().merging(value) { _, new in new } as CFDictionary, nil)
+        let accessControl = try Self.makeAccessControl()
+        let deleteStatus = SecItemDelete(query() as CFDictionary)
+        guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
+            throw StoreError.osStatus(deleteStatus)
+        }
+        var addQuery = query()
+        addQuery[kSecValueData as String] = raw
+        addQuery[kSecAttrAccessControl as String] = accessControl
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else { throw StoreError.osStatus(status) }
     }
-    public func load() throws -> SymmetricKey {
+    public func load(authenticationContext: LAContext? = nil, authenticationPrompt: String? = nil) throws -> SymmetricKey {
         var query = query(); query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
+        if let authenticationContext {
+            query[kSecUseAuthenticationContext as String] = authenticationContext
+        } else if let authenticationPrompt {
+            let context = LAContext()
+            context.localizedReason = authenticationPrompt
+            query[kSecUseAuthenticationContext as String] = context
+        }
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { throw StoreError.keyNotFound }
@@ -50,6 +74,9 @@ public struct VaultKeychainRootStore: Sendable {
     private let accessGroup: String?
     public init(accessGroup: String?) { self.accessGroup = accessGroup }
     public func save(_ key: SymmetricKey, context: VaultContext) throws { try VaultKeychainRootStore(accessGroup: accessGroup, context: context).save(rootKey: key) }
-    public func load(context: VaultContext) throws -> SymmetricKey { try VaultKeychainRootStore(accessGroup: accessGroup, context: context).load() }
+    public func load(context: VaultContext) throws -> SymmetricKey { try load(context: context, authenticationContext: nil) }
+    public func load(context: VaultContext, authenticationContext: LAContext?) throws -> SymmetricKey {
+        try VaultKeychainRootStore(accessGroup: accessGroup, context: context).load(authenticationContext: authenticationContext)
+    }
     public func clear() throws { try VaultKeychainRootStore.clearAll(accessGroup: accessGroup) }
 }

@@ -111,6 +111,60 @@ export function extractDomains(urls: readonly string[]): string[] {
   return domains;
 }
 
+const NON_MATCHABLE_PARENT_DOMAINS = new Set([
+  // Common multi-label public suffixes
+  "co.jp",
+  "ne.jp",
+  "or.jp",
+  "ac.jp",
+  "go.jp",
+  "co.uk",
+  "org.uk",
+  "ac.uk",
+  "gov.uk",
+  "com.au",
+  "net.au",
+  "org.au",
+  "com.br",
+  "com.cn",
+  "com.hk",
+  "com.sg",
+  "com.tw",
+  "co.kr",
+  "co.in",
+  "co.nz",
+  "co.za",
+  // Shared multi-tenant hosting & IC canister domains
+  "github.io",
+  "gitlab.io",
+  "pages.dev",
+  "workers.dev",
+  "vercel.app",
+  "netlify.app",
+  "herokuapp.com",
+  "appspot.com",
+  "web.app",
+  "firebaseapp.com",
+  "cloudfront.net",
+  "amazonaws.com",
+  "s3.amazonaws.com",
+  "azurewebsites.net",
+  "icp0.io",
+  "ic0.app",
+  "raw.icp0.io",
+]);
+
+function isIpOrLocalhost(host: string): boolean {
+  if (host === "localhost") return true;
+  if (host.startsWith("[") && host.endsWith("]")) return true;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+}
+
+function canMatchAsParentDomain(domain: string): boolean {
+  if (!domain.includes(".") || isIpOrLocalhost(domain)) return false;
+  return !NON_MATCHABLE_PARENT_DOMAINS.has(domain);
+}
+
 export function matchesDomain(
   domains: readonly string[] | undefined,
   queryHost: string,
@@ -118,12 +172,10 @@ export function matchesDomain(
   const target = normalizeDomain(queryHost);
   if (!target || !domains?.length) return false;
   return domains.some((entry) => {
-    const domain = entry.toLowerCase();
-    return (
-      domain === target ||
-      target.endsWith(`.${domain}`) ||
-      domain.endsWith(`.${target}`)
-    );
+    const domain = normalizeDomain(entry);
+    if (!domain) return false;
+    if (domain === target) return true;
+    return canMatchAsParentDomain(domain) && target.endsWith(`.${domain}`);
   });
 }
 

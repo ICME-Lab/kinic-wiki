@@ -18,7 +18,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     private var keychainAccessGroup: String? {
-        Bundle.main.object(forInfoDictionaryKey: "KINIC_KEYCHAIN_ACCESS_GROUP") as? String
+        Bundle.main.object(forInfoDictionaryKey: "KINIC_VAULT_KEYCHAIN_ACCESS_GROUP") as? String
     }
 
     private func makeSnapshotStore() -> VaultAutoFillSnapshotStore? {
@@ -33,9 +33,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         return VaultAutoFillSnapshotStore(fileURL: fileURL)
     }
 
-    private func loadRootKey(store: VaultAutoFillSnapshotStore) throws -> SymmetricKey? {
+    private func loadRootKey(
+        store: VaultAutoFillSnapshotStore,
+        authenticationContext: LAContext?
+    ) throws -> SymmetricKey? {
         guard let snapshot = try store.load() else { return nil }
-        return try VaultKeychainRootStore(accessGroup: keychainAccessGroup, context: snapshot.context).load()
+        return try VaultKeychainRootStore(accessGroup: keychainAccessGroup, context: snapshot.context)
+            .load(authenticationContext: authenticationContext)
     }
 
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
@@ -64,14 +68,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         }
         Task { @MainActor in
-            let unlocked = await authenticateBiometrics(
+            guard let authContext = await authenticateBiometrics(
                 reason: "Unlock Kinic Vault to fill your password"
-            )
-            guard unlocked else {
+            ) else {
                 cancelWith(code: .userCanceled)
                 return
             }
-            completeWithCredential(recordIdentifier: recordId)
+            completeWithCredential(recordIdentifier: recordId, authenticationContext: authContext)
         }
     }
 
@@ -92,10 +95,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     @MainActor
     private func presentCredentialPicker(serviceHosts: [String]) async {
-        let unlocked = await authenticateBiometrics(
+        guard let authContext = await authenticateBiometrics(
             reason: "Unlock Kinic Vault to browse saved logins"
-        )
-        guard unlocked else {
+        ) else {
             cancelWith(code: .userCanceled)
             return
         }
@@ -104,7 +106,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             embedError("Vault storage group is not available.")
             return
         }
-        guard let rootKey = try? loadRootKey(store: store) else {
+        guard let rootKey = try? loadRootKey(store: store, authenticationContext: authContext) else {
             embed(
                 AutoFillRootView(
                     state: .configurationNeeded,
@@ -131,7 +133,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 AutoFillRootView(
                     state: .ready(matched: matched, all: allCandidates),
                     onSelect: { [weak self] recordId in
-                        self?.completeWithCredential(recordIdentifier: recordId)
+                        self?.completeWithCredential(recordIdentifier: recordId, rootKey: rootKey)
                     },
                     onCancel: { [weak self] in
                         self?.cancelWith(code: .userCanceled)
@@ -144,9 +146,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     @MainActor
-    private func completeWithCredential(recordIdentifier: String) {
+    private func completeWithCredential(
+        recordIdentifier: String,
+        authenticationContext: LAContext? = nil,
+        rootKey preloadedRootKey: SymmetricKey? = nil
+    ) {
         guard let store = makeSnapshotStore(),
-              let rootKey = try? loadRootKey(store: store),
+              let rootKey = preloadedRootKey ?? (try? loadRootKey(store: store, authenticationContext: authenticationContext)),
               let decrypted = try? store.decryptCredential(
                   recordIdentifier: recordIdentifier,
                   rootKey: rootKey
@@ -174,17 +180,18 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
     }
 
-    private func authenticateBiometrics(reason: String) async -> Bool {
+    private func authenticateBiometrics(reason: String) async -> LAContext? {
         let context = LAContext()
         var authError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError) else {
-            return false
+            return nil
         }
-        return await withCheckedContinuation { continuation in
+        let ok = await withCheckedContinuation { continuation in
             context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, _ in
                 continuation.resume(returning: ok)
             }
         }
+        return ok ? context : nil
     }
 
     @MainActor

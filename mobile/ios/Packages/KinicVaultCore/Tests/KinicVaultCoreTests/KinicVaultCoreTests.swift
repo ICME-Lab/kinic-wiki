@@ -333,6 +333,21 @@ struct KinicVaultCoreTests {
         #expect(VaultTOTP.formatCode("12345") == "12345")
     }
 
+    @Test("Matches subdomains one-way and blocks public suffix parent wildcards")
+    func matchesDomainStrictRules() {
+        #expect(VaultCredentialCodec.matchesDomain(domains: ["github.com"], queryHost: "https://api.github.com/v1"))
+        #expect(VaultCredentialCodec.matchesDomain(domains: ["github.com"], queryHost: "https://github.com"))
+        #expect(!VaultCredentialCodec.matchesDomain(domains: ["github.com"], queryHost: "https://notgithub.com"))
+        // Stored subdomain must not match its parent domain or sibling subdomains.
+        #expect(!VaultCredentialCodec.matchesDomain(domains: ["accounts.example.com"], queryHost: "https://example.com"))
+        #expect(!VaultCredentialCodec.matchesDomain(domains: ["accounts.example.com"], queryHost: "https://mail.example.com"))
+        #expect(VaultCredentialCodec.matchesDomain(domains: ["accounts.example.com"], queryHost: "https://accounts.example.com"))
+        // Public suffixes and shared multi-tenant hosts must not act as wildcard parents.
+        #expect(!VaultCredentialCodec.matchesDomain(domains: ["co.uk"], queryHost: "https://bank.co.uk"))
+        #expect(!VaultCredentialCodec.matchesDomain(domains: ["github.io"], queryHost: "https://victim.github.io"))
+        #expect(!VaultCredentialCodec.matchesDomain(domains: ["icp0.io"], queryHost: "https://canister.icp0.io"))
+    }
+
     @Test("Snapshot lists both credentials and notes while AutoFill candidates stay credential-only")
     func snapshotListsRichItemsAndPreservesAutoFillFilter() throws {
         let context = try makeTestContext()

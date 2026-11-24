@@ -160,7 +160,7 @@ final class VaultWorkspaceModel {
 
         if let group = configuration.appGroupId,
            let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
-           let accessGroup = configuration.keychainAccessGroup {
+           let accessGroup = configuration.vaultKeychainAccessGroup {
             let store = VaultAutoFillSnapshotStore(fileURL: url.appendingPathComponent("VaultAutoFill/snapshot.v1.json"))
             let controller = VaultAutoFillSyncController(
                 snapshotStore: store,
@@ -177,7 +177,7 @@ final class VaultWorkspaceModel {
         switch Self.resolveConnection(from: configuration) {
         case .success(let resolved):
             if let resolved {
-                configureConnection(resolved, accessGroup: configuration.keychainAccessGroup)
+                configureConnection(resolved, accessGroup: configuration.vaultKeychainAccessGroup)
             }
         case .failure(let error):
             available = true
@@ -398,12 +398,12 @@ final class VaultWorkspaceModel {
         guard !isPreviewFixture, !busy, !isSaving, let cache else { return }
         let ticket = generation
         let unlockTicket = unlockRevision
-        let authenticated = await evaluateDeviceOwnerAuthentication(
+        let authContext = await evaluateDeviceOwnerAuthentication(
             reason: "Unlock Kinic Vault to view your saved logins and codes"
         )
-        guard authenticated, generation == ticket, unlockRevision == unlockTicket else { return }
+        guard let authContext, generation == ticket, unlockRevision == unlockTicket else { return }
         do {
-            if let (snapshot, rootKey) = try cache.loadOfflineSnapshot() {
+            if let (snapshot, rootKey) = try cache.loadOfflineSnapshot(authenticationContext: authContext) {
                 let enabled = await cache.isProviderEnabled()
                 guard generation == ticket, unlockRevision == unlockTicket else { return }
                 if vaults.contains(where: { $0.id == snapshot.context.vault }) {
@@ -433,17 +433,18 @@ final class VaultWorkspaceModel {
         }
     }
 
-    private func evaluateDeviceOwnerAuthentication(reason: String) async -> Bool {
+    private func evaluateDeviceOwnerAuthentication(reason: String) async -> LAContext? {
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            return false
+            return nil
         }
-        return await withCheckedContinuation { continuation in
+        let ok = await withCheckedContinuation { continuation in
             context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, _ in
                 continuation.resume(returning: ok)
             }
         }
+        return ok ? context : nil
     }
 
     // MARK: - Authentication & Vault Management
