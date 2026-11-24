@@ -3,12 +3,36 @@
 // Why: Mechanical split out of lib.rs; a child module keeps same-crate private access.
 use super::*;
 
-const INDEX_SCHEMA_MIGRATION_002: &str =
-    include_str!("../migrations/index_db/002_node_publications.sql");
-const INDEX_SCHEMA_MIGRATION_CURRENT: &str =
-    include_str!("../migrations/index_db/003_publication_mutation_recovery.sql");
-const INDEX_SCHEMA_MIGRATION_IAP: &str =
-    include_str!("../migrations/index_db/004_iap_cycle_grants.sql");
+const INDEX_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+        include_str!("../migrations/index_db/002_node_publications.sql"),
+    ),
+    (
+        INDEX_SCHEMA_VERSION_CURRENT,
+        include_str!("../migrations/index_db/003_publication_mutation_recovery.sql"),
+    ),
+    (
+        INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
+        include_str!("../migrations/index_db/004_iap_cycle_grants.sql"),
+    ),
+    (
+        INDEX_SCHEMA_VERSION_VOICE,
+        include_str!("../migrations/index_db/005_voice_billing.sql"),
+    ),
+    (
+        INDEX_SCHEMA_VERSION_MAINTENANCE,
+        include_str!("../migrations/index_db/006_database_maintenance.sql"),
+    ),
+    (
+        INDEX_SCHEMA_VERSION_BRIDGE,
+        include_str!("../migrations/index_db/007_credit_bridge.sql"),
+    ),
+    (
+        INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY,
+        include_str!("../migrations/index_db/008_credit_bridge_fence_expiry.sql"),
+    ),
+];
 
 impl VfsService {
     pub fn run_index_migrations(&self) -> Result<(), String> {
@@ -67,14 +91,12 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     create_schema_migrations(&tx)?;
     create_fresh_index_schema(&tx)?;
     insert_cycles_billing_config(&tx, config)?;
-    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_INITIAL)?;
-    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
-    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
-    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
-    apply_voice_migration(&tx)?;
-    apply_maintenance_migration(&tx)?;
-    apply_bridge_migration(&tx)?;
-    apply_bridge_fence_expiry_migration(&tx)?;
+    for version in &INDEX_SCHEMA_VERSIONS[..4] {
+        record_schema_migration(&tx, version)?;
+    }
+    for (version, sql) in &INDEX_MIGRATIONS[3..] {
+        apply_sql_migration(&tx, version, sql)?;
+    }
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -111,14 +133,12 @@ fn run_index_migrations_in_tx(
     create_schema_migrations(conn)?;
     create_fresh_index_schema(conn)?;
     insert_cycles_billing_config(conn, config)?;
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_INITIAL)?;
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
-    apply_voice_migration(conn)?;
-    apply_maintenance_migration(conn)?;
-    apply_bridge_migration(conn)?;
-    apply_bridge_fence_expiry_migration(conn)?;
+    for version in &INDEX_SCHEMA_VERSIONS[..4] {
+        record_schema_migration(conn, version)?;
+    }
+    for (version, sql) in &INDEX_MIGRATIONS[3..] {
+        apply_sql_migration(conn, version, sql)?;
+    }
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -175,146 +195,44 @@ fn validate_current_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     validate_index_schema(conn)
 }
 
-const INDEX_SCHEMA_VOICE_VERSIONS: &[&str] = &[
-    INDEX_SCHEMA_VERSION_INITIAL,
-    INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
-    INDEX_SCHEMA_VERSION_CURRENT,
-    INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
-    INDEX_SCHEMA_VERSION_VOICE,
-];
 fn apply_pending_index_migrations(
     conn: &Transaction<'_>,
     config: Option<&CyclesBillingConfig>,
 ) -> Result<(), String> {
     let versions = applied_index_versions(conn)?;
-    if versions.iter().map(String::as_str).collect::<Vec<_>>() == INDEX_SCHEMA_VERSIONS {
+    let refs: Vec<&str> = versions.iter().map(String::as_str).collect();
+    if refs == INDEX_SCHEMA_VERSIONS {
         return Ok(());
     }
-    let refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
-    if refs == INDEX_SCHEMA_VERSIONS[..7] {
-        return apply_bridge_fence_expiry_migration(conn);
-    }
-    if refs == INDEX_SCHEMA_VERSIONS[..6] {
-        apply_bridge_migration(conn)?;
-        return apply_bridge_fence_expiry_migration(conn);
-    }
-    if versions.iter().any(|v| {
-        v == INDEX_SCHEMA_VERSION_MAINTENANCE
-            || v == INDEX_SCHEMA_VERSION_BRIDGE
-            || v == INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY
-    }) {
-        return Err("unsupported index schema version".into());
-    }
-    apply_index_migrations_through_voice(conn, config)?;
-    apply_maintenance_migration(conn)?;
-    apply_bridge_migration(conn)?;
-    apply_bridge_fence_expiry_migration(conn)
-}
-fn apply_bridge_fence_expiry_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(include_str!(
-        "../migrations/index_db/008_credit_bridge_fence_expiry.sql"
-    ))
-    .map_err(|e| e.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE_FENCE_EXPIRY)?;
-    Ok(())
-}
-fn apply_bridge_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(include_str!("../migrations/index_db/007_credit_bridge.sql"))
-        .map_err(|e| e.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_BRIDGE)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_BRIDGE)?;
-    Ok(())
-}
-
-fn apply_maintenance_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(include_str!(
-        "../migrations/index_db/006_database_maintenance.sql"
-    ))
-    .map_err(|e| e.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_MAINTENANCE)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_MAINTENANCE)?;
-    Ok(())
-}
-fn apply_index_migrations_through_voice(
-    conn: &Transaction<'_>,
-    config: Option<&CyclesBillingConfig>,
-) -> Result<(), String> {
-    let mut versions = applied_index_versions(conn)?;
-    let mut version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
-    if version_refs == INDEX_SCHEMA_VOICE_VERSIONS {
-        return Ok(());
-    }
-    if version_refs == INDEX_SCHEMA_VOICE_VERSIONS[..4] {
-        apply_voice_migration(conn)?;
-        return Ok(());
-    }
-    if version_refs == [INDEX_SCHEMA_VERSION_INITIAL] {
-        conn.execute_batch(INDEX_SCHEMA_MIGRATION_002)
-            .map_err(|error| error.to_string())?;
-        #[cfg(not(target_arch = "wasm32"))]
-        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
-        #[cfg(target_arch = "wasm32")]
-        insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
-        versions.push(INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string());
-        version_refs = versions.iter().map(String::as_str).collect();
-    }
-    if version_refs
-        == [
-            INDEX_SCHEMA_VERSION_INITIAL,
-            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
-        ]
-    {
-        conn.execute_batch(INDEX_SCHEMA_MIGRATION_CURRENT)
-            .map_err(|error| error.to_string())?;
-        #[cfg(not(target_arch = "wasm32"))]
-        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
-        #[cfg(target_arch = "wasm32")]
-        insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
-        versions.push(INDEX_SCHEMA_VERSION_CURRENT.to_string());
-        version_refs = versions.iter().map(String::as_str).collect();
-    }
-    if version_refs
-        != [
-            INDEX_SCHEMA_VERSION_INITIAL,
-            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
-            INDEX_SCHEMA_VERSION_CURRENT,
-        ]
-        && version_refs != INDEX_SCHEMA_VOICE_VERSIONS
-    {
+    if refs.is_empty() || !INDEX_SCHEMA_VERSIONS.starts_with(&refs) {
         return Err(format!(
             "unsupported index schema version; recreate the index database: {}",
             versions.join(", ")
         ));
     }
-
-    if version_refs == INDEX_SCHEMA_VOICE_VERSIONS {
-        return Ok(());
+    for (version, sql) in &INDEX_MIGRATIONS[refs.len() - 1..] {
+        if *version == INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS {
+            let config = config.ok_or_else(|| {
+                format!(
+                    "cycles config required to apply index schema migration {INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS}"
+                )
+            })?;
+            conn.execute_batch(sql).map_err(|error| error.to_string())?;
+            if let Some(iap_authority_id) = &config.iap_authority_id {
+                validate_principal_text(iap_authority_id)?;
+                set_cycles_billing_config_text(conn, "iap_authority_id", iap_authority_id)?;
+            }
+            record_schema_migration(conn, version)?;
+        } else {
+            apply_sql_migration(conn, version, sql)?;
+        }
     }
-
-    let config = config.ok_or_else(|| {
-        format!(
-            "cycles config required to apply index schema migration {INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS}"
-        )
-    })?;
-    conn.execute_batch(INDEX_SCHEMA_MIGRATION_IAP)
-        .map_err(|error| error.to_string())?;
-    if let Some(iap_authority_id) = &config.iap_authority_id {
-        validate_principal_text(iap_authority_id)?;
-        set_cycles_billing_config_text(conn, "iap_authority_id", iap_authority_id)?;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
-    apply_voice_migration(conn)?;
     Ok(())
+}
+
+fn apply_sql_migration(conn: &Transaction<'_>, version: &str, sql: &str) -> Result<(), String> {
+    conn.execute_batch(sql).map_err(|error| error.to_string())?;
+    record_schema_migration(conn, version)
 }
 
 fn applied_index_versions(conn: &Transaction<'_>) -> Result<Vec<String>, String> {
@@ -337,7 +255,7 @@ fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn insert_schema_migration_now(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
+fn record_schema_migration(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at)
          VALUES (?1, CAST(strftime('%s', 'now') AS INTEGER) * 1000)",
@@ -348,7 +266,7 @@ fn insert_schema_migration_now(conn: &Transaction<'_>, version: &str) -> Result<
 }
 
 #[cfg(target_arch = "wasm32")]
-fn insert_schema_migration_zero(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
+fn record_schema_migration(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
         params![version],
@@ -761,14 +679,4 @@ fn sqlite_master_entry_exists(
     .optional()
     .map(|row| row.is_some())
     .map_err(|error| error.to_string())
-}
-
-fn apply_voice_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(include_str!("../migrations/index_db/005_voice_billing.sql"))
-        .map_err(|e| e.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_VOICE)?;
-    #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_VOICE)?;
-    Ok(())
 }
