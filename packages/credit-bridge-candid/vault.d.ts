@@ -44,7 +44,7 @@ export interface LinkStatus {
 }
 export type Result_2 = { 'Ok' : LinkChallenge } |
   { 'Err' : BridgeError };
-export type Result_26 = { 'Ok' : CreditReceipt } |
+export type Result_27 = { 'Ok' : CreditReceipt } |
   { 'Err' : BridgeError };
 export type Result_29 = { 'Ok' : BridgeRevocation } |
   { 'Err' : BridgeError };
@@ -52,7 +52,7 @@ export type Result_31 = { 'Ok' : [] | [LinkStatus] } |
   { 'Err' : BridgeError };
 export interface _SERVICE {
   'begin_wiki_link' : ActorMethod<[Uint8Array | number[]], Result_2>,
-  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_26>,
+  'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_27>,
   'revoke_wiki_link' : ActorMethod<[], Result_29>,
   'wiki_link_status' : ActorMethod<[], Result_31>,
 }

@@ -167,6 +167,72 @@ test("official ledger charges the wallet, credits an independent beneficiary onc
       await ledger.actor.icrc1_balance_of(account(vault.canisterId)),
       amount,
     );
+
+    // The beneficiary reads and submits a quote the payer signed and approved.
+    const third = await quote();
+    await approve((await now()) + 60_000_000_000n);
+    const stranger = pic.createActor(idlFactory, vault.canisterId);
+    stranger.setPrincipal(Principal.selfAuthenticating(randomBytes(32)));
+    assert.deepEqual(
+      ok(await stranger.beneficiary_payment_status(payer, third.request.operation)),
+      [],
+    );
+    assert.deepEqual(ok(await stranger.beneficiary_payments(payer)), []);
+    assert.deepEqual(
+      await stranger.beneficiary_pay_purchase(payer, third.request.operation),
+      { Err: { NotFound: null } },
+    );
+    assert.deepEqual(
+      stable(
+        ok(await beneficiary.beneficiary_payment_status(payer, third.request.operation))[0],
+      ),
+      stable(third),
+    );
+    assert.ok(
+      ok(await beneficiary.beneficiary_payments(payer)).some((p) =>
+        Buffer.from(p.request.operation).equals(Buffer.from(third.request.operation)),
+      ),
+    );
+    const submitted = ok(
+      await beneficiary.beneficiary_pay_purchase(payer, third.request.operation),
+    );
+    assert.ok("Paid" in submitted.status);
+    assert.deepEqual(stable(submitted), stable(third));
+    assert.deepEqual(
+      await beneficiary.beneficiary_pay_purchase(payer, third.request.operation),
+      { Err: { Conflict: null } },
+    );
+    assert.equal(await walletBalance(), initial - 2n * amount - fee * 5n);
+    assert.equal(
+      ok(await beneficiary.account_balance()),
+      initialCredit + 2n * credits,
+    );
+    assert.equal(
+      await ledger.actor.icrc1_balance_of(account(vault.canisterId)),
+      2n * amount,
+    );
+    // Reconciling an already settled operation returns its receipt without another credit.
+    const replay = ok(
+      await beneficiary.beneficiary_reconcile_purchase(payer, third.request.operation),
+    );
+    assert.ok("Paid" in replay.payment.status);
+    assert.equal(
+      ok(await beneficiary.account_balance()),
+      initialCredit + 2n * credits,
+    );
+
+    // The beneficiary withdraws an unpaid quote; nobody else can touch it.
+    const unpaid = await quote();
+    for (const call of [
+      stranger.beneficiary_cancel_quote(payer, unpaid.request.operation),
+      stranger.beneficiary_reconcile_purchase(payer, unpaid.request.operation),
+    ])
+      assert.deepEqual(await call, { Err: { NotFound: null } });
+    const cancelled = ok(
+      await beneficiary.beneficiary_cancel_quote(payer, unpaid.request.operation),
+    );
+    assert.deepEqual(cancelled.status, { Expired: null });
+    assert.equal(await walletBalance(), initial - 2n * amount - fee * 5n);
   } finally {
     try {
       await pic?.tearDown();

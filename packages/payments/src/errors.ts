@@ -62,11 +62,17 @@ const errorMessages: Record<PaymentErrorCode, string> = {
   Unavailable: "The service is temporarily unavailable.",
   AccountChanged: "The funding account changed. Review the payment terms.",
   UnsupportedAccount: "Use a default ledger account for funding.",
+  SignerBlocked: "The browser blocked the wallet window. Allow pop-ups for this site, then try again.",
   InvalidReply: "The service returned an unexpected reply.",
   CoordinationUnavailable: "This browser cannot safely coordinate payments across tabs. Use a browser with Web Locks support.",
   StorageUnavailable: "The payment record could not be saved or read.",
   Unknown: "Check the saved payment status before trying again.",
 };
+
+/** The user-facing explanation for a failure code, without a stage prefix. */
+export function paymentFailureMessage(code: PaymentErrorCode): string {
+  return errorMessages[code];
+}
 
 export function formatPaymentFailure(
   { stage, code }: PaymentFailureDetails,
