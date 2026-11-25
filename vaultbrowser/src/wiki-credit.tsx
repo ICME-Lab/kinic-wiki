@@ -233,7 +233,10 @@ export function WikiCreditFunding({
           const status = bridgeOk(await actor.wiki_link_status());
           checkWork();
           channelCheck();
+          const policy = status[0]?.active ? await loadAuto(actor) : undefined;
+          checkWork();
           setLink(status[0]);
+          setAuto(policy);
           setNotice(
             status[0]?.active
               ? "Wiki account linked. Set up auto top-up to refill this Vault from Wiki."
@@ -256,7 +259,9 @@ export function WikiCreditFunding({
         channelCheck();
         if (Date.now() - started > 10 * 60_000) throw Error("Timeout");
       } catch {
+        const closedFund = popup.closed && mode === "fund";
         stop();
+        if (closedFund) return;
         try {
           check();
           setNotice(

@@ -214,3 +214,43 @@ it("a Wiki window opened for auto top-up never prepares a manual offer", async (
   expect(mocks.prepare).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Charge from Wiki credits" })).toBeNull();
 });
+
+it("loads auto top-up status right after linking so Set up in Wiki appears immediately", async () => {
+  mocks.begin.mockResolvedValue({
+    Ok: {
+      challenge: new Uint8Array(16).fill(2),
+      vault_owner: principal,
+      generation: 1n,
+      expires_at_ns: 999n,
+    },
+  });
+  render(<WikiCreditFunding client={client()} onFunded={async () => {}} balance={5_000n} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Link Wiki account" }).hasAttribute("disabled"),
+    ).toBe(false),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Link Wiki account" }));
+  await waitFor(() => expect(popup.location.replace).toHaveBeenCalled());
+  const params = new URLSearchParams(
+    new URL(popup.location.replace.mock.calls[0][0]).hash.slice(1),
+  );
+  mocks.status.mockResolvedValue({ Ok: [linked] });
+  mocks.autoStatus.mockResolvedValue({ Ok: [] });
+  fireEvent(
+    window,
+    new MessageEvent("message", {
+      origin: "https://wiki.kinic.xyz",
+      source: popup as unknown as Window,
+      data: {
+        protocol: "kinic-credit-v1",
+        type: "linked",
+        nonce: params.get("nonce"),
+        id: params.get("id"),
+      },
+    }),
+  );
+  await screen.findByText(/Wiki account linked\. Set up auto top-up/);
+  expect(screen.getByText("Auto top-up off")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Set up in Wiki" })).toBeTruthy();
+});
