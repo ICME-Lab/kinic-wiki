@@ -25,7 +25,7 @@ import { Input } from "@kinic/ui/input";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminPanel, AdminPageHeader, AdminField } from "@/components/admin-ui";
 import { StatusPill } from "@/components/ui/status-pill";
-import { CheckCircle2, CircleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
 import { PrincipalText } from "@kinic/ui/principal";
 import { formatCycles, formatRawCycles } from "@kinic/ui/cycles";
 import {
@@ -128,6 +128,10 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
   const [connected, setConnected] = useState(false);
   const [ready, setReady] = useState(false);
   const waiting = useRef<string | undefined>(undefined);
+  // One confirmation in this window carries a held offer through Vault readiness to the send.
+  const [autoPlan, setAutoPlan] = useState<
+    { operation: string; approval: ReturnType<typeof approvalFor> } | undefined
+  >(undefined);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [notice, setNotice] = useState("");
@@ -416,6 +420,53 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         }
       });
   };
+  const requestReadiness = (value: VaultTransfer) => {
+    if (!available || !initialized.current) return;
+    const check = fence();
+    try {
+      check();
+      waiting.current = hex(value.offer.operation);
+      post("offer", waiting.current);
+      setNotice("Waiting for independently authenticated Vault readiness.");
+    } catch {
+      setNotice("Reconnect through Vault before sending.");
+    }
+  };
+  const sendHeld = (
+    value: VaultTransfer,
+    approval: ReturnType<typeof approvalFor>,
+  ) =>
+    work(async (check) => {
+      if (!connectedRef.current) throw Error("Vault disconnected");
+      const sent = bridgeOk(
+        await actor!.execute_vault_transfer(value.offer.operation, approval),
+      );
+      check();
+      update(sent);
+      post("result", hex(sent.offer.operation));
+    }, true);
+  const requestReadinessRef = useRef(requestReadiness);
+  requestReadinessRef.current = requestReadiness;
+  const sendHeldRef = useRef(sendHeld);
+  sendHeldRef.current = sendHeld;
+  useEffect(() => {
+    if (!autoPlan) return;
+    if (
+      !transfer ||
+      hex(transfer.offer.operation) !== autoPlan.operation ||
+      !("Offered" in transfer.phase) ||
+      uncertain
+    ) {
+      // Any other phase, a failure or a replaced receipt ends the automatic path.
+      setAutoPlan(undefined);
+      return;
+    }
+    if (busy || !connected || !initialized.current) return;
+    if (ready) {
+      setAutoPlan(undefined);
+      sendHeldRef.current(transfer, autoPlan.approval);
+    } else if (!waiting.current) requestReadinessRef.current(transfer);
+  }, [autoPlan, transfer, ready, busy, connected, uncertain]);
   const refreshPending = () =>
     work(async (check) => {
       const pending = bridgeOk(await actor!.get_pending_vault_transfer([]));
@@ -794,10 +845,10 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                   {quoted || offered ? (
                     <>
                       <p className="text-xs text-muted">
-                        Confirmation places a temporary hold on the database
-                        credits. Reduced credit may suspend database updates.
-                        Exact partial transfers keep their specified amount; the
-                        held offer never changes.
+                        Confirming holds the database credits and sends them
+                        once your Vault window is ready. Reduced credit may
+                        suspend database updates. Exact partial transfers keep
+                        their specified amount; the held offer never changes.
                       </p>
                       {all ? (
                         <label className="flex min-h-11 items-start gap-3 rounded border border-line p-3 text-sm">
@@ -832,41 +883,34 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                         work(async (check) => {
                           if (!connectedRef.current)
                             throw Error("Vault disconnected");
+                          const approval = approvalFor(transfer.requested, allConfirmed);
                           const value = bridgeOk(
                             await actor!.execute_vault_transfer(
                               transfer.offer.operation,
-                              approvalFor(transfer.requested, allConfirmed),
+                              approval,
                             ),
                           );
                           check();
                           update(value);
+                          if ("Offered" in value.phase)
+                            setAutoPlan({ operation: hex(value.offer.operation), approval });
                         }, true)
                       }
                     >
-                      Confirm and hold credits
+                      Confirm and send
                     </Button>
                   ) : null}
-                  {offered ? (
+                  {offered && autoPlan?.operation === hex(transfer.offer.operation) ? (
+                    <output aria-live="polite" className="flex items-center gap-2 text-sm font-semibold">
+                      <Loader2 aria-hidden className="animate-spin" size={16} />
+                      {ready ? "Sending to Vault…" : "Waiting for your Vault window…"}
+                    </output>
+                  ) : offered ? (
                     <>
                       <Button
                         variant="outline"
                         disabled={busy || !available || uncertain || !connected}
-                        onClick={() => {
-                          if (!available || !initialized.current) return;
-                          const check = fence();
-                          try {
-                            check();
-                            waiting.current = hex(transfer.offer.operation);
-                            post("offer", waiting.current);
-                            setNotice(
-                              "Waiting for independently authenticated Vault readiness.",
-                            );
-                          } catch {
-                            setNotice(
-                              "Reconnect through Vault before sending.",
-                            );
-                          }
-                        }}
+                        onClick={() => requestReadiness(transfer)}
                       >
                         Request Vault readiness
                       </Button>
@@ -881,19 +925,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                             (!!all && !allConfirmed)
                           }
                           onClick={() =>
-                            work(async (check) => {
-                              if (!connectedRef.current)
-                                throw Error("Vault disconnected");
-                              const value = bridgeOk(
-                                await actor!.execute_vault_transfer(
-                                  transfer.offer.operation,
-                                  approvalFor(transfer.requested, allConfirmed),
-                                ),
-                              );
-                              check();
-                              update(value);
-                              post("result", hex(value.offer.operation));
-                            }, true)
+                            sendHeld(transfer, approvalFor(transfer.requested, allConfirmed))
                           }
                         >
                           Send held credits

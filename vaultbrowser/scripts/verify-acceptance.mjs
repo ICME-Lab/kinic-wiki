@@ -797,10 +797,8 @@ async function verifyAcceptance() {
   await fundingPopup.getByText("Connected to your Vault window.").waitFor();
   await fundingPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await fundingPopup.getByText("Quoted", { exact: true }).waitFor();
-  await fundingPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
-  await fundingPopup.getByText("Offered", { exact: true }).waitFor();
-  await fundingPopup.getByRole("button", { name: "Request Vault readiness" }).click();
-  await fundingPopup.getByRole("button", { name: "Send held credits" }).click();
+  // One confirmation holds, waits for Vault readiness and sends.
+  await fundingPopup.getByRole("button", { name: "Confirm and send" }).click();
   await fundingPopup.getByText("Paid", { exact: true }).waitFor();
   await fundingPopup.getByText(/Fixed transfer: 1,000,000,000 cycles/).waitFor();
   const balanceAfterBridge = BigInt((await readback(vault)).balance.Ok);
@@ -821,10 +819,7 @@ async function verifyAcceptance() {
   await allPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await allPopup.getByText("Quoted", { exact: true }).waitFor();
   await allPopup.getByRole("checkbox", { name: /I authorize the entire available balance/ }).check();
-  await allPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
-  await allPopup.getByText("Offered", { exact: true }).waitFor();
-  await allPopup.getByRole("button", { name: "Request Vault readiness" }).click();
-  await allPopup.getByRole("button", { name: "Send held credits" }).click();
+  await allPopup.getByRole("button", { name: "Confirm and send" }).click();
   await allPopup.getByText("Paid", { exact: true }).waitFor();
   assert.ok(await allPopup.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
     "mobile AllAvailable transfer should not overflow horizontally");
@@ -842,14 +837,12 @@ async function verifyAcceptance() {
   await lostCreditPopup.getByText("Connected to your Vault window.").waitFor();
   await lostCreditPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await lostCreditPopup.getByText("Quoted", { exact: true }).waitFor();
-  await lostCreditPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
-  await lostCreditPopup.getByText("Offered", { exact: true }).waitFor();
-  await lostCreditPopup.getByRole("button", { name: "Request Vault readiness" }).click();
-  let droppedCreditReplies = 0;
+  let droppedCreditReplies = 0, executeCalls = 0;
+  // The first execute only holds; drop the reply of the automatic send that follows.
   const dropCreditReply = async (route) => {
     const body = route.request().postDataBuffer();
     const method = body ? Cbor.decode(body).content?.method_name : undefined;
-    if (method !== "execute_vault_transfer") return route.continue();
+    if (method !== "execute_vault_transfer" || ++executeCalls === 1) return route.continue();
     const response = await route.fetch();
     assert.ok(response.ok(), "real Wiki ingress should finish before losing its HTTP reply");
     droppedCreditReplies++;
@@ -857,7 +850,7 @@ async function verifyAcceptance() {
   };
   await lostCreditPopup.route("**/api/v*/canister/**/call", dropCreditReply);
   const beforeLostCredit = BigInt((await readback(vault)).balance.Ok);
-  await lostCreditPopup.getByRole("button", { name: "Send held credits" }).click();
+  await lostCreditPopup.getByRole("button", { name: "Confirm and send" }).click();
   await lostCreditPopup.getByText(/Request did not complete\. Refresh saved status before retrying/).waitFor();
   assert.ok(droppedCreditReplies > 0);
   await lostCreditPopup.unroute("**/api/v*/canister/**/call", dropCreditReply);
@@ -879,9 +872,18 @@ async function verifyAcceptance() {
   await heldPopup.getByText("Connected to your Vault window.").waitFor();
   await heldPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await heldPopup.getByText("Quoted", { exact: true }).waitFor();
-  await heldPopup.getByRole("button", { name: "Confirm and hold credits" }).click();
+  // Keep Vault from preparing so the automatic send stays held, then close Wiki.
+  const blockPrepare = async (route) => {
+    const body = route.request().postDataBuffer();
+    const method = body ? Cbor.decode(body).content?.method_name : undefined;
+    if (method === "prepare_wiki_credit") return route.abort("failed");
+    return route.continue();
+  };
+  await vault.route("**/api/v*/canister/**/call", blockPrepare);
+  await heldPopup.getByRole("button", { name: "Confirm and send" }).click();
   await heldPopup.getByText("Offered", { exact: true }).waitFor();
   await heldPopup.close();
+  await vault.unroute("**/api/v*/canister/**/call", blockPrepare);
   const recoveryPopupPromise = context.waitForEvent("page");
   await action(vault, "Charge from Wiki credits");
   const recoveryPopup = await recoveryPopupPromise;

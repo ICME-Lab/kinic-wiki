@@ -253,7 +253,7 @@ export function WikiCreditFunding({
             throw Error("Invalid receipt");
           popup.postMessage(message("ready", m.id, nonce), origins.wiki);
           setNotice(
-            "Vault is ready. Review the held amount and send from the Wiki window.",
+            "Vault is ready. Wiki is sending the held amount.",
           );
         })()
           .catch(() => {

@@ -127,12 +127,12 @@ it("All requires full-balance consent; first execute only holds and final send w
   await screen.findByText(/Estimated execution fee/);
   expect(
     screen
-      .getByRole("button", { name: "Confirm and hold credits" })
+      .getByRole("button", { name: "Confirm and send" })
       .hasAttribute("disabled"),
   ).toBe(true);
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(
-    screen.getByRole("button", { name: "Confirm and hold credits" }),
+    screen.getByRole("button", { name: "Confirm and send" }),
   );
   await waitFor(() =>
     expect(mocks.actor.execute_vault_transfer).toHaveBeenCalledTimes(1),
@@ -140,20 +140,24 @@ it("All requires full-balance consent; first execute only holds and final send w
   expect(mocks.actor.execute_vault_transfer.mock.calls[0][1]).toEqual({
     AllAvailable: null,
   });
-  await screen.findByRole("button", { name: "Request Vault readiness" });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Request Vault readiness" }),
+  // The single confirmation asks Vault for readiness without another click.
+  await screen.findByText("Waiting for your Vault window…");
+  await waitFor(() =>
+    expect(
+      opener.postMessage.mock.calls.some(([m]) => m.type === "offer"),
+    ).toBe(true),
   );
-  act(() => incoming("ready", "02".repeat(16)));
   expect(
-    screen.queryByRole("button", { name: "Send held credits" }),
+    screen.queryByRole("button", { name: "Request Vault readiness" }),
   ).toBeNull();
-  act(() => incoming("ready"));
-  await screen.findByRole("button", { name: "Send held credits" });
+  act(() => incoming("ready", "02".repeat(16)));
   expect(mocks.actor.execute_vault_transfer).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole("button", { name: "Send held credits" }));
+  act(() => incoming("ready"));
   await screen.findByText("Paid");
   expect(mocks.actor.execute_vault_transfer).toHaveBeenCalledTimes(2);
+  expect(mocks.actor.execute_vault_transfer.mock.calls[1][1]).toEqual({
+    AllAvailable: null,
+  });
 });
 it("Unknown recovered from backend exposes reconciliation and no cancel or resend", async () => {
   mocks.actor.get_pending_vault_transfer.mockResolvedValue({
@@ -186,7 +190,7 @@ it("late quote after same-Principal identity replacement cannot expose a confirm
     () => ({ getPrincipal: () => principal });
   await act(async () => resolve({ Ok: quoted }));
   expect(
-    screen.queryByRole("button", { name: "Confirm and hold credits" }),
+    screen.queryByRole("button", { name: "Confirm and send" }),
   ).toBeNull();
 });
 it("an ambiguous hold error disables reserve and cancel until authenticated status refresh", async () => {
@@ -199,14 +203,14 @@ it("an ambiguous hold error disables reserve and cancel until authenticated stat
   fireEvent.click(
     screen.getByRole("button", { name: "Get transfer estimate" }),
   );
-  await screen.findByRole("button", { name: "Confirm and hold credits" });
+  await screen.findByRole("button", { name: "Confirm and send" });
   fireEvent.click(
-    screen.getByRole("button", { name: "Confirm and hold credits" }),
+    screen.getByRole("button", { name: "Confirm and send" }),
   );
   await screen.findByText(/Request did not complete/);
   expect(
     screen
-      .getByRole("button", { name: "Confirm and hold credits" })
+      .getByRole("button", { name: "Confirm and send" })
       .hasAttribute("disabled"),
   ).toBe(true);
   expect(
@@ -347,7 +351,7 @@ it("link-only popup cannot quote or hold even after explicit link approval", asy
     screen.queryByRole("button", { name: "Get transfer estimate" }),
   ).toBeNull();
   expect(
-    screen.queryByRole("button", { name: "Confirm and hold credits" }),
+    screen.queryByRole("button", { name: "Confirm and send" }),
   ).toBeNull();
   expect(mocks.actor.execute_vault_transfer).not.toHaveBeenCalled();
 });
@@ -456,7 +460,7 @@ it.each([
     );
     expect(screen.getByText(terminalPhase)).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: "Confirm and hold credits" }),
+      screen.queryByRole("button", { name: "Confirm and send" }),
     ).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Request Vault readiness" }),
@@ -502,7 +506,7 @@ it.each([
         Ok: { ...b, phase: { Offered: null } },
       });
       fireEvent.click(
-        screen.getByRole("button", { name: "Confirm and hold credits" }),
+        screen.getByRole("button", { name: "Confirm and send" }),
       );
       await screen.findByText("Offered");
       expect(mocks.actor.execute_vault_transfer).toHaveBeenCalledWith(
@@ -510,17 +514,21 @@ it.each([
         { Exact: 90n },
       );
     }
-    fireEvent.click(
-      screen.getByRole("button", { name: "Request Vault readiness" }),
-    );
-    expect(opener.postMessage).toHaveBeenCalledWith(
-      {
-        protocol: "kinic-credit-v1",
-        type: "offer",
-        id: "02".repeat(16),
-        nonce: nextNonce,
-      },
-      "https://vault.kinic.xyz",
+    // A recovered Offered receipt asks explicitly; a fresh confirmation asks on its own.
+    if (pendingPhase !== "Quoted")
+      fireEvent.click(
+        screen.getByRole("button", { name: "Request Vault readiness" }),
+      );
+    await waitFor(() =>
+      expect(opener.postMessage).toHaveBeenCalledWith(
+        {
+          protocol: "kinic-credit-v1",
+          type: "offer",
+          id: "02".repeat(16),
+          nonce: nextNonce,
+        },
+        "https://vault.kinic.xyz",
+      ),
     );
   },
 );
@@ -545,7 +553,7 @@ it.each(["Quoted", "Offered"])(
       id,
     );
     expect(
-      screen.queryByRole("button", { name: "Confirm and hold credits" }),
+      screen.queryByRole("button", { name: "Confirm and send" }),
     ).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Request Vault readiness" }),
@@ -578,7 +586,7 @@ it("does not replace a retired saved receipt with another tab's pending transfer
   await screen.findByText(/Another transfer is pending/);
   expect(new URLSearchParams(window.location.hash.slice(1)).get("id")).toBe(id);
   expect(
-    screen.queryByRole("button", { name: "Confirm and hold credits" }),
+    screen.queryByRole("button", { name: "Confirm and send" }),
   ).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Request Vault readiness" }),
@@ -627,7 +635,7 @@ it.each(["marked", "retired marked", "unmarked"])(
       expect(mocks.actor.get_pending_vault_transfer).not.toHaveBeenCalled();
       expect(window.location.pathname + window.location.hash).toBe(savedURL);
       for (const name of [
-        "Confirm and hold credits",
+        "Confirm and send",
         "Request Vault readiness",
         "Send held credits",
       ])
@@ -673,7 +681,7 @@ it.each(["marked", "retired marked", "unmarked"])(
       id,
     );
     expect(
-      screen.queryByRole("button", { name: "Confirm and hold credits" }),
+      screen.queryByRole("button", { name: "Confirm and send" }),
     ).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Request Vault readiness" }),
@@ -702,7 +710,7 @@ it.each(["Quoted", "Offered"])(
     const assertBlocked = () => {
       for (const name of [
         "Recover pending transfer",
-        "Confirm and hold credits",
+        "Confirm and send",
         "Request Vault readiness",
         "Revoke account link",
         "Refresh transfer status",
@@ -770,4 +778,28 @@ it("completed initialization still permits authenticated Unknown status and reco
   expect(mocks.actor.execute_vault_transfer).not.toHaveBeenCalled();
   expect(mocks.actor.cancel_vault_transfer).not.toHaveBeenCalled();
   expect(opener.postMessage).not.toHaveBeenCalled();
+});
+it("a failed automatic send stops and never retries without the user", async () => {
+  mocks.actor.quote_vault_transfer.mockResolvedValue({
+    Ok: { ...quoted, requested: { Exact: 90n } },
+  });
+  mocks.actor.execute_vault_transfer
+    .mockResolvedValueOnce({
+      Ok: { ...quoted, requested: { Exact: 90n }, phase: { Offered: null } },
+    })
+    .mockRejectedValueOnce(new Error("lost reply"));
+  render(<VaultCreditClient canisterId="aaaaa-aa" />);
+  await connected();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Get transfer estimate" }),
+  );
+  await screen.findByText("Quoted");
+  fireEvent.click(screen.getByRole("button", { name: "Confirm and send" }));
+  await screen.findByText("Waiting for your Vault window…");
+  act(() => incoming("ready"));
+  await screen.findByText(/Request did not complete/);
+  act(() => incoming("ready"));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(mocks.actor.execute_vault_transfer).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText("Waiting for your Vault window…")).toBeNull();
 });
