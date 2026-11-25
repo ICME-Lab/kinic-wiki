@@ -895,6 +895,7 @@ async function verifyAcceptance() {
   const savedRecoveryUrl = recoveryPopup.url();
   await recoveryPopup.close();
   await action(vault, "Revoke Wiki link");
+  await action(vault, "Revoke link");
   await vault.getByText(/Wiki principal: .* · Revoked/).waitFor();
   const relinkPopupPromise = context.waitForEvent("page");
   await action(vault, "Link Wiki account");
@@ -976,6 +977,7 @@ async function verifyAcceptance() {
   // race test still intercepts a real derivation rather than a cache hit.
   await action(vault, "Account settings");
   await action(vault, "Delete saved keys from this browser");
+  await action(vault, "Delete keys");
   assertDeviceKeyStore(await vault.evaluate(readDeviceKeyStore), `${canister}:${owner}`);
   assert.equal((await vault.evaluate(readDeviceKeyStore)).records.filter(record => record.key).length, 0);
   await action(vault, "Back to Vault");

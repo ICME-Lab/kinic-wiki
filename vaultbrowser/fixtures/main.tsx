@@ -158,6 +158,12 @@ const fundingClient = new VaultClient({
         },
       };
     },
+    // #205: the beneficiary reads, submits and reconciles with its own session.
+    beneficiary_payments: async () => ({ Ok: [fundingPayment] }),
+    beneficiary_payment_status: async () => ({ Ok: [fundingPayment] }),
+    beneficiary_pay_purchase: async () => ({ Ok: fundingPayment }),
+    beneficiary_reconcile_purchase: async (_wallet: unknown, operation: Uint8Array) =>
+      (fundingClient.actor as unknown as { reconcile_purchase(op: Uint8Array): Promise<unknown> }).reconcile_purchase(operation),
   } as unknown as VaultActor,
 });
 if (fixtureState === "funding") {

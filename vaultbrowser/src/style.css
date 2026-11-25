@@ -1568,3 +1568,45 @@ body {
 .vault-isolated--picker {
   width: min(100%, 40rem);
 }
+
+/* Confirmation before destructive settings actions. */
+.vault-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Funding is a form: keep it left-aligned even inside the centered empty state. */
+.vault-funding {
+  text-align: left;
+}
+
+/* Wiki credits, styled as a settings card. */
+.vault-wiki-credit {
+  gap: 12px;
+  padding: 16px 20px;
+}
+.vault-wiki-credit > h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.vault-wiki-credit-description,
+.vault-wiki-credit-notice {
+  max-width: 560px;
+  margin: 0;
+  color: hsl(var(--muted));
+  font-size: 13px;
+  line-height: 1.5;
+}
+.vault-wiki-credit-link {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.vault-wiki-credit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

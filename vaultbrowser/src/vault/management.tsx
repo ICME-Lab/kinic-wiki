@@ -5,6 +5,7 @@ import { ArrowLeft, Eraser, Flame, KeyRound } from "lucide-react";
 import { VaultButton, VaultField, VaultPanel } from "./ui";
 import { StatusPill } from "@kinic/ui/status-pill";
 import { VaultMembers } from "./members";
+import { useConfirm } from "./confirm";
 import type { VaultWork } from "./workspace";
 
 export function VaultSettings({
@@ -38,6 +39,8 @@ export function VaultSettings({
   useLayoutEffect(() => { if (active) heading.current?.focus(); }, [active]);
   const vaultKey = selected ? Array.from(bytes(selected.id)).join(",") : "";
   const maintenanceDisabled = disabled || client.hasPendingSave;
+  const [confirm, confirmDialog] = useConfirm();
+  const forgetKeys = onForgetKeys ?? (() => run(() => client.forgetDeviceKeys()));
   return (
     <section hidden={!active} className="vault-settings" aria-labelledby="vault-settings-title">
       <div className="vault-settings-header">
@@ -55,7 +58,13 @@ export function VaultSettings({
             title="Saved browser keys"
             description="Removing saved keys closes any open Vault on this browser. Opening your Vaults again may require a paid key retrieval. Your documents are kept."
             action={
-              <VaultButton size="sm" disabled={maintenanceDisabled} onClick={onForgetKeys ?? (() => run(() => client.forgetDeviceKeys()))}>
+              <VaultButton size="sm" disabled={maintenanceDisabled} onClick={() => {
+                void confirm({
+                  title: "Delete saved keys from this browser?",
+                  description: "Any open Vault on this browser closes. Opening your Vaults again may require a paid key retrieval. Your documents are kept.",
+                  confirmLabel: "Delete keys",
+                }).then((confirmed) => { if (confirmed) forgetKeys(); });
+              }}>
                 Delete saved keys from this browser
               </VaultButton>
             }
@@ -76,6 +85,7 @@ export function VaultSettings({
         </>
       ) : scope === "vault" ? <p className="vault-setting-empty">Choose a Vault from its actions menu to manage it.</p> : null}
       </> : null}
+      {confirmDialog}
     </section>
   );
 }
@@ -116,24 +126,33 @@ function StorageMaintenance({ client, disabled, run, onChanged }: {
   onChanged: () => Promise<void>;
 }) {
   const [progress, setProgress] = useState("");
+  const [confirm, confirmDialog] = useConfirm();
+  const collect = () => run(async () => {
+    const ticket = client.session.capture();
+    await client.collect();
+    client.session.check(ticket);
+    setProgress("Storage maintenance complete");
+    await onChanged();
+  });
   return (
     <SettingRow
       icon={<Eraser size={16} />}
       title="Storage maintenance"
       description="Unused storage is cleaned up automatically. You can also remove expired uploads and older versions beyond the history limit now. Current documents are kept."
       action={
-        <VaultButton size="sm" disabled={disabled} onClick={() => run(async () => {
-          const ticket = client.session.capture();
-          await client.collect();
-          client.session.check(ticket);
-          setProgress("Storage maintenance complete");
-          await onChanged();
-        })}>
+        <VaultButton size="sm" disabled={disabled} onClick={() => {
+          void confirm({
+            title: "Free up unused storage?",
+            description: "Expired uploads and saved versions beyond the history limit are permanently removed. Current documents are kept.",
+            confirmLabel: "Free up storage",
+          }).then((confirmed) => { if (confirmed) collect(); });
+        }}>
           Free up unused storage
         </VaultButton>
       }
     >
       {progress ? <output><StatusPill tone="positive" label={progress} /></output> : null}
+      {confirmDialog}
     </SettingRow>
   );
 }

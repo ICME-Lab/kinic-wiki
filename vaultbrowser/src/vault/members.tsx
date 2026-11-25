@@ -4,6 +4,7 @@ import { bytes, type MemberRole, type VaultClient } from "@kinic/vault-client";
 import type { Header, VaultMember } from "@kinic/vault-client/contracts";
 import { ChevronRight, Users } from "lucide-react";
 import { VaultButton, VaultField } from "./ui";
+import { useConfirm } from "./confirm";
 import type { VaultWork } from "./workspace";
 
 function RoleSelect({
@@ -50,6 +51,7 @@ export function VaultMembers({
   const [role, setRole] = useState<MemberRole>("Viewer");
   const [members, setMembers] = useState<VaultMember[]>();
   const [open, setOpen] = useState(initiallyOpen);
+  const [confirm, confirmDialog] = useConfirm();
   const live = useRef(false);
   useLayoutEffect(() => {
     live.current = true;
@@ -145,15 +147,22 @@ export function VaultMembers({
                     }
                   />
                   <VaultButton
-                    disabled={disabled}
-                    onClick={() =>
-                      run(async () => {
-                        const ticket = client.session.capture();
-                        await client.removeMember(member, bytes(vault));
-                        client.session.check(ticket);
-                        if (live.current) await refresh();
-                      })
-                    }
+                                        disabled={disabled}
+                    onClick={() => {
+                      void confirm({
+                        title: "Remove this member?",
+                        description: `${member.toText()} loses access to this Vault. You can add them again later.`,
+                        confirmLabel: "Remove",
+                      }).then((confirmed) => {
+                        if (!confirmed) return;
+                        run(async () => {
+                          const ticket = client.session.capture();
+                          await client.removeMember(member, bytes(vault));
+                          client.session.check(ticket);
+                          if (live.current) await refresh();
+                        });
+                      });
+                    }}
                   >
                     Remove member
                   </VaultButton>
@@ -165,6 +174,7 @@ export function VaultMembers({
           <p>No additional members.</p>
         ) : null}
       </div>
+      {confirmDialog}
     </details>
   );
 }
