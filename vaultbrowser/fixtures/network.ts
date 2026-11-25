@@ -70,6 +70,7 @@ export function fixtureNetwork(
       },
     }),
     list_payments: async () => ({ Ok: [] }),
+    beneficiary_payments: async () => ({ Ok: [] }),
     list_vaults: async () => ({ Ok: structuredClone(headers.filter((header) => !roles.has(key(header.id)))) }),
     create_vault: async (
       request: Parameters<VaultActor["create_vault"]>[0],
