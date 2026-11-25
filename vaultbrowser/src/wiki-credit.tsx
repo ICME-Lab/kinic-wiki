@@ -67,6 +67,8 @@ export function WikiCreditFunding({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [unavailable, setUnavailable] = useState(false);
+  // True only after wiki_link_status answered, so "Not linked" never shows while checking.
+  const [loaded, setLoaded] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
   const [handoff] = useState(() =>
     typeof window === "undefined" ? null : parseLaunch(window.location.hash),
@@ -99,6 +101,7 @@ export function WikiCreditFunding({
     setActor(undefined);
     setLink(undefined);
     setUnavailable(false);
+    setLoaded(false);
     setBusy(false);
     const check = sessionFence(() =>
       live.current
@@ -116,6 +119,7 @@ export function WikiCreditFunding({
       const status = bridgeOk(await a.wiki_link_status());
       check();
       setLink(status[0]);
+      setLoaded(true);
       setNotice("");
     })().catch(() => {
       try {
@@ -331,8 +335,9 @@ export function WikiCreditFunding({
       check();
       setUnavailable(false);
       setLink(status[0]);
+      setLoaded(true);
     });
-  const view = linkView(!actor && !unavailable, unavailable, link);
+  const view = linkView(!loaded && !unavailable, unavailable, link);
   const wikiOwner = link?.wiki_owner.toText();
   return (
     <div className="vault-settings-group">
@@ -381,7 +386,7 @@ export function WikiCreditFunding({
       <div className="vault-wiki-credit-actions">
         {link?.active ? (
           <VaultButton
-            disabled={!actor || busy}
+            disabled={!actor || !loaded || busy}
             tone="primary"
             onClick={() => openWiki("fund")}
           >
@@ -389,7 +394,7 @@ export function WikiCreditFunding({
           </VaultButton>
         ) : (
           <VaultButton
-            disabled={!actor || busy}
+            disabled={!actor || !loaded || busy}
             tone="primary"
             onClick={() => openWiki("link")}
           >

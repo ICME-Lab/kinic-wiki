@@ -498,7 +498,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             {connected ? (
               <output>
-                <StatusPill dot tone="positive" label="Connected to your Vault window." />
+                <StatusPill dot tone="positive" label="Connected to your Vault window" />
               </output>
             ) : (
               <StatusPill dot tone="warn" label="Vault window not connected" />
