@@ -1,4 +1,5 @@
 "use client";
+import { PrincipalText } from "@kinic/ui/principal";
 import {
   useCallback,
   useEffect,
@@ -984,7 +985,7 @@ function Workspace({ client }: { client: VaultClient }) {
                   </div>
                   <dl className="vault-account-meta">
                     <dt>Vault principal</dt>
-                    <dd><code>{client.identity.getPrincipal().toText()}</code></dd>
+                    <dd><PrincipalText value={client.identity.getPrincipal().toText()} /></dd>
                   </dl>
                   <div className="vault-disclosure-actions">
                     <VaultButton

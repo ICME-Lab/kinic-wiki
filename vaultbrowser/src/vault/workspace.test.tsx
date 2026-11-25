@@ -129,7 +129,7 @@ it("keeps account settings separate and deletes a different Vault without switch
   await x.actor.set_vault_member(secondId, guest, { Viewer: null });
   await openVaultSettings("Vault 2", true);
   const settings = screen.getByRole("region", { name: "Vault 2 settings" });
-  const member = (await within(settings).findByText(guest.toText())).closest("li")!;
+  const member = (await within(settings).findByTitle(guest.toText())).closest("li")!;
   fireEvent.click(within(member).getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
   await within(settings).findByText("No additional members.");
@@ -161,7 +161,7 @@ it("removes a member from another Vault while preserving an interrupted save", a
   expect(x.client.hasPendingSave).toBe(true);
 
   await openVaultSettings("Vault 2", true);
-  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  const row = (await screen.findByTitle(guest.toText())).closest("li")!;
   fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
   await screen.findByText("No additional members.");
@@ -2119,7 +2119,7 @@ it("lets only the owner add, update, and remove members by Vault principal", asy
     target: { value: guest },
   });
   fireEvent.click(screen.getByRole("button", { name: "Add member" }));
-  const member = await screen.findByText(guest);
+  const member = await screen.findByTitle(guest);
   const row = within(member.closest("li")!);
   fireEvent.change(row.getByLabelText("Member role"), {
     target: { value: "Editor" },
@@ -2136,7 +2136,7 @@ it("lets only the owner add, update, and remove members by Vault principal", asy
   );
   fireEvent.click(row.getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
-  await waitFor(() => expect(screen.queryByText(guest)).toBeNull());
+  await waitFor(() => expect(screen.queryByTitle(guest)).toBeNull());
 });
 
 it("loads subsequent accessible Vault pages and fences a revoked cached context", async () => {
@@ -2174,7 +2174,7 @@ it("lets a cold owner remove a member at zero credit after key service failure w
   expect(screen.queryByLabelText("Document title")).toBeNull();
   x.setBalance(0n);
   await openVaultSettings(undefined, true);
-  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  const row = (await screen.findByTitle(guest.toText())).closest("li")!;
   fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
   await screen.findByText("No additional members.");
@@ -2205,10 +2205,10 @@ it("discards a late member list when the owner selects a different Vault without
   act(() => x.client.session.lock());
   fireEvent.click(screen.getByRole("button", { name: "Back to Vault" }));
   await openVaultSettings("Vault 2", true);
-  await screen.findByText(b.toText());
+  await screen.findByTitle(b.toText());
   await act(async () => release());
-  expect(screen.queryByText(a.toText())).toBeNull();
-  expect(screen.getByText(b.toText())).toBeTruthy();
+  expect(screen.queryByTitle(a.toText())).toBeNull();
+  expect(screen.getByTitle(b.toText())).toBeTruthy();
   expect(derive).not.toHaveBeenCalled();
 });
 

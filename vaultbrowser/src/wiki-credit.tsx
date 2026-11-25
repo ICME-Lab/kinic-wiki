@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Link2, RefreshCw } from "lucide-react";
 import { StatusPill, type StatusTone } from "@kinic/ui/status-pill";
+import { PrincipalText } from "@kinic/ui/principal";
 import type { VaultClient } from "@kinic/vault-client";
 import type { LinkStatus, VaultBridgeActor } from "@kinic/credit-bridge-candid";
 import {
@@ -18,8 +19,6 @@ import { vaultCreditActor, creditOrigins } from "./wiki-credit-actor";
 import { VaultButton } from "./vault/ui";
 import { useConfirm } from "./vault/confirm";
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
-const shortPrincipal = (text: string) =>
-  text.length > 16 ? `${text.slice(0, 5)}…${text.slice(-3)}` : text;
 type LinkView = { label: string; tone: StatusTone; description: string };
 function linkView(
   checking: boolean,
@@ -343,7 +342,7 @@ export function WikiCreditFunding({
         <div className="vault-wiki-credit-title">
           <h4>Wiki account</h4>
           {wikiOwner ? (
-            <code title={wikiOwner}>{shortPrincipal(wikiOwner)}</code>
+            <PrincipalText value={wikiOwner} />
           ) : null}
         </div>
         <output className="vault-wiki-credit-status" aria-live="polite">

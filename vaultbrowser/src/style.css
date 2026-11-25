@@ -1614,7 +1614,7 @@ body {
   font-size: 14px;
   font-weight: 600;
 }
-.vault-wiki-credit-title > code {
+.vault-wiki-credit-title > span {
   color: hsl(var(--muted));
   font-size: 12px;
 }

@@ -25,7 +25,8 @@ import { Input } from "@kinic/ui/input";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminPanel, AdminPageHeader, AdminField } from "@/components/admin-ui";
 import { StatusPill } from "@/components/ui/status-pill";
-import { ArrowLeftRight, CheckCircle2, CircleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert } from "lucide-react";
+import { PrincipalText } from "@kinic/ui/principal";
 import {
   creditOrigins,
   ownerDatabases,
@@ -37,17 +38,6 @@ type DatabaseChoice = {
   cyclesBalance: string;
 };
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
-const shortPrincipal = (text: string) =>
-  text.length > 16 ? `${text.slice(0, 5)}…${text.slice(-3)}` : text;
-function AccountCard({ label, note, principal }: { label: string; note: string; principal: string }) {
-  return (
-    <div className="grid min-w-0 gap-1 rounded-lg border border-line bg-white p-3">
-      <span className="text-xs font-semibold uppercase text-muted">{label}</span>
-      <code className="min-w-0 text-sm text-ink [overflow-wrap:anywhere]">{principal}</code>
-      <span className="text-xs text-muted">{note}</span>
-    </div>
-  );
-}
 // Persist only the opaque server receipt reference in this popup's URL, never amounts or identity.
 function rememberTransferReference(
   launch: Launch | null,
@@ -443,10 +433,10 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
   return (
     <div className="mx-auto grid w-full max-w-2xl min-w-0 gap-5 p-4 sm:p-6 [&_button]:min-h-11">
       <AdminPageHeader
-        title={linkMode ? "Link your Vault account" : "Move Wiki credits to Vault"}
+        title={linkMode ? "Link to Vault" : "Move Wiki credits to Vault"}
         description={
           linkMode
-            ? "Approve once so this Wiki account can send database credits to your Vault. No credits move now."
+            ? undefined
             : "Pick a database and an amount, review the estimate, then confirm. Nothing moves until you confirm."
         }
       />
@@ -494,27 +484,14 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
               </a>
             </AdminPanel>
           ) : null}
-          <AdminPanel className="grid min-w-0 gap-4" ariaLabel="Account link">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-semibold">Account link</h2>
-              <StatusPill dot tone={linkPill.tone} label={linkPill.label} />
-            </div>
+          <AdminPanel className="grid min-w-0 gap-3" ariaLabel="Account link">
             {challenge ? (
               <>
-                <div className="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
-                  <AccountCard label="Wiki account" note="Signed in here" principal={session.principal ?? ""} />
-                  <ArrowLeftRight aria-hidden className="justify-self-center text-muted" size={18} />
-                  <AccountCard label="Vault account" note="Your Vault window" principal={challenge.vault_owner.toText()} />
-                </div>
-                <ul className="grid list-disc gap-1 pl-5 text-sm text-muted">
-                  <li>Linking itself moves no credits.</li>
-                  <li>Every transfer is reviewed and confirmed in this Wiki window.</li>
-                  <li>
-                    This permanently pairs these two accounts. You can revoke
-                    future transfers later, but cannot link a different Vault
-                    account.
-                  </li>
-                </ul>
+                <p className="text-sm">
+                  Let this Wiki account send credits to Vault{" "}
+                  <PrincipalText value={challenge.vault_owner.toText()} />?
+                </p>
+                <p className="text-xs text-muted">No credits move now. You can revoke this later.</p>
                 <Button
                   className="justify-self-start"
                   disabled={busy || !available || !connected}
@@ -533,57 +510,46 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                   Approve account link
                 </Button>
               </>
-            ) : link ? (
-              <AdminField
-                label="Vault account"
-                value={<code title={link.vault_owner.toText()}>{shortPrincipal(link.vault_owner.toText())}</code>}
-              />
             ) : (
-              <p className="text-sm text-muted">
-                No Vault account is linked to this Wiki account yet.
-              </p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                {linkMode && link?.active ? (
+                  <p className="flex items-center gap-2 text-sm font-semibold text-okText">
+                    <CheckCircle2 aria-hidden size={18} />
+                    Accounts linked. You can close this window.
+                  </p>
+                ) : (
+                  <StatusPill dot tone={linkPill.tone} label={linkPill.label} />
+                )}
+                {link && !(linkMode && link.active) ? (
+                  <span className="text-sm">
+                    Vault <PrincipalText value={link.vault_owner.toText()} />
+                  </span>
+                ) : null}
+                {link?.active ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto text-dangerText"
+                    disabled={busy || !available}
+                    onClick={() =>
+                      work(async (check) => {
+                        bridgeOk(await actor!.revoke_vault_link());
+                        check();
+                        setLink({ ...link, active: false });
+                        setReady(false);
+                        setNotice(
+                          "Link revoked. Dispatched transfers remain recoverable.",
+                        );
+                      })
+                    }
+                  >
+                    Revoke account link
+                  </Button>
+                ) : null}
+              </div>
             )}
-            {link?.active ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="justify-self-start text-dangerText"
-                disabled={busy || !available}
-                onClick={() =>
-                  work(async (check) => {
-                    bridgeOk(await actor!.revoke_vault_link());
-                    check();
-                    setLink({ ...link, active: false });
-                    setReady(false);
-                    setNotice(
-                      "Link revoked. Dispatched transfers remain recoverable.",
-                    );
-                  })
-                }
-              >
-                Revoke account link
-              </Button>
-            ) : null}
           </AdminPanel>
-          {linkMode ? (
-            link?.active && !challenge ? (
-              <AdminPanel className="grid gap-2 border-okLine bg-okSoft">
-                <p className="flex items-center gap-2 font-semibold text-okText">
-                  <CheckCircle2 aria-hidden size={18} />
-                  Accounts linked
-                </p>
-                <p className="text-sm text-okText">
-                  You can close this window. In Vault, choose Charge from Wiki
-                  credits to open a new Wiki window for a manual transfer.
-                </p>
-              </AdminPanel>
-            ) : (
-              <p className="text-sm text-muted">
-                This window only links accounts. To move credits afterwards,
-                return to Vault and choose Charge from Wiki credits.
-              </p>
-            )
-          ) : (
+          {linkMode ? null : (
             <AdminPanel
               className="grid min-w-0 gap-4"
               ariaLabel="Manual credit transfer"
@@ -729,8 +695,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                   />
                   <AdminField
                     label="Vault recipient"
-                    value={transfer.offer.vault_owner.toText()}
-                    breakAll
+                    value={<PrincipalText value={transfer.offer.vault_owner.toText()} />}
                   />
                   <p className="text-sm">
                     {quoted

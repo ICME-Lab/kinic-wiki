@@ -1,3 +1,4 @@
+import { PrincipalText } from "./principal";
 import { useId } from "react";
 import { Button } from "./button";
 import { Input } from "./input";
@@ -39,7 +40,7 @@ export function FundingSource({label, account, balanceLabel, connectionState, on
   Omit<PaymentSource, "id"> & {disabled?: boolean}) {
   const connectLabel = connectionState === "remembered" ? "Reconnect" : connectionState === "grant" ? "Authorize" : "Connect";
   return <div className="grid min-w-0 gap-2 text-sm">
-    {account && <span className="break-all font-mono text-xs">{account}</span>}
+    {account && <PrincipalText value={account} className="text-xs" />}
     {balanceLabel && <span>Balance · {balanceLabel}</span>}
     {onConnect && connectionState !== "connected" &&
       <Button type="button" variant="outline" disabled={disabled || connectDisabled || connectionState === "connecting"} onClick={onConnect}>{connectLabel} {label}</Button>}
