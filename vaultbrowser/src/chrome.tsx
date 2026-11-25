@@ -1,6 +1,17 @@
 import {useVaultNavigation} from "./navigation";
 import type { ReactNode } from "react";
-import { ArrowUpRight, LockKeyhole } from "lucide-react";
+import { ArrowUpRight, LockKeyhole, LogOut } from "lucide-react";
+import { VaultButton } from "./vault/ui";
+
+/** Sign out, collapsed to an icon on phones while keeping its accessible name. */
+export function VaultSignOut({ disabled, onClick }: { disabled?: boolean; onClick?: () => void }) {
+  return (
+    <VaultButton className="vault-sign-out" disabled={disabled} onClick={onClick}>
+      <LogOut size={15} aria-hidden />
+      <span className="vault-sign-out-label">Sign out</span>
+    </VaultButton>
+  );
+}
 
 export function VaultChrome({ actions }: { actions?: ReactNode }) {
   const nav=useVaultNavigation();

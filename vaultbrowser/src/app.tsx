@@ -1,6 +1,6 @@
 import {useVaultAuth} from "./auth";
 import VaultPage from "./vault/page";
-import {VaultChrome} from "./chrome";
+import {VaultChrome,VaultSignOut} from "./chrome";
 import {VaultButton} from "./vault/ui";
 import {useDraftGuard} from "./draft-guard";
 export function App() {
@@ -10,13 +10,13 @@ export function App() {
     <>
       <VaultChrome
         actions={
-          <VaultButton
-            tone={identity ? "default" : "primary"}
-            disabled={loading || (!identity && !ready)}
-            onClick={identity ? () => guard.protect(logout) : login}
-          >
-            {identity ? "Sign out" : "Sign in with Internet Identity"}
-          </VaultButton>
+          identity ? (
+            <VaultSignOut disabled={loading} onClick={() => guard.protect(logout)} />
+          ) : (
+            <VaultButton tone="primary" disabled={loading || !ready} onClick={login}>
+              Sign in with Internet Identity
+            </VaultButton>
+          )
         }
       />
       {error ? (
