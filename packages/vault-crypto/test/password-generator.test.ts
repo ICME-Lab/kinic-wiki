@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   estimatePasswordStrength,
@@ -73,5 +74,8 @@ describe("generated passphrase strength", () => {
     expect(PASSPHRASE_WORDLIST.every((word) => /^[a-z]{3,8}$/.test(word))).toBe(true);
     expect(PASSPHRASE_WORDLIST[0]).toBe("abandon");
     expect(PASSPHRASE_WORDLIST[2047]).toBe("zoo");
+    // Same digest is asserted by the iOS copy in KinicVaultCoreTests.passphraseWordlistMatchesWeb.
+    const digest = createHash("sha256").update(PASSPHRASE_WORDLIST.join("\n")).digest("hex");
+    expect(digest).toBe("187db04a869dd9bc7be80d21a86497d692c0db6abd3aa8cb6be5d618ff757fae");
   });
 });
