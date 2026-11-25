@@ -701,7 +701,7 @@ function Documents({
                       Add login
                     </VaultButton>
                   ) : null}
-                  {dirty && loginProblem ? <p className="vault-field-hint" role="status">{loginProblem}</p> : null}
+                  {dirty && loginProblem ? <output className="vault-field-hint">{loginProblem}</output> : null}
                   {showNotes ? (
                     <label className="vault-field">
                       <span>Credential notes</span>
