@@ -234,6 +234,96 @@ async fn cancel_vault_transfer(operation: Vec<u8>) -> BridgeResult<VaultTransfer
 async fn reconcile_vault_transfer(operation: Vec<u8>) -> BridgeResult<VaultTransfer> {
     reconcile(caller()?, &operation).await
 }
+#[update]
+fn set_vault_auto_topup(
+    policy: Option<AutoTopupPolicy>,
+) -> BridgeResult<Option<AutoTopupStatus>> {
+    let p = caller()?;
+    bridge(|s| s.set_vault_auto_topup(p, policy, bridge_now()))
+}
+#[query]
+fn get_vault_auto_topup() -> BridgeResult<Option<AutoTopupStatus>> {
+    let p = caller()?;
+    bridge(|s| s.get_vault_auto_topup(p, bridge_now()))
+}
+/// The Vault peer reads the refill policy of its account's linked Wiki owner.
+#[update]
+fn vault_auto_topup_status(vault_owner: Principal) -> BridgeResult<Option<AutoTopupStatus>> {
+    let p = caller()?;
+    bridge(|s| s.vault_auto_topup_status(p, vault_owner, bridge_now()))
+}
+fn credit_status(phase: &TransferPhase) -> CreditStatus {
+    match phase {
+        TransferPhase::Paid => CreditStatus::Accepted,
+        TransferPhase::Refunded => CreditStatus::NotAccepted,
+        _ => CreditStatus::Prepared,
+    }
+}
+/// The Vault peer asks for one standing refill. Admission against the Wiki
+/// owner's policy is the only new authority; the hold, Vault preparation,
+/// dispatch and settlement are the manual transfer path with the owner as payer.
+/// `Prepared` in the reply means the send is still unresolved.
+#[update]
+async fn request_vault_auto_topup(
+    vault_owner: Principal,
+    operation: Vec<u8>,
+    vault_balance: u64,
+) -> BridgeResult<Option<CreditReceipt>> {
+    valid_id(&operation)?;
+    let peer = caller()?;
+    let fee = (UPDATE_EXECUTION_BASE_CYCLES + UPDATE_ACCOUNTING_OVERHEAD_CYCLES) as u64;
+    let Some(admitted) = bridge(|s| {
+        s.admit_vault_auto_topup(peer, vault_owner, vault_balance, fee, bridge_now())
+    })?
+    else {
+        return Ok(None);
+    };
+    let payer = admitted.wiki_owner;
+    let amount = admitted.amount_cycles;
+    bridge(|s| {
+        s.quote_vault_transfer(
+            payer,
+            &admitted.database_id,
+            TransferAmount::Exact(amount),
+            operation.clone(),
+            bridge_now(),
+            fee,
+        )
+    })?;
+    let held = bridge(|s| {
+        s.confirm_vault_transfer(
+            payer,
+            &operation,
+            TransferApproval::Exact(amount),
+            u128::from(fee),
+            bridge_now(),
+        )
+    })?;
+    if held.phase != TransferPhase::Offered {
+        return Ok(Some(CreditReceipt {
+            status: credit_status(&held.phase),
+            offer: held.offer,
+        }));
+    }
+    let prepared =
+        peer_call::<CreditReceipt, _>(peer, "prepare_wiki_auto_credit", (held.offer.clone(),))
+            .await;
+    let receipt = match prepared {
+        Ok(r) if r.offer == held.offer && r.status == CreditStatus::Prepared => r,
+        other => {
+            // Nothing was dispatched, so the hold returns to the database now.
+            bridge(|s| s.cancel_vault_transfer(payer, &operation, bridge_now()))?;
+            return Err(other.err().unwrap_or(BridgeError::Conflict));
+        }
+    };
+    let context = bridge(|s| s.vault_transfer_dispatch_context(payer, &operation))?;
+    dispatch(payer, context, receipt).await?;
+    let view = reconcile(payer, &operation).await?;
+    Ok(Some(CreditReceipt {
+        status: credit_status(&view.phase),
+        offer: view.offer,
+    }))
+}
 async fn reconcile(p: Principal, op: &[u8]) -> BridgeResult<VaultTransfer> {
     let view = bridge(|s| s.get_vault_transfer(p, op, bridge_now()))?;
     if view.phase == TransferPhase::Quoted
@@ -862,5 +952,51 @@ mod tests {
             .unwrap(),
             paid
         );
+    }
+    #[test]
+    fn automatic_refill_runs_only_for_the_peer_and_returns_a_failed_hold() {
+        let (_root, db) = setup();
+        let now = 1_000_000_000_000;
+        TEST_BRIDGE_NOW.with(|slot| slot.set(Some(now)));
+        set_test_caller_principal_for_test(p(1));
+        set_vault_auto_topup(Some(AutoTopupPolicy {
+            database_id: db.clone(),
+            threshold_cycles: 1_000,
+            amount_cycles: 1_000_000,
+            daily_limit_cycles: 10_000_000,
+            min_database_cycles: 0,
+        }))
+        .unwrap()
+        .unwrap();
+        // The Wiki owner cannot trigger it; only the Vault peer can.
+        assert!(run(request_vault_auto_topup(p(2), vec![5; 16], 0)).is_err());
+        set_test_caller_principal_for_test(p(9));
+        assert_eq!(
+            run(request_vault_auto_topup(p(2), vec![5; 16], 1_000)),
+            Ok(None)
+        );
+        let offer = CreditOffer {
+            operation: vec![5; 16],
+            wiki_owner: p(1),
+            vault_owner: p(2),
+            amount_cycles: 1_000_000,
+            expires_at_ns: now + 300_000_000_000,
+            link_generation: 1,
+        };
+        reply::<CreditReceipt, _>(
+            "prepare_wiki_auto_credit",
+            (offer.clone(),),
+            Err(BridgeError::Unavailable),
+        );
+        assert_eq!(
+            run(request_vault_auto_topup(p(2), vec![5; 16], 0)),
+            Err(BridgeError::Unavailable)
+        );
+        // Vault never prepared it, so the hold went back to the database.
+        set_test_caller_principal_for_test(p(1));
+        let refunded = get_vault_transfer(vec![5; 16]).unwrap();
+        assert_eq!(refunded.phase, TransferPhase::Refunded);
+        assert_eq!(refunded.offer, offer);
+        TEST_BRIDGE_NOW.with(|slot| slot.set(None));
     }
 }

@@ -209,6 +209,7 @@ impl VfsService {
                 active: false,
                 owner_epoch: snap.owner_epoch,
                 config_epoch: snap.epoch,
+                auto: None,
             };
             save_link(c, &l)?;
             c.execute(

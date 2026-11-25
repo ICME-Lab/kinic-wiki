@@ -751,6 +751,10 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
 
 #[test]
 fn exported_candid_matches_checked_in_vfs_did() {
+    if std::env::var_os("WRITE_VFS_DID").is_some() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/vfs.did");
+        std::fs::write(path, format!("{}\n", super::candid_interface().trim_end())).unwrap();
+    }
     assert_eq!(
         super::candid_interface().trim_end(),
         include_str!("../vfs.did").trim_end()

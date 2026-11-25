@@ -52,6 +52,23 @@ export const idlFactory = ({ IDL }) => {
     'Ok' : IDL.Opt(VaultTransfer),
     'Err' : BridgeError,
   });
+  const AutoTopupPolicy = IDL.Record({
+    'daily_limit_cycles' : IDL.Nat64,
+    'threshold_cycles' : IDL.Nat64,
+    'database_id' : IDL.Text,
+    'amount_cycles' : IDL.Nat64,
+    'min_database_cycles' : IDL.Nat64,
+  });
+  const AutoTopupStatus = IDL.Record({
+    'sent_today_cycles' : IDL.Nat64,
+    'last_topup_at_ns' : IDL.Opt(IDL.Nat64),
+    'database_name' : IDL.Text,
+    'policy' : AutoTopupPolicy,
+  });
+  const Result_22 = IDL.Variant({
+    'Ok' : IDL.Opt(AutoTopupStatus),
+    'Err' : BridgeError,
+  });
   const Result_5 = IDL.Variant({
     'Ok' : IDL.Opt(LinkStatus),
     'Err' : BridgeError,
@@ -62,8 +79,8 @@ export const idlFactory = ({ IDL }) => {
     'vault_owner' : IDL.Principal,
     'expires_at_ns' : IDL.Nat64,
   });
-  const Result_49 = IDL.Variant({ 'Ok' : LinkChallenge, 'Err' : BridgeError });
-  const Result_59 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : BridgeError });
+  const Result_50 = IDL.Variant({ 'Ok' : LinkChallenge, 'Err' : BridgeError });
+  const Result_61 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : BridgeError });
   return IDL.Service({
     'approve_vault_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_1], []),
     'cancel_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_6], []),
@@ -77,16 +94,22 @@ export const idlFactory = ({ IDL }) => {
         [Result_21],
         [],
       ),
+    'get_vault_auto_topup' : IDL.Func([], [Result_22], ['query']),
     'get_vault_link' : IDL.Func([], [Result_5], ['query']),
     'get_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_6], []),
-    'preview_vault_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_49], []),
+    'preview_vault_link' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_50], []),
     'quote_vault_transfer' : IDL.Func(
         [IDL.Text, TransferAmount, IDL.Vec(IDL.Nat8)],
         [Result_6],
         [],
       ),
     'reconcile_vault_transfer' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_6], []),
-    'revoke_vault_link' : IDL.Func([], [Result_59], []),
+    'revoke_vault_link' : IDL.Func([], [Result_61], []),
+    'set_vault_auto_topup' : IDL.Func(
+        [IDL.Opt(AutoTopupPolicy)],
+        [Result_22],
+        [],
+      ),
   });
 };
 export const init = ({ IDL }) => { return []; };

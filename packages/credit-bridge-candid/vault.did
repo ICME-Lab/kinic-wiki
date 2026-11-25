@@ -1,3 +1,21 @@
+type AutoTopupPolicy = record {
+  // The most this policy may send per UTC day.
+  daily_limit_cycles : nat64;
+  // A refill may run only while the Vault balance is below this.
+  threshold_cycles : nat64;
+  // The owned Wiki database that pays for refills.
+  database_id : text;
+  // Cycles sent per refill.
+  amount_cycles : nat64;
+  // The database keeps at least this after a refill and its fee.
+  min_database_cycles : nat64;
+};
+type AutoTopupStatus = record {
+  sent_today_cycles : nat64;
+  last_topup_at_ns : opt nat64;
+  database_name : text;
+  policy : AutoTopupPolicy;
+};
 type BridgeError = variant {
   Storage;
   InvalidInput;
@@ -37,11 +55,15 @@ type LinkStatus = record {
 };
 type Result_2 = variant { Ok : LinkChallenge; Err : BridgeError };
 type Result_27 = variant { Ok : CreditReceipt; Err : BridgeError };
-type Result_29 = variant { Ok : BridgeRevocation; Err : BridgeError };
-type Result_31 = variant { Ok : opt LinkStatus; Err : BridgeError };
+type Result_29 = variant { Ok : opt CreditReceipt; Err : BridgeError };
+type Result_30 = variant { Ok : BridgeRevocation; Err : BridgeError };
+type Result_32 = variant { Ok : opt AutoTopupStatus; Err : BridgeError };
+type Result_33 = variant { Ok : opt LinkStatus; Err : BridgeError };
 service : {
   begin_wiki_link : (blob) -> (Result_2);
   prepare_wiki_credit : (blob) -> (Result_27);
-  revoke_wiki_link : () -> (Result_29);
-  wiki_link_status : () -> (Result_31);
+  request_wiki_auto_topup : () -> (Result_29);
+  revoke_wiki_link : () -> (Result_30);
+  wiki_auto_topup_status : () -> (Result_32);
+  wiki_link_status : () -> (Result_33);
 }

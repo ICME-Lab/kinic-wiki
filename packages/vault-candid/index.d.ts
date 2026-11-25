@@ -49,6 +49,38 @@ export type Action = {
   } |
   { 'SaveInline' : SaveInline } |
   { 'BeginRevision' : BeginRevision };
+/**
+ * A Wiki owner's standing authorization to refill the linked Vault account.
+ * Separate from the frozen v1 tuples: it is set by the Wiki owner and read by both sides.
+ */
+export interface AutoTopupPolicy {
+  /**
+   * The most this policy may send per UTC day.
+   */
+  'daily_limit_cycles' : bigint,
+  /**
+   * A refill may run only while the Vault balance is below this.
+   */
+  'threshold_cycles' : bigint,
+  /**
+   * The owned Wiki database that pays for refills.
+   */
+  'database_id' : string,
+  /**
+   * Cycles sent per refill.
+   */
+  'amount_cycles' : bigint,
+  /**
+   * The database keeps at least this after a refill and its fee.
+   */
+  'min_database_cycles' : bigint,
+}
+export interface AutoTopupStatus {
+  'sent_today_cycles' : bigint,
+  'last_topup_at_ns' : [] | [bigint],
+  'database_name' : string,
+  'policy' : AutoTopupPolicy,
+}
 export interface BeginRevision {
   'object' : Uint8Array | number[],
   'vault' : Uint8Array | number[],
@@ -336,13 +368,17 @@ export type Result_27 = { 'Ok' : CreditReceipt } |
   { 'Err' : BridgeError };
 export type Result_28 = { 'Ok' : null } |
   { 'Err' : Error };
-export type Result_29 = { 'Ok' : BridgeRevocation } |
+export type Result_29 = { 'Ok' : [] | [CreditReceipt] } |
   { 'Err' : BridgeError };
 export type Result_3 = { 'Ok' : Payment } |
   { 'Err' : Error };
-export type Result_30 = { 'Ok' : KeyRetrievalCost } |
+export type Result_30 = { 'Ok' : BridgeRevocation } |
+  { 'Err' : BridgeError };
+export type Result_31 = { 'Ok' : KeyRetrievalCost } |
   { 'Err' : Error };
-export type Result_31 = { 'Ok' : [] | [LinkStatus] } |
+export type Result_32 = { 'Ok' : [] | [AutoTopupStatus] } |
+  { 'Err' : BridgeError };
+export type Result_33 = { 'Ok' : [] | [LinkStatus] } |
   { 'Err' : BridgeError };
 export type Result_4 = { 'Ok' : [] | [Payment] } |
   { 'Err' : Error };
@@ -509,6 +545,7 @@ export interface _SERVICE {
   'mutate' : ActorMethod<[Mutation], Result_26>,
   'pay_purchase' : ActorMethod<[Uint8Array | number[]], Result_3>,
   'payment_status' : ActorMethod<[Uint8Array | number[]], Result_4>,
+  'prepare_wiki_auto_credit' : ActorMethod<[CreditOffer], Result_27>,
   'prepare_wiki_credit' : ActorMethod<[Uint8Array | number[]], Result_27>,
   'quote_purchase' : ActorMethod<[PurchaseRequest], Result_3>,
   'receive_wiki_credit' : ActorMethod<[CreditOffer], Result_27>,
@@ -517,7 +554,12 @@ export interface _SERVICE {
     [Uint8Array | number[], Principal],
     Result_28
   >,
-  'revoke_wiki_link' : ActorMethod<[], Result_29>,
+  /**
+   * The signed-in owner asks Wiki for one refill under the owner's Wiki policy.
+   * `None` means none was due; `Prepared` means the send is still unresolved.
+   */
+  'request_wiki_auto_topup' : ActorMethod<[], Result_29>,
+  'revoke_wiki_link' : ActorMethod<[], Result_30>,
   'set_config' : ActorMethod<[[] | [VaultConfig]], Result_28>,
   'set_cycles_refill_source' : ActorMethod<[[] | [Principal]], RefillResult_1>,
   'set_funding_config' : ActorMethod<[[] | [FundingConfig]], Result_28>,
@@ -553,10 +595,14 @@ export interface _SERVICE {
     Result_23
   >,
   'shared_mutate' : ActorMethod<[Uint8Array | number[], Mutation], Result_26>,
-  'vault_key_cost' : ActorMethod<[[] | [string]], Result_30>,
+  'vault_key_cost' : ActorMethod<[[] | [string]], Result_31>,
+  /**
+   * The owner's refill policy as stored by the linked Wiki owner.
+   */
+  'wiki_auto_topup_status' : ActorMethod<[], Result_32>,
   'wiki_bridge_config' : ActorMethod<[], [] | [BridgeConfig]>,
   'wiki_credit_status' : ActorMethod<[CreditOffer], Result_27>,
-  'wiki_link_status' : ActorMethod<[], Result_31>,
+  'wiki_link_status' : ActorMethod<[], Result_33>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];
