@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
     execute_vault_transfer: vi.fn(),
     reconcile_vault_transfer: vi.fn(),
     cancel_vault_transfer: vi.fn(),
+    get_vault_auto_topup: vi.fn(),
+    set_vault_auto_topup: vi.fn(),
   },
   databases: vi.fn(),
 }));
@@ -87,6 +89,7 @@ beforeEach(() => {
     ],
   });
   mocks.actor.get_vault_transfer.mockResolvedValue({ Err: { NotFound: null } });
+  mocks.actor.get_vault_auto_topup.mockResolvedValue({ Ok: [] });
   mocks.actor.get_pending_vault_transfer.mockResolvedValue({ Ok: [] });
   mocks.databases.mockResolvedValue([
     { databaseId: "db1", name: "Research", cyclesBalance: "100" },

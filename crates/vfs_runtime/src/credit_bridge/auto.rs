@@ -196,7 +196,8 @@ impl VfsService {
             } else {
                 0
             };
-            if u128::from(sent_today) + u128::from(amount) > u128::from(state.policy.daily_limit_cycles)
+            if u128::from(sent_today) + u128::from(amount)
+                > u128::from(state.policy.daily_limit_cycles)
                 || daily(c, now)? + u128::from(amount) > u128::from(s.config.daily_limit_cycles)
             {
                 return Err("Capacity".into());

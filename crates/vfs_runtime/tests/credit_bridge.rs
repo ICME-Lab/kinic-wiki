@@ -1239,7 +1239,11 @@ const GAP: u64 = AUTO_TOPUP_INTERVAL_NS;
 fn auto_topup_policy_belongs_to_the_wiki_owner_and_its_owned_database() {
     let f = Fixture::new();
     // Only the linked Wiki owner can set it, and only for a database it owns.
-    assert!(f.svc.set_vault_auto_topup(p(7), Some(policy()), T0).is_err());
+    assert!(
+        f.svc
+            .set_vault_auto_topup(p(7), Some(policy()), T0)
+            .is_err()
+    );
     let mut foreign = policy();
     foreign.database_id = "missing".into();
     assert!(f.svc.set_vault_auto_topup(p(1), Some(foreign), T0).is_err());
@@ -1269,11 +1273,16 @@ fn auto_topup_policy_belongs_to_the_wiki_owner_and_its_owned_database() {
 #[test]
 fn auto_topup_admission_is_bounded_by_threshold_interval_daily_limit_and_reserve() {
     let f = Fixture::new();
-    f.svc.set_vault_auto_topup(p(1), Some(policy()), T0).unwrap();
+    f.svc
+        .set_vault_auto_topup(p(1), Some(policy()), T0)
+        .unwrap();
     // Only the configured Vault peer may ask.
     assert!(f.svc.admit_vault_auto_topup(p(8), p(2), 0, 0, T0).is_err());
     // Not below the threshold: nothing to do.
-    assert_eq!(f.svc.admit_vault_auto_topup(p(9), p(2), 500, 0, T0), Ok(None));
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 500, 0, T0),
+        Ok(None)
+    );
     let admitted = f
         .svc
         .admit_vault_auto_topup(p(9), p(2), 499, 0, T0)
@@ -1288,7 +1297,10 @@ fn auto_topup_admission_is_bounded_by_threshold_interval_daily_limit_and_reserve
         }
     );
     // Too soon after the previous refill.
-    assert_eq!(f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + 1), Ok(None));
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + 1),
+        Ok(None)
+    );
     f.svc
         .admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + GAP)
         .unwrap()
@@ -1298,7 +1310,11 @@ fn auto_topup_admission_is_bounded_by_threshold_interval_daily_limit_and_reserve
         f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + 2 * GAP),
         Err("Capacity".into())
     );
-    let status = f.svc.get_vault_auto_topup(p(1), T0 + 2 * GAP).unwrap().unwrap();
+    let status = f
+        .svc
+        .get_vault_auto_topup(p(1), T0 + 2 * GAP)
+        .unwrap()
+        .unwrap();
     assert_eq!(status.sent_today_cycles, 200_000_000);
     // The database must keep its reserve after the amount and the fee
     // (storage billing settles first, so the passing case leaves headroom).
@@ -1309,17 +1325,20 @@ fn auto_topup_admission_is_bounded_by_threshold_interval_daily_limit_and_reserve
         Err("Capacity".into())
     );
     f.balance(800_000_000);
-    assert!(f
-        .svc
-        .admit_vault_auto_topup(p(9), p(2), 0, 1, next_day)
-        .unwrap()
-        .is_some());
+    assert!(
+        f.svc
+            .admit_vault_auto_topup(p(9), p(2), 0, 1, next_day)
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[test]
 fn auto_topup_waits_for_an_unresolved_transfer_and_ends_with_the_link() {
     let f = Fixture::new();
-    f.svc.set_vault_auto_topup(p(1), Some(policy()), T0).unwrap();
+    f.svc
+        .set_vault_auto_topup(p(1), Some(policy()), T0)
+        .unwrap();
     f.hold(1_000);
     assert_eq!(
         f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0),

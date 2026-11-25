@@ -27,6 +27,7 @@ import { AdminPanel, AdminPageHeader, AdminField } from "@/components/admin-ui";
 import { StatusPill } from "@/components/ui/status-pill";
 import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
 import { PrincipalText } from "@kinic/ui/principal";
+import { AutoTopupPanel } from "./auto-topup-panel";
 import { formatCycles, formatRawCycles } from "@kinic/ui/cycles";
 import {
   creditOrigins,
@@ -641,6 +642,9 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
               </div>
             )}
           </AdminPanel>
+          {link?.active && !challenge ? (
+            <AutoTopupPanel actor={actor} databases={databases} disabled={busy || !available} />
+          ) : null}
           {linkMode ? (link?.active && !challenge ? <WikiCredits databases={databases} /> : null) : (
             <AdminPanel
               className="grid min-w-0 gap-4"

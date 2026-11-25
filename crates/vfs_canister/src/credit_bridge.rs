@@ -235,9 +235,7 @@ async fn reconcile_vault_transfer(operation: Vec<u8>) -> BridgeResult<VaultTrans
     reconcile(caller()?, &operation).await
 }
 #[update]
-fn set_vault_auto_topup(
-    policy: Option<AutoTopupPolicy>,
-) -> BridgeResult<Option<AutoTopupStatus>> {
+fn set_vault_auto_topup(policy: Option<AutoTopupPolicy>) -> BridgeResult<Option<AutoTopupStatus>> {
     let p = caller()?;
     bridge(|s| s.set_vault_auto_topup(p, policy, bridge_now()))
 }
@@ -272,9 +270,8 @@ async fn request_vault_auto_topup(
     valid_id(&operation)?;
     let peer = caller()?;
     let fee = (UPDATE_EXECUTION_BASE_CYCLES + UPDATE_ACCOUNTING_OVERHEAD_CYCLES) as u64;
-    let Some(admitted) = bridge(|s| {
-        s.admit_vault_auto_topup(peer, vault_owner, vault_balance, fee, bridge_now())
-    })?
+    let Some(admitted) =
+        bridge(|s| s.admit_vault_auto_topup(peer, vault_owner, vault_balance, fee, bridge_now()))?
     else {
         return Ok(None);
     };

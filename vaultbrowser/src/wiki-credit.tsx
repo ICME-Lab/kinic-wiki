@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import "./wiki-credit.css";
 import { Link2, RefreshCw } from "lucide-react";
 import { StatusPill, type StatusTone } from "@kinic/ui/status-pill";
 import { PrincipalText } from "@kinic/ui/principal";
 import { formatCycles, formatRawCycles } from "@kinic/ui/cycles";
 import type { VaultClient } from "@kinic/vault-client";
-import type { LinkStatus, VaultBridgeActor } from "@kinic/credit-bridge-candid";
+import type { AutoTopupStatus, LinkStatus, VaultBridgeActor } from "@kinic/credit-bridge-candid";
 import {
   acceptMessage,
   bridgeOk,
@@ -20,6 +21,15 @@ import { vaultCreditActor, creditOrigins } from "./wiki-credit-actor";
 import { VaultButton } from "./vault/ui";
 import { useConfirm } from "./vault/confirm";
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
+/** The refill policy, or undefined when Wiki cannot say; never fails the card. */
+async function loadAuto(actor: VaultBridgeActor): Promise<AutoTopupStatus | null | undefined> {
+  try {
+    const reply = await actor.wiki_auto_topup_status();
+    return "Ok" in reply ? (reply.Ok[0] ?? null) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 type LinkView = { label: string; tone: StatusTone; description: string };
 function linkView(
   checking: boolean,
@@ -67,6 +77,9 @@ export function WikiCreditFunding({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [unavailable, setUnavailable] = useState(false);
+  // undefined: not loaded; null: no standing refill policy in Wiki.
+  const [auto, setAuto] = useState<AutoTopupStatus | null>();
+  const autoRun = useRef({ running: false, lastAt: 0 });
   // True only after wiki_link_status answered, so "Not linked" never shows while checking.
   const [loaded, setLoaded] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
@@ -100,6 +113,7 @@ export function WikiCreditFunding({
     working.current = false;
     setActor(undefined);
     setLink(undefined);
+    setAuto(undefined);
     setUnavailable(false);
     setLoaded(false);
     setBusy(false);
@@ -121,6 +135,8 @@ export function WikiCreditFunding({
       setLink(status[0]);
       setLoaded(true);
       setNotice("");
+      if (status[0]?.active) setAuto(await loadAuto(a));
+      check();
     })().catch(() => {
       try {
         check();
@@ -326,6 +342,46 @@ export function WikiCreditFunding({
       );
     });
   };
+  // A standing Wiki policy refills this Vault without a window once the
+  // balance drops below its threshold. Wiki enforces the limits; this only asks.
+  useEffect(() => {
+    if (!actor || !link?.active || !auto || balance === null) return;
+    if (balance >= auto.policy.threshold_cycles) return;
+    const run = autoRun.current;
+    if (run.running || Date.now() - run.lastAt < 60_000) return;
+    run.running = true;
+    run.lastAt = Date.now();
+    const check = fence();
+    void (async () => {
+      const reply = bridgeOk(await actor.request_wiki_auto_topup());
+      check();
+      const receipt = reply[0];
+      if (!receipt) return;
+      const amount = formatCycles(receipt.offer.amount_cycles);
+      if ("Accepted" in receipt.status) {
+        setNotice(`Refilled ${amount} cycles from Wiki.`);
+        await funded.current();
+      } else if ("Prepared" in receipt.status) {
+        setNotice(`A ${amount} refill from Wiki is still settling. Check it in Wiki.`);
+      }
+      const policy = await loadAuto(actor);
+      check();
+      setAuto(policy);
+    })()
+      .catch(() => {
+        try {
+          check();
+          setNotice("Automatic refill from Wiki did not run. Charge manually or check the policy in Wiki.");
+        } catch {
+          /* stale */
+        }
+      })
+      .finally(() => {
+        run.running = false;
+      });
+    // fence() reads refs only; re-running on its identity would retrigger refills.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, link, auto, balance]);
   const refresh = () =>
     work(async (check) => {
       const a = actor ?? (await vaultCreditActor(current.current));
@@ -336,6 +392,8 @@ export function WikiCreditFunding({
       setUnavailable(false);
       setLink(status[0]);
       setLoaded(true);
+      setAuto(status[0]?.active ? await loadAuto(a) : undefined);
+      check();
     });
   const view = linkView(!loaded && !unavailable, unavailable, link);
   const wikiOwner = link?.wiki_owner.toText();
@@ -366,6 +424,28 @@ export function WikiCreditFunding({
             {balance === null ? "--" : `${formatCycles(balance)} cycles`}
           </dd>
         </dl>
+      ) : null}
+      {link?.active && auto !== undefined ? (
+        <div className="vault-wiki-credit-auto">
+          <StatusPill
+            dot
+            tone={auto ? "positive" : "neutral"}
+            label={auto ? "Auto top-up on" : "Auto top-up off"}
+          />
+          <span className="vault-wiki-credit-auto-text">
+            {auto
+              ? `Adds ${formatCycles(auto.policy.amount_cycles)} from ${auto.database_name} when the balance is below ${formatCycles(auto.policy.threshold_cycles)} · ${formatCycles(auto.sent_today_cycles)} of ${formatCycles(auto.policy.daily_limit_cycles)} used today`
+              : "Refill this Vault from a Wiki database automatically when the balance runs low."}
+          </span>
+          <VaultButton
+            size="sm"
+            tone="ghost"
+            disabled={!actor || busy}
+            onClick={() => openWiki("fund")}
+          >
+            {auto ? "Change in Wiki" : "Set up in Wiki"}
+          </VaultButton>
+        </div>
       ) : null}
       {channelOpen ? (
         <div className="vault-notice vault-notice--info vault-wiki-credit-window">

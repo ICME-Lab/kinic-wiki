@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn(),
   status: vi.fn(),
   revoke: vi.fn(),
+  autoStatus: vi.fn(),
+  autoRequest: vi.fn(),
 }));
 vi.mock("./wiki-credit-actor", () => ({
   creditOrigins: () => ({
@@ -25,6 +27,8 @@ vi.mock("./wiki-credit-actor", () => ({
     prepare_wiki_credit: mocks.prepare,
     wiki_link_status: mocks.status,
     revoke_wiki_link: mocks.revoke,
+    wiki_auto_topup_status: mocks.autoStatus,
+    request_wiki_auto_topup: mocks.autoRequest,
   }),
 }));
 import { WikiCreditFunding } from "./wiki-credit";
@@ -45,6 +49,7 @@ let popup: {
 beforeEach(() => {
   generation = 0;
   mocks.status.mockResolvedValue({ Ok: [] });
+  mocks.autoStatus.mockResolvedValue({ Ok: [] });
   popup = {
     closed: false,
     close: vi.fn(),
@@ -328,3 +333,64 @@ it.each(["completed", "canceled with prepare pending"])(
     window.history.replaceState(null, "", "/");
   },
 );
+
+const linked = {
+  wiki_owner: principal,
+  vault_owner: principal,
+  generation: 1n,
+  active: true,
+};
+const autoPolicy = {
+  policy: {
+    database_id: "db1",
+    threshold_cycles: 1_000n,
+    amount_cycles: 50_000_000_000n,
+    daily_limit_cycles: 200_000_000_000n,
+    min_database_cycles: 0n,
+  },
+  database_name: "Research",
+  sent_today_cycles: 0n,
+  last_topup_at_ns: [],
+};
+it("shows the standing Wiki refill and asks for one only below its threshold", async () => {
+  mocks.status.mockResolvedValue({ Ok: [linked] });
+  mocks.autoStatus.mockResolvedValue({ Ok: [autoPolicy] });
+  mocks.autoRequest.mockResolvedValue({
+    Ok: [
+      {
+        offer: { amount_cycles: 50_000_000_000n },
+        status: { Accepted: null },
+      },
+    ],
+  });
+  const funded = vi.fn(async () => {});
+  // One client for the session: a replaced client fences late replies.
+  const session = client();
+  const view = render(
+    <WikiCreditFunding client={session} onFunded={funded} balance={5_000n} />,
+  );
+  await screen.findByText("Auto top-up on");
+  expect(screen.getByText(/Adds 50.00B from Research/)).toBeTruthy();
+  expect(mocks.autoRequest).not.toHaveBeenCalled();
+  view.rerender(
+    <WikiCreditFunding client={session} onFunded={funded} balance={500n} />,
+  );
+  await screen.findByText("Refilled 50.00B cycles from Wiki.");
+  expect(mocks.autoRequest).toHaveBeenCalledTimes(1);
+  expect(funded).toHaveBeenCalledTimes(1);
+  // A later render below the threshold does not ask again within a minute.
+  view.rerender(
+    <WikiCreditFunding client={session} onFunded={funded} balance={400n} />,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(mocks.autoRequest).toHaveBeenCalledTimes(1);
+});
+it("without a Wiki refill policy offers setup and never asks", async () => {
+  mocks.status.mockResolvedValue({ Ok: [linked] });
+  render(
+    <WikiCreditFunding client={client()} onFunded={async () => {}} balance={0n} />,
+  );
+  await screen.findByText("Auto top-up off");
+  expect(screen.getByRole("button", { name: "Set up in Wiki" })).toBeTruthy();
+  expect(mocks.autoRequest).not.toHaveBeenCalled();
+});
