@@ -794,7 +794,7 @@ async function verifyAcceptance() {
   const fundingPopupPromise = context.waitForEvent("page");
   await action(vault, "Charge from Wiki credits");
   const fundingPopup = await fundingPopupPromise;
-  await fundingPopup.getByText("Connected to your Vault window.").waitFor();
+  await fundingPopup.getByText("Connected to your Vault window").waitFor();
   await fundingPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await fundingPopup.getByText("Quoted", { exact: true }).waitFor();
   // One confirmation holds, waits for Vault readiness and sends.
@@ -814,7 +814,7 @@ async function verifyAcceptance() {
   await action(vault, "Charge from Wiki credits");
   const allPopup = await allPopupPromise;
   await allPopup.setViewportSize({ width: 390, height: 844 });
-  await allPopup.getByText("Connected to your Vault window.").waitFor();
+  await allPopup.getByText("Connected to your Vault window").waitFor();
   await allPopup.getByRole("radio", { name: "All available credits" }).check();
   await allPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await allPopup.getByText("Quoted", { exact: true }).waitFor();
@@ -834,7 +834,7 @@ async function verifyAcceptance() {
   const lostCreditPopupPromise = context.waitForEvent("page");
   await action(vault, "Charge from Wiki credits");
   const lostCreditPopup = await lostCreditPopupPromise;
-  await lostCreditPopup.getByText("Connected to your Vault window.").waitFor();
+  await lostCreditPopup.getByText("Connected to your Vault window").waitFor();
   await lostCreditPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await lostCreditPopup.getByText("Quoted", { exact: true }).waitFor();
   let droppedCreditReplies = 0, executeCalls = 0;
@@ -869,7 +869,7 @@ async function verifyAcceptance() {
   await action(vault, "Charge from Wiki credits");
   const heldPopup = await heldPopupPromise;
   await heldPopup.setViewportSize({ width: 390, height: 844 });
-  await heldPopup.getByText("Connected to your Vault window.").waitFor();
+  await heldPopup.getByText("Connected to your Vault window").waitFor();
   await heldPopup.getByRole("button", { name: "Get transfer estimate" }).click();
   await heldPopup.getByText("Quoted", { exact: true }).waitFor();
   // Keep Vault from preparing so the automatic send stays held, then close Wiki.
