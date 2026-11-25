@@ -1,4 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { Link2, RefreshCw } from "lucide-react";
+import { StatusPill, type StatusTone } from "@kinic/ui/status-pill";
 import type { VaultClient } from "@kinic/vault-client";
 import type { LinkStatus, VaultBridgeActor } from "@kinic/credit-bridge-candid";
 import {
@@ -16,6 +18,40 @@ import { vaultCreditActor, creditOrigins } from "./wiki-credit-actor";
 import { VaultButton } from "./vault/ui";
 import { useConfirm } from "./vault/confirm";
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
+const shortPrincipal = (text: string) =>
+  text.length > 16 ? `${text.slice(0, 5)}…${text.slice(-3)}` : text;
+type LinkView = { label: string; tone: StatusTone; description: string };
+function linkView(
+  checking: boolean,
+  unavailable: boolean,
+  link: LinkStatus | undefined,
+): LinkView {
+  if (unavailable)
+    return {
+      label: "Unavailable",
+      tone: "danger",
+      description: "Wiki link status could not be loaded. Check again in a moment.",
+    };
+  if (checking)
+    return { label: "Checking…", tone: "neutral", description: "Checking whether a Wiki account is linked." };
+  if (link?.active)
+    return {
+      label: "Linked",
+      tone: "positive",
+      description: "Move credits from one of your Wiki databases into this Vault. You review and confirm each transfer in Wiki.",
+    };
+  if (link)
+    return {
+      label: "Link revoked",
+      tone: "warn",
+      description: "Transfers are turned off. You can link the same Wiki account again.",
+    };
+  return {
+    label: "Not linked",
+    tone: "neutral",
+    description: "Link your Wiki account once to pay for Vault with Wiki database credits. Linking moves no credits.",
+  };
+}
 export function WikiCreditFunding({
   client,
   onFunded,
@@ -26,7 +62,8 @@ export function WikiCreditFunding({
   const [actor, setActor] = useState<VaultBridgeActor>();
   const [link, setLink] = useState<LinkStatus>();
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("Checking Wiki link…");
+  const [notice, setNotice] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
   const [handoff] = useState(() =>
     typeof window === "undefined" ? null : parseLaunch(window.location.hash),
@@ -58,6 +95,7 @@ export function WikiCreditFunding({
     working.current = false;
     setActor(undefined);
     setLink(undefined);
+    setUnavailable(false);
     setBusy(false);
     const check = sessionFence(() =>
       live.current
@@ -79,7 +117,7 @@ export function WikiCreditFunding({
     })().catch(() => {
       try {
         check();
-        setNotice("Wiki link unavailable. Refresh status to try again.");
+        setUnavailable(true);
       } catch {
         /* stale */
       }
@@ -281,6 +319,18 @@ export function WikiCreditFunding({
       );
     });
   };
+  const refresh = () =>
+    work(async (check) => {
+      const a = actor ?? (await vaultCreditActor(current.current));
+      check();
+      setActor(a);
+      const status = bridgeOk(await a.wiki_link_status());
+      check();
+      setUnavailable(false);
+      setLink(status[0]);
+    });
+  const view = linkView(!actor && !unavailable, unavailable, link);
+  const wikiOwner = link?.wiki_owner.toText();
   return (
     <div className="vault-settings-group">
     <h3 className="vault-settings-group-title">Wiki credits</h3>
@@ -288,54 +338,72 @@ export function WikiCreditFunding({
       aria-label="Wiki credit funding"
       className="vault-panel vault-wiki-credit"
     >
-      <h4>Use Wiki database credits</h4>
-      <p className="vault-wiki-credit-description">
-        Link your independently signed-in Wiki account, then manually move
-        database credits to this Vault account. Linking never charges a
-        database. The account pairing is permanent; revocation disables future
-        transfers.
-      </p>
-      {link ? (
-        <p className="vault-wiki-credit-link">
-          Wiki principal: {link.wiki_owner.toText()} ·{" "}
-          {link.active ? "Linked" : "Revoked"}
-        </p>
+      <div className="vault-wiki-credit-head">
+        <span className="vault-wiki-credit-icon" aria-hidden><Link2 size={16} /></span>
+        <div className="vault-wiki-credit-title">
+          <h4>Wiki account</h4>
+          {wikiOwner ? (
+            <code title={wikiOwner}>{shortPrincipal(wikiOwner)}</code>
+          ) : null}
+        </div>
+        <output className="vault-wiki-credit-status" aria-live="polite">
+          <StatusPill dot tone={view.tone} label={view.label} />
+        </output>
+      </div>
+      <p className="vault-wiki-credit-description">{view.description}</p>
+      {channelOpen ? (
+        <div className="vault-notice vault-notice--info vault-wiki-credit-window">
+          <span>Wiki window is open. Finish there, then come back.</span>
+          <VaultButton
+            size="sm"
+            onClick={() => {
+              stopChannel.current();
+              setNotice(
+                "Window closed. Existing holds remain recoverable from Wiki.",
+              );
+            }}
+          >
+            Close Wiki window
+          </VaultButton>
+        </div>
       ) : null}
       <div className="vault-wiki-credit-actions">
-        <VaultButton disabled={!actor || busy} onClick={() => openWiki("link")}>
-          {link?.active ? "Review Wiki link" : "Link Wiki account"}
-        </VaultButton>
+        {link?.active ? (
+          <VaultButton
+            disabled={!actor || busy}
+            tone="primary"
+            onClick={() => openWiki("fund")}
+          >
+            Charge from Wiki credits
+          </VaultButton>
+        ) : (
+          <VaultButton
+            disabled={!actor || busy}
+            tone="primary"
+            onClick={() => openWiki("link")}
+          >
+            Link Wiki account
+          </VaultButton>
+        )}
         <VaultButton
-          disabled={!actor || busy || !link?.active}
-          tone="primary"
-          onClick={() => openWiki("fund")}
+          tone="ghost"
+          size="icon"
+          aria-label="Refresh Wiki link"
+          title="Refresh Wiki link"
+          disabled={busy}
+          onClick={refresh}
         >
-          Charge from Wiki credits
-        </VaultButton>
-        <VaultButton
-          disabled={!actor || busy}
-          onClick={() =>
-            work(async (check) => {
-              const status = bridgeOk(await actor!.wiki_link_status());
-              check();
-              setLink(status[0]);
-              setNotice(
-                status[0]?.active
-                  ? "Wiki link is active."
-                  : "No active Wiki link. Link an account to charge from its databases.",
-              );
-            })
-          }
-        >
-          Refresh Wiki link
+          <RefreshCw size={15} aria-hidden />
         </VaultButton>
         {link?.active ? (
           <VaultButton
-                        disabled={busy}
+            tone="ghost"
+            className="vault-wiki-credit-revoke"
+            disabled={busy}
             onClick={() => {
               void confirm({
                 title: "Revoke Wiki link?",
-                description: "Charging from Wiki credits stops for this Vault account. Transfers already sent can still settle.",
+                description: "Charging from Wiki credits stops for this Vault account. Transfers already sent can still settle. You can link the same Wiki account again later.",
                 confirmLabel: "Revoke link",
               }).then((confirmed) => {
                 if (!confirmed) return;
@@ -352,18 +420,6 @@ export function WikiCreditFunding({
             }}
           >
             Revoke Wiki link
-          </VaultButton>
-        ) : null}
-        {channelOpen ? (
-          <VaultButton
-            onClick={() => {
-              stopChannel.current();
-              setNotice(
-                "Window closed. Existing holds remain recoverable from Wiki.",
-              );
-            }}
-          >
-            Close Wiki window
           </VaultButton>
         ) : null}
       </div>

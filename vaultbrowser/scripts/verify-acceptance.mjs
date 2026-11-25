@@ -896,7 +896,7 @@ async function verifyAcceptance() {
   await recoveryPopup.close();
   await action(vault, "Revoke Wiki link");
   await action(vault, "Revoke link");
-  await vault.getByText(/Wiki principal: .* · Revoked/).waitFor();
+  await vault.getByText("Link revoked", { exact: true }).waitFor();
   const relinkPopupPromise = context.waitForEvent("page");
   await action(vault, "Link Wiki account");
   const relinkPopup = await relinkPopupPromise;
@@ -905,7 +905,7 @@ async function verifyAcceptance() {
   pass("Vault revocation blocks new funding and the same real II Wiki/Vault principal pair can explicitly relink");
   await relinkPopup.getByRole("button", { name: "Revoke account link" }).click();
   await action(vault, "Refresh Wiki link");
-  await vault.getByText(/Wiki principal: .* · Revoked/).waitFor();
+  await vault.getByText("Link revoked", { exact: true }).waitFor();
   pass("Wiki-side account revocation propagates to the authenticated Vault status");
   await relinkPopup.close();
   const staleCreditPage = await context.newPage();

@@ -24,6 +24,8 @@ import { Button } from "@kinic/ui/button";
 import { Input } from "@kinic/ui/input";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminPanel, AdminPageHeader, AdminField } from "@/components/admin-ui";
+import { StatusPill } from "@/components/ui/status-pill";
+import { ArrowLeftRight, CheckCircle2, CircleAlert } from "lucide-react";
 import {
   creditOrigins,
   ownerDatabases,
@@ -35,6 +37,17 @@ type DatabaseChoice = {
   cyclesBalance: string;
 };
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
+const shortPrincipal = (text: string) =>
+  text.length > 16 ? `${text.slice(0, 5)}…${text.slice(-3)}` : text;
+function AccountCard({ label, note, principal }: { label: string; note: string; principal: string }) {
+  return (
+    <div className="grid min-w-0 gap-1 rounded-lg border border-line bg-white p-3">
+      <span className="text-xs font-semibold uppercase text-muted">{label}</span>
+      <code className="min-w-0 text-sm text-ink [overflow-wrap:anywhere]">{principal}</code>
+      <span className="text-xs text-muted">{note}</span>
+    </div>
+  );
+}
 // Persist only the opaque server receipt reference in this popup's URL, never amounts or identity.
 function rememberTransferReference(
   launch: Launch | null,
@@ -421,11 +434,21 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
     },
     creditOrigins(),
   );
+  const linkMode = launch?.mode === "link";
+  const linkPill = link?.active
+    ? ({ tone: "positive", label: "Linked" } as const)
+    : link
+      ? ({ tone: "warn", label: "Link revoked" } as const)
+      : ({ tone: "neutral", label: "Not linked" } as const);
   return (
     <div className="mx-auto grid w-full max-w-2xl min-w-0 gap-5 p-4 sm:p-6 [&_button]:min-h-11">
       <AdminPageHeader
-        title="Move Wiki credits to Vault"
-        description="Sign in to each app separately. Every transfer requires your confirmation."
+        title={linkMode ? "Link your Vault account" : "Move Wiki credits to Vault"}
+        description={
+          linkMode
+            ? "Approve once so this Wiki account can send database credits to your Vault. No credits move now."
+            : "Pick a database and an amount, review the estimate, then confirm. Nothing moves until you confirm."
+        }
       />
       {!identity ? (
         <AdminPanel>
@@ -441,60 +464,59 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         </AdminPanel>
       ) : (
         <>
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={() => void session.logout()}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {connected ? (
+              <output>
+                <StatusPill dot tone="positive" label="Connected to your Vault window." />
+              </output>
+            ) : (
+              <StatusPill dot tone="warn" label="Vault window not connected" />
+            )}
+            <Button variant="ghost" size="sm" onClick={() => void session.logout()}>
               Sign out of Wiki
             </Button>
           </div>
           {!connected ? (
-            <AdminPanel>
-              <p className="mb-3 text-sm">
-                Start in Vault, then open Wiki from its funding controls. Your
-                saved transfer can be recovered after the handoff.
+            <AdminPanel className="grid gap-3 border-warnLine bg-warnSoft">
+              <p className="flex items-start gap-2 text-sm text-warnText">
+                <CircleAlert aria-hidden className="mt-0.5 shrink-0" size={16} />
+                <span>
+                  Start in Vault, then open Wiki from its funding controls. Your
+                  saved transfer can be recovered after the handoff.
+                </span>
               </p>
               <a
-                className="inline-flex min-h-11 items-center rounded border border-line px-4 font-semibold text-ink"
+                className="inline-flex min-h-11 items-center justify-self-start rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink"
                 href={handoff}
                 target="_self"
               >
                 Continue in Vault
               </a>
             </AdminPanel>
-          ) : (
-            <output className="text-sm">Connected to your Vault window.</output>
-          )}
+          ) : null}
           <AdminPanel className="grid min-w-0 gap-4" ariaLabel="Account link">
-            <h2 className="font-semibold">Account link</h2>
-            <AdminField
-              label="Wiki principal"
-              value={session.principal}
-              breakAll
-            />
-            {link ? (
-              <>
-                <AdminField
-                  label="Vault principal"
-                  value={link.vault_owner.toText()}
-                  breakAll
-                />
-                <p>{link.active ? "Linked" : "Revoked"}</p>
-              </>
-            ) : (
-              <p className="text-sm">No active link.</p>
-            )}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-semibold">Account link</h2>
+              <StatusPill dot tone={linkPill.tone} label={linkPill.label} />
+            </div>
             {challenge ? (
               <>
-                <AdminField
-                  label="Link to Vault principal"
-                  value={challenge.vault_owner.toText()}
-                  breakAll
-                />
-                <p className="text-sm">
-                  This permanently pairs these two accounts. Revocation disables
-                  future transfers but does not allow a different partner.
-                  Linking itself moves no credits.
-                </p>
+                <div className="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
+                  <AccountCard label="Wiki account" note="Signed in here" principal={session.principal ?? ""} />
+                  <ArrowLeftRight aria-hidden className="justify-self-center text-muted" size={18} />
+                  <AccountCard label="Vault account" note="Your Vault window" principal={challenge.vault_owner.toText()} />
+                </div>
+                <ul className="grid list-disc gap-1 pl-5 text-sm text-muted">
+                  <li>Linking itself moves no credits.</li>
+                  <li>Every transfer is reviewed and confirmed in this Wiki window.</li>
+                  <li>
+                    This permanently pairs these two accounts. You can revoke
+                    future transfers later, but cannot link a different Vault
+                    account.
+                  </li>
+                </ul>
                 <Button
+                  className="justify-self-start"
                   disabled={busy || !available || !connected}
                   onClick={() =>
                     work(async (check) => {
@@ -511,10 +533,21 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                   Approve account link
                 </Button>
               </>
-            ) : null}
+            ) : link ? (
+              <AdminField
+                label="Vault account"
+                value={<code title={link.vault_owner.toText()}>{shortPrincipal(link.vault_owner.toText())}</code>}
+              />
+            ) : (
+              <p className="text-sm text-muted">
+                No Vault account is linked to this Wiki account yet.
+              </p>
+            )}
             {link?.active ? (
               <Button
-                variant="outline"
+                variant="ghost"
+                size="sm"
+                className="justify-self-start text-dangerText"
                 disabled={busy || !available}
                 onClick={() =>
                   work(async (check) => {
@@ -532,20 +565,44 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
               </Button>
             ) : null}
           </AdminPanel>
-          {launch?.mode === "link" ? (
-            <AdminPanel>
-              <p>
-                This window only links accounts. Return to your Vault window and
-                choose Charge from Wiki credits to open a new Wiki window for a
-                manual transfer.
+          {linkMode ? (
+            link?.active && !challenge ? (
+              <AdminPanel className="grid gap-2 border-okLine bg-okSoft">
+                <p className="flex items-center gap-2 font-semibold text-okText">
+                  <CheckCircle2 aria-hidden size={18} />
+                  Accounts linked
+                </p>
+                <p className="text-sm text-okText">
+                  You can close this window. In Vault, choose Charge from Wiki
+                  credits to open a new Wiki window for a manual transfer.
+                </p>
+              </AdminPanel>
+            ) : (
+              <p className="text-sm text-muted">
+                This window only links accounts. To move credits afterwards,
+                return to Vault and choose Charge from Wiki credits.
               </p>
-            </AdminPanel>
+            )
           ) : (
             <AdminPanel
               className="grid min-w-0 gap-4"
               ariaLabel="Manual credit transfer"
             >
-              <h2 className="font-semibold">Manual credit transfer</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-semibold">Manual credit transfer</h2>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !available}
+                  onClick={refreshPending}
+                >
+                  Recover pending transfer
+                </Button>
+              </div>
+              <p className="-mt-2 text-sm text-muted">
+                Credits move from one of your databases to the linked Vault
+                account.
+              </p>
               <label className="grid gap-1 text-sm">
                 Owner database
                 <select
@@ -564,13 +621,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                   ))}
                 </select>
               </label>
-              <Button
-                variant="outline"
-                disabled={busy || !available}
-                onClick={refreshPending}
-              >
-                Recover pending transfer
-              </Button>
               {!transfer && channelUsed ? (
                 <p>
                   This channel has already reviewed a transfer. Return to your
@@ -652,9 +702,20 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                 </>
               ) : (
                 <>
-                  <output aria-live="polite" className="font-semibold">
-                    {Object.keys(transfer.phase)[0]}
+                  <output aria-live="polite" className="justify-self-start">
+                    <StatusPill
+                      dot
+                      tone={
+                        "Paid" in transfer.phase
+                          ? "positive"
+                          : "Unknown" in transfer.phase || "Refunded" in transfer.phase
+                            ? "warn"
+                            : "info"
+                      }
+                      label={Object.keys(transfer.phase)[0]}
+                    />
                   </output>
+                  <div className="grid min-w-0 gap-3 rounded-lg border border-line bg-white p-3">
                   <p className="text-sm">
                     Offer expires:{" "}
                     {new Date(
@@ -695,7 +756,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                         Estimated remaining source balance:{" "}
                         {estimate.remaining.toLocaleString()} cycles.
                       </p>
-                      <p>
+                      <p className="text-xs text-muted">
                         These estimates use the quote snapshot. Later storage
                         billing, execution fees and other balance changes can
                         change the remaining balance.{" "}
@@ -712,9 +773,10 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                     {transfer.collected_execution_fee_cycles.toLocaleString()}{" "}
                     cycles. Storage billing is settled before reservation.
                   </p>
+                  </div>
                   {quoted || offered ? (
                     <>
-                      <p className="text-sm">
+                      <p className="text-xs text-muted">
                         Confirmation places a temporary hold on the database
                         credits. Reduced credit may suspend database updates.
                         Exact partial transfers keep their specified amount; the
