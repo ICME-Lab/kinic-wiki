@@ -55,7 +55,7 @@ enum HtmlPolicy<'a> {
     Default,
     Embed(&'a str),
     Picker,
-    // Internet Identity reads these well-known resources cross-origin from its own frontend.
+    // Internet Identity and native clients read well-known resources cross-origin.
     InternetIdentity,
 }
 
@@ -151,6 +151,59 @@ fn html_fallbacks(index: &[u8], mime: &str, wiki_origin: Option<&str>) -> Vec<En
     routes
 }
 
+fn local_derivation_origin(id: &str, host: &url::Url) -> String {
+    let port = host
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    format!("{}://{id}.localhost{port}", host.scheme())
+}
+
+const PRODUCTION_NATIVE_CALLBACK: &str = "https://vault.kinic.xyz/ios-vault-auth-callback";
+
+fn native_callback_entries_for_host(
+    callback: &str,
+    expected_host: &str,
+) -> std::result::Result<Vec<Entry>, ()> {
+    let url = url::Url::parse(callback).map_err(|_| ())?;
+    if url.scheme() != "https"
+        || url.host_str() != Some(expected_host)
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/ios-vault-auth-callback"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.as_str() != callback
+    {
+        return Err(());
+    }
+    Ok(vec![
+        entry(
+            HttpCertificationPath::exact("/.well-known/ii-auth-callbacks"),
+            serde_json::to_vec(&serde_json::json!({"callbacks":[callback]})).unwrap(),
+            "application/json",
+            HtmlPolicy::InternetIdentity,
+        ),
+        entry(
+            HttpCertificationPath::exact("/.well-known/apple-app-site-association"),
+            br#"{"webcredentials":{"apps":["AKN976G7AK.xyz.kinic.ios.KinicWiki"]}}"#.to_vec(),
+            "application/json",
+            HtmlPolicy::InternetIdentity,
+        ),
+        entry(
+            HttpCertificationPath::exact("/ios-vault-auth-callback"),
+            b"<!doctype html><meta charset=utf-8><title>Kinic Vault</title><p>Return to the Kinic app to finish signing in.</p>".to_vec(),
+            "text/html; charset=utf-8",
+            HtmlPolicy::Default,
+        ),
+    ])
+}
+
+fn native_callback_entries(callback: &str) -> std::result::Result<Vec<Entry>, ()> {
+    native_callback_entries_for_host(callback, "vault.localhost")
+}
+
 const PRODUCTION_EXTENSION_ORIGIN: &str = "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj";
 
 fn is_valid_chrome_extension_origin(origin: &str) -> bool {
@@ -243,10 +296,7 @@ pub fn initialize() {
         );
         (
             host.to_string(),
-            format!(
-                "http://{id}.localhost:{}",
-                parsed.port().expect("local port")
-            ),
+            local_derivation_origin(&id, &parsed),
             provider.to_string(),
         )
     } else {
@@ -263,6 +313,18 @@ pub fn initialize() {
     };
     let config = serde_json::json!({"canister":id,"host":host,"derivationOrigin":derivation,"identityProvider":provider,"origin":origin,"wikiOrigin":wiki_origin,"local":local.is_some(),"fundingMode":crate::funding::FUNDING_MODE});
     let mut entries = vec![];
+    if local.is_some() {
+        if let Some(callback) = option_env!("VAULT_LOCAL_NATIVE_CALLBACK") {
+            entries.extend(native_callback_entries(callback).expect(
+                "local native callback must use https://vault.localhost/ios-vault-auth-callback",
+            ));
+        }
+    } else {
+        entries.extend(
+            native_callback_entries_for_host(PRODUCTION_NATIVE_CALLBACK, "vault.kinic.xyz")
+                .expect("production native callback must be valid"),
+        );
+    }
     for (path, mime, bytes) in ASSETS {
         entries.push(entry(
             HttpCertificationPath::exact((*path).to_string()),
@@ -340,6 +402,46 @@ mod route_tests {
     use super::*;
 
     #[test]
+    fn native_local_callbacks_are_exact_terminal_and_cors_readable() {
+        let routes =
+            native_callback_entries("https://vault.localhost/ios-vault-auth-callback").unwrap();
+        let (_, _, declaration) = select_entry(&routes, "/.well-known/ii-auth-callbacks").unwrap();
+        let body: serde_json::Value = serde_json::from_slice(declaration.body()).unwrap();
+        assert_eq!(
+            body["callbacks"],
+            serde_json::json!(["https://vault.localhost/ios-vault-auth-callback"])
+        );
+        assert!(
+            declaration
+                .headers()
+                .contains(&("Access-Control-Allow-Origin".into(), "*".into()))
+        );
+        let (_, _, callback) = select_entry(&routes, "/ios-vault-auth-callback").unwrap();
+        assert_eq!(callback.status_code().as_u16(), 200);
+        assert!(
+            !callback
+                .headers()
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("location"))
+        );
+        let (_, _, aasa) =
+            select_entry(&routes, "/.well-known/apple-app-site-association").unwrap();
+        let aasa: serde_json::Value = serde_json::from_slice(aasa.body()).unwrap();
+        assert_eq!(
+            aasa["webcredentials"]["apps"],
+            serde_json::json!(["AKN976G7AK.xyz.kinic.ios.KinicWiki"])
+        );
+        for bad in [
+            "http://vault.localhost/ios-vault-auth-callback",
+            "https://evil.test/ios-vault-auth-callback",
+            "https://vault.localhost/ios-vault-auth-callback?state=x",
+            "https://vault.localhost:9443/ios-vault-auth-callback",
+        ] {
+            assert!(native_callback_entries(bad).is_err());
+        }
+    }
+
+    #[test]
     fn ii_well_known_routes_are_certified_and_cross_origin_readable() {
         let entries =
             ii_well_known_entries("https://vault.kinic.xyz", Some(PRODUCTION_EXTENSION_ORIGIN))
@@ -385,6 +487,56 @@ mod route_tests {
             );
             assert!(tree.witness(entry, path).is_ok(), "{path}");
         }
+    }
+
+    #[test]
+    fn native_production_callbacks_serve_certified_vault_origin_only() {
+        let routes =
+            native_callback_entries_for_host(PRODUCTION_NATIVE_CALLBACK, "vault.kinic.xyz")
+                .unwrap();
+        let (_, _, declaration) = select_entry(&routes, "/.well-known/ii-auth-callbacks").unwrap();
+        let body: serde_json::Value = serde_json::from_slice(declaration.body()).unwrap();
+        assert_eq!(
+            body["callbacks"],
+            serde_json::json!(["https://vault.kinic.xyz/ios-vault-auth-callback"])
+        );
+        assert!(
+            declaration
+                .headers()
+                .contains(&("Access-Control-Allow-Origin".into(), "*".into()))
+        );
+        let (_, _, aasa) =
+            select_entry(&routes, "/.well-known/apple-app-site-association").unwrap();
+        let aasa: serde_json::Value = serde_json::from_slice(aasa.body()).unwrap();
+        assert_eq!(
+            aasa["webcredentials"]["apps"],
+            serde_json::json!(["AKN976G7AK.xyz.kinic.ios.KinicWiki"])
+        );
+        assert!(
+            native_callback_entries_for_host(
+                "https://wiki.kinic.xyz/ios-vault-auth-callback",
+                "vault.kinic.xyz"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn native_local_tls_preserves_the_web_derivation_origin() {
+        assert_eq!(
+            local_derivation_origin(
+                "test-canister",
+                &url::Url::parse("http://127.0.0.1:8080").unwrap()
+            ),
+            "http://test-canister.localhost:8080"
+        );
+        assert_eq!(
+            local_derivation_origin(
+                "test-canister",
+                &url::Url::parse("https://localhost").unwrap()
+            ),
+            "https://test-canister.localhost"
+        );
     }
 
     #[test]
