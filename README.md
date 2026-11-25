@@ -8,7 +8,7 @@ It stores durable knowledge nodes in an Internet Computer canister and exposes t
 - Public MCP: `https://wiki-mcp.kinic.xyz/mcp` (anonymous, read-only)
 - Private MCP: `https://wiki-private-mcp.kinic.xyz/mcp` (OAuth with Internet Identity)
 
-The separate [Kinic Vault](docs/vault/README.md) provides Internet Identity-owned, client-encrypted documents on its own origin (`https://vault.kinic.xyz`) and dedicated canister, with pinned KINIC ledger funding and optional Wiki embed references. It has no independent Vault recovery; losing II access permanently loses Vault access unless II itself is recovered. See the [Vault overview](docs/vault/README.md) and [Vault browser guide](vaultbrowser/README.md).
+For end-to-end encrypted private documents, see [Kinic Vault](#kinic-vault) (`https://vault.kinic.xyz`), which runs on a separate origin and dedicated canister.
 
 ## Why Kinic Wiki
 
@@ -133,6 +133,17 @@ kinic-vfs-cli skill record-run legal-review --task "review contract" --outcome s
 ```
 
 Agents should discover relevant skills, inspect the package, use the instructions, then record run evidence when the workflow produces useful feedback. Packages move through `draft`, `reviewed`, `promoted`, and `deprecated` with `skill set-status`, and `skill rollback` restores a previous version.
+
+## Kinic Vault
+
+[Kinic Vault](docs/vault/README.md) is a standalone, end-to-end encrypted document store for private notes, credentials, and attachments (`https://vault.kinic.xyz`). While Kinic Wiki is designed for structured, searchable agent knowledge, Kinic Vault is isolated from Wiki by origin, Internet Identity derivation origin, dedicated canister, SQLite storage, and deployment lifecycle.
+
+- **Client-side encryption**: Vault keys are derived via IC vetKD and documents are encrypted in the browser with AES-GCM before upload.
+- **Team sharing**: Vaults support Owner, Editor, and Viewer roles with per-Vault access control and KINIC ledger funding.
+- **Opaque Wiki embeds**: Wiki articles can reference private Vault documents via `/pick` and render them inside a Vault-origin `/embed` iframe after independent Vault authentication.
+- **No independent recovery**: Access is tied exclusively to Internet Identity. Losing Internet Identity access permanently loses Vault access unless Internet Identity itself is recovered.
+
+For architecture, protocol, trust boundaries, and local verification, see the [Vault overview](docs/vault/README.md) and [Vault browser guide](vaultbrowser/README.md).
 
 ## Developer And Operator Guides
 
