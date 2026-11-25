@@ -253,6 +253,19 @@
                   <option value="30">30 minutes</option>
                 </select>
               </div>
+              <div class="settings-card autofill-card">
+                <div class="settings-row">
+                  <span>Autofill on websites</span>
+                  <span id="settings-autofill-status" class="muted">Off</span>
+                </div>
+                <p id="settings-autofill-hint" class="muted autofill-hint">
+                  Allow website access to show matching logins on sign-in forms and offer to save new
+                  ones. Filling from this popup works without it.
+                </p>
+                <button id="btn-settings-autofill" class="btn secondary full" type="button">Allow website access</button>
+                <label class="checkbox-row"><input id="settings-inline" type="checkbox" /><span>Show matching logins on sign-in fields</span></label>
+                <label class="checkbox-row"><input id="settings-save-banner" type="checkbox" /><span>Offer to save new logins</span></label>
+              </div>
               <div class="settings-card">
                 <div class="settings-row">
                   <span>Signed-in Principal</span>

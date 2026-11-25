@@ -2,6 +2,11 @@
 // What: MV3 background service worker coordinating the offscreen VaultEngine, popup UI, and content autofill.
 // Why: Enforce sender/origin verification, badge updates, auto-lock alarms, and ephemeral save-login prompts.
 import { matchesDomain, normalizeDomain } from "@kinic/vault-crypto/credential";
+import {
+  AUTOFILL_SCRIPT_FILE,
+  syncAutofillRegistration,
+  type AutofillChromeApi
+} from "./autofill-registration.ts";
 import { isWebOriginFillable } from "./form-detector.ts";
 import {
   DEFAULT_EXTENSION_SETTINGS,
@@ -161,7 +166,18 @@ function createDefaultDeps(): ServiceWorkerDeps {
       }
     },
     sendToTab: async (tabId, message) => {
-      return chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+      try {
+        return await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+      } catch (error) {
+        // Without website access the autofill script is not registered. A popup action grants
+        // activeTab for this tab, so inject the script into the top frame once and retry.
+        if (!String(error).includes("Receiving end does not exist")) throw error;
+        await chrome.scripting.executeScript({
+          target: { tabId, frameIds: [0] },
+          files: [AUTOFILL_SCRIPT_FILE]
+        });
+        return chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+      }
     },
     queryActiveTab: async () => {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -881,4 +897,17 @@ if (typeof chrome !== "undefined" && chrome.alarms?.onAlarm) {
       void handleAutoLockAlarm();
     }
   });
+}
+
+if (typeof chrome !== "undefined" && chrome.permissions && chrome.scripting?.registerContentScripts) {
+  const api = chrome as unknown as AutofillChromeApi;
+  const sync = () => {
+    syncAutofillRegistration(api).catch((error) => {
+      console.warn("failed to sync Vault autofill registration", error);
+    });
+  };
+  // Runs on every service worker start, which covers install, update and browser startup.
+  sync();
+  chrome.permissions.onAdded?.addListener(sync);
+  chrome.permissions.onRemoved?.addListener(sync);
 }

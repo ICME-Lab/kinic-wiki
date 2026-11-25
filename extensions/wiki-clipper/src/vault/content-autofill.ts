@@ -592,6 +592,13 @@ function initContentAutofill(): void {
   })();
 }
 
+// The script is registered for granted sites and can also be injected on demand from the
+// popup, so a page may receive it twice. Initialize once per isolated world.
+const INIT_FLAG = "__kinicVaultAutofillInitialized";
 if (typeof window !== "undefined" && typeof document !== "undefined") {
-  initContentAutofill();
+  const scope = globalThis as typeof globalThis & { [INIT_FLAG]?: boolean };
+  if (!scope[INIT_FLAG]) {
+    scope[INIT_FLAG] = true;
+    initContentAutofill();
+  }
 }

@@ -20,6 +20,7 @@ import {
 import { logoutInternetIdentity } from "../src/vault/auth-client.ts";
 import { isWebOriginFillable } from "../src/vault/form-detector.ts";
 import { RUNTIME_CONFIG } from "../src/vault/runtime-config.ts";
+import { AUTOFILL_ORIGINS } from "../src/vault/autofill-registration.ts";
 import {
   DEFAULT_EXTENSION_SETTINGS,
   type DecryptedItemView,
@@ -160,6 +161,28 @@ function renderVaultSelectors(): void {
   el("btn-create-first-vault").hidden = vaults.length > 0;
 }
 
+// Website access is an optional permission; the autofill script runs only after it is granted.
+let websiteAccess = false;
+const AUTOFILL_PERMISSIONS = { origins: [...AUTOFILL_ORIGINS] };
+
+async function refreshWebsiteAccess(): Promise<void> {
+  try {
+    websiteAccess = await chrome.permissions.contains({ origins: ["https://*/*"] });
+  } catch {
+    websiteAccess = false;
+  }
+}
+
+function renderWebsiteAccess(): void {
+  el("settings-autofill-status").textContent = websiteAccess ? "On" : "Off";
+  el("settings-autofill-hint").hidden = websiteAccess;
+  el("btn-settings-autofill").textContent = websiteAccess
+    ? "Turn off website access"
+    : "Allow website access";
+  el<HTMLInputElement>("settings-inline").disabled = !websiteAccess;
+  el<HTMLInputElement>("settings-save-banner").disabled = !websiteAccess;
+}
+
 function renderSettingsControls(): void {
   el<HTMLSelectElement>("settings-autolock").value = String(
     settings.autoLockMinutes
@@ -167,6 +190,7 @@ function renderSettingsControls(): void {
   el<HTMLInputElement>("settings-inline").checked = settings.inlineTriggerEnabled;
   el<HTMLInputElement>("settings-save-banner").checked =
     settings.saveBannerEnabled;
+  renderWebsiteAccess();
   renderVaultSelectors();
 }
 
@@ -1032,12 +1056,29 @@ function wireEvents(): void {
     showToast("Settings saved");
   };
   el("settings-autolock").addEventListener("change", () => void saveCurrentSettings());
+  el("btn-settings-autofill").addEventListener("click", () => {
+    // permissions.request must run directly in the click handler to keep the user gesture.
+    const change = websiteAccess
+      ? chrome.permissions.remove(AUTOFILL_PERMISSIONS)
+      : chrome.permissions.request(AUTOFILL_PERMISSIONS);
+    void change
+      .then(async () => {
+        // The service worker registers or removes the autofill script on permission changes.
+        await refreshWebsiteAccess();
+        renderWebsiteAccess();
+        showToast(websiteAccess ? "Autofill on websites is on" : "Autofill on websites is off");
+      })
+      .catch((error: unknown) => {
+        showToast(error instanceof Error ? error.message : "Could not change website access");
+      });
+  });
   document.getElementById("settings-inline")?.addEventListener("change", () => void saveCurrentSettings());
   document.getElementById("settings-save-banner")?.addEventListener("change", () => void saveCurrentSettings());
 }
 
 async function bootstrap(): Promise<void> {
   wireEvents();
+  await refreshWebsiteAccess();
   setRootView("loading");
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });

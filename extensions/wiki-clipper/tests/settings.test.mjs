@@ -160,10 +160,11 @@ test("manifest exposes settings as options page and unified action popup", () =>
     [
       ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       ["https://claude.ai/*"],
-      ["https://gemini.google.com/*"],
-      ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
+      ["https://gemini.google.com/*"]
     ]
   );
+  // Vault autofill runs only after the user grants optional website access.
+  assert.deepEqual(manifest.optional_host_permissions, ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]);
   assert.equal(manifest.icons["128"], "icons/icon-128.png");
   assert.equal(manifest.action.default_icon["128"], "icons/icon-128.png");
 });

@@ -40,12 +40,6 @@
       "matches": ["https://gemini.google.com/*"],
       "js": ["dist/content-ui.js"],
       "run_at": "document_start"
-    },
-    {
-      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-      "js": ["dist/content-autofill.js"],
-      "run_at": "document_idle",
-      "all_frames": false
     }
   ],
   "web_accessible_resources": [
@@ -66,5 +60,6 @@
     "https://icp0.io/*",
     "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io/*",
     "https://mcx4q-2qaaa-aaaao-qqn3a-cai.icp0.io/*"
-  ]
+  ],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
 }
