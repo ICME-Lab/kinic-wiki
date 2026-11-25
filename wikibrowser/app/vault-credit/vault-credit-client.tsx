@@ -27,6 +27,7 @@ import { AdminPanel, AdminPageHeader, AdminField } from "@/components/admin-ui";
 import { StatusPill } from "@/components/ui/status-pill";
 import { CheckCircle2, CircleAlert } from "lucide-react";
 import { PrincipalText } from "@kinic/ui/principal";
+import { formatCycles, formatRawCycles } from "@kinic/ui/cycles";
 import {
   creditOrigins,
   ownerDatabases,
@@ -38,6 +39,46 @@ type DatabaseChoice = {
   cyclesBalance: string;
 };
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
+function cyclesOf(text: string): bigint | null {
+  try {
+    return BigInt(text);
+  } catch {
+    return null;
+  }
+}
+/** "1.25T cycles" for display; small or unparsable values stay exact. */
+function cyclesLabel(text: string): string {
+  const value = cyclesOf(text);
+  if (value === null) return `${text} cycles`;
+  return value >= 1_000_000n ? `${formatCycles(value)} cycles` : `${formatRawCycles(value)} cycles`;
+}
+function WikiCredits({ databases }: { databases: DatabaseChoice[] }) {
+  if (!databases.length) return null;
+  const total = databases.reduce((sum, db) => sum + (cyclesOf(db.cyclesBalance) ?? 0n), 0n);
+  return (
+    <AdminPanel className="grid min-w-0 gap-3" ariaLabel="Your Wiki credits">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">Your Wiki credits</h2>
+        <span className="font-mono text-sm font-semibold" title={`${formatRawCycles(total)} cycles`}>
+          {cyclesLabel(total.toString())} total
+        </span>
+      </div>
+      <ul className="grid divide-y divide-line rounded-lg border border-line bg-white">
+        {databases.map((db) => (
+          <li key={db.databaseId} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2 text-sm">
+            <span className="min-w-0 truncate">{db.name}</span>
+            <span className="shrink-0 font-mono" title={`${db.cyclesBalance} cycles`}>
+              {cyclesLabel(db.cyclesBalance)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted">
+        To move credits, choose Charge from Wiki credits in Vault.
+      </p>
+    </AdminPanel>
+  );
+}
 // Persist only the opaque server receipt reference in this popup's URL, never amounts or identity.
 function rememberTransferReference(
   launch: Launch | null,
@@ -549,7 +590,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
               </div>
             )}
           </AdminPanel>
-          {linkMode ? null : (
+          {linkMode ? (link?.active && !challenge ? <WikiCredits databases={databases} /> : null) : (
             <AdminPanel
               className="grid min-w-0 gap-4"
               ariaLabel="Manual credit transfer"
@@ -582,11 +623,22 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                 >
                   {databases.map((db) => (
                     <option key={db.databaseId} value={db.databaseId}>
-                      {db.name} · {db.cyclesBalance} cycles
+                      {db.name} · {cyclesLabel(db.cyclesBalance)}
                     </option>
                   ))}
                 </select>
               </label>
+              {(() => {
+                const selected = databases.find((db) => db.databaseId === database);
+                return selected ? (
+                  <p className="-mt-2 flex items-baseline justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm">
+                    <span className="text-muted">Available in this database</span>
+                    <span className="font-mono font-semibold" title={`${selected.cyclesBalance} cycles`}>
+                      {cyclesLabel(selected.cyclesBalance)}
+                    </span>
+                  </p>
+                ) : null;
+              })()}
               {!transfer && channelUsed ? (
                 <p>
                   This channel has already reviewed a transfer. Return to your

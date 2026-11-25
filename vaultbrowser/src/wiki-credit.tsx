@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Link2, RefreshCw } from "lucide-react";
 import { StatusPill, type StatusTone } from "@kinic/ui/status-pill";
 import { PrincipalText } from "@kinic/ui/principal";
+import { formatCycles, formatRawCycles } from "@kinic/ui/cycles";
 import type { VaultClient } from "@kinic/vault-client";
 import type { LinkStatus, VaultBridgeActor } from "@kinic/credit-bridge-candid";
 import {
@@ -54,9 +55,12 @@ function linkView(
 export function WikiCreditFunding({
   client,
   onFunded,
+  balance = null,
 }: {
   client: VaultClient;
   onFunded: () => Promise<void>;
+  /** The Vault prepaid balance, so a finished charge is visible here. */
+  balance?: bigint | null;
 }) {
   const [actor, setActor] = useState<VaultBridgeActor>();
   const [link, setLink] = useState<LinkStatus>();
@@ -350,6 +354,14 @@ export function WikiCreditFunding({
         </output>
       </div>
       <p className="vault-wiki-credit-description">{view.description}</p>
+      {link?.active ? (
+        <dl className="vault-wiki-credit-balance">
+          <dt>Vault balance</dt>
+          <dd title={balance === null ? "Balance unavailable" : `${formatRawCycles(balance)} cycles`}>
+            {balance === null ? "--" : `${formatCycles(balance)} cycles`}
+          </dd>
+        </dl>
+      ) : null}
       {channelOpen ? (
         <div className="vault-notice vault-notice--info vault-wiki-credit-window">
           <span>Wiki window is open. Finish there, then come back.</span>

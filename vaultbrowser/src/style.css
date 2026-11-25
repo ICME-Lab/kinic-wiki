@@ -1776,3 +1776,24 @@ body {
     margin-left: 0;
   }
 }
+.vault-wiki-credit-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius-sm);
+  background: rgb(var(--paper));
+}
+.vault-wiki-credit-balance > dt {
+  color: hsl(var(--muted));
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.vault-wiki-credit-balance > dd {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 15px;
+  font-weight: 600;
+}
