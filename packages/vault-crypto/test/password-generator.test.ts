@@ -5,6 +5,7 @@ import {
   generatePassphrase,
   generatePassword,
 } from "../src/password-generator.ts";
+import { PASSPHRASE_WORDLIST } from "../src/passphrase-wordlist.ts";
 
 describe("password and passphrase generator", () => {
   it("generates passwords honoring length, character sets, and ambiguous exclusion", () => {
@@ -48,19 +49,29 @@ describe("password and passphrase generator", () => {
 
 describe("generated passphrase strength", () => {
   it("counts choices rather than the length or capitalization of words", () => {
-    expect(estimatePassphraseStrength({ words: 3, includeNumber: false })).toEqual({ entropyBits: 24, level: "weak" });
-    expect(estimatePassphraseStrength({ words: 3, includeNumber: false, capitalize: false, separator: "---" })).toEqual({ entropyBits: 24, level: "weak" });
-    expect(estimatePassphraseStrength({ words: 5, includeNumber: false })).toEqual({ entropyBits: 40, level: "fair" });
-    expect(estimatePassphraseStrength({ words: 5, includeNumber: true }).entropyBits).toBeCloseTo(40 + Math.log2(500));
-    expect(estimatePassphraseStrength({ words: 8, includeNumber: false }).level).toBe("strong");
+    expect(estimatePassphraseStrength({ words: 3, includeNumber: false })).toEqual({ entropyBits: 33, level: "weak" });
+    expect(estimatePassphraseStrength({ words: 3, includeNumber: false, capitalize: false, separator: "---" })).toEqual({ entropyBits: 33, level: "weak" });
+    expect(estimatePassphraseStrength({ words: 5, includeNumber: false })).toEqual({ entropyBits: 55, level: "fair" });
+    expect(estimatePassphraseStrength({ words: 5, includeNumber: true }).entropyBits).toBeCloseTo(55 + Math.log2(500));
+    expect(estimatePassphraseStrength({ words: 8, includeNumber: false }).level).toBe("very-strong");
+  });
+  it("defaults to a strong passphrase", () => {
+    expect(estimatePassphraseStrength().level).toBe("strong");
   });
   it("keeps the wordlist bound after applying or saving a generated phrase", () => {
-    expect(estimatePasswordStrength("Acorn-Agate-Alder")).toEqual({ entropyBits: 24, level: "weak" });
-    expect(estimatePasswordStrength("acorn-agate-alder")).toEqual({ entropyBits: 24, level: "weak" });
-    expect(estimatePasswordStrength("Acorn-Agate0-Alder").entropyBits).toBeCloseTo(24 + Math.log2(300));
+    expect(estimatePasswordStrength("Abandon-Ability-Able")).toEqual({ entropyBits: 33, level: "weak" });
+    expect(estimatePasswordStrength("abandon-ability-able")).toEqual({ entropyBits: 33, level: "weak" });
+    expect(estimatePasswordStrength("Abandon-Ability0-Able").entropyBits).toBeCloseTo(33 + Math.log2(300));
   });
   it("uses the same word-count limits as generation", () => {
-    expect(estimatePassphraseStrength({ words: 1, includeNumber: false }).entropyBits).toBe(24);
-    expect(estimatePassphraseStrength({ words: 20, includeNumber: false }).entropyBits).toBe(80);
+    expect(estimatePassphraseStrength({ words: 1, includeNumber: false }).entropyBits).toBe(33);
+    expect(estimatePassphraseStrength({ words: 20, includeNumber: false }).entropyBits).toBe(110);
+  });
+  it("uses the full BIP-39 English wordlist", () => {
+    expect(PASSPHRASE_WORDLIST).toHaveLength(2048);
+    expect(new Set(PASSPHRASE_WORDLIST).size).toBe(2048);
+    expect(PASSPHRASE_WORDLIST.every((word) => /^[a-z]{3,8}$/.test(word))).toBe(true);
+    expect(PASSPHRASE_WORDLIST[0]).toBe("abandon");
+    expect(PASSPHRASE_WORDLIST[2047]).toBe("zoo");
   });
 });

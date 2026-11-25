@@ -86,7 +86,12 @@ export function parseTotpInput(input: string): TotpConfig {
     if (!Number.isInteger(period) || period < 1 || period > 300) {
       throw new Error("InvalidTotpPeriod");
     }
-    const label = decodeURIComponent(url.pathname.replace(/^\/+/, "")).trim();
+    let label: string;
+    try {
+      label = decodeURIComponent(url.pathname.replace(/^\/+/, "")).trim();
+    } catch {
+      throw new Error("InvalidTotpUri");
+    }
     const issuer = params.get("issuer")?.trim();
 
     return {

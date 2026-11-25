@@ -78,6 +78,9 @@ describe("ambiguous and malformed TOTP parameters", () => {
   it.each(["&secret=JBSWY3DPEHPK3PXP", "&SECRET=JBSWY3DPEHPK3PXP", "&issuer=A&ISSUER=B"])("rejects duplicate known parameters %s", suffix => {
     expect(() => parseTotpInput(uri + suffix)).toThrow("InvalidTotpUri");
   });
+  it("rejects a label with malformed percent-encoding", () => {
+    expect(() => parseTotpInput("otpauth://totp/Bad%E0%A4%A?secret=JBSWY3DPEHPK3PXP")).toThrow("InvalidTotpUri");
+  });
   it("ignores repeated unknown parameters", () => {
     expect(parseTotpInput(uri + "&extra=one&extra=two").secret).toBe("JBSWY3DPEHPK3PXP");
   });

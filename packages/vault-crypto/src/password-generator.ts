@@ -1,3 +1,5 @@
+import { PASSPHRASE_WORDLIST } from "./passphrase-wordlist.ts";
+
 export type PasswordOptions = {
   length: number;
   uppercase: boolean;
@@ -27,41 +29,8 @@ const DIGITS = "0123456789";
 const SYMBOLS = "!@#$%^&*()-_=+[]{}|;:,.<>?";
 const AMBIGUOUS = new Set(["0", "O", "o", "1", "l", "I"]);
 
-// Compact, unambiguous high-readability English wordlist (256 words = 8 bits/word).
-const WORDLIST = [
-  "acorn", "agate", "alder", "amber", "anchor", "anise", "apple", "apron",
-  "arbor", "arrow", "aspen", "atlas", "attic", "audio", "autumn", "avocado",
-  "badge", "baker", "bamboo", "banjo", "barley", "basil", "basin", "beacon",
-  "beaver", "berry", "birch", "bison", "blade", "bloom", "bluff", "boulder",
-  "branch", "breeze", "bridge", "brook", "brush", "buckle", "butter", "cabin",
-  "cactus", "cairn", "camera", "candle", "canopy", "canyon", "carbon", "carpet",
-  "carrot", "castle", "cedar", "celery", "chalk", "channel", "cherry", "chisel",
-  "cider", "cinder", "citrus", "clasp", "clover", "cobalt", "coffee", "comet",
-  "compass", "copper", "coral", "cotton", "cradle", "crater", "creek", "crest",
-  "crimson", "crown", "crystal", "cypress", "dagger", "daisy", "dancer", "dawn",
-  "delta", "desert", "diamond", "dolphin", "domino", "dragon", "drift", "drizzle",
-  "eagle", "earth", "eclipse", "ember", "emerald", "engine", "falcon", "feather",
-  "fennel", "fern", "fiddle", "field", "figure", "finch", "fjord", "flame",
-  "flint", "flora", "flute", "forest", "fossil", "fountain", "frost", "galaxy",
-  "garden", "garlic", "garnet", "geyser", "ginger", "glacier", "glade", "glider",
-  "granite", "grape", "gravel", "griffin", "grove", "guitar", "harbor", "harvest",
-  "hazel", "heather", "helmet", "heron", "hickory", "hilltop", "hollow", "honey",
-  "horizon", "iceberg", "indigo", "island", "ivory", "jacket", "jade", "jasmine",
-  "jasper", "jigsaw", "juniper", "kayak", "kelp", "kernel", "kettle", "kestrel",
-  "lantern", "larch", "laurel", "lavender", "lemon", "lichen", "lilac", "linden",
-  "lizard", "lotus", "lumber", "magnet", "magpie", "mango", "maple", "marble",
-  "marina", "meadow", "melon", "mercury", "meteor", "mineral", "mint", "mirror",
-  "monarch", "monkey", "monolith", "moon", "moss", "muffin", "mulberry", "nebula",
-  "nectar", "needle", "nickel", "nimbus", "nutmeg", "oasis", "obsidian", "ocean",
-  "ochre", "olive", "onyx", "opal", "orange", "orbit", "orchid", "oriole",
-  "osprey", "otter", "oyster", "paddle", "palace", "panther", "papaya", "parcel",
-  "parrot", "pebble", "pecan", "pelican", "pepper", "petrel", "pewter", "phoenix",
-  "picnic", "pigeon", "pillar", "pine", "planet", "plaza", "plover", "plum",
-  "pocket", "poplar", "portal", "prairie", "prism", "puffin", "pumpkin", "quartz",
-  "quiver", "rabbit", "radish", "rainbow", "ranger", "raven", "redwood", "reef",
-  "ribbon", "ridge", "ripple", "river", "robin", "rocket", "rosemary", "ruby",
-  "saffron", "sage", "salmon", "sandal", "sapphire", "saturn", "scarlet", "summit",
-];
+const WORDLIST = PASSPHRASE_WORDLIST;
+const WORDSET: ReadonlySet<string> = new Set(WORDLIST);
 
 function randomInt(maxExclusive: number): number {
   if (!Number.isSafeInteger(maxExclusive) || maxExclusive <= 0) {
@@ -176,7 +145,7 @@ export function estimatePasswordStrength(password: string): PasswordStrength {
   if (parts.length >= 3 && parts.length <= 10) {
     const words = parts.map(part => /^([a-z]+)([0-9]{1,2})?$/i.exec(part));
     const numbered = words.filter(word => word?.[2] !== undefined).length;
-    if (numbered <= 1 && words.every(word => word && WORDLIST.includes(word[1].toLowerCase()))) {
+    if (numbered <= 1 && words.every(word => word && WORDSET.has(word[1].toLowerCase()))) {
       return estimatePassphraseStrength({ words: parts.length, includeNumber: numbered === 1 });
     }
   }

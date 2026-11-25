@@ -323,7 +323,7 @@ it("shows the entropy of generated word choices in the passphrase preview", () =
   fireEvent.click(screen.getByRole("button", { name: "Passphrase" }));
   fireEvent.change(screen.getByRole("slider"), { target: { value: "3" } });
   fireEvent.click(screen.getByLabelText("Include number"));
-  expect(screen.getByTitle("Estimated 24 bits of entropy").textContent).toBe("Weak");
+  expect(screen.getByTitle("Estimated 33 bits of entropy").textContent).toBe("Weak");
   fireEvent.click(screen.getByLabelText("Capitalize"));
-  expect(screen.getByTitle("Estimated 24 bits of entropy").textContent).toBe("Weak");
+  expect(screen.getByTitle("Estimated 33 bits of entropy").textContent).toBe("Weak");
 });
