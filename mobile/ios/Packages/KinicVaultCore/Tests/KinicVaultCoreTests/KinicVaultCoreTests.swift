@@ -323,7 +323,20 @@ struct KinicVaultCoreTests {
             VaultPassphraseOptions(words: 4, separator: ".", capitalize: true, includeNumber: false)
         )
         #expect(lowerStrength == capStrength)
-        #expect(lowerStrength.level == .weak) // 4 * 8 = 32 bits < 40
+        #expect(lowerStrength.level == .fair) // 4 * 11 = 44 bits
+        // The default passphrase (5 words + number) is strong: 55 + log2(500) ≈ 64 bits.
+        #expect(VaultPasswordGenerator.estimatePassphraseStrength(VaultPassphraseOptions()).level == .strong)
+    }
+
+    @Test("Uses the same BIP-39 English wordlist as packages/vault-crypto")
+    func passphraseWordlistMatchesWeb() {
+        let words = VaultPassphraseWordlist.words
+        #expect(words.count == 2048)
+        #expect(Set(words).count == 2048)
+        let digest = SHA256.hash(data: Data(words.joined(separator: "\n").utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        // Same digest is asserted in packages/vault-crypto/test/password-generator.test.ts.
+        #expect(hex == "187db04a869dd9bc7be80d21a86497d692c0db6abd3aa8cb6be5d618ff757fae")
     }
 
     @Test("Formats TOTP codes cleanly for 6-digit and 8-digit displays")

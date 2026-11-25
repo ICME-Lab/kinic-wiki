@@ -78,42 +78,7 @@ public enum VaultPasswordGenerator {
     private static let symbols = Array("!@#$%^&*()-_=+[]{}|;:,.<>?")
     private static let ambiguous: Set<Character> = ["0", "O", "o", "1", "l", "I"]
 
-    // Compact, unambiguous high-readability English wordlist (256 words = 8 bits/word),
-    // matching packages/vault-crypto/src/password-generator.ts.
-    private static let wordlist: [String] = [
-        "acorn", "agate", "alder", "amber", "anchor", "anise", "apple", "apron",
-        "arbor", "arrow", "aspen", "atlas", "attic", "audio", "autumn", "avocado",
-        "badge", "baker", "bamboo", "banjo", "barley", "basil", "basin", "beacon",
-        "beaver", "berry", "birch", "bison", "blade", "bloom", "bluff", "boulder",
-        "branch", "breeze", "bridge", "brook", "brush", "buckle", "butter", "cabin",
-        "cactus", "cairn", "camera", "candle", "canopy", "canyon", "carbon", "carpet",
-        "carrot", "castle", "cedar", "celery", "chalk", "channel", "cherry", "chisel",
-        "cider", "cinder", "citrus", "clasp", "clover", "cobalt", "coffee", "comet",
-        "compass", "copper", "coral", "cotton", "cradle", "crater", "creek", "crest",
-        "crimson", "crown", "crystal", "cypress", "dagger", "daisy", "dancer", "dawn",
-        "delta", "desert", "diamond", "dolphin", "domino", "dragon", "drift", "drizzle",
-        "eagle", "earth", "eclipse", "ember", "emerald", "engine", "falcon", "feather",
-        "fennel", "fern", "fiddle", "field", "figure", "finch", "fjord", "flame",
-        "flint", "flora", "flute", "forest", "fossil", "fountain", "frost", "galaxy",
-        "garden", "garlic", "garnet", "geyser", "ginger", "glacier", "glade", "glider",
-        "granite", "grape", "gravel", "griffin", "grove", "guitar", "harbor", "harvest",
-        "hazel", "heather", "helmet", "heron", "hickory", "hilltop", "hollow", "honey",
-        "horizon", "iceberg", "indigo", "island", "ivory", "jacket", "jade", "jasmine",
-        "jasper", "jigsaw", "juniper", "kayak", "kelp", "kernel", "kettle", "kestrel",
-        "lantern", "larch", "laurel", "lavender", "lemon", "lichen", "lilac", "linden",
-        "lizard", "lotus", "lumber", "magnet", "magpie", "mango", "maple", "marble",
-        "marina", "meadow", "melon", "mercury", "meteor", "mineral", "mint", "mirror",
-        "monarch", "monkey", "monolith", "moon", "moss", "muffin", "mulberry", "nebula",
-        "nectar", "needle", "nickel", "nimbus", "nutmeg", "oasis", "obsidian", "ocean",
-        "ochre", "olive", "onyx", "opal", "orange", "orbit", "orchid", "oriole",
-        "osprey", "otter", "oyster", "paddle", "palace", "panther", "papaya", "parcel",
-        "parrot", "pebble", "pecan", "pelican", "pepper", "petrel", "pewter", "phoenix",
-        "picnic", "pigeon", "pillar", "pine", "planet", "plaza", "plover", "plum",
-        "pocket", "poplar", "portal", "prairie", "prism", "puffin", "pumpkin", "quartz",
-        "quiver", "rabbit", "radish", "rainbow", "ranger", "raven", "redwood", "reef",
-        "ribbon", "ridge", "ripple", "river", "robin", "rocket", "rosemary", "ruby",
-        "saffron", "sage", "salmon", "sandal", "sapphire", "saturn", "scarlet", "summit",
-    ]
+    private static let wordlist = VaultPassphraseWordlist.words
     private static let wordlistSet = Set(wordlist)
 
     public static func generate(_ options: VaultPasswordOptions = VaultPasswordOptions()) throws -> String {
