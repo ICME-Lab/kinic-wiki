@@ -1222,3 +1222,133 @@ fn expired_unpaired_revocations_do_not_exhaust_new_link_admission() {
         "the admitted pair and new pair must retain their fences"
     );
 }
+
+fn policy() -> AutoTopupPolicy {
+    AutoTopupPolicy {
+        database_id: "one".into(),
+        threshold_cycles: 500,
+        amount_cycles: 100_000_000,
+        daily_limit_cycles: 250_000_000,
+        min_database_cycles: 600_000_000,
+    }
+}
+const T0: u64 = 1_000;
+const GAP: u64 = AUTO_TOPUP_INTERVAL_NS;
+
+#[test]
+fn auto_topup_policy_belongs_to_the_wiki_owner_and_its_owned_database() {
+    let f = Fixture::new();
+    // Only the linked Wiki owner can set it, and only for a database it owns.
+    assert!(
+        f.svc
+            .set_vault_auto_topup(p(7), Some(policy()), T0)
+            .is_err()
+    );
+    let mut foreign = policy();
+    foreign.database_id = "missing".into();
+    assert!(f.svc.set_vault_auto_topup(p(1), Some(foreign), T0).is_err());
+    let mut bad = policy();
+    bad.daily_limit_cycles = bad.amount_cycles - 1;
+    assert_eq!(
+        f.svc.set_vault_auto_topup(p(1), Some(bad), T0),
+        Err("InvalidInput".into())
+    );
+    let status = f
+        .svc
+        .set_vault_auto_topup(p(1), Some(policy()), T0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.policy, policy());
+    assert_eq!(status.database_name, "one");
+    // The Vault peer reads the same policy for the linked Vault owner; others cannot.
+    assert_eq!(
+        f.svc.vault_auto_topup_status(p(9), p(2), T0).unwrap(),
+        Some(status)
+    );
+    assert!(f.svc.vault_auto_topup_status(p(8), p(2), T0).is_err());
+    assert_eq!(f.svc.set_vault_auto_topup(p(1), None, T0).unwrap(), None);
+    assert_eq!(f.svc.vault_auto_topup_status(p(9), p(2), T0).unwrap(), None);
+}
+
+#[test]
+fn auto_topup_admission_is_bounded_by_threshold_interval_daily_limit_and_reserve() {
+    let f = Fixture::new();
+    f.svc
+        .set_vault_auto_topup(p(1), Some(policy()), T0)
+        .unwrap();
+    // Only the configured Vault peer may ask.
+    assert!(f.svc.admit_vault_auto_topup(p(8), p(2), 0, 0, T0).is_err());
+    // Not below the threshold: nothing to do.
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 500, 0, T0),
+        Ok(None)
+    );
+    let admitted = f
+        .svc
+        .admit_vault_auto_topup(p(9), p(2), 499, 0, T0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        admitted,
+        AutoTopupAdmission {
+            wiki_owner: p(1),
+            database_id: "one".into(),
+            amount_cycles: 100_000_000
+        }
+    );
+    // Too soon after the previous refill.
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + 1),
+        Ok(None)
+    );
+    f.svc
+        .admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + GAP)
+        .unwrap()
+        .unwrap();
+    // A third refill would exceed the 250M daily policy limit.
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0 + 2 * GAP),
+        Err("Capacity".into())
+    );
+    let status = f
+        .svc
+        .get_vault_auto_topup(p(1), T0 + 2 * GAP)
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.sent_today_cycles, 200_000_000);
+    // The database must keep its reserve after the amount and the fee
+    // (storage billing settles first, so the passing case leaves headroom).
+    let next_day = T0 + 86_400_000_000_000;
+    f.balance(700_000_000);
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 0, 1, next_day),
+        Err("Capacity".into())
+    );
+    f.balance(800_000_000);
+    assert!(
+        f.svc
+            .admit_vault_auto_topup(p(9), p(2), 0, 1, next_day)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn auto_topup_waits_for_an_unresolved_transfer_and_ends_with_the_link() {
+    let f = Fixture::new();
+    f.svc
+        .set_vault_auto_topup(p(1), Some(policy()), T0)
+        .unwrap();
+    f.hold(1_000);
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0),
+        Err("Conflict".into())
+    );
+    f.svc.cancel_vault_transfer(p(1), &[4; 16], T0).unwrap();
+    f.svc.revoke_vault_link(p(1)).unwrap();
+    assert_eq!(
+        f.svc.admit_vault_auto_topup(p(9), p(2), 0, 0, T0),
+        Err("NotFound".into())
+    );
+    assert_eq!(f.svc.get_vault_auto_topup(p(1), T0).unwrap(), None);
+}

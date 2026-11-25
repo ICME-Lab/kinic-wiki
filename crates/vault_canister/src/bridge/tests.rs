@@ -715,3 +715,40 @@ fn disabled_bridge_allows_claimed_proof_recovery_but_not_new_claims() {
     );
     ack_link(p(9), proof).unwrap();
 }
+#[test]
+fn automatic_refill_prepares_only_from_the_peer_and_credits_once() {
+    setup();
+    let o = offer();
+    assert_eq!(prepare_auto(p(8), o.clone(), 0), Err(Error::Unauthorized));
+    assert_eq!(
+        prepare_auto(p(9), o.clone(), 0).unwrap().status,
+        CreditStatus::Prepared
+    );
+    // The same offer replays its receipt; it is credited exactly once.
+    assert_eq!(
+        prepare_auto(p(9), o.clone(), 0).unwrap().status,
+        CreditStatus::Prepared
+    );
+    let received = receive(p(9), o.clone(), 1, 100, |n| n).unwrap();
+    assert_eq!(received.status, CreditStatus::Accepted);
+    assert_eq!(crate::state::State.balance(&p(1).to_text()).unwrap(), 100);
+    assert_eq!(
+        receive(p(9), o, 2, 100, |_| panic!("second accept"))
+            .unwrap()
+            .status,
+        CreditStatus::Accepted
+    );
+}
+#[test]
+fn automatic_refill_operations_are_unique_per_request() {
+    setup();
+    let (peer, a) = auto_operation(p(1), 5).unwrap();
+    let (_, b) = auto_operation(p(1), 5).unwrap();
+    assert_eq!(peer, p(9));
+    assert_eq!(a.len(), 16);
+    assert_ne!(a, b);
+    assert_eq!(
+        auto_operation(Principal::anonymous(), 5),
+        Err(Error::Unauthorized)
+    );
+}

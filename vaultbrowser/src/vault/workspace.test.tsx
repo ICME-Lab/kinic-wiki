@@ -39,7 +39,6 @@ vi.mock("@kinic/ui/editor", () => ({
     />
   ),
 }));
-const credit = vi.hoisted(() => ({ prepare: vi.fn() }));
 vi.mock("../wiki-credit-actor", () => ({
   creditOrigins: () => ({
     wiki: "https://wiki.kinic.xyz",
@@ -56,7 +55,7 @@ vi.mock("../wiki-credit-actor", () => ({
         },
       ],
     }),
-    prepare_wiki_credit: credit.prepare,
+    wiki_auto_topup_status: async () => ({ Ok: [] }),
   }),
 }));
 import { VaultWorkspace } from "./workspace";
@@ -1817,13 +1816,11 @@ it.each([false, true])(
     await waitFor(() =>
       expect(
         screen
-          .getByRole("button", { name: "Charge from Wiki credits" })
+          .getByRole("button", { name: "Set up in Wiki" })
           .hasAttribute("disabled"),
       ).toBe(false),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Charge from Wiki credits" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Set up in Wiki" }));
     await waitFor(() => expect(popup.location.replace).toHaveBeenCalled());
     const nonce = new URL(popup.location.replace.mock.calls[0][0]).hash.split(
       "nonce=",
@@ -1839,15 +1836,7 @@ it.each([false, true])(
     if (retained) expect(retained.value).toBe("");
     expect(screen.queryByLabelText("Document title")).toBeNull();
     expect(popup.close).not.toHaveBeenCalled();
-    credit.prepare.mockResolvedValue({
-      Ok: {
-        status: { Prepared: null },
-        offer: {
-          operation: new Uint8Array(16).fill(4),
-          vault_owner: x.client.identity.getPrincipal(),
-        },
-      },
-    });
+    // The authenticated Wiki channel survives the private lock and still answers.
     fireEvent(
       window,
       new MessageEvent("message", {
@@ -1855,7 +1844,7 @@ it.each([false, true])(
         source: popup as unknown as Window,
         data: {
           protocol: "kinic-credit-v1",
-          type: "offer",
+          type: "hello",
           id: "04".repeat(16),
           nonce,
         },
@@ -1863,7 +1852,7 @@ it.each([false, true])(
     );
     await waitFor(() =>
       expect(popup.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "ready" }),
+        expect.objectContaining({ type: "ack" }),
         "https://wiki.kinic.xyz",
       ),
     );
