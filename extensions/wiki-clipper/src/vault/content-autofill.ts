@@ -53,6 +53,42 @@ function sendRuntimeMessage<T>(message: Record<string, unknown>): Promise<T | nu
   });
 }
 
+// The picker and banner live in the page's DOM, so the page can restyle or cover their host.
+// Accept a press only when the browser generated it, after the control was visible long enough
+// to be read, and when the host is visible and is the element actually under the pointer.
+const MIN_VISIBLE_MS = 400;
+
+function raiseToTopLayer(host: HTMLElement): void {
+  // A manual popover renders in the top layer, above every page element that is not itself in it.
+  try {
+    host.popover = "manual";
+    Object.assign(host.style, {
+      inset: "auto",
+      margin: "0",
+      padding: "0",
+      border: "0",
+      background: "transparent",
+      overflow: "visible"
+    });
+    host.showPopover();
+  } catch {
+    /* Popover API unavailable; the fixed position and z-index still apply. */
+  }
+}
+
+function isGenuinePress(event: MouseEvent, host: HTMLElement, shownAt: number): boolean {
+  if (!event.isTrusted || !host.isConnected) return false;
+  if (performance.now() - shownAt < MIN_VISIBLE_MS) return false;
+  if (
+    typeof host.checkVisibility === "function" &&
+    !host.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+  ) {
+    return false;
+  }
+  // Clicks inside a shadow root are retargeted to its host.
+  return document.elementFromPoint(event.clientX, event.clientY) === host;
+}
+
 function removeInlinePicker(): void {
   if (activePickerHost) {
     activePickerHost.remove();
@@ -84,6 +120,7 @@ function showInlinePicker(
   host.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 220)}px`;
   host.style.zIndex = "2147483647";
 
+  let shownAt = Number.POSITIVE_INFINITY;
   const shadow = host.attachShadow({ mode: "closed" });
   const style = document.createElement("style");
   style.textContent = `
@@ -174,6 +211,7 @@ function showInlinePicker(
     btn.append(titleEl, subEl);
     btn.addEventListener("mousedown", (event) => {
       event.preventDefault();
+      if (!isGenuinePress(event, host, shownAt)) return;
       void (async () => {
         const creds = await sendRuntimeMessage<{
           username: string;
@@ -195,6 +233,8 @@ function showInlinePicker(
   card.append(hdr, list);
   shadow.append(style, card);
   document.documentElement.appendChild(host);
+  raiseToTopLayer(host);
+  shownAt = performance.now();
   activePickerHost = host;
 }
 
@@ -208,6 +248,7 @@ function showSaveBanner(prompt: SaveBannerPromptView): void {
   host.style.right = "16px";
   host.style.zIndex = "2147483647";
 
+  let shownAt = Number.POSITIVE_INFINITY;
   const shadow = host.attachShadow({ mode: "closed" });
   const style = document.createElement("style");
   style.textContent = `
@@ -320,7 +361,8 @@ function showSaveBanner(prompt: SaveBannerPromptView): void {
   closeBtn.addEventListener("click", dismiss);
   dismissBtn.addEventListener("click", dismiss);
 
-  saveBtn.addEventListener("click", () => {
+  saveBtn.addEventListener("click", (event) => {
+    if (!isGenuinePress(event, host, shownAt)) return;
     saveBtn.disabled = true;
     statusEl.textContent = "Encrypting and saving…";
     void (async () => {
@@ -344,6 +386,8 @@ function showSaveBanner(prompt: SaveBannerPromptView): void {
   banner.append(head, titleField, userField, actions, statusEl);
   shadow.append(style, banner);
   document.documentElement.appendChild(host);
+  raiseToTopLayer(host);
+  shownAt = performance.now();
   activeBannerHost = host;
 }
 
