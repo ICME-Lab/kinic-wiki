@@ -154,8 +154,8 @@ export function MarkdownEditor({
           {statusLabel(saveState)}
         </span>
         <span className="ml-auto font-mono text-xs text-muted">
-          {lineCount.toLocaleString()} lines / {byteCount.toLocaleString()}{" "}
-          bytes
+          {lineCount.toLocaleString()} {lineCount === 1 ? "line" : "lines"} ·{" "}
+          {byteCount.toLocaleString()} {byteCount === 1 ? "byte" : "bytes"}
         </span>
         {warning ? (
           <p className="basis-full text-sm text-yellow-800">{warning}</p>
@@ -200,7 +200,7 @@ function statusLabel(state: EditorSaveState): string {
   if (state === "saving") return "Saving";
   if (state === "saved") return "Saved";
   if (state === "error") return "Save failed";
-  return "Clean";
+  return "No changes";
 }
 
 function statusClassName(state: EditorSaveState): string {

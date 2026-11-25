@@ -2,8 +2,7 @@
 import {VaultRouter} from "../src/navigation";
 import {DraftGuardProvider} from "../src/draft-guard";
 import { useEffect } from "react";
-import { VaultChrome } from "../src/chrome";
-import { VaultButton } from "../src/vault/ui";
+import { VaultChrome, VaultSignOut } from "../src/chrome";
 import { createRoot } from "react-dom/client";
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
@@ -241,7 +240,7 @@ function Fixture() {
   }, []);
   return (
     <>
-      <VaultChrome actions={<VaultButton>Sign out</VaultButton>} />
+      <VaultChrome actions={<VaultSignOut />} />
       <main className="vault-page">
         <VaultWorkspace client={client} />
       </main>
