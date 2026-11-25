@@ -1,5 +1,5 @@
 import {useLayoutEffect,useRef,useState} from "react";
-import {Copy} from "lucide-react";
+import {Check,Copy,X} from "lucide-react";
 import {VaultButton} from "./vault/ui";
 export function CopyPasswordButton({value,disabled}:{value:string;disabled:boolean}){
  const [status,setStatus]=useState("Copy password");
@@ -11,5 +11,6 @@ export function CopyPasswordButton({value,disabled}:{value:string;disabled:boole
   catch{if(owned.epoch===ticket)setStatus("Copy failed");}
   finally{if(owned.epoch===ticket)owned.timer=window.setTimeout(()=>setStatus("Copy password"),3000);}
  };
- return <VaultButton size="sm" disabled={disabled||status==="Copying…"} onClick={()=>{void copy();}}><Copy size={14} aria-hidden/><span aria-live="polite">{status}</span></VaultButton>;
+ const Icon=status==="Copied"?Check:status==="Copy failed"?X:Copy;
+ return <VaultButton size="icon" tone="ghost" className="vault-icon-button" title={status} disabled={disabled||status==="Copying…"} onClick={()=>{void copy();}}><Icon aria-hidden/><span className="sr-only" aria-live="polite">{status}</span></VaultButton>;
 }

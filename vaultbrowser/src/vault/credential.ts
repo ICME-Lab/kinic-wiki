@@ -38,3 +38,17 @@ export function serializeCredential(label: string, logins: CredentialLogin[], no
     ...(additional.length ? { additionalLogins: additional.map(fieldsFor) } : {}),
   });
 }
+
+/** A row with nothing typed in it; it is dropped on save instead of blocking it. */
+export function isBlankLogin({ username, password, url }: CredentialLogin) {
+  return !username.trim() && !password.trim() && !url.trim();
+}
+
+/** Why the logins cannot be saved yet, or undefined when they can. */
+export function credentialProblem(logins: CredentialLogin[]): string | undefined {
+  const filled = logins.filter(login => !isBlankLogin(login));
+  if (filled.some(({ username, password }) => !username.trim() && !password.trim()))
+    return "Each login needs a username or a password.";
+  if (!filled.length) return "Enter a username or a password.";
+  return undefined;
+}
