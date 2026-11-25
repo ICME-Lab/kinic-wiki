@@ -12,7 +12,14 @@ final class HomeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["database.choose"].firstMatch.waitForExistence(timeout: 10))
         return app
     }
+    /// Screenshots are review/demo output, not assertions. Each one blocks on a simulator capture that
+    /// can time out on a busy CI runner, so they are taken only when explicitly requested.
+    private static let capturesScreenshots: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["KINIC_UI_SCREENSHOTS"] == "1" || env["KINIC_DEMO_CAPTURE"] == "1"
+    }()
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
+        guard Self.capturesScreenshots else { return }
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
