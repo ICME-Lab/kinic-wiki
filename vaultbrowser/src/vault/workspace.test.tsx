@@ -76,6 +76,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
+/** Accepts the destructive-action confirmation opened by the previous click. */
+function confirmAction(label:string){
+ fireEvent.click(screen.getByRole("button",{name:label}));
+}
 function clickAndDiscard(element:HTMLElement){
  fireEvent.click(element);
  const dialog=screen.queryByRole("dialog",{name:"Discard unsaved changes?"});
@@ -127,6 +131,7 @@ it("keeps account settings separate and deletes a different Vault without switch
   const settings = screen.getByRole("region", { name: "Vault 2 settings" });
   const member = (await within(settings).findByText(guest.toText())).closest("li")!;
   fireEvent.click(within(member).getByRole("button", { name: "Remove member" }));
+  confirmAction("Remove");
   await within(settings).findByText("No additional members.");
   expect(await x.actor.list_vault_members(secondId)).toEqual({ Ok: [] });
   expect(within(settings).queryByText("Saved browser keys")).toBeNull();
@@ -158,6 +163,7 @@ it("removes a member from another Vault while preserving an interrupted save", a
   await openVaultSettings("Vault 2", true);
   const row = (await screen.findByText(guest.toText())).closest("li")!;
   fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
+  confirmAction("Remove");
   await screen.findByText("No additional members.");
   expect(await x.actor.list_vault_members(target)).toEqual({ Ok: [] });
   expect(x.client.session.root).toBe(root);
@@ -1177,6 +1183,7 @@ it.each(["Pending", "Deleting", "failed-open"])(
     x.lose("Collect");
     clickAndDiscard(screen.getByText("Storage maintenance"));
     clickAndDiscard(screen.getByText("Free up unused storage"));
+    confirmAction("Free up storage");
     await waitFor(() => expect(x.calls).toHaveLength(1));
     await waitFor(() =>
       expect(
@@ -1185,6 +1192,7 @@ it.each(["Pending", "Deleting", "failed-open"])(
       ).toBe(false),
     );
     clickAndDiscard(screen.getByText("Free up unused storage"));
+    confirmAction("Free up storage");
     await screen.findByText("Storage maintenance complete");
     expect(x.calls[0]).toEqual(x.calls[1]);
     expect(x.client.session.root).toBeUndefined();
@@ -1195,6 +1203,7 @@ it.each(["Pending", "Deleting", "failed-open"])(
       ).toBe(false),
     );
     clickAndDiscard(screen.getByText("Free up unused storage"));
+    confirmAction("Free up storage");
     await waitFor(() => expect(x.calls).toHaveLength(3));
     expect(x.calls[2].operation).not.toEqual(x.calls[0].operation);
   },
@@ -1536,6 +1545,7 @@ it("keeps browser keys and the draft when key removal is cancelled",async()=>{
  fireEvent.change(screen.getByLabelText("Private note body"),{target:{value:"private draft"}});
  fireEvent.click(screen.getByRole("button",{name:"Account settings"}));
  fireEvent.click(screen.getByRole("button",{name:"Delete saved keys from this browser"}));
+ confirmAction("Delete keys");
  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button",{name:"Keep editing"}));
  expect(forget).not.toHaveBeenCalled();expect(x.client.session.root).toBeTruthy();
  fireEvent.click(screen.getByRole("button",{name:"Back to Vault"}));
@@ -2125,6 +2135,7 @@ it("lets only the owner add, update, and remove members by Vault principal", asy
     ).toBe(false),
   );
   fireEvent.click(row.getByRole("button", { name: "Remove member" }));
+  confirmAction("Remove");
   await waitFor(() => expect(screen.queryByText(guest)).toBeNull());
 });
 
@@ -2165,6 +2176,7 @@ it("lets a cold owner remove a member at zero credit after key service failure w
   await openVaultSettings(undefined, true);
   const row = (await screen.findByText(guest.toText())).closest("li")!;
   fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
+  confirmAction("Remove");
   await screen.findByText("No additional members.");
   expect(await x.actor.list_vault_members(x.headers[0].id)).toEqual({ Ok: [] });
   expect(derive).toHaveBeenCalledTimes(1);

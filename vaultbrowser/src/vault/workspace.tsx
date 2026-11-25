@@ -956,7 +956,6 @@ function Workspace({ client }: { client: VaultClient }) {
       ) : null}
 
       </div>
-      <div hidden={nav.view !== "settings"}><WikiCreditFunding client={client} onFunded={refreshConfiguration} /></div>
       <VaultSettings
           key={`settings-${generation}-${settingsTarget?.id ?? ""}-${settingsTarget?.members ?? false}`}
           scope={nav.view === "vault-settings" ? "vault" : "account"}
@@ -1028,6 +1027,8 @@ function Workspace({ client }: { client: VaultClient }) {
             requestAnimationFrame(() => document.getElementById(focusId)?.focus());
           }}
         />
+      {/* Kept outside the keyed VaultSettings so Wiki funding follows the client lifetime. */}
+      <div hidden={nav.view !== "settings"} className="vault-settings"><WikiCreditFunding client={client} onFunded={refreshConfiguration} /></div>
       {nav.view === "help" ? <VaultHelp/> : null}
       {nav.view === "not-found" ? <VaultNotFound/> : null}
     </div>

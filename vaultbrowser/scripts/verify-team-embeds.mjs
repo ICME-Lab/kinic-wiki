@@ -405,6 +405,7 @@ try {
   await expect(owner.page.getByLabel("Document title")).toHaveCount(0);
   const readsBeforeRemove = await owner.page.evaluate(() => window.ownerKeyCacheReads);
   await row.getByRole("button", { name: "Remove member" }).click();
+  await owner.page.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(row).toHaveCount(0);
   assert.equal(derived, 0);
   assert.equal(

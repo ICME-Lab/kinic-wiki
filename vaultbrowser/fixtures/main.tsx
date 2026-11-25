@@ -2,8 +2,7 @@
 import {VaultRouter} from "../src/navigation";
 import {DraftGuardProvider} from "../src/draft-guard";
 import { useEffect } from "react";
-import { VaultChrome } from "../src/chrome";
-import { VaultButton } from "../src/vault/ui";
+import { VaultChrome, VaultSignOut } from "../src/chrome";
 import { createRoot } from "react-dom/client";
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
@@ -158,6 +157,12 @@ const fundingClient = new VaultClient({
         },
       };
     },
+    // #205: the beneficiary reads, submits and reconciles with its own session.
+    beneficiary_payments: async () => ({ Ok: [fundingPayment] }),
+    beneficiary_payment_status: async () => ({ Ok: [fundingPayment] }),
+    beneficiary_pay_purchase: async () => ({ Ok: fundingPayment }),
+    beneficiary_reconcile_purchase: async (_wallet: unknown, operation: Uint8Array) =>
+      (fundingClient.actor as unknown as { reconcile_purchase(op: Uint8Array): Promise<unknown> }).reconcile_purchase(operation),
   } as unknown as VaultActor,
 });
 if (fixtureState === "funding") {
@@ -235,7 +240,7 @@ function Fixture() {
   }, []);
   return (
     <>
-      <VaultChrome actions={<VaultButton>Sign out</VaultButton>} />
+      <VaultChrome actions={<VaultSignOut />} />
       <main className="vault-page">
         <VaultWorkspace client={client} />
       </main>

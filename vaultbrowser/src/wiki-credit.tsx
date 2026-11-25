@@ -14,6 +14,7 @@ import {
 } from "@kinic/credit-bridge-candid/browser";
 import { vaultCreditActor, creditOrigins } from "./wiki-credit-actor";
 import { VaultButton } from "./vault/ui";
+import { useConfirm } from "./vault/confirm";
 const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
 export function WikiCreditFunding({
   client,
@@ -31,6 +32,7 @@ export function WikiCreditFunding({
     typeof window === "undefined" ? null : parseLaunch(window.location.hash),
   );
   const handoffUsed = useRef(false);
+  const [confirm, confirmDialog] = useConfirm();
   // Funding follows authentication/client lifetime, never the decryption-root lock.
   const current = useRef(client);
   current.current = client;
@@ -280,24 +282,26 @@ export function WikiCreditFunding({
     });
   };
   return (
+    <div className="vault-settings-group">
+    <h3 className="vault-settings-group-title">Wiki credits</h3>
     <section
       aria-label="Wiki credit funding"
-      className="grid min-w-0 gap-3 border-t border-line pt-4 [&_button]:min-h-11"
+      className="vault-panel vault-wiki-credit"
     >
-      <h3 className="font-semibold">Use Wiki database credits</h3>
-      <p className="text-sm">
+      <h4>Use Wiki database credits</h4>
+      <p className="vault-wiki-credit-description">
         Link your independently signed-in Wiki account, then manually move
         database credits to this Vault account. Linking never charges a
         database. The account pairing is permanent; revocation disables future
         transfers.
       </p>
       {link ? (
-        <p className="break-all text-sm">
+        <p className="vault-wiki-credit-link">
           Wiki principal: {link.wiki_owner.toText()} ·{" "}
           {link.active ? "Linked" : "Revoked"}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div className="vault-wiki-credit-actions">
         <VaultButton disabled={!actor || busy} onClick={() => openWiki("link")}>
           {link?.active ? "Review Wiki link" : "Link Wiki account"}
         </VaultButton>
@@ -327,16 +331,23 @@ export function WikiCreditFunding({
         </VaultButton>
         {link?.active ? (
           <VaultButton
-            disabled={busy}
+                        disabled={busy}
             onClick={() => {
-              stopChannel.current();
-              work(async (check) => {
-                bridgeOk(await actor!.revoke_wiki_link());
-                check();
-                setLink({ ...link, active: false });
-                setNotice(
-                  "Link revoked. Existing dispatched transfers can still settle.",
-                );
+              void confirm({
+                title: "Revoke Wiki link?",
+                description: "Charging from Wiki credits stops for this Vault account. Transfers already sent can still settle.",
+                confirmLabel: "Revoke link",
+              }).then((confirmed) => {
+                if (!confirmed) return;
+                stopChannel.current();
+                work(async (check) => {
+                  bridgeOk(await actor!.revoke_wiki_link());
+                  check();
+                  setLink({ ...link, active: false });
+                  setNotice(
+                    "Link revoked. Existing dispatched transfers can still settle.",
+                  );
+                });
               });
             }}
           >
@@ -357,10 +368,12 @@ export function WikiCreditFunding({
         ) : null}
       </div>
       {notice ? (
-        <output className="text-sm">
+        <output className="vault-wiki-credit-notice">
           {notice}
         </output>
       ) : null}
+      {confirmDialog}
     </section>
+    </div>
   );
 }
