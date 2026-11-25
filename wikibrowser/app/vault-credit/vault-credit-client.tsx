@@ -1,5 +1,4 @@
 "use client";
-import { quoteEstimate } from "@/lib/vault-credit-estimate";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   LinkChallenge,
@@ -9,23 +8,20 @@ import type {
 } from "@kinic/credit-bridge-candid";
 import {
   acceptMessage,
-  approvalFor,
   bridgeOk,
   bridgeUrl,
   bytes,
   hex,
   message,
-  parseExactCycles,
   parseLaunch,
   sessionFence,
   type Launch,
 } from "@kinic/credit-bridge-candid/browser";
 import { Button } from "@kinic/ui/button";
-import { Input } from "@kinic/ui/input";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminPanel, AdminPageHeader, AdminField } from "@/components/admin-ui";
 import { StatusPill } from "@/components/ui/status-pill";
-import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
+import { CheckCircle2, CircleAlert } from "lucide-react";
 import { PrincipalText } from "@kinic/ui/principal";
 import { AutoTopupPanel } from "./auto-topup-panel";
 import { formatCycles, formatRawCycles } from "@kinic/ui/cycles";
@@ -39,7 +35,6 @@ type DatabaseChoice = {
   name: string;
   cyclesBalance: string;
 };
-const randomId = () => hex(crypto.getRandomValues(new Uint8Array(16)));
 function cyclesOf(text: string): bigint | null {
   try {
     return BigInt(text);
@@ -75,7 +70,7 @@ function WikiCredits({ databases }: { databases: DatabaseChoice[] }) {
         ))}
       </ul>
       <p className="text-xs text-muted">
-        To move credits, choose Charge from Wiki credits in Vault.
+        Auto top-up pays from one of these databases.
       </p>
     </AdminPanel>
   );
@@ -116,23 +111,12 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
   const [link, setLink] = useState<LinkStatus>();
   const [challenge, setChallenge] = useState<LinkChallenge>();
   const [databases, setDatabases] = useState<DatabaseChoice[]>([]);
-  const [database, setDatabase] = useState("");
   const [transfer, setTransfer] = useState<VaultTransfer>();
-  const [channelUsed, setChannelUsed] = useState(false);
   // A nonce/window authorizes one authenticated operation, including recovery.
   const channelOperation = useRef<string | undefined>(undefined);
   const transferRef = useRef(transfer);
   transferRef.current = transfer;
-  const [mode, setMode] = useState<"exact" | "all">("exact");
-  const [amount, setAmount] = useState("1000000000");
-  const [allConfirmed, setAllConfirmed] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [ready, setReady] = useState(false);
-  const waiting = useRef<string | undefined>(undefined);
-  // One confirmation in this window carries a held offer through Vault readiness to the send.
-  const [autoPlan, setAutoPlan] = useState<
-    { operation: string; approval: ReturnType<typeof approvalFor> } | undefined
-  >(undefined);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [notice, setNotice] = useState("");
@@ -164,10 +148,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
       channelOperation.current = operation;
       rememberTransferReference(launch, value);
       setTransfer(value);
-      setChannelUsed(true);
       transferRef.current = value;
-      waiting.current = undefined;
-      setReady(false);
       setUncertain(false);
     },
     [launch],
@@ -182,14 +163,11 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
     boundIdentity.current = identity;
     working.current = false;
     initialized.current = false;
-    waiting.current = undefined;
     setActor(undefined);
     setTransfer(undefined);
     setChallenge(undefined);
     setLink(undefined);
     setLoaded(false);
-    setReady(false);
-    setAllConfirmed(false);
     setUncertain(false);
     setBusy(false);
     setConnected(false);
@@ -247,18 +225,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         connectedRef.current = true;
         setConnected(true);
       }
-      if (
-        acknowledged &&
-        initialized.current &&
-        m.type === "ready" &&
-        waiting.current === m.id &&
-        transferRef.current &&
-        "Offered" in transferRef.current.phase &&
-        hex(transferRef.current.offer.operation) === m.id
-      ) {
-        setReady(true);
-        waiting.current = undefined;
-      }
     };
     window.addEventListener("message", receive);
     sendHello();
@@ -274,7 +240,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
           window.removeEventListener("message", receive);
           connectedRef.current = false;
           setConnected(false);
-          setReady(false);
           setNotice(
             "Vault window closed or timed out. Saved transfers remain available for status checks and reconciliation. Continue in Vault to reconnect.",
           );
@@ -285,7 +250,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         window.clearInterval(timer);
         connectedRef.current = false;
         setConnected(false);
-        setReady(false);
         if (!disposed) {
           initialized.current = false;
           setLoaded(false);
@@ -301,7 +265,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         if (channelOperation.current && channelOperation.current !== launch.id)
           throw Error("Receipt mismatch");
         channelOperation.current = launch.id;
-        setChannelUsed(true);
       }
       const a = await wikiCreditActor(canisterId, identity);
       check();
@@ -328,7 +291,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
       }
       if (savedTransfer) {
         update(savedTransfer);
-        setDatabase(savedTransfer.database_id);
       } else if (channelOperation.current) {
         setNotice(
           "The saved receipt is no longer available. Return to Vault and open a new Wiki window for another transfer.",
@@ -337,7 +299,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
       const dbs = await ownerDatabases(canisterId, identity);
       check();
       setDatabases(dbs);
-      if (!savedTransfer) setDatabase(dbs[0]?.databaseId ?? "");
       if (launch?.mode === "link") {
         const preview = bridgeOk(await a.preview_vault_link(bytes(launch.id)));
         check();
@@ -353,8 +314,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         initialized.current = false;
         setActor(undefined);
         setLoaded(false);
-        waiting.current = undefined;
-        setReady(false);
         setNotice(
           "Could not load credit bridge status. Reload to recover before starting a transfer.",
         );
@@ -403,7 +362,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         try {
           check();
           if (mayChangeTransfer) setUncertain(true);
-          setReady(false);
           setNotice(
             "Request did not complete. Refresh saved status before retrying. Unknown transfers must be reconciled.",
           );
@@ -421,91 +379,10 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
         }
       });
   };
-  const requestReadiness = (value: VaultTransfer) => {
-    if (!available || !initialized.current) return;
-    const check = fence();
-    try {
-      check();
-      waiting.current = hex(value.offer.operation);
-      post("offer", waiting.current);
-      setNotice("Waiting for independently authenticated Vault readiness.");
-    } catch {
-      setNotice("Reconnect through Vault before sending.");
-    }
-  };
-  const sendHeld = (
-    value: VaultTransfer,
-    approval: ReturnType<typeof approvalFor>,
-  ) =>
-    work(async (check) => {
-      if (!connectedRef.current) throw Error("Vault disconnected");
-      const sent = bridgeOk(
-        await actor!.execute_vault_transfer(value.offer.operation, approval),
-      );
-      check();
-      update(sent);
-      post("result", hex(sent.offer.operation));
-    }, true);
-  const requestReadinessRef = useRef(requestReadiness);
-  requestReadinessRef.current = requestReadiness;
-  const sendHeldRef = useRef(sendHeld);
-  sendHeldRef.current = sendHeld;
-  useEffect(() => {
-    if (!autoPlan) return;
-    if (
-      !transfer ||
-      hex(transfer.offer.operation) !== autoPlan.operation ||
-      !("Offered" in transfer.phase) ||
-      uncertain
-    ) {
-      // Any other phase, a failure or a replaced receipt ends the automatic path.
-      setAutoPlan(undefined);
-      return;
-    }
-    if (busy || !connected || !initialized.current) return;
-    if (ready) {
-      setAutoPlan(undefined);
-      sendHeldRef.current(transfer, autoPlan.approval);
-    } else if (!waiting.current) requestReadinessRef.current(transfer);
-  }, [autoPlan, transfer, ready, busy, connected, uncertain]);
-  const refreshPending = () =>
-    work(async (check) => {
-      const pending = bridgeOk(await actor!.get_pending_vault_transfer([]));
-      check();
-      const value =
-        pending[0] ??
-        (database
-          ? bridgeOk(await actor!.get_pending_vault_transfer([database]))[0]
-          : undefined);
-      check();
-      if (
-        value &&
-        channelOperation.current &&
-        channelOperation.current !== hex(value.offer.operation)
-      ) {
-        waiting.current = undefined;
-        setReady(false);
-        setNotice(
-          "Another transfer is pending. This window keeps its original receipt. Return to Vault and open a new Wiki window to recover that transfer.",
-        );
-        return;
-      }
-      if (value) update(value);
-      setNotice(
-        value
-          ? "Recovered the saved transfer."
-          : "No pending transfer for this account or selected database.",
-      );
-      setAllConfirmed(false);
-      setUncertain(false);
-      setReady(false);
-    });
   const offered = transfer && "Offered" in transfer.phase;
   const quoted = transfer && "Quoted" in transfer.phase;
   const terminal =
     transfer && ("Paid" in transfer.phase || "Refunded" in transfer.phase);
-  const all = transfer && "All" in transfer.requested;
-  const estimate = transfer && quoted ? quoteEstimate(transfer) : undefined;
   const handoff = bridgeUrl(
     "vault",
     {
@@ -526,11 +403,11 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
   return (
     <div className="mx-auto grid w-full max-w-2xl min-w-0 gap-5 p-4 sm:p-6 [&_button]:min-h-11">
       <AdminPageHeader
-        title={linkMode ? "Link to Vault" : "Move Wiki credits to Vault"}
+        title={linkMode ? "Link to Vault" : "Vault auto top-up"}
         description={
           linkMode
             ? undefined
-            : "Pick a database and an amount, review the estimate, then confirm. Nothing moves until you confirm."
+            : "Refill your Vault from a Wiki database automatically, within limits you set."
         }
       />
       {!identity ? (
@@ -552,20 +429,23 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
               <output>
                 <StatusPill dot tone="positive" label="Connected to your Vault window" />
               </output>
-            ) : (
+            ) : linkMode ? (
               <StatusPill dot tone="warn" label="Vault window not connected" />
+            ) : (
+              <span />
             )}
             <Button variant="ghost" size="sm" onClick={() => void session.logout()}>
               Sign out of Wiki
             </Button>
           </div>
-          {!connected ? (
+          {/* Linking needs the Vault window; settings and recovery do not. */}
+          {!connected && (linkMode || (loaded && !link?.active)) ? (
             <AdminPanel className="grid gap-3 border-warnLine bg-warnSoft">
               <p className="flex items-start gap-2 text-sm text-warnText">
                 <CircleAlert aria-hidden className="mt-0.5 shrink-0" size={16} />
                 <span>
-                  Start in Vault, then open Wiki from its funding controls. Your
-                  saved transfer can be recovered after the handoff.
+                  Start in Vault: open Account settings and choose Link Wiki
+                  account.
                 </span>
               </p>
               <a
@@ -629,7 +509,6 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                         bridgeOk(await actor!.revoke_vault_link());
                         check();
                         setLink({ ...link, active: false });
-                        setReady(false);
                         setNotice(
                           "Link revoked. Dispatched transfers remain recoverable.",
                         );
@@ -645,380 +524,114 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
           {link?.active && !challenge ? (
             <AutoTopupPanel actor={actor} databases={databases} disabled={busy || !available} />
           ) : null}
-          {linkMode ? (link?.active && !challenge ? <WikiCredits databases={databases} /> : null) : (
-            <AdminPanel
-              className="grid min-w-0 gap-4"
-              ariaLabel="Manual credit transfer"
-            >
+          {link?.active && !challenge ? <WikiCredits databases={databases} /> : null}
+          {transfer ? (
+            <AdminPanel className="grid min-w-0 gap-3" ariaLabel="Transfer to Vault">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-semibold">Manual credit transfer</h2>
+                <h2 className="font-semibold">Transfer to Vault</h2>
+                <output aria-live="polite">
+                  <StatusPill
+                    dot
+                    tone={
+                      "Paid" in transfer.phase
+                        ? "positive"
+                        : "Unknown" in transfer.phase || "Refunded" in transfer.phase
+                          ? "warn"
+                          : "info"
+                    }
+                    label={Object.keys(transfer.phase)[0]}
+                  />
+                </output>
+              </div>
+              <div className="grid min-w-0 gap-3 rounded-lg border border-line bg-white p-3">
+                <AdminField
+                  label="Source database"
+                  value={databases.find((db) => db.databaseId === transfer.database_id)?.name ?? transfer.database_id}
+                />
+                <AdminField
+                  label="Vault recipient"
+                  value={<PrincipalText value={transfer.offer.vault_owner.toText()} />}
+                />
+                <AdminField
+                  label="Amount"
+                  value={`${cyclesLabel(transfer.offer.amount_cycles.toString())} (${transfer.offer.amount_cycles.toLocaleString()} cycles)`}
+                />
+              </div>
+              {"Unknown" in transfer.phase ? (
+                <p className="text-sm">
+                  The send outcome is unknown. Keep this transfer held and
+                  reconcile its receipt. Do not create a replacement
+                  transfer; cancellation is unavailable.
+                </p>
+              ) : null}
+              {transfer.receiver_cleanup_pending ? (
+                <p className="text-sm">
+                  Receiver receipt cleanup is pending. Reconcile to release
+                  the pending slot.
+                </p>
+              ) : null}
+              {terminal && !transfer.receiver_cleanup_pending ? (
+                <p className="text-sm text-muted">
+                  This transfer is finished. Auto top-up handles future
+                  refills.
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={busy || !available}
-                  onClick={refreshPending}
+                  onClick={() =>
+                    work(async (check) => {
+                      const value = bridgeOk(
+                        await actor!.get_vault_transfer(transfer.offer.operation),
+                      );
+                      check();
+                      update(value);
+                    })
+                  }
                 >
-                  Recover pending transfer
+                  Refresh transfer status
                 </Button>
-              </div>
-              <p className="-mt-2 text-sm text-muted">
-                Credits move from one of your databases to the linked Vault
-                account.
-              </p>
-              <label className="grid gap-1 text-sm">
-                Owner database
-                <select
-                  className="min-h-11 min-w-0 rounded border border-line bg-paper px-3"
-                  disabled={busy || !available || !!transfer}
-                  value={database}
-                  onChange={(e) => {
-                    setDatabase(e.target.value);
-                    setAllConfirmed(false);
-                  }}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !available}
+                  onClick={() =>
+                    work(async (check) => {
+                      const value = bridgeOk(
+                        await actor!.reconcile_vault_transfer(transfer.offer.operation),
+                      );
+                      check();
+                      update(value);
+                      if (connectedRef.current)
+                        post("result", hex(value.offer.operation));
+                    })
+                  }
                 >
-                  {databases.map((db) => (
-                    <option key={db.databaseId} value={db.databaseId}>
-                      {db.name} · {cyclesLabel(db.cyclesBalance)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {(() => {
-                const selected = databases.find((db) => db.databaseId === database);
-                return selected ? (
-                  <p className="-mt-2 flex items-baseline justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm">
-                    <span className="text-muted">Available in this database</span>
-                    <span className="font-mono font-semibold" title={`${selected.cyclesBalance} cycles`}>
-                      {cyclesLabel(selected.cyclesBalance)}
-                    </span>
-                  </p>
-                ) : null;
-              })()}
-              {!transfer && channelUsed ? (
-                <p>
-                  This channel has already reviewed a transfer. Return to your
-                  Vault window and choose Charge from Wiki credits to open a new
-                  Wiki window with a fresh confirmation.
-                </p>
-              ) : !transfer ? (
-                <>
-                  <fieldset
-                    disabled={busy || !available}
-                    className="grid gap-2"
-                  >
-                    <legend className="mb-2 text-sm font-semibold">
-                      Transfer amount
-                    </legend>
-                    <label className="flex min-h-11 items-center gap-2">
-                      <input
-                        type="radio"
-                        name="transfer-mode"
-                        checked={mode === "exact"}
-                        onChange={() => setMode("exact")}
-                      />
-                      Exact partial amount
-                    </label>
-                    <label className="flex min-h-11 items-center gap-2">
-                      <input
-                        type="radio"
-                        name="transfer-mode"
-                        checked={mode === "all"}
-                        onChange={() => setMode("all")}
-                      />
-                      All available credits
-                    </label>
-                    {mode === "exact" ? (
-                      <label
-                        htmlFor="credit-exact-cycles"
-                        className="grid gap-1 text-sm"
-                      >
-                        Exact cycles
-                        <Input
-                          id="credit-exact-cycles"
-                          inputMode="numeric"
-                          value={amount}
-                          onChange={(e) => setAmount(e.target.value)}
-                        />
-                      </label>
-                    ) : null}
-                  </fieldset>
+                  Reconcile transfer
+                </Button>
+                {quoted || offered ? (
                   <Button
-                    disabled={
-                      busy ||
-                      !available ||
-                      !database ||
-                      !connected ||
-                      !link?.active ||
-                      uncertain
-                    }
+                    variant="outline"
+                    size="sm"
+                    disabled={busy || !available || uncertain}
                     onClick={() =>
                       work(async (check) => {
-                        const requested =
-                          mode === "all"
-                            ? ({ All: null } as const)
-                            : { Exact: parseExactCycles(amount) };
                         const value = bridgeOk(
-                          await actor!.quote_vault_transfer(
-                            database,
-                            requested,
-                            bytes(randomId()),
-                          ),
+                          await actor!.cancel_vault_transfer(transfer.offer.operation),
                         );
                         check();
                         update(value);
-                        setAllConfirmed(false);
                       }, true)
                     }
                   >
-                    Get transfer estimate
+                    Cancel unsent transfer
                   </Button>
-                </>
-              ) : (
-                <>
-                  <output aria-live="polite" className="justify-self-start">
-                    <StatusPill
-                      dot
-                      tone={
-                        "Paid" in transfer.phase
-                          ? "positive"
-                          : "Unknown" in transfer.phase || "Refunded" in transfer.phase
-                            ? "warn"
-                            : "info"
-                      }
-                      label={Object.keys(transfer.phase)[0]}
-                    />
-                  </output>
-                  <div className="grid min-w-0 gap-3 rounded-lg border border-line bg-white p-3">
-                  <p className="text-sm">
-                    Offer expires:{" "}
-                    {new Date(
-                      Number(transfer.offer.expires_at_ns / 1_000_000n),
-                    ).toLocaleString()}
-                  </p>
-                  <AdminField
-                    label="Source database"
-                    value={transfer.database_id}
-                    breakAll
-                  />
-                  <AdminField
-                    label="Vault recipient"
-                    value={<PrincipalText value={transfer.offer.vault_owner.toText()} />}
-                  />
-                  <p className="text-sm">
-                    {quoted
-                      ? all
-                        ? "Quoted available balance"
-                        : "Fixed Exact amount"
-                      : "Fixed transfer"}
-                    : {transfer.offer.amount_cycles.toLocaleString()} cycles.
-                    Balance at quote:{" "}
-                    {transfer.balance_at_quote.toLocaleString()} cycles.
-                  </p>
-                  {estimate ? (
-                    <div className="grid gap-2 text-sm">
-                      <p>
-                        Estimated recipient credit:{" "}
-                        {estimate.recipient.toLocaleString()} cycles.
-                      </p>
-                      <p>
-                        Estimated source reduction including execution fee:{" "}
-                        {estimate.sourceDebit.toLocaleString()} cycles.
-                      </p>
-                      <p>
-                        Estimated remaining source balance:{" "}
-                        {estimate.remaining.toLocaleString()} cycles.
-                      </p>
-                      <p className="text-xs text-muted">
-                        These estimates use the quote snapshot. Later storage
-                        billing, execution fees and other balance changes can
-                        change the remaining balance.{" "}
-                        {all
-                          ? "AllAvailable reserves the entire available balance after settlement, so the remaining available balance at reservation is zero; the recipient amount can differ from this estimate."
-                          : "The Exact recipient amount stays fixed; reservation may fail if the balance cannot cover it after fees."}
-                      </p>
-                    </div>
-                  ) : null}
-                  <p className="text-sm">
-                    Estimated execution fee:{" "}
-                    {transfer.estimated_execution_fee_cycles.toLocaleString()}{" "}
-                    cycles. Collected execution fee:{" "}
-                    {transfer.collected_execution_fee_cycles.toLocaleString()}{" "}
-                    cycles. Storage billing is settled before reservation.
-                  </p>
-                  </div>
-                  {quoted || offered ? (
-                    <>
-                      <p className="text-xs text-muted">
-                        Confirming holds the database credits and sends them
-                        once your Vault window is ready. Reduced credit may
-                        suspend database updates. Exact partial transfers keep
-                        their specified amount; the held offer never changes.
-                      </p>
-                      {all ? (
-                        <label className="flex min-h-11 items-start gap-3 rounded border border-line p-3 text-sm">
-                          <input
-                            className="mt-1"
-                            type="checkbox"
-                            checked={allConfirmed}
-                            disabled={busy || !available}
-                            onChange={(e) => setAllConfirmed(e.target.checked)}
-                          />
-                          <span>
-                            I authorize the entire available balance after
-                            billing and fees at reservation time, even if it
-                            differs from this estimate. This may suspend the
-                            database.
-                          </span>
-                        </label>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {quoted ? (
-                    <Button
-                      disabled={
-                        busy ||
-                        !available ||
-                        uncertain ||
-                        !connected ||
-                        !link?.active ||
-                        (!!all && !allConfirmed)
-                      }
-                      onClick={() =>
-                        work(async (check) => {
-                          if (!connectedRef.current)
-                            throw Error("Vault disconnected");
-                          const approval = approvalFor(transfer.requested, allConfirmed);
-                          const value = bridgeOk(
-                            await actor!.execute_vault_transfer(
-                              transfer.offer.operation,
-                              approval,
-                            ),
-                          );
-                          check();
-                          update(value);
-                          if ("Offered" in value.phase)
-                            setAutoPlan({ operation: hex(value.offer.operation), approval });
-                        }, true)
-                      }
-                    >
-                      Confirm and send
-                    </Button>
-                  ) : null}
-                  {offered && autoPlan?.operation === hex(transfer.offer.operation) ? (
-                    <output aria-live="polite" className="flex items-center gap-2 text-sm font-semibold">
-                      <Loader2 aria-hidden className="animate-spin" size={16} />
-                      {ready ? "Sending to Vault…" : "Waiting for your Vault window…"}
-                    </output>
-                  ) : offered ? (
-                    <>
-                      <Button
-                        variant="outline"
-                        disabled={busy || !available || uncertain || !connected}
-                        onClick={() => requestReadiness(transfer)}
-                      >
-                        Request Vault readiness
-                      </Button>
-                      {ready ? (
-                        <Button
-                          disabled={
-                            busy ||
-                            !available ||
-                            uncertain ||
-                            !connected ||
-                            !link?.active ||
-                            (!!all && !allConfirmed)
-                          }
-                          onClick={() =>
-                            sendHeld(transfer, approvalFor(transfer.requested, allConfirmed))
-                          }
-                        >
-                          Send held credits
-                        </Button>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {"Unknown" in transfer.phase ? (
-                    <p className="text-sm">
-                      The send outcome is unknown. Keep this transfer held and
-                      reconcile its receipt. Do not create a replacement
-                      transfer; cancellation is unavailable.
-                    </p>
-                  ) : null}
-                  {transfer.receiver_cleanup_pending ? (
-                    <p className="text-sm">
-                      Receiver receipt cleanup is pending. Reconcile to release
-                      the pending slot.
-                    </p>
-                  ) : null}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      disabled={busy || !available}
-                      onClick={() =>
-                        work(async (check) => {
-                          const value = bridgeOk(
-                            await actor!.get_vault_transfer(
-                              transfer.offer.operation,
-                            ),
-                          );
-                          check();
-                          update(value);
-                        })
-                      }
-                    >
-                      Refresh transfer status
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={busy || !available}
-                      onClick={() =>
-                        work(async (check) => {
-                          const value = bridgeOk(
-                            await actor!.reconcile_vault_transfer(
-                              transfer.offer.operation,
-                            ),
-                          );
-                          check();
-                          update(value);
-                          if (connectedRef.current)
-                            post("result", hex(value.offer.operation));
-                        })
-                      }
-                    >
-                      Reconcile transfer
-                    </Button>
-                    {quoted || offered ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy || !available || uncertain}
-                        onClick={() =>
-                          work(async (check) => {
-                            const value = bridgeOk(
-                              await actor!.cancel_vault_transfer(
-                                transfer.offer.operation,
-                              ),
-                            );
-                            check();
-                            update(value);
-                          }, true)
-                        }
-                      >
-                        Cancel unsent transfer
-                      </Button>
-                    ) : null}
-                    {terminal && !transfer.receiver_cleanup_pending ? (
-                      <p>
-                        For another charge, return to your Vault window and
-                        choose Charge from Wiki credits to open a new Wiki
-                        window with a fresh confirmation. This receipt remains
-                        available here.
-                      </p>
-                    ) : null}
-                  </div>
-                </>
-              )}
+                ) : null}
+              </div>
             </AdminPanel>
-          )}
+          ) : null}
         </>
       )}
       {notice ? <output className="text-sm">{notice}</output> : null}

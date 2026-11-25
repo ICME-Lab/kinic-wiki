@@ -48,7 +48,7 @@ function linkView(
     return {
       label: "Linked",
       tone: "positive",
-      description: "Move credits from one of your Wiki databases into this Vault. You review and confirm each transfer in Wiki.",
+      description: "Vault can refill itself from one of your Wiki databases when the balance runs low, within limits you set in Wiki.",
     };
   if (link)
     return {
@@ -195,9 +195,7 @@ export function WikiCreditFunding({
     const nonce = hex(crypto.getRandomValues(new Uint8Array(32)));
     const origins = creditOrigins();
     let active = true,
-      launchId = "",
-      operation: string | undefined,
-      preparing = false;
+      launchId = "";
     const started = Date.now();
     const channelCheck = () => {
       check();
@@ -225,12 +223,8 @@ export function WikiCreditFunding({
       });
       if (!m) return;
       // A reloaded Wiki page can carry its authenticated backend receipt ID.
-      // ACK only establishes the same owned channel; prepare remains pinned below.
-      if (
-        m.type === "hello" &&
-        (m.id === launchId ||
-          (mode === "fund" && (!operation || m.id === operation)))
-      ) {
+      // ACK only establishes the same owned channel; it moves no credits.
+      if (m.type === "hello" && (m.id === launchId || mode === "fund")) {
         popup.postMessage(message("ack", m.id, nonce), origins.wiki);
         return;
       }
@@ -242,58 +236,17 @@ export function WikiCreditFunding({
           setLink(status[0]);
           setNotice(
             status[0]?.active
-              ? "Wiki account linked. Choose Charge from Wiki credits here to open a new funding window."
+              ? "Wiki account linked. Set up auto top-up to refill this Vault from Wiki."
               : "Link approval is incomplete. Resume from Wiki.",
           );
         });
       }
-      if (
-        m.type === "offer" &&
-        mode === "fund" &&
-        !preparing &&
-        (!operation || operation === m.id)
-      ) {
-        operation = m.id;
-        preparing = true;
-        void (async () => {
-          const receipt = bridgeOk(
-            await actor.prepare_wiki_credit(bytes(m.id)),
-          );
-          channelCheck();
-          if (
-            hex(receipt.offer.operation) !== m.id ||
-            receipt.offer.vault_owner.toText() !==
-              client.identity.getPrincipal().toText() ||
-            !("Prepared" in receipt.status || "Accepted" in receipt.status)
-          )
-            throw Error("Invalid receipt");
-          popup.postMessage(message("ready", m.id, nonce), origins.wiki);
-          setNotice(
-            "Vault is ready. Wiki is sending the held amount.",
-          );
-        })()
-          .catch(() => {
-            try {
-              channelCheck();
-              setNotice(
-                "Preparation did not complete. Retry preparation from the Wiki window.",
-              );
-            } catch {
-              /* stale */
-            }
-          })
-          .finally(() => {
-            preparing = false;
-          });
-      }
-      if (m.type === "result" && mode === "fund" && m.id === operation) {
+      if (m.type === "result" && mode === "fund") {
         void (async () => {
           channelCheck();
           await funded.current();
           channelCheck();
-          setNotice(
-            "Wiki transfer status changed. Review the receipt in Wiki and the refreshed Vault balance.",
-          );
+          setNotice("Wiki transfer status changed. Vault balance refreshed.");
         })().catch(() => {});
       }
     };
@@ -439,7 +392,7 @@ export function WikiCreditFunding({
           </span>
           <VaultButton
             size="sm"
-            tone="ghost"
+            tone={auto ? "default" : "primary"}
             disabled={!actor || busy}
             onClick={() => openWiki("fund")}
           >
@@ -464,15 +417,7 @@ export function WikiCreditFunding({
         </div>
       ) : null}
       <div className="vault-wiki-credit-actions">
-        {link?.active ? (
-          <VaultButton
-            disabled={!actor || !loaded || busy}
-            tone="primary"
-            onClick={() => openWiki("fund")}
-          >
-            Charge from Wiki credits
-          </VaultButton>
-        ) : (
+        {link?.active ? null : (
           <VaultButton
             disabled={!actor || !loaded || busy}
             tone="primary"
@@ -499,7 +444,7 @@ export function WikiCreditFunding({
             onClick={() => {
               void confirm({
                 title: "Revoke Wiki link?",
-                description: "Charging from Wiki credits stops for this Vault account. Transfers already sent can still settle. You can link the same Wiki account again later.",
+                description: "Auto top-up from Wiki stops for this Vault account. Transfers already sent can still settle. You can link the same Wiki account again later.",
                 confirmLabel: "Revoke link",
               }).then((confirmed) => {
                 if (!confirmed) return;
