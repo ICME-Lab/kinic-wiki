@@ -252,10 +252,7 @@ struct AskAIModelTests {
         let knowledge = AskAIKnowledgeProviderStub(sources: [])
         knowledge.askAIOutputLanguage = .japanese
         let client = AskAICompletionStub(responses: [
-            .delayed(
-                "<mode>conversation</mode><answer>最初の回答</answer>",
-                .milliseconds(30)
-            ),
+            .gated("<mode>conversation</mode><answer>最初の回答</answer>"),
             .value("<mode>conversation</mode><answer>Deuxième réponse</answer>")
         ])
         let model = AskAIModel(
@@ -268,6 +265,7 @@ struct AskAIModelTests {
         model.draft = "What is the first answer?"
         model.send()
         knowledge.askAIOutputLanguage = .french
+        await client.release()
         try await waitUntilFinished(model)
 
         model.draft = "What is the second answer?"
@@ -766,10 +764,7 @@ struct AskAIModelTests {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
             .value("Here is a query"),
-            .delayed(
-                "<mode>search</mode><answer>wrong database topic</answer>",
-                .milliseconds(80)
-            )
+            .gated("<mode>search</mode><answer>wrong database topic</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
         await model.load()
@@ -778,6 +773,7 @@ struct AskAIModelTests {
         model.send()
         try await waitForCallCount(client, count: 2)
         knowledge.selectedAskAIDatabaseId = "db_other"
+        await client.release()
         try await waitUntilFinished(model)
 
         #expect(await client.callCount == 2)
@@ -847,7 +843,7 @@ struct AskAIModelTests {
     func answerContentIsNotDisplayedWhileSecondCompletionIsPending() async throws {
         let client = AskAICompletionStub(responses: [
             .value("<mode>search</mode><answer>question</answer>"),
-            .delayed("<sources>S1</sources><answer>Final only</answer>", .milliseconds(80))
+            .gated("<sources>S1</sources><answer>Final only</answer>")
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: [contextSource()]),
@@ -858,14 +854,12 @@ struct AskAIModelTests {
 
         model.draft = "Question"
         model.send()
-        for _ in 0..<200 {
-            if await client.callCount == 2 { break }
-            try await Task.sleep(for: .milliseconds(2))
-        }
+        try await waitForCallCount(client, count: 2)
         #expect(model.messages.last?.state == .generating)
         #expect(model.messages.last?.text.isEmpty == true)
         #expect(model.messages.last?.sources.isEmpty == true)
 
+        await client.release()
         try await waitUntilFinished(model)
         #expect(model.messages.last?.text == "Final only")
     }
@@ -874,7 +868,7 @@ struct AskAIModelTests {
     func databaseChangeDuringRoutingStopsBeforeRetrieval() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
-            .delayed("<mode>search</mode><answer>question</answer>", .milliseconds(80)),
+            .gated("<mode>search</mode><answer>question</answer>"),
             .value("<sources>S1</sources><answer>Wrong database answer.</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
@@ -884,6 +878,7 @@ struct AskAIModelTests {
         model.send()
         try await waitForCallCount(client, count: 1)
         knowledge.selectedAskAIDatabaseId = "db_other"
+        await client.release()
         try await waitUntilFinished(model)
 
         #expect(await client.callCount == 1)
@@ -898,10 +893,7 @@ struct AskAIModelTests {
         let knowledge = AskAIKnowledgeProviderStub(sources: [])
         let client = AskAICompletionStub(responses: [
             .value("<mode>search</mode><answer>unknown topic</answer>"),
-            .delayed(
-                "<answer>different unknown\nunknown subject\nmissing subject</answer>",
-                .milliseconds(80)
-            )
+            .gated("<answer>different unknown\nunknown subject\nmissing subject</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
         await model.load()
@@ -910,6 +902,7 @@ struct AskAIModelTests {
         model.send()
         try await waitForCallCount(client, count: 2)
         knowledge.selectedAskAIDatabaseId = "db_other"
+        await client.release()
         try await waitUntilFinished(model)
 
         #expect(await client.callCount == 2)
@@ -924,7 +917,7 @@ struct AskAIModelTests {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
             .value("<mode>search</mode><answer>question</answer>"),
-            .delayed("<sources>S1</sources><answer>Wrong database answer.</answer>", .milliseconds(80))
+            .gated("<sources>S1</sources><answer>Wrong database answer.</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
         await model.load()
@@ -933,6 +926,7 @@ struct AskAIModelTests {
         model.send()
         try await waitForCallCount(client, count: 2)
         knowledge.selectedAskAIDatabaseId = "db_other"
+        await client.release()
         try await waitUntilFinished(model)
 
         #expect(await client.callCount == 2)
@@ -1604,8 +1598,10 @@ struct AskAIModelTests {
         #expect(model.loadState == .loaded)
     }
 
+    // Polling helpers return as soon as their condition holds; the generous bounds only matter on a
+    // slow CI simulator, where a short bound turns scheduling delay into a spurious failure.
     private func waitUntilFinished(_ model: AskAIModel) async throws {
-        for _ in 0..<400 where model.isGenerating {
+        for _ in 0..<2_000 where model.isGenerating {
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(!model.isGenerating)
@@ -1619,7 +1615,7 @@ struct AskAIModelTests {
     }
 
     private func waitForCallCount(_ client: AskAICompletionStub, count: Int) async throws {
-        for _ in 0..<200 {
+        for _ in 0..<5_000 {
             if await client.callCount == count { return }
             try await Task.sleep(for: .milliseconds(2))
         }
@@ -1840,12 +1836,22 @@ private enum AskAIKnowledgeProviderStubError: Error {
 private actor AskAICompletionStub: AskAICompleting {
     enum Response: Sendable {
         case value(String)
+        /// Effectively never answers within a test; used for timeout and cancellation paths.
         case delayed(String, Duration)
+        /// Answers only after the test calls `release()`, so the test can change state while this
+        /// call is in flight without racing a wall-clock delay on a busy CI simulator.
+        case gated(String)
     }
 
     let responses: [Response]
     private(set) var messages: [String] = []
     private(set) var cancellationCount = 0
+    private var isReleased = false
+
+    /// Lets every pending and future `.gated` response return.
+    func release() {
+        isReleased = true
+    }
 
     init(responses: [Response]) {
         self.responses = responses
@@ -1865,6 +1871,12 @@ private actor AskAICompletionStub: AskAICompleting {
                 return value
             case let .delayed(value, delay):
                 try await Task.sleep(for: delay)
+                return value
+            case let .gated(value):
+                // Task.sleep throws on cancellation, so a cancelled request still unwinds.
+                while !isReleased {
+                    try await Task.sleep(for: .milliseconds(1))
+                }
                 return value
             }
         } catch is CancellationError {
