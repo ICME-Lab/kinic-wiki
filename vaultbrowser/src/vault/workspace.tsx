@@ -1,4 +1,5 @@
 "use client";
+import { PrincipalText } from "@kinic/ui/principal";
 import {
   useCallback,
   useEffect,
@@ -984,7 +985,7 @@ function Workspace({ client }: { client: VaultClient }) {
                   </div>
                   <dl className="vault-account-meta">
                     <dt>Vault principal</dt>
-                    <dd><code>{client.identity.getPrincipal().toText()}</code></dd>
+                    <dd><PrincipalText value={client.identity.getPrincipal().toText()} /></dd>
                   </dl>
                   <div className="vault-disclosure-actions">
                     <VaultButton
@@ -1028,7 +1029,7 @@ function Workspace({ client }: { client: VaultClient }) {
           }}
         />
       {/* Kept outside the keyed VaultSettings so Wiki funding follows the client lifetime. */}
-      <div hidden={nav.view !== "settings"} className="vault-settings"><WikiCreditFunding client={client} onFunded={refreshConfiguration} /></div>
+      <div hidden={nav.view !== "settings"} className="vault-settings"><WikiCreditFunding client={client} onFunded={refreshConfiguration} balance={accountReady ? balance : null} /></div>
       {nav.view === "help" ? <VaultHelp/> : null}
       {nav.view === "not-found" ? <VaultNotFound/> : null}
     </div>

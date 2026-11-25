@@ -201,7 +201,7 @@ function AdminAccountControls() {
 }
 
 function isAdminShellPath(pathname: string): boolean {
-  return pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/metrics" || pathname === "/marketplace" || pathname.startsWith("/marketplace/") || pathname === "/cycles" || pathname === "/profile" || pathname === "/docs" || pathname.startsWith("/docs/");
+  return pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/metrics" || pathname === "/marketplace" || pathname.startsWith("/marketplace/") || pathname === "/cycles" || pathname === "/profile" || pathname === "/vault-credit" || pathname === "/docs" || pathname.startsWith("/docs/");
 }
 
 function isDocsPath(pathname: string): boolean {

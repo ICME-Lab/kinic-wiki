@@ -95,8 +95,8 @@ async function identity() {
   await page.locator("summary").filter({ hasText: "Account & storage" }).click();
   const principal = await page
     .getByRole("region", { name: "Vault account", exact: true })
-    .locator('dl > dt:text-is("Vault principal") + dd > code')
-    .textContent();
+    .locator('dl > dt:text-is("Vault principal") + dd code')
+    .getAttribute("title");
   return { context, page, credentials, principal };
 }
 async function manageMembers(page) {
@@ -141,7 +141,7 @@ try {
   await action(owner.page, "Add member");
   const row = owner.page
     .getByRole("listitem")
-    .filter({ hasText: member.principal });
+    .filter({ has: owner.page.locator(`code[title="${member.principal}"]`) });
   await expect(row.getByLabel("Member role")).toHaveValue("Viewer");
   await action(member.page, "Refresh Vaults");
   await showVaultNavigation(member.page);
