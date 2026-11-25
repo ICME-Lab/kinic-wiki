@@ -299,7 +299,13 @@ it("adds another login to an existing credential and reloads both encrypted logi
   await waitFor(() => expect(screen.getAllByLabelText("Password").map(input => (input as HTMLInputElement).value)).toEqual(["first", "second"]));
   expect(screen.getAllByLabelText("URL (stored as text)").map(input => (input as HTMLInputElement).value)).toEqual(["https://first.test", "https://second.test"]);
   expect(screen.getByLabelText("Credential notes")).toHaveProperty("value", "memo");
-  fireEvent.click(within(screen.getByRole("group", { name: "Login 1" })).getByRole("button", { name: "Remove login" }));
+  const removeFirst = () => fireEvent.click(within(screen.getByRole("group", { name: "Login 1" })).getByRole("button", { name: "Remove login" }));
+  removeFirst();
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Remove this login?" })).getByRole("button", { name: "Cancel" }));
+  expect(screen.getAllByLabelText("Username")).toHaveLength(2);
+  removeFirst();
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Remove this login?" })).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(screen.getAllByLabelText("Username")).toHaveLength(1));
   expect(screen.getByLabelText("Username")).toHaveProperty("value", "bob");
   expect(screen.getByLabelText("Password")).toHaveProperty("type", "password");
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add login" }));
@@ -793,6 +799,8 @@ it("saves credentials as user content and an attachment without extra authentica
   fireEvent.change(screen.getByLabelText("Document type"), {
     target: { value: "credential" },
   });
+  expect(screen.queryByLabelText("Credential notes")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Add notes" }));
   for (const [label, value] of [
     ["Document title", "Login"],
     ["Username", "alice"],
@@ -809,8 +817,8 @@ it("saves credentials as user content and an attachment without extra authentica
       "secret",
     ),
   );
-  await waitFor(() => expect(screen.getByText("Show password")).toHaveProperty("disabled", false));
-  clickAndDiscard(screen.getByText("Show password"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Show password" })).toHaveProperty("disabled", false));
+  clickAndDiscard(screen.getByRole("button", { name: "Show password" }));
   expect(screen.getByLabelText("Password").getAttribute("type")).toBe("text");
   clickAndDiscard(screen.getByRole("button", { name: "New document" }));
   fireEvent.change(screen.getByLabelText("Document type"), {
@@ -2335,4 +2343,27 @@ it("reopens the first owned Vault whose key is saved on this device", async () =
   expect(screen.getByText("Vault 1").closest("button")?.getAttribute("aria-pressed")).toBe("false");
   expect(screen.getByText("Vault 2").closest("button")?.getAttribute("aria-pressed")).toBe("true");
   expect(derive).toHaveBeenCalledTimes(1);
+});
+it("drops blank logins on save and blocks a login with neither username nor password", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Document type"), { target: { value: "credential" } });
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Wi-Fi" } });
+  const saveButton = screen.getByRole("button", { name: "Save document" });
+  expect(saveButton).toHaveProperty("disabled", true);
+  expect(screen.getByText("Enter a username or a password.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("URL (stored as text)"), { target: { value: "https://router.test" } });
+  expect(screen.getByText("Each login needs a username or a password.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "router secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add login" }));
+  expect(screen.getAllByLabelText("Password")).toHaveLength(2);
+  expect(saveButton).toHaveProperty("disabled", false);
+  fireEvent.click(saveButton);
+  await screen.findByText("Saved.");
+  expect(screen.getAllByLabelText("Password")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "New document" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Wi-Fi" }));
+  await waitFor(() => expect(screen.getByLabelText("Password")).toHaveProperty("value", "router secret"));
+  expect(screen.getAllByLabelText("Password")).toHaveLength(1);
+  expect(screen.getByLabelText("Username")).toHaveProperty("value", "");
 });
