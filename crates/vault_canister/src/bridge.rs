@@ -726,6 +726,32 @@ fn ack_credit(caller: Principal, offer: CreditOffer, _now: u64) -> Result<()> {
         )
     })
 }
+/// A refill offer arrives from Wiki without a browser lookup. Preparing it only
+/// reserves capacity for an incoming credit to `offer.vault_owner`.
+fn prepare_auto(caller: Principal, offer: CreditOffer, now: u64) -> Result<CreditReceipt> {
+    prepare(offer.vault_owner, caller, offer, now)
+}
+/// A fresh refill operation ID for `owner`, unique per bridge serial.
+fn auto_operation(owner: Principal, now: u64) -> Result<(Principal, Vec<u8>)> {
+    auth(owner)?;
+    transaction(|db| {
+        let mut s = settings(db)?;
+        enabled(&s)?;
+        s.serial = s.serial.checked_add(1).ok_or(Error::QuotaExceeded)?;
+        save_settings(db, &s)?;
+        let mut hash = Sha256::new();
+        hash.update(b"vault-wiki-auto-topup-v1");
+        hash.update([owner.as_slice().len() as u8]);
+        hash.update(owner.as_slice());
+        hash.update(now.to_be_bytes());
+        hash.update(s.serial.to_be_bytes());
+        Ok((s.config.peer, hash.finalize()[..16].to_vec()))
+    })
+}
+fn bridge_peer() -> Result<Principal> {
+    transaction(|db| settings(db).map(|s| s.config.peer))
+}
+
 #[cfg(test)]
 mod tests;
 

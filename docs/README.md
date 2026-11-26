@@ -65,5 +65,5 @@ because their recorded review/device checks are unresolved.
 - [Protocol](vault/protocol.md) — vetKD derivation, v3 document encryption, mutations, and Wiki embeds
 - [Team access](vault/team-access.md) — Owner/Editor/Viewer roles, shared wire API, and revocation semantics
 - [Accounting and capacity](vault/accounting-capacity.md) — quotas, row bounds, reservations, storage fees, and reconciliation
-- [Operations and trust boundaries](vault/operations.md) — origins, II metadata, browser session/device keys, schema 14 upgrades, and release builds
+- [Operations and trust boundaries](vault/operations.md) — origins, II metadata, browser session/device keys, schema 15 upgrades, and release builds
 - [Validation and local testing](vault/validation.md) — reproducible Rust, PocketIC Wasm, official-ledger, and real-II acceptance commands

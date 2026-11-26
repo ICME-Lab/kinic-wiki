@@ -924,37 +924,63 @@ body {
 /* Credential form */
 .vault-credential {
   display: grid;
-  gap: 16px;
-  max-width: 760px;
+  gap: 8px;
+  max-width: 880px;
+}
+.vault-credential-logins {
+  display: grid;
+  gap: 6px;
 }
 .vault-credential-login {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 16px;
-  min-width: 0;
-}
-.vault-credential-login legend {
-  margin-bottom: 8px;
-  font-weight: 600;
-}
-.vault-credential-wide {
-  grid-column: 1 / -1;
-}
-.vault-password {
-  display: grid;
-  gap: 8px;
-}
-.vault-password-actions {
-  display: flex;
-  flex-wrap: wrap;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) 32px;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
-.vault-password-actions > p {
-  margin: 0 0 0 4px;
+.vault-credential-index {
   color: hsl(var(--muted));
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.vault-credential-login .vault-input {
+  height: 32px;
+  font-size: 13px;
+}
+.vault-password {
+  position: relative;
+  min-width: 0;
+}
+.vault-password .vault-input {
+  padding-right: 60px;
+}
+.vault-password-actions {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  display: flex;
+  gap: 0;
+  transform: translateY(-50%);
+}
+.vault-icon-button {
+  width: 28px;
+  height: 28px;
+  color: hsl(var(--muted));
+}
+.vault-icon-button:hover:not(:disabled) {
+  color: rgb(var(--ink));
+}
+.vault-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+.vault-credential-remove.vault-icon-button:hover:not(:disabled) {
+  color: hsl(var(--destructive));
+}
+.vault-credential-add {
+  justify-self: start;
+  margin-left: 20px;
 }
 
 /* Attachment */
@@ -1262,7 +1288,18 @@ body {
     padding: 12px 14px 14px;
   }
   .vault-credential-login {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgb(var(--line));
+  }
+  .vault-credential-index {
+    display: none;
+  }
+  .vault-credential-url {
+    grid-column: 1 / 3;
+  }
+  .vault-credential-add {
+    margin-left: 0;
   }
   .vault-editor-bar-title {
     flex-basis: 100%;
@@ -1816,15 +1853,44 @@ body {
   text-align: left;
 }
 
-/* Wiki credits, styled as a settings card. */
+/* Wiki credits: one status, one primary action per state. */
 .vault-wiki-credit {
   gap: 12px;
   padding: 16px 20px;
 }
-.vault-wiki-credit > h4 {
+.vault-wiki-credit-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.vault-wiki-credit-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius-sm);
+  background: rgb(var(--paper));
+  color: hsl(var(--muted));
+}
+.vault-wiki-credit-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.vault-wiki-credit-title > h4 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+}
+.vault-wiki-credit-title > span {
+  color: hsl(var(--muted));
+  font-size: 12px;
+}
+.vault-wiki-credit-status {
+  margin-left: auto;
 }
 .vault-wiki-credit-description,
 .vault-wiki-credit-notice {
@@ -1834,15 +1900,18 @@ body {
   font-size: 13px;
   line-height: 1.5;
 }
-.vault-wiki-credit-link {
-  margin: 0;
-  font-size: 13px;
-  overflow-wrap: anywhere;
+.vault-wiki-credit-window {
+  align-items: center;
 }
 .vault-wiki-credit-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
+}
+.vault-wiki-credit-revoke {
+  margin-left: auto;
+  color: hsl(var(--destructive));
 }
 
 /* Note editor toolbar: save status on the left, counts and Revert on the right. */
@@ -1972,4 +2041,30 @@ body {
 }
 .vault-editor-frame > div > div:first-child > p {
   order: 3;
+}
+@media (max-width: 560px) {
+  .vault-wiki-credit-revoke {
+    margin-left: 0;
+  }
+}
+.vault-wiki-credit-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--vault-radius-sm);
+  background: rgb(var(--paper));
+}
+.vault-wiki-credit-balance > dt {
+  color: hsl(var(--muted));
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.vault-wiki-credit-balance > dd {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 15px;
+  font-weight: 600;
 }

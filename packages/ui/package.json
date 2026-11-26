@@ -13,6 +13,7 @@
     "./styles.css": "./src/styles.css",
     "./tailwind-preset": "./tailwind-preset.ts",
     "./status-pill": "./src/status-pill.tsx",
+    "./principal": "./src/principal.tsx",
     "./empty-state": "./src/empty-state.tsx",
     "./cycle-balance": "./src/cycle-balance.tsx",
     "./cycles": "./src/cycles.ts",

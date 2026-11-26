@@ -67,3 +67,25 @@ pub struct CreditReceipt {
     pub offer: CreditOffer,
     pub status: CreditStatus,
 }
+/// A Wiki owner's standing authorization to refill the linked Vault account.
+/// Separate from the frozen v1 tuples: it is set by the Wiki owner and read by both sides.
+#[derive(Clone, Debug, CandidType, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoTopupPolicy {
+    /// The owned Wiki database that pays for refills.
+    pub database_id: String,
+    /// A refill may run only while the Vault balance is below this.
+    pub threshold_cycles: u64,
+    /// Cycles sent per refill.
+    pub amount_cycles: u64,
+    /// The most this policy may send per UTC day.
+    pub daily_limit_cycles: u64,
+    /// The database keeps at least this after a refill and its fee.
+    pub min_database_cycles: u64,
+}
+#[derive(Clone, Debug, CandidType, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoTopupStatus {
+    pub policy: AutoTopupPolicy,
+    pub database_name: String,
+    pub sent_today_cycles: u64,
+    pub last_topup_at_ns: Option<u64>,
+}

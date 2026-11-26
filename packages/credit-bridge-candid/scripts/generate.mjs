@@ -4,8 +4,8 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const selections={
- wiki:['preview_vault_link','approve_vault_link','get_vault_link','revoke_vault_link','quote_vault_transfer','execute_vault_transfer','get_vault_transfer','get_pending_vault_transfer','cancel_vault_transfer','reconcile_vault_transfer'],
- vault:['wiki_link_status','begin_wiki_link','prepare_wiki_credit','revoke_wiki_link'],
+ wiki:['preview_vault_link','approve_vault_link','get_vault_link','revoke_vault_link','quote_vault_transfer','execute_vault_transfer','get_vault_transfer','get_pending_vault_transfer','cancel_vault_transfer','reconcile_vault_transfer','set_vault_auto_topup','get_vault_auto_topup'],
+ vault:['wiki_link_status','begin_wiki_link','prepare_wiki_credit','revoke_wiki_link','request_wiki_auto_topup','wiki_auto_topup_status'],
 };
 for(const [side,methods] of Object.entries(selections)) {
  const did=`${root}crates/${side==='wiki'?'vfs':'vault'}_canister/${side==='wiki'?'vfs':'vault'}.did`;

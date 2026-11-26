@@ -34,23 +34,24 @@ The browser prepares validated certified sign-in configuration alongside AuthCli
 - **Device-key cache**: Verified non-extractable AES-GCM root handles are saved in IndexedDB (separate from II's delegation database) under the canister and authenticated caller, bound to the immutable owner context and public key. Closing, signing out, and idle expiry retain these handles; reopening authenticates and revalidates current access before reuse. A shared member's new key request uses the recorded owner's first-key subsidy (when eligible) or prepaid credit. **Delete saved keys from this browser** removes the caller's handles and advances a shared epoch to fence older views and in-flight writes. Access denial or a changed immutable header evicts the target Vault's handle. Persistence failure falls back to memory (a later paid retrieval may be needed). Plaintext, raw keys, and DEKs must never enter persistent storage, URLs, analytics, or logs. Origin code can use saved handles; signing out does not cryptographically protect them from that origin.
 - **Member management without key retrieval**: Owners can open **Actions for Vault → Manage members** on a Vault card to list and remove grants without opening its root or paying for a key request, including after a key-service failure. Adding or changing a grant remains subject to spending and capacity checks.
 
-## Schema 14 and Upgrades
+## Schema 15 and Upgrades
 
-Fresh installations create **schema 14**. The backend validates and migrates supported historical layouts in place:
+Fresh installations create **schema 15**. The backend validates and migrates supported historical layouts in place:
 
 - owner schemas 8, 9, and 10
 - grant-bearing schema 10
 - team schema 11
 - subsidy schemas 11 and 12
 - combined schema 13
+- schema 14 (expands `global_settings` from 7 to 8 fixed slots to admit `cycles_refill_source`)
 
 Migration retains owner headers, encrypted documents, pending-upload provenance, grants, accounting, subsidy consumption, and mutation receipts. Unknown or hybrid layouts are rejected atomically.
 
 **Rollout and rollback rules:**
 
 1. Upgrade the Vault backend **before** publishing any UI that calls shared, rename, account-initialization, or key-price methods. Existing owner-only clients continue to work.
-2. Earlier binaries cannot reopen a migrated schema 14 store.
-3. Rollback requires a separately validated schema-14-compatible build; **do not reinstall or downgrade the store**.
+2. Earlier binaries cannot reopen a migrated schema 15 store.
+3. Rollback requires a separately validated schema-15-compatible build; **do not reinstall or downgrade the store**.
 4. Retain source and Wasm provenance for every release.
 
 ## Capacity and Cleanup Bounds

@@ -42,6 +42,7 @@ try {
     wasm: oldWasm, cycles: 100_000_000_000_000n });
   vault.actor.setPrincipal(vaultOwner);
   assert.equal(ok(await vault.actor.account_balance()), 0n);
+  await pic.tick(150);
   await pic.upgradeCanister({ sender: admin, canisterId: vault.canisterId,
     wasm: currentWasm, arg: IDL.encode([], []) });
   const actor = pic.createActor(vaultFactory, vault.canisterId);
@@ -85,9 +86,11 @@ try {
   const balance = ok(await actor.account_balance());
   assert.equal(balance, amount);
   // Same-version upgrade preserves both receipt variants and account balance.
+  await pic.tick(150);
   await pic.upgradeCanister({ sender: admin, canisterId: vault.canisterId, wasm: currentWasm, arg: IDL.encode([], []) });
   let downgradeError;
   try {
+    await pic.tick(150);
     await pic.upgradeCanister({ sender: admin, canisterId: vault.canisterId, wasm: oldWasm, arg: IDL.encode([], []) });
   } catch (error) { downgradeError = String(error); }
   assert.ok(downgradeError, 'PR #177 schema9 binary must reject the bridge store');

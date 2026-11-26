@@ -377,11 +377,15 @@ export const idlFactory = ({ IDL }) => {
   });
   const Result_27 = IDL.Variant({ 'Ok' : CreditReceipt, 'Err' : BridgeError });
   const Result_28 = IDL.Variant({ 'Ok' : IDL.Null, 'Err' : Error });
+  const Result_29 = IDL.Variant({
+    'Ok' : IDL.Opt(CreditReceipt),
+    'Err' : BridgeError,
+  });
   const BridgeRevocation = IDL.Record({
     'through_generation' : IDL.Nat64,
     'vault_owner' : IDL.Principal,
   });
-  const Result_29 = IDL.Variant({
+  const Result_30 = IDL.Variant({
     'Ok' : BridgeRevocation,
     'Err' : BridgeError,
   });
@@ -397,14 +401,31 @@ export const idlFactory = ({ IDL }) => {
     'owner_fee' : IDL.Nat64,
     'first_key_free' : IDL.Bool,
   });
-  const Result_30 = IDL.Variant({ 'Ok' : KeyRetrievalCost, 'Err' : Error });
+  const Result_31 = IDL.Variant({ 'Ok' : KeyRetrievalCost, 'Err' : Error });
+  const AutoTopupPolicy = IDL.Record({
+    'daily_limit_cycles' : IDL.Nat64,
+    'threshold_cycles' : IDL.Nat64,
+    'database_id' : IDL.Text,
+    'amount_cycles' : IDL.Nat64,
+    'min_database_cycles' : IDL.Nat64,
+  });
+  const AutoTopupStatus = IDL.Record({
+    'sent_today_cycles' : IDL.Nat64,
+    'last_topup_at_ns' : IDL.Opt(IDL.Nat64),
+    'database_name' : IDL.Text,
+    'policy' : AutoTopupPolicy,
+  });
+  const Result_32 = IDL.Variant({
+    'Ok' : IDL.Opt(AutoTopupStatus),
+    'Err' : BridgeError,
+  });
   const LinkStatus = IDL.Record({
     'wiki_owner' : IDL.Principal,
     'active' : IDL.Bool,
     'generation' : IDL.Nat64,
     'vault_owner' : IDL.Principal,
   });
-  const Result_31 = IDL.Variant({
+  const Result_33 = IDL.Variant({
     'Ok' : IDL.Opt(LinkStatus),
     'Err' : BridgeError,
   });
@@ -492,6 +513,7 @@ export const idlFactory = ({ IDL }) => {
     'mutate' : IDL.Func([Mutation], [Result_26], []),
     'pay_purchase' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_3], []),
     'payment_status' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_4], ['query']),
+    'prepare_wiki_auto_credit' : IDL.Func([CreditOffer], [Result_27], []),
     'prepare_wiki_credit' : IDL.Func([IDL.Vec(IDL.Nat8)], [Result_27], []),
     'quote_purchase' : IDL.Func([PurchaseRequest], [Result_3], []),
     'receive_wiki_credit' : IDL.Func([CreditOffer], [Result_27], []),
@@ -501,7 +523,8 @@ export const idlFactory = ({ IDL }) => {
         [Result_28],
         [],
       ),
-    'revoke_wiki_link' : IDL.Func([], [Result_29], []),
+    'request_wiki_auto_topup' : IDL.Func([], [Result_29], []),
+    'revoke_wiki_link' : IDL.Func([], [Result_30], []),
     'set_config' : IDL.Func([IDL.Opt(VaultConfig)], [Result_28], []),
     'set_cycles_refill_source' : IDL.Func(
         [IDL.Opt(IDL.Principal)],
@@ -548,10 +571,11 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'shared_mutate' : IDL.Func([IDL.Vec(IDL.Nat8), Mutation], [Result_26], []),
-    'vault_key_cost' : IDL.Func([IDL.Opt(IDL.Text)], [Result_30], ['query']),
+    'vault_key_cost' : IDL.Func([IDL.Opt(IDL.Text)], [Result_31], ['query']),
+    'wiki_auto_topup_status' : IDL.Func([], [Result_32], []),
     'wiki_bridge_config' : IDL.Func([], [IDL.Opt(BridgeConfig)], ['query']),
     'wiki_credit_status' : IDL.Func([CreditOffer], [Result_27], []),
-    'wiki_link_status' : IDL.Func([], [Result_31], []),
+    'wiki_link_status' : IDL.Func([], [Result_33], []),
   });
 };
 export const init = ({ IDL }) => { return []; };

@@ -31,7 +31,7 @@ import {
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
-import { emptyLogin, type CredentialLogin } from "./credential";
+import { credentialProblem, emptyLogin, isBlankLogin, type CredentialLogin } from "./credential";
 import { CredentialLoginFields } from "./credential-login-fields";
 import { TotpLiveDisplay } from "./credential-tools";
 import { VaultPortabilityPanel } from "./portability";
@@ -111,6 +111,15 @@ function Documents({
   const [customFields, setCustomFields] = useState<CredentialCustomField[]>([]);
   const [favorite, setFavorite] = useState(false);
   const [tagsText, setTagsText] = useState("");
+  // Focus moves to Add login after the confirm dialog has closed and returned focus.
+  const focusAddLogin = useRef(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesInput = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (!focusAddLogin.current) return;
+    focusAddLogin.current = false;
+    addLoginButton.current?.focus();
+  }, [logins]);
   const [file, setFile] = useState<File>();
   const [editorKey, setEditorKey] = useState(0);
   const [history, setHistory] = useState<{
@@ -146,6 +155,7 @@ function Documents({
     setCustomFields([]);
     setFavorite(false);
     setTagsText("");
+    setNotesOpen(false);
     setFile(undefined);
     setHistory(undefined);
     setProgress(0);
@@ -283,7 +293,7 @@ function Documents({
     }
   });
   const save = () => {
-    if (readOnly || !dirty) return;
+    if (readOnly || !dirty || loginProblem) return;
     run(async () => {
       const g = client.session.capture();
       let plain: Uint8Array | undefined;
@@ -297,7 +307,7 @@ function Documents({
           plain = new Uint8Array(await file.arrayBuffer());
           metadata = { ...metadata, filename: file.name, mime: file.type };
         } else if (kind === "credential") {
-          const [primary = emptyLogin, ...additional] = logins;
+          const [primary = emptyLogin, ...additional] = logins.filter((login) => !isBlankLogin(login));
           const extraUrlList = extraUrls
             .split(/\r?\n/)
             .map((entry) => entry.trim())
@@ -339,6 +349,7 @@ function Documents({
         });
         client.session.check(g);
         confirmed(g, revision, metadata);
+        if (kind === "credential") setLogins(current => current.filter(login => !isBlankLogin(login)));
       } finally {
         plain?.fill(0);
         if (!client.hasPendingSave) pendingMetadata.current = undefined;
@@ -370,6 +381,8 @@ function Documents({
   const readOnly =
     !canEdit || disabled || writesDisabled || pendingSave || !!displayedRevision?.deleted || historical;
   const byteCount = utf8.encode(body).length;
+  const loginProblem = kind === "credential" ? credentialProblem(logins) : undefined;
+  const showNotes = notesOpen || body !== "";
   const kindLabel = (k: Metadata["kind"]) =>
     k === "credential" ? "Login" : k === "attachment" ? "Attachment" : "Note";
   const visibleItems = items.filter(({ metadata }) =>
@@ -735,9 +748,9 @@ function Documents({
                   className="vault-editor-save"
                   aria-label="Save document"
                   aria-busy={saving}
-                  title={saving ? "Saving document…" : saved ? "Document saved" : "Save document"}
+                  title={saving ? "Saving document…" : saved ? "Document saved" : dirty && loginProblem ? loginProblem : "Save document"}
                   disabled={
-                    readOnly || !dirty || (kind === "attachment" && !file)
+                    readOnly || !dirty || (kind === "attachment" && !file) || !!loginProblem
                   }
                   onClick={save}
                 >
@@ -851,42 +864,45 @@ function Documents({
                 </>
               ) : kind === "credential" ? (
                 <div className="vault-credential">
-                  {logins.map(({ id, focusUsername, ...login }, index) => (
-                    <CredentialLoginFields
-                      key={`${editorKey}:${id}`}
-                      client={client}
-                      login={login}
-                      number={index + 1}
-                      focusUsername={focusUsername}
-                      readOnly={readOnly}
-                      disabled={disabled}
-                      onChange={(value) => {
-                        setLogins((current) =>
-                          current.map((entry) =>
-                            entry.id === id ? { ...entry, ...value } : entry,
-                          ),
-                        );
-                        changed();
-                      }}
-                      onRemove={
-                        !historical && logins.length > 1
-                          ? () => {
-                              addLoginButton.current?.focus();
-                              setLogins((current) =>
-                                current.filter((entry) => entry.id !== id),
-                              );
-                              changed();
-                            }
-                          : undefined
-                      }
-                    />
-                  ))}
+                  <div className="vault-credential-logins">
+                    {logins.map(({ id, focusUsername, ...login }, index) => (
+                      <CredentialLoginFields
+                        key={`${editorKey}:${id}`}
+                        client={client}
+                        login={login}
+                        number={index + 1}
+                        focusUsername={focusUsername}
+                        readOnly={readOnly}
+                        disabled={disabled}
+                        onChange={(value) => {
+                          setLogins((current) =>
+                            current.map((entry) =>
+                              entry.id === id ? { ...entry, ...value } : entry,
+                            ),
+                          );
+                          changed();
+                        }}
+                        onRemove={
+                          !historical && logins.length > 1
+                            ? () => {
+                                focusAddLogin.current = true;
+                                setLogins((current) =>
+                                  current.filter((entry) => entry.id !== id),
+                                );
+                                changed();
+                              }
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </div>
                   <div className="vault-inline-actions vault-credential-wide">
                     {!historical ? (
                       <VaultButton
                         ref={addLoginButton}
                         size="sm"
                         tone="ghost"
+                        className="vault-credential-add"
                         disabled={readOnly}
                         onClick={() => {
                           const id = nextLoginId.current++;
@@ -915,6 +931,7 @@ function Documents({
                       {favorite ? "Favorited" : "Favorite"}
                     </VaultButton>
                   </div>
+                  {dirty && loginProblem ? <output className="vault-field-hint vault-credential-wide">{loginProblem}</output> : null}
                   <p className="vault-field-hint vault-credential-wide">
                     The clipboard is not cleared automatically.
                   </p>
@@ -971,18 +988,34 @@ function Documents({
                       changed();
                     }}
                   />
-                  <label className="vault-field vault-credential-wide">
-                    <span>Credential notes</span>
-                    <textarea
-                      className="vault-textarea"
-                      value={body}
-                      disabled={readOnly}
-                      onChange={(e) => {
-                        setBody(e.target.value);
-                        changed();
+                  {showNotes ? (
+                    <label className="vault-field vault-credential-wide">
+                      <span>Credential notes</span>
+                      <textarea
+                        ref={notesInput}
+                        className="vault-textarea"
+                        value={body}
+                        disabled={readOnly}
+                        onChange={(e) => {
+                          setBody(e.target.value);
+                          changed();
+                        }}
+                      />
+                    </label>
+                  ) : !readOnly ? (
+                    <VaultButton
+                      size="sm"
+                      tone="ghost"
+                      className="vault-credential-add vault-credential-wide"
+                      onClick={() => {
+                        setNotesOpen(true);
+                        requestAnimationFrame(() => notesInput.current?.focus());
                       }}
-                    />
-                  </label>
+                    >
+                      <Plus size={14} aria-hidden />
+                      Add notes
+                    </VaultButton>
+                  ) : null}
                 </div>
               ) : (
                 <div className="vault-attachment">
