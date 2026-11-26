@@ -26,7 +26,7 @@ fn version(db: &Connection) -> i64 {
 }
 
 #[test]
-fn integration_all_frozen_predecessors_migrate_and_reopen_at_fourteen() {
+fn integration_all_frozen_predecessors_migrate_and_reopen_at_fifteen() {
     for (v, extra) in [
         (8, &[][..]),
         (9, &[]),
@@ -183,7 +183,39 @@ fn integration_schema_fourteen_with_full_global_settings_migrates_and_admits_cyc
 }
 
 #[test]
-fn integration_team_provenance_and_journal_survive_schema_fourteen() {
+fn integration_damaged_schema_fourteen_is_rejected_atomically() {
+    for damage in [
+        "DROP TRIGGER accounting_global_settings_count",
+        "ALTER TABLE global_settings ADD COLUMN extra TEXT",
+    ] {
+        let db = Connection::open_in_memory().unwrap();
+        schema::legacy_v14_for_test(&db);
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES('config','kept')",
+            [],
+        )
+        .unwrap();
+        db.execute_batch(damage).unwrap();
+        assert_eq!(
+            schema::initialize_vault_schema(&db),
+            Err(Error::Storage),
+            "damaged schema 14: {damage}"
+        );
+        assert_eq!(version(&db), 14);
+        assert_eq!(
+            db.query_row(
+                "SELECT value FROM global_settings WHERE key='config'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "kept"
+        );
+    }
+}
+
+#[test]
+fn integration_team_provenance_and_journal_survive_schema_fifteen() {
     use kinic_sqlite_compat::params;
     use vault_store::{OwnerContext, operations, sharing};
     let db = predecessor(11, &[TEAM]);

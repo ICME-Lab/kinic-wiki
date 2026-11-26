@@ -687,7 +687,7 @@ try {
   assertBilled(recovered);
   assertBilled(stillHealthy);
   assert.ok(recovered.balance < healthy.balance, "failed owner catches up from its unchanged checkpoint");
-  console.log("PASS actual schema14 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
+  console.log("PASS actual schema15 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
 } finally {
   await billing.close();
 }

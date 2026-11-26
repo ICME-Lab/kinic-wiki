@@ -4,11 +4,10 @@ use std::collections::BTreeMap;
 use vault_types::{Error, Result};
 
 const CURRENT_VERSION: i64 = 15;
-const V14_SETTING_SLOTS: usize = 7;
 const CAPACITY: &str = include_str!("sql/capacity-schema-v14.sql");
 const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
 
-// Historical DDL from 3a536a54, dec6eac2 (team) and 41db6180 (grants/subsidies).
+// Historical DDL from 3a536a54, dec6eac2 (team), 41db6180 (grants/subsidies), and 7145d998 (schema 14).
 // Keep these snapshots independent of current schema generators and quota constants.
 const COMMON: &str = include_str!("schema_contracts/common.sql");
 const ACCOUNTS_V8: &str = include_str!("schema_contracts/accounts_v8.sql");
@@ -16,6 +15,7 @@ const ACCOUNTS_V9: &str = include_str!("schema_contracts/accounts_v9.sql");
 const TEAM: &str = include_str!("schema_contracts/team_v11.sql");
 const GRANT: &str = include_str!("schema_contracts/grant_v10.sql");
 const SUBSIDY: &str = include_str!("schema_contracts/subsidy_v11.sql");
+const SCHEMA_V14: &str = include_str!("schema_contracts/schema_v14.sql");
 
 pub(crate) fn initialize_vault_schema(db: &Connection) -> Result<()> {
     db.execute_batch("SAVEPOINT vault_schema_upgrade")
@@ -123,7 +123,7 @@ fn initialize_inner(db: &Connection) -> Result<()> {
             crate::funding::initialize_scan_slots(db)?;
         }
         14 => {
-            validate(&actual, &v14_statements())?;
+            validate(&actual, &split_ddl(SCHEMA_V14))?;
             migrate_global_settings_slots(db)?;
         }
         CURRENT_VERSION => return validate(&actual, &latest),
@@ -199,22 +199,6 @@ fn exclude_existing(db: &Connection) -> Result<()> {
         .map_err(|_| Error::Storage)?;
     }
     Ok(())
-}
-
-fn v14_statements() -> Vec<String> {
-    let current =
-        crate::capacity::global_settings_count_trigger(vault_types::capacity::SETTING_SLOTS);
-    let legacy = crate::capacity::global_settings_count_trigger(V14_SETTING_SLOTS);
-    latest_statements()
-        .into_iter()
-        .map(|stmt| {
-            if stmt == current {
-                legacy.clone()
-            } else {
-                stmt
-            }
-        })
-        .collect()
 }
 
 fn latest_statements() -> Vec<String> {
@@ -330,7 +314,7 @@ pub(crate) fn subsidy_v11_for_test(db: &Connection) {
 }
 #[cfg(test)]
 pub(crate) fn legacy_v14_for_test(db: &Connection) {
-    db.execute_batch(&v14_statements().join("\n")).unwrap();
+    db.execute_batch(SCHEMA_V14).unwrap();
     crate::funding::initialize_scan_slots(db).unwrap();
     db.execute_batch("PRAGMA user_version=14;").unwrap();
 }

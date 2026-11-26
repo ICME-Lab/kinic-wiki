@@ -407,7 +407,7 @@ fn initial_release_rejects_missing_columns_or_guards_without_repair() {
 }
 
 #[test]
-fn initial_release_creates_v14_and_reopens_without_rewriting_data() {
+fn initial_release_creates_v15_and_reopens_without_rewriting_data() {
     use kinic_sqlite_compat::{Connection, params};
     let db = Connection::open_in_memory().unwrap();
     crate::schema::initialize_vault_schema(&db).unwrap();
@@ -1798,7 +1798,7 @@ fn insufficient_execution_credit_does_not_consume_the_first_key_subsidy() {
 }
 
 #[test]
-fn bridge_upgrade_accepts_v8_and_initializes_v14() {
+fn bridge_upgrade_accepts_v8_and_initializes_v15() {
     let db = kinic_sqlite_compat::Connection::open_in_memory().unwrap();
     schema::initialize_legacy_v8(&db);
     db.execute("INSERT INTO accounts(owner,balance_cycles,storage_bytes,storage_charged_at_ms) VALUES('owner',42,7,8)", []).unwrap();
