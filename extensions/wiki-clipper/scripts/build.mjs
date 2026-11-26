@@ -62,6 +62,10 @@ await esbuild.build({
 
 if (staging) {
   await Promise.all([
+    cp(resolve(root, "auth"), resolve(outputRoot, "auth"), {
+      recursive: true,
+      filter: (source) => !source.endsWith(".ts")
+    }),
     cp(resolve(root, "icons"), resolve(outputRoot, "icons"), { recursive: true }),
     cp(resolve(root, "offscreen"), resolve(outputRoot, "offscreen"), { recursive: true }),
     cp(resolve(root, "popup"), resolve(outputRoot, "popup"), {
