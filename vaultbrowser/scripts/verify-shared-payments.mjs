@@ -356,7 +356,8 @@ try {
         await completeLocalLogin(iiURL, await popup, [], true);
         if (app === "Wiki") {
           if (viewport.width === 1280) {
-            const payer = await page.getByRole("group", {name:"Payment source"}).locator("span.font-mono").innerText();
+            // PrincipalText shows a shortened principal and keeps the full value in its title.
+            const payer = await page.getByRole("group", {name:"Payment source"}).locator("code[title]").first().getAttribute("title") ?? "";
             assert.equal(Principal.fromText(payer).toText(), payer);
             assert.notEqual(payer, Principal.anonymous().toText());
             const grant = icp(["canister", "call", "wiki", "grant_database_access",

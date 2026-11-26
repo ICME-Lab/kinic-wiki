@@ -1,3 +1,4 @@
+import { formatPrincipal } from "@kinic/ui/principal";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { VaultClient } from "@kinic/vault-client";
 import type { FundingConfig, Payment, ReconciliationProgress } from "@kinic/vault-candid";
@@ -260,7 +261,7 @@ function VaultPayment({client, onFunded, source, select, session, snapshot, onNe
     {journalId && !selected && !state.summary && <p className="break-all text-sm">Original payment · {journalId}</p>}
     {hasHistory && selected && !state.summary && <p className="break-all text-sm">{paymentStatusLabel(selected)} · {paymentId(selected)}</p>}
     <PaymentForm sources={sources} selectedSource={source} amount={state.summary ? formatKinicExact(state.summary.amountE8s) : journalAmount ?? (hasHistory && selected ? formatKinicExact(selected.request.amount_e8s) : amount)}
-      targetLabel={`Vault prepaid account · ${beneficiary}`} summary={presentation.summary}
+      targetLabel={`Vault prepaid account · ${formatPrincipal(beneficiary)}`} summary={presentation.summary}
       status={{...presentation.status,recoveryActions:actions}} actions={{onSource:select,onAmount:setAmount,locked:busy || state.phase === "ready",
         canPay:enabled && connected && !busy,onPay:() => {
           const summary = state.summary;

@@ -39,7 +39,6 @@ vi.mock("@kinic/ui/editor", () => ({
     />
   ),
 }));
-const credit = vi.hoisted(() => ({ prepare: vi.fn() }));
 vi.mock("../wiki-credit-actor", () => ({
   creditOrigins: () => ({
     wiki: "https://wiki.kinic.xyz",
@@ -56,7 +55,7 @@ vi.mock("../wiki-credit-actor", () => ({
         },
       ],
     }),
-    prepare_wiki_credit: credit.prepare,
+    wiki_auto_topup_status: async () => ({ Ok: [] }),
   }),
 }));
 import { VaultWorkspace } from "./workspace";
@@ -129,7 +128,7 @@ it("keeps account settings separate and deletes a different Vault without switch
   await x.actor.set_vault_member(secondId, guest, { Viewer: null });
   await openVaultSettings("Vault 2", true);
   const settings = screen.getByRole("region", { name: "Vault 2 settings" });
-  const member = (await within(settings).findByText(guest.toText())).closest("li")!;
+  const member = (await within(settings).findByTitle(guest.toText())).closest("li")!;
   fireEvent.click(within(member).getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
   await within(settings).findByText("No additional members.");
@@ -161,7 +160,7 @@ it("removes a member from another Vault while preserving an interrupted save", a
   expect(x.client.hasPendingSave).toBe(true);
 
   await openVaultSettings("Vault 2", true);
-  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  const row = (await screen.findByTitle(guest.toText())).closest("li")!;
   fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
   await screen.findByText("No additional members.");
@@ -299,7 +298,13 @@ it("adds another login to an existing credential and reloads both encrypted logi
   await waitFor(() => expect(screen.getAllByLabelText("Password").map(input => (input as HTMLInputElement).value)).toEqual(["first", "second"]));
   expect(screen.getAllByLabelText("URL (stored as text)").map(input => (input as HTMLInputElement).value)).toEqual(["https://first.test", "https://second.test"]);
   expect(screen.getByLabelText("Credential notes")).toHaveProperty("value", "memo");
-  fireEvent.click(within(screen.getByRole("group", { name: "Login 1" })).getByRole("button", { name: "Remove login" }));
+  const removeFirst = () => fireEvent.click(within(screen.getByRole("group", { name: "Login 1" })).getByRole("button", { name: "Remove login" }));
+  removeFirst();
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Remove this login?" })).getByRole("button", { name: "Cancel" }));
+  expect(screen.getAllByLabelText("Username")).toHaveLength(2);
+  removeFirst();
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Remove this login?" })).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(screen.getAllByLabelText("Username")).toHaveLength(1));
   expect(screen.getByLabelText("Username")).toHaveProperty("value", "bob");
   expect(screen.getByLabelText("Password")).toHaveProperty("type", "password");
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add login" }));
@@ -793,6 +798,8 @@ it("saves credentials as user content and an attachment without extra authentica
   fireEvent.change(screen.getByLabelText("Document type"), {
     target: { value: "credential" },
   });
+  expect(screen.queryByLabelText("Credential notes")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Add notes" }));
   for (const [label, value] of [
     ["Document title", "Login"],
     ["Username", "alice"],
@@ -809,8 +816,8 @@ it("saves credentials as user content and an attachment without extra authentica
       "secret",
     ),
   );
-  await waitFor(() => expect(screen.getByText("Show password")).toHaveProperty("disabled", false));
-  clickAndDiscard(screen.getByText("Show password"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Show password" })).toHaveProperty("disabled", false));
+  clickAndDiscard(screen.getByRole("button", { name: "Show password" }));
   expect(screen.getByLabelText("Password").getAttribute("type")).toBe("text");
   clickAndDiscard(screen.getByRole("button", { name: "New document" }));
   fireEvent.change(screen.getByLabelText("Document type"), {
@@ -1809,13 +1816,11 @@ it.each([false, true])(
     await waitFor(() =>
       expect(
         screen
-          .getByRole("button", { name: "Charge from Wiki credits" })
+          .getByRole("button", { name: "Set up in Wiki" })
           .hasAttribute("disabled"),
       ).toBe(false),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Charge from Wiki credits" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Set up in Wiki" }));
     await waitFor(() => expect(popup.location.replace).toHaveBeenCalled());
     const nonce = new URL(popup.location.replace.mock.calls[0][0]).hash.split(
       "nonce=",
@@ -1831,15 +1836,7 @@ it.each([false, true])(
     if (retained) expect(retained.value).toBe("");
     expect(screen.queryByLabelText("Document title")).toBeNull();
     expect(popup.close).not.toHaveBeenCalled();
-    credit.prepare.mockResolvedValue({
-      Ok: {
-        status: { Prepared: null },
-        offer: {
-          operation: new Uint8Array(16).fill(4),
-          vault_owner: x.client.identity.getPrincipal(),
-        },
-      },
-    });
+    // The authenticated Wiki channel survives the private lock and still answers.
     fireEvent(
       window,
       new MessageEvent("message", {
@@ -1847,7 +1844,7 @@ it.each([false, true])(
         source: popup as unknown as Window,
         data: {
           protocol: "kinic-credit-v1",
-          type: "offer",
+          type: "hello",
           id: "04".repeat(16),
           nonce,
         },
@@ -1855,7 +1852,7 @@ it.each([false, true])(
     );
     await waitFor(() =>
       expect(popup.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "ready" }),
+        expect.objectContaining({ type: "ack" }),
         "https://wiki.kinic.xyz",
       ),
     );
@@ -2119,7 +2116,7 @@ it("lets only the owner add, update, and remove members by Vault principal", asy
     target: { value: guest },
   });
   fireEvent.click(screen.getByRole("button", { name: "Add member" }));
-  const member = await screen.findByText(guest);
+  const member = await screen.findByTitle(guest);
   const row = within(member.closest("li")!);
   fireEvent.change(row.getByLabelText("Member role"), {
     target: { value: "Editor" },
@@ -2136,7 +2133,7 @@ it("lets only the owner add, update, and remove members by Vault principal", asy
   );
   fireEvent.click(row.getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
-  await waitFor(() => expect(screen.queryByText(guest)).toBeNull());
+  await waitFor(() => expect(screen.queryByTitle(guest)).toBeNull());
 });
 
 it("loads subsequent accessible Vault pages and fences a revoked cached context", async () => {
@@ -2174,7 +2171,7 @@ it("lets a cold owner remove a member at zero credit after key service failure w
   expect(screen.queryByLabelText("Document title")).toBeNull();
   x.setBalance(0n);
   await openVaultSettings(undefined, true);
-  const row = (await screen.findByText(guest.toText())).closest("li")!;
+  const row = (await screen.findByTitle(guest.toText())).closest("li")!;
   fireEvent.click(within(row).getByRole("button", { name: "Remove member" }));
   confirmAction("Remove");
   await screen.findByText("No additional members.");
@@ -2205,10 +2202,10 @@ it("discards a late member list when the owner selects a different Vault without
   act(() => x.client.session.lock());
   fireEvent.click(screen.getByRole("button", { name: "Back to Vault" }));
   await openVaultSettings("Vault 2", true);
-  await screen.findByText(b.toText());
+  await screen.findByTitle(b.toText());
   await act(async () => release());
-  expect(screen.queryByText(a.toText())).toBeNull();
-  expect(screen.getByText(b.toText())).toBeTruthy();
+  expect(screen.queryByTitle(a.toText())).toBeNull();
+  expect(screen.getByTitle(b.toText())).toBeTruthy();
   expect(derive).not.toHaveBeenCalled();
 });
 
@@ -2335,4 +2332,27 @@ it("reopens the first owned Vault whose key is saved on this device", async () =
   expect(screen.getByText("Vault 1").closest("button")?.getAttribute("aria-pressed")).toBe("false");
   expect(screen.getByText("Vault 2").closest("button")?.getAttribute("aria-pressed")).toBe("true");
   expect(derive).toHaveBeenCalledTimes(1);
+});
+it("drops blank logins on save and blocks a login with neither username nor password", async () => {
+  const x = await mounted();
+  await x.open();
+  fireEvent.change(screen.getByLabelText("Document type"), { target: { value: "credential" } });
+  fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Wi-Fi" } });
+  const saveButton = screen.getByRole("button", { name: "Save document" });
+  expect(saveButton).toHaveProperty("disabled", true);
+  expect(screen.getByText("Enter a username or a password.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("URL (stored as text)"), { target: { value: "https://router.test" } });
+  expect(screen.getByText("Each login needs a username or a password.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "router secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add login" }));
+  expect(screen.getAllByLabelText("Password")).toHaveLength(2);
+  expect(saveButton).toHaveProperty("disabled", false);
+  fireEvent.click(saveButton);
+  await screen.findByText("Saved.");
+  expect(screen.getAllByLabelText("Password")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "New document" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Wi-Fi" }));
+  await waitFor(() => expect(screen.getByLabelText("Password")).toHaveProperty("value", "router secret"));
+  expect(screen.getAllByLabelText("Password")).toHaveLength(1);
+  expect(screen.getByLabelText("Username")).toHaveProperty("value", "");
 });

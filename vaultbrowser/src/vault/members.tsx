@@ -5,6 +5,7 @@ import type { Header, VaultMember } from "@kinic/vault-client/contracts";
 import { ChevronRight, Users } from "lucide-react";
 import { VaultButton, VaultField } from "./ui";
 import { useConfirm } from "./confirm";
+import { formatPrincipal, PrincipalText } from "@kinic/ui/principal";
 import type { VaultWork } from "./workspace";
 
 function RoleSelect({
@@ -132,7 +133,7 @@ export function VaultMembers({
                 key={member.toText()}
                 className="grid gap-2 rounded-lg border border-line p-3"
               >
-                <code className="break-all text-sm">{member.toText()}</code>
+                <PrincipalText value={member.toText()} className="text-sm" />
                 <div className="flex flex-wrap items-end gap-2">
                   <RoleSelect
                     role={"Editor" in grant ? "Editor" : "Viewer"}
@@ -151,7 +152,7 @@ export function VaultMembers({
                     onClick={() => {
                       void confirm({
                         title: "Remove this member?",
-                        description: `${member.toText()} loses access to this Vault. You can add them again later.`,
+                        description: `${formatPrincipal(member.toText())} loses access to this Vault. You can add them again later.`,
                         confirmLabel: "Remove",
                       }).then((confirmed) => {
                         if (!confirmed) return;

@@ -2,6 +2,34 @@ import type { Principal } from '@icp-sdk/core/principal';
 import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 
+export interface AutoTopupPolicy {
+  /**
+   * The most this policy may send per UTC day.
+   */
+  'daily_limit_cycles' : bigint,
+  /**
+   * A refill may run only while the Vault balance is below this.
+   */
+  'threshold_cycles' : bigint,
+  /**
+   * The owned Wiki database that pays for refills.
+   */
+  'database_id' : string,
+  /**
+   * Cycles sent per refill.
+   */
+  'amount_cycles' : bigint,
+  /**
+   * The database keeps at least this after a refill and its fee.
+   */
+  'min_database_cycles' : bigint,
+}
+export interface AutoTopupStatus {
+  'sent_today_cycles' : bigint,
+  'last_topup_at_ns' : [] | [bigint],
+  'database_name' : string,
+  'policy' : AutoTopupPolicy,
+}
 export type BridgeError = { 'Storage' : null } |
   { 'InvalidInput' : null } |
   { 'Disabled' : null } |
@@ -35,13 +63,15 @@ export type Result_1 = { 'Ok' : LinkStatus } |
   { 'Err' : BridgeError };
 export type Result_21 = { 'Ok' : [] | [VaultTransfer] } |
   { 'Err' : BridgeError };
-export type Result_49 = { 'Ok' : LinkChallenge } |
+export type Result_22 = { 'Ok' : [] | [AutoTopupStatus] } |
   { 'Err' : BridgeError };
 export type Result_5 = { 'Ok' : [] | [LinkStatus] } |
   { 'Err' : BridgeError };
-export type Result_59 = { 'Ok' : null } |
+export type Result_50 = { 'Ok' : LinkChallenge } |
   { 'Err' : BridgeError };
 export type Result_6 = { 'Ok' : VaultTransfer } |
+  { 'Err' : BridgeError };
+export type Result_61 = { 'Ok' : null } |
   { 'Err' : BridgeError };
 export type TransferAmount = { 'All' : null } |
   { 'Exact' : bigint };
@@ -70,15 +100,17 @@ export interface _SERVICE {
     Result_6
   >,
   'get_pending_vault_transfer' : ActorMethod<[[] | [string]], Result_21>,
+  'get_vault_auto_topup' : ActorMethod<[], Result_22>,
   'get_vault_link' : ActorMethod<[], Result_5>,
   'get_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_6>,
-  'preview_vault_link' : ActorMethod<[Uint8Array | number[]], Result_49>,
+  'preview_vault_link' : ActorMethod<[Uint8Array | number[]], Result_50>,
   'quote_vault_transfer' : ActorMethod<
     [string, TransferAmount, Uint8Array | number[]],
     Result_6
   >,
   'reconcile_vault_transfer' : ActorMethod<[Uint8Array | number[]], Result_6>,
-  'revoke_vault_link' : ActorMethod<[], Result_59>,
+  'revoke_vault_link' : ActorMethod<[], Result_61>,
+  'set_vault_auto_topup' : ActorMethod<[[] | [AutoTopupPolicy]], Result_22>,
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];

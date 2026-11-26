@@ -122,3 +122,43 @@ async fn wiki_link_status() -> BridgeResult<Option<LinkStatus>> {
             .map_err(|_| BridgeError::Unavailable)?;
     wire(validate_link_status(caller, status?))
 }
+
+#[ic_cdk::update]
+fn prepare_wiki_auto_credit(offer: CreditOffer) -> BridgeResult<CreditReceipt> {
+    wire(prepare_auto(
+        ic_cdk::api::msg_caller(),
+        offer,
+        crate::now_nanos(),
+    ))
+}
+/// The signed-in owner asks Wiki for one refill under the owner's Wiki policy.
+/// `None` means none was due; `Prepared` means the send is still unresolved.
+#[ic_cdk::update]
+async fn request_wiki_auto_topup() -> BridgeResult<Option<CreditReceipt>> {
+    let caller = ic_cdk::api::msg_caller();
+    let balance = wire(crate::state::State.balance(&caller.to_text()))?;
+    let (peer, operation) = wire(auto_operation(caller, crate::now_nanos()))?;
+    let reply: BridgeResult<Option<CreditReceipt>> =
+        ic_cdk::call::Call::bounded_wait(peer, "request_vault_auto_topup")
+            .with_args(&(caller, operation, balance))
+            .await
+            .map_err(|_| BridgeError::Unavailable)?
+            .candid()
+            .map_err(|_| BridgeError::Unavailable)?;
+    reply
+}
+/// The owner's refill policy as stored by the linked Wiki owner.
+#[ic_cdk::update]
+async fn wiki_auto_topup_status() -> BridgeResult<Option<AutoTopupStatus>> {
+    let caller = ic_cdk::api::msg_caller();
+    wire(auth(caller))?;
+    let peer = wire(bridge_peer())?;
+    let reply: BridgeResult<Option<AutoTopupStatus>> =
+        ic_cdk::call::Call::bounded_wait(peer, "vault_auto_topup_status")
+            .with_arg(caller)
+            .await
+            .map_err(|_| BridgeError::Unavailable)?
+            .candid()
+            .map_err(|_| BridgeError::Unavailable)?;
+    reply
+}

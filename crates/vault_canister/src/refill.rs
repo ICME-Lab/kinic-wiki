@@ -32,6 +32,10 @@ fn configure_source(source: Option<Principal>) -> Result<(), String> {
     {
         return Err("invalid refill source".into());
     }
+    store_source(source)
+}
+
+fn store_source(source: Option<Principal>) -> Result<(), String> {
     crate::state::transaction(|db| {
         if let Some(source) = source {
             db.execute(
@@ -56,8 +60,8 @@ fn cycles_balance_for_wiki() -> RefillResult<u128> {
     balance_for_caller().into()
 }
 
-fn balance_for_caller() -> Result<u128, String> {
-    let source: Option<String> = crate::state::read(|db| {
+fn load_source() -> Result<Option<String>, String> {
+    crate::state::read(|db| {
         db.query_row(
             "SELECT value FROM global_settings WHERE key='cycles_refill_source'",
             params![],
@@ -66,9 +70,52 @@ fn balance_for_caller() -> Result<u128, String> {
         .optional()
         .map_err(|_| vault_types::Error::Storage)
     })
-    .map_err(|e| format!("refill source: {e:?}"))?;
+    .map_err(|e| format!("refill source: {e:?}"))
+}
+
+fn balance_for_caller() -> Result<u128, String> {
+    let source = load_source()?;
     if source.as_deref() != Some(&ic_cdk::api::msg_caller().to_text()) {
         return Err("forbidden".into());
     }
     Ok(ic_cdk::api::canister_cycle_balance())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_source_succeeds_when_all_seven_other_global_settings_are_present() {
+        crate::state::initialize().unwrap();
+        crate::state::transaction(|db| {
+            for key in [
+                "config",
+                "funding",
+                "generation",
+                "quote_fee_serial",
+                "gc-owner",
+                "serial",
+                "bridge",
+            ] {
+                db.execute(
+                    "INSERT INTO global_settings(key,value) VALUES(?1,?2)
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    params![key, format!("seeded:{key}")],
+                )
+                .unwrap();
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        let wiki = Principal::from_slice(&[7; 29]);
+        let next_wiki = Principal::from_slice(&[8; 29]);
+        store_source(Some(wiki)).unwrap();
+        assert_eq!(load_source().unwrap(), Some(wiki.to_text()));
+        store_source(Some(next_wiki)).unwrap();
+        assert_eq!(load_source().unwrap(), Some(next_wiki.to_text()));
+        store_source(None).unwrap();
+        assert_eq!(load_source().unwrap(), None);
+    }
 }

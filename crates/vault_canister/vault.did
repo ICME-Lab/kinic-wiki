@@ -20,6 +20,26 @@ type Action = variant {
   SaveInline : SaveInline;
   BeginRevision : BeginRevision;
 };
+// A Wiki owner's standing authorization to refill the linked Vault account.
+// Separate from the frozen v1 tuples: it is set by the Wiki owner and read by both sides.
+type AutoTopupPolicy = record {
+  // The most this policy may send per UTC day.
+  daily_limit_cycles : nat64;
+  // A refill may run only while the Vault balance is below this.
+  threshold_cycles : nat64;
+  // The owned Wiki database that pays for refills.
+  database_id : text;
+  // Cycles sent per refill.
+  amount_cycles : nat64;
+  // The database keeps at least this after a refill and its fee.
+  min_database_cycles : nat64;
+};
+type AutoTopupStatus = record {
+  sent_today_cycles : nat64;
+  last_topup_at_ns : opt nat64;
+  database_name : text;
+  policy : AutoTopupPolicy;
+};
 type BeginRevision = record {
   object : blob;
   vault : blob;
@@ -265,10 +285,12 @@ type Result_25 = variant { Ok : vec Header; Err : Error };
 type Result_26 = variant { Ok : MutationResult; Err : Error };
 type Result_27 = variant { Ok : CreditReceipt; Err : BridgeError };
 type Result_28 = variant { Ok; Err : Error };
-type Result_29 = variant { Ok : BridgeRevocation; Err : BridgeError };
+type Result_29 = variant { Ok : opt CreditReceipt; Err : BridgeError };
 type Result_3 = variant { Ok : Payment; Err : Error };
-type Result_30 = variant { Ok : KeyRetrievalCost; Err : Error };
-type Result_31 = variant { Ok : opt LinkStatus; Err : BridgeError };
+type Result_30 = variant { Ok : BridgeRevocation; Err : BridgeError };
+type Result_31 = variant { Ok : KeyRetrievalCost; Err : Error };
+type Result_32 = variant { Ok : opt AutoTopupStatus; Err : BridgeError };
+type Result_33 = variant { Ok : opt LinkStatus; Err : BridgeError };
 type Result_4 = variant { Ok : opt Payment; Err : Error };
 type Result_5 = variant { Ok : vec Payment; Err : Error };
 type Result_6 = variant { Ok : ReconciliationProgress; Err : Error };
@@ -377,12 +399,16 @@ service : () -> {
   mutate : (Mutation) -> (Result_26);
   pay_purchase : (blob) -> (Result_3);
   payment_status : (blob) -> (Result_4) query;
+  prepare_wiki_auto_credit : (CreditOffer) -> (Result_27);
   prepare_wiki_credit : (blob) -> (Result_27);
   quote_purchase : (PurchaseRequest) -> (Result_3);
   receive_wiki_credit : (CreditOffer) -> (Result_27);
   reconcile_purchase : (blob) -> (Result_6);
   remove_vault_member : (blob, principal) -> (Result_28);
-  revoke_wiki_link : () -> (Result_29);
+  // The signed-in owner asks Wiki for one refill under the owner's Wiki policy.
+  // `None` means none was due; `Prepared` means the send is still unresolved.
+  request_wiki_auto_topup : () -> (Result_29);
+  revoke_wiki_link : () -> (Result_30);
   set_config : (opt VaultConfig) -> (Result_28);
   set_cycles_refill_source : (opt principal) -> (RefillResult_1);
   set_funding_config : (opt FundingConfig) -> (Result_28);
@@ -397,8 +423,10 @@ service : () -> {
   shared_list_objects : (blob, blob) -> (Result_22);
   shared_list_pending_uploads : (blob, blob) -> (Result_23);
   shared_mutate : (blob, Mutation) -> (Result_26);
-  vault_key_cost : (opt text) -> (Result_30) query;
+  vault_key_cost : (opt text) -> (Result_31) query;
+  // The owner's refill policy as stored by the linked Wiki owner.
+  wiki_auto_topup_status : () -> (Result_32);
   wiki_bridge_config : () -> (opt BridgeConfig) query;
   wiki_credit_status : (CreditOffer) -> (Result_27);
-  wiki_link_status : () -> (Result_31);
+  wiki_link_status : () -> (Result_33);
 }

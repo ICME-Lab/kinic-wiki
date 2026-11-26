@@ -4,7 +4,7 @@ import { VaultCreditClient } from "@/app/vault-credit/vault-credit-client";
 export const Route = createFileRoute("/vault-credit")({
   head: () => ({
     meta: [
-      { title: "Move Wiki credits to Vault" },
+      { title: "Vault auto top-up" },
       { name: "robots", content: "noindex" },
     ],
   }),

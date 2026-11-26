@@ -660,8 +660,8 @@ try {
   ));
   const seeded = await read();
   await billing.upgrade();
-  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "14");
-  assert.deepEqual(await read(), seeded, "schema14 preserves fractional fees and checkpoints");
+  assert.equal(await billing.controls.fixture_read("SELECT CAST(user_version AS TEXT) FROM pragma_user_version"), "15");
+  assert.deepEqual(await read(), seeded, "schema15 preserves fractional fees and checkpoints");
   assert.equal(await billing.controls.fixture_read("SELECT value FROM global_settings WHERE key='serial'"), "9000", "upgrade preserves the never-reused ID serial");
   await billing.controls.fixture_execute(
     `CREATE TRIGGER fixture_fail_owner_billing BEFORE UPDATE OF balance_cycles ON accounts WHEN OLD.owner='${failedOwner}' BEGIN SELECT RAISE(ABORT,'injected owner billing failure'); END;`,
@@ -687,7 +687,7 @@ try {
   assertBilled(recovered);
   assertBilled(stillHealthy);
   assert.ok(recovered.balance < healthy.balance, "failed owner catches up from its unchanged checkpoint");
-  console.log("PASS actual schema14 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
+  console.log("PASS actual schema15 Wasm upgrade preserves remainder/serial; real timer isolates owner Constraint failures and catches up after recovery");
 } finally {
   await billing.close();
 }

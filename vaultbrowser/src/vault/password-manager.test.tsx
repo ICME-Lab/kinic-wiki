@@ -80,6 +80,7 @@ describe("VaultDocuments password manager features", () => {
     fireEvent.click(screen.getByRole("button", { name: "New document" }));
     fireEvent.change(screen.getByLabelText("Document type"), { target: { value: "credential" } });
     fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "New login" } });
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "bob" } });
     fireEvent.click(screen.getByRole("button", { name: "Save document" }));
     await waitFor(() => expect(saved).toHaveLength(2));
     expect((saved[1] as { customFields?: unknown[] }).customFields).toBeUndefined();

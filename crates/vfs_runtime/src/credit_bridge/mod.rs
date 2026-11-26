@@ -62,6 +62,9 @@ struct Link {
     active: bool,
     owner_epoch: u64,
     config_epoch: u64,
+    /// Absent in records written before automatic refills existed.
+    #[serde(default)]
+    auto: Option<auto::AutoState>,
 }
 #[derive(Clone, Debug)]
 pub struct LinkSnapshot {
@@ -367,6 +370,8 @@ pub(crate) fn guard_delete(c: &Connection, db: &str, payer: bool) -> R<()> {
     Ok(())
 }
 
+mod auto;
+pub use auto::{AUTO_TOPUP_INTERVAL_NS, AutoTopupAdmission};
 mod links;
 mod transfers;
 
