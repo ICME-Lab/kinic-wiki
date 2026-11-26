@@ -5,7 +5,8 @@
   "description": "Create Kinic Wiki knowledge pages from the current tab and export ChatGPT, Claude, and Gemini conversations.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs5287sDaurUdgrnxKcx/A5JjcRpUFrxb5qXEvtkiO2STfEVsprr+uUltmecOlbHzt/8n15LxXPOyl3C9S2ZyArZWgUbOy0o3cCTDwLM80KkMj+x0hHGwC5KGAjZqOWnyQsFe6jonlQuTUye70xFodZdDfgU0V7SMjmrCFArIno+8A+3aVdODpcCMSkwiWaAFmCbvXeVFcAn70tcI0rJ/GXgnksU4gqwL6+0S5ZvLvhc7xRLNRjK+j2YXTRxxrGKQJ1ongCgJSgWzzSnJVOJ3t4K7ZosBlCZV6p/qTrY/4V2LC/XACRPctnKgNmD/9rvedIZdCVBMBYrfPOMSbteZeQIDAQAB",
   "action": {
-    "default_title": "Create knowledge page",
+    "default_title": "Kinic Wiki & Vault",
+    "default_popup": "popup/action-popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -47,15 +48,18 @@
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]
     }
   ],
-  "permissions": ["storage", "activeTab", "scripting", "offscreen", "contextMenus"],
+  "permissions": ["storage", "activeTab", "scripting", "offscreen", "contextMenus", "alarms"],
   "host_permissions": [
     "https://wiki.kinic.xyz/*",
+    "https://vault.kinic.xyz/*",
     "https://id.ai/*",
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
     "https://claude.ai/*",
     "https://gemini.google.com/*",
     "https://icp0.io/*",
-    "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io/*"
-  ]
+    "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io/*",
+    "https://mcx4q-2qaaa-aaaao-qqn3a-cai.icp0.io/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
 }

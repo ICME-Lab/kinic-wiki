@@ -136,10 +136,10 @@ test("settings popup clears database on logout and fails closed on auth reset er
   assert.match(popupJs, /value\.sourcePath/);
 });
 
-test("manifest exposes settings as options page without popup", () => {
+test("manifest exposes settings as options page and unified action popup", () => {
   const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.options_page, "popup/popup.html");
-  assert.equal(manifest.action.default_popup, undefined);
+  assert.equal(manifest.action.default_popup, "popup/action-popup.html");
   assert.ok(manifest.permissions.includes("contextMenus"));
   assert.ok(manifest.permissions.includes("scripting"));
   assert.equal(manifest.permissions.includes("tabs"), false);
@@ -157,8 +157,14 @@ test("manifest exposes settings as options page without popup", () => {
   ]);
   assert.deepEqual(
     manifest.content_scripts.map((script) => script.matches),
-    [["https://chatgpt.com/*", "https://chat.openai.com/*"], ["https://claude.ai/*"], ["https://gemini.google.com/*"]]
+    [
+      ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      ["https://claude.ai/*"],
+      ["https://gemini.google.com/*"]
+    ]
   );
+  // Vault autofill runs only after the user grants optional website access.
+  assert.deepEqual(manifest.optional_host_permissions, ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]);
   assert.equal(manifest.icons["128"], "icons/icon-128.png");
   assert.equal(manifest.action.default_icon["128"], "icons/icon-128.png");
 });

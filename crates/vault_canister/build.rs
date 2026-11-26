@@ -55,6 +55,13 @@ fn main() {
     let root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../vaultbrowser/dist");
     println!("cargo:rerun-if-changed={}", root.display());
+    println!("cargo:rerun-if-env-changed=VAULT_LOCAL_EXTENSION_ORIGIN");
+    if env::var_os("VAULT_LOCAL_EXTENSION_ORIGIN").is_some() {
+        assert!(
+            env::var_os("VAULT_LOCAL_ORIGIN").is_some(),
+            "Local extension origin override requires VAULT_LOCAL_ORIGIN"
+        );
+    }
     println!("cargo:rerun-if-env-changed=VAULT_LOCAL_NATIVE_CALLBACK");
     if env::var_os("VAULT_LOCAL_NATIVE_CALLBACK").is_some() {
         assert!(
@@ -121,6 +128,7 @@ fn main() {
             "VAULT_LOCAL_HOST",
             "VAULT_LOCAL_II",
             "VAULT_LOCAL_WIKI_ORIGIN",
+            "VAULT_LOCAL_EXTENSION_ORIGIN",
             "VAULT_LOCAL_NATIVE_CALLBACK",
         ]
         .iter()

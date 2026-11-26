@@ -204,14 +204,42 @@ fn native_callback_entries(callback: &str) -> std::result::Result<Vec<Entry>, ()
     native_callback_entries_for_host(callback, "vault.localhost")
 }
 
-fn ii_well_known_entries(origin: &str) -> Vec<Entry> {
-    vec![
-        entry(
-            HttpCertificationPath::exact(II_ALTERNATIVE_ORIGINS_PATH),
-            serde_json::to_vec(&serde_json::json!({"alternativeOrigins":[origin]})).unwrap(),
-            "application/json",
-            HtmlPolicy::InternetIdentity,
-        ),
+const PRODUCTION_EXTENSION_ORIGIN: &str = "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj";
+
+fn is_valid_chrome_extension_origin(origin: &str) -> bool {
+    let Some(id) = origin.strip_prefix("chrome-extension://") else {
+        return false;
+    };
+    id.len() == 32 && id.bytes().all(|byte| (b'a'..=b'p').contains(&byte))
+}
+
+fn alternative_origins_entry(
+    web_origin: &str,
+    extension_origin: Option<&str>,
+) -> std::result::Result<Entry, ()> {
+    let mut origins = vec![web_origin.to_string()];
+    if let Some(ext) = extension_origin {
+        if !is_valid_chrome_extension_origin(ext) {
+            return Err(());
+        }
+        if !origins.iter().any(|item| item == ext) {
+            origins.push(ext.to_string());
+        }
+    }
+    Ok(entry(
+        HttpCertificationPath::exact(II_ALTERNATIVE_ORIGINS_PATH),
+        serde_json::to_vec(&serde_json::json!({"alternativeOrigins": origins})).unwrap(),
+        "application/json",
+        HtmlPolicy::InternetIdentity,
+    ))
+}
+
+fn ii_well_known_entries(
+    origin: &str,
+    extension_origin: Option<&str>,
+) -> std::result::Result<Vec<Entry>, ()> {
+    Ok(vec![
+        alternative_origins_entry(origin, extension_origin)?,
         entry(
             HttpCertificationPath::exact(II_APP_METADATA_PATH),
             II_APP_METADATA_BODY.as_bytes().to_vec(),
@@ -224,7 +252,7 @@ fn ii_well_known_entries(origin: &str) -> Vec<Entry> {
             "image/png",
             HtmlPolicy::InternetIdentity,
         ),
-    ]
+    ])
 }
 
 fn select_entry<'a>(entries: &'a [Entry], path: &str) -> Option<&'a Entry> {
@@ -314,7 +342,14 @@ pub fn initialize() {
         "application/json",
         HtmlPolicy::Default,
     ));
-    entries.extend(ii_well_known_entries(origin));
+    let extension_origin = if local.is_some() {
+        option_env!("VAULT_LOCAL_EXTENSION_ORIGIN").unwrap_or(PRODUCTION_EXTENSION_ORIGIN)
+    } else {
+        PRODUCTION_EXTENSION_ORIGIN
+    };
+    entries.extend(
+        ii_well_known_entries(origin, Some(extension_origin)).expect("valid II well-known entries"),
+    );
     entries.push(entry(
         HttpCertificationPath::exact("/.well-known/ic-domains".to_string()),
         if local.is_none() {
@@ -408,7 +443,9 @@ mod route_tests {
 
     #[test]
     fn ii_well_known_routes_are_certified_and_cross_origin_readable() {
-        let entries = ii_well_known_entries("https://vault.kinic.xyz");
+        let entries =
+            ii_well_known_entries("https://vault.kinic.xyz", Some(PRODUCTION_EXTENSION_ORIGIN))
+                .unwrap();
         let mut tree = HttpCertificationTree::default();
         for (_, entry, _) in &entries {
             tree.insert(entry);
@@ -416,11 +453,15 @@ mod route_tests {
         let metadata: serde_json::Value = serde_json::from_str(II_APP_METADATA_BODY).unwrap();
         assert_eq!(metadata["name"], "Kinic Vault");
         assert_eq!(metadata["logo"], II_APP_LOGO_PATH);
+        let expected_origins = serde_json::to_vec(&serde_json::json!({
+            "alternativeOrigins": ["https://vault.kinic.xyz", PRODUCTION_EXTENSION_ORIGIN]
+        }))
+        .unwrap();
         for (path, mime, body) in [
             (
                 II_ALTERNATIVE_ORIGINS_PATH,
                 "application/json",
-                br#"{"alternativeOrigins":["https://vault.kinic.xyz"]}"#.as_slice(),
+                expected_origins.as_slice(),
             ),
             (
                 II_APP_METADATA_PATH,
@@ -540,6 +581,43 @@ mod route_tests {
             assert_eq!(get("X-Frame-Options"), xfo.then_some("DENY"), "{path}");
             assert_eq!(get("Cross-Origin-Opener-Policy"), Some(coop), "{path}");
             assert!(tree.witness(entry, path).is_ok(), "{path}");
+        }
+    }
+
+    #[test]
+    fn alternative_origins_include_vault_web_and_extension_with_cors() {
+        let (_, entry, response) =
+            alternative_origins_entry("https://vault.kinic.xyz", Some(PRODUCTION_EXTENSION_ORIGIN))
+                .unwrap();
+        let mut tree = HttpCertificationTree::default();
+        tree.insert(&entry);
+        assert!(
+            tree.witness(&entry, "/.well-known/ii-alternative-origins")
+                .is_ok()
+        );
+        assert!(
+            response
+                .headers()
+                .contains(&("Access-Control-Allow-Origin".into(), "*".into()))
+        );
+        let body: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+        let origins = body["alternativeOrigins"].as_array().unwrap();
+        assert_eq!(
+            origins,
+            &vec![
+                serde_json::json!("https://vault.kinic.xyz"),
+                serde_json::json!(PRODUCTION_EXTENSION_ORIGIN),
+            ]
+        );
+        assert!(origins.len() <= 10);
+        for bad in [
+            "https://evil.example",
+            "chrome-extension://short",
+            "chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "chrome-extension://DLBFFGLCOCNLLLLHJAAPACKOCGKAEGAK",
+            "chrome-extension://dlbffglcocnllllhjaapackocgkaegak/",
+        ] {
+            assert!(alternative_origins_entry("https://vault.kinic.xyz", Some(bad)).is_err());
         }
     }
 }

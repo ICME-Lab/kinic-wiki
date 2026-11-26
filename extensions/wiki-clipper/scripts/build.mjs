@@ -31,10 +31,14 @@ await rm(staging ? outputRoot : dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 await esbuild.build({
   entryPoints: {
-    "service-worker": resolve(root, "src/service-worker.js"),
+    "service-worker": resolve(root, "src/background-entry.js"),
     "content-ui": resolve(root, "src/content-ui.tsx"),
+    "content-autofill": resolve(root, "src/vault/content-autofill.ts"),
     offscreen: resolve(root, "src/offscreen.js"),
-    popup: resolve(root, "popup/popup.js")
+    "offscreen-vault": resolve(root, "src/vault/offscreen.ts"),
+    popup: resolve(root, "popup/popup.js"),
+    "action-popup": resolve(root, "popup/action-popup.ts"),
+    "vault-login": resolve(root, "auth/vault-login.ts")
   },
   outdir: dist,
   bundle: true,
@@ -58,6 +62,10 @@ await esbuild.build({
 
 if (staging) {
   await Promise.all([
+    cp(resolve(root, "auth"), resolve(outputRoot, "auth"), {
+      recursive: true,
+      filter: (source) => !source.endsWith(".ts")
+    }),
     cp(resolve(root, "icons"), resolve(outputRoot, "icons"), { recursive: true }),
     cp(resolve(root, "offscreen"), resolve(outputRoot, "offscreen"), { recursive: true }),
     cp(resolve(root, "popup"), resolve(outputRoot, "popup"), {
