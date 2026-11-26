@@ -26,7 +26,7 @@ fn version(db: &Connection) -> i64 {
 }
 
 #[test]
-fn integration_all_frozen_predecessors_migrate_and_reopen_at_fourteen() {
+fn integration_all_frozen_predecessors_migrate_and_reopen_at_fifteen() {
     for (v, extra) in [
         (8, &[][..]),
         (9, &[]),
@@ -50,7 +50,7 @@ fn integration_all_frozen_predecessors_migrate_and_reopen_at_fourteen() {
                 .unwrap();
         }
         schema::initialize_vault_schema(&db).unwrap();
-        assert_eq!(version(&db), 14, "predecessor {v}");
+        assert_eq!(version(&db), 15, "predecessor {v}");
         assert_eq!(
             db.query_row(
                 "SELECT balance_cycles FROM accounts WHERE owner='before'",
@@ -116,12 +116,106 @@ fn integration_schema_thirteen_reserves_space_only_for_unsettled_payments() {
         stored,
         "01010101010101010101010101010101,02020202020202020202020202020202"
     );
-    assert_eq!(version(&db), 14);
+    assert_eq!(version(&db), 15);
     schema::initialize_vault_schema(&db).unwrap();
 }
 
 #[test]
-fn integration_team_provenance_and_journal_survive_schema_fourteen() {
+fn integration_schema_fourteen_with_full_global_settings_migrates_and_admits_cycles_refill_source()
+{
+    use kinic_sqlite_compat::params;
+    let db = Connection::open_in_memory().unwrap();
+    schema::legacy_v14_for_test(&db);
+    let legacy_keys = [
+        "config",
+        "funding",
+        "generation",
+        "quote_fee_serial",
+        "gc-owner",
+        "serial",
+        "bridge",
+    ];
+    for key in legacy_keys {
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES(?1,?2)",
+            params![key, format!("val:{key}")],
+        )
+        .unwrap();
+    }
+    assert!(
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES('cycles_refill_source','6emaw-iyaaa-aaaay-aacka-cai')",
+            params![],
+        )
+        .is_err(),
+        "schema 14 rejects the eighth global setting slot"
+    );
+
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(version(&db), 15);
+    for key in legacy_keys {
+        let value: String = db
+            .query_row(
+                "SELECT value FROM global_settings WHERE key=?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, format!("val:{key}"));
+    }
+    db.execute(
+        "INSERT INTO global_settings(key,value) VALUES('cycles_refill_source','6emaw-iyaaa-aaaay-aacka-cai')
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![],
+    )
+    .unwrap();
+    assert!(
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES('ninth','x')",
+            params![],
+        )
+        .is_err(),
+        "schema 15 still bounds global_settings at eight slots"
+    );
+    let changes = db.total_changes();
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(db.total_changes(), changes);
+}
+
+#[test]
+fn integration_damaged_schema_fourteen_is_rejected_atomically() {
+    for damage in [
+        "DROP TRIGGER accounting_global_settings_count",
+        "ALTER TABLE global_settings ADD COLUMN extra TEXT",
+    ] {
+        let db = Connection::open_in_memory().unwrap();
+        schema::legacy_v14_for_test(&db);
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES('config','kept')",
+            [],
+        )
+        .unwrap();
+        db.execute_batch(damage).unwrap();
+        assert_eq!(
+            schema::initialize_vault_schema(&db),
+            Err(Error::Storage),
+            "damaged schema 14: {damage}"
+        );
+        assert_eq!(version(&db), 14);
+        assert_eq!(
+            db.query_row(
+                "SELECT value FROM global_settings WHERE key='config'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "kept"
+        );
+    }
+}
+
+#[test]
+fn integration_team_provenance_and_journal_survive_schema_fifteen() {
     use kinic_sqlite_compat::params;
     use vault_store::{OwnerContext, operations, sharing};
     let db = predecessor(11, &[TEAM]);

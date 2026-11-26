@@ -32,7 +32,7 @@ pnpm --dir packages/payments typecheck
 pnpm --dir vaultbrowser typecheck
 ```
 
-Native Rust tests include contract migrations validating all supported predecessor layouts (owner schemas 8/9/10, grant-bearing 10, team 11, subsidy 11/12, and combined 13) up to schema 14, rejecting unknown or hybrid layouts atomically.
+Native Rust tests include contract migrations validating all supported predecessor layouts (owner schemas 8/9/10, grant-bearing 10, team 11, subsidy 11/12, combined 13, and 14) up to schema 15, rejecting unknown or hybrid layouts atomically.
 
 ## PocketIC Wasm and Official-Ledger Acceptance
 

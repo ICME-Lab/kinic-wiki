@@ -15,7 +15,7 @@ Kinic Vault is an end-to-end encrypted document store built as a standalone Inte
 | Component | Path | Purpose |
 | --- | --- | --- |
 | Wire contract | [`crates/vault_canister/vault.did`](../../crates/vault_canister/vault.did) | Authoritative Candid API for owner, shared, funding, and controller methods |
-| Canister | [`crates/vault_canister/`](../../crates/vault_canister/) | IC canister (`vault-canister`): vetKD derivation, certified HTTP/assets, ICRC-2 KINIC funding, reconciliation, Wiki credit bridge, schema 14 migrations |
+| Canister | [`crates/vault_canister/`](../../crates/vault_canister/) | IC canister (`vault-canister`): vetKD derivation, certified HTTP/assets, ICRC-2 KINIC funding, reconciliation, Wiki credit bridge, schema 15 migrations |
 | Domain service | [`crates/vault_service/`](../../crates/vault_service/) | Replayable mutation engine, operation/upload receipts, sharing authorization, and bounded cleanup |
 | SQLite store | [`crates/vault_store/`](../../crates/vault_store/) | SQLite VFS persistence for Vault headers, encrypted revisions/chunks, grants, and capacity triggers |
 | Shared Rust types | [`crates/vault_types/`](../../crates/vault_types/) | Candid-compatible Rust request, response, error, and capacity types |
@@ -34,7 +34,7 @@ Kinic Vault is an end-to-end encrypted document store built as a standalone Inte
 | [Protocol](protocol.md) | vetKD key derivation, AES-GCM v3 document format, mutation replay/upload reconciliation, deletion/GC, and Wiki `/pick` + `/embed` contracts |
 | [Team access](team-access.md) | Owner/Editor/Viewer roles, member management workflow, shared wire methods, billing attribution, and revocation semantics |
 | [Accounting and capacity](accounting-capacity.md) | Owner storage quotas, row bounds, prepaid accounts, upload reservations, cleanup credits, emergency key slots, storage fee math, and ledger reconciliation |
-| [Operations and trust boundaries](operations.md) | Origin/II metadata setup, trust boundaries, browser session and device-key lifecycle, schema 14 upgrade/rollback rules, production KINIC funding, and release builds |
+| [Operations and trust boundaries](operations.md) | Origin/II metadata setup, trust boundaries, browser session and device-key lifecycle, schema 15 upgrade/rollback rules, production KINIC funding, and release builds |
 | [Validation and local testing](validation.md) | Reproducible unit, boundary, PocketIC Wasm, official-ledger, and real-II browser acceptance commands |
 | [Vault Browser guide](../../vaultbrowser/README.md) | Web workspace UX, SPA routes, draft protection, device keys, and frontend fixture verification |
 | [Wiki-to-Vault cycle refill](../operations/bekko-refill.md#vault-setup) | Controller runbook for configuring optional automated execution-cycle refills from Wiki to Vault |

@@ -26,11 +26,11 @@ pub const KEY_CONTROL_ROWS: usize = 64;
 pub const KEY_CONTROL_OWNER_ROWS: usize = 16;
 pub const KEY_CONTROL_ROW: usize = 2048;
 pub const KEY_CONTROL_RESULT: usize = 1024;
-pub const SETTINGS: usize = 64 * 1024;
-pub const SETTING_SLOTS: usize = 7;
+pub const SETTINGS: usize = 72 * 1024;
+pub const SETTING_SLOTS: usize = 8;
 pub const SETTING_ROW: usize = 8192;
 pub const BILLING_CURSOR_ROW: usize = 512;
-/// Fixed global keys, including the bridge configuration and monotonic challenge serial.
+/// Fixed global keys, including bridge configuration, challenge serial, and cycle refill source.
 pub const GLOBAL_SETTING_KEYS: &[&str] = &[
     "config",
     "funding",
@@ -39,6 +39,7 @@ pub const GLOBAL_SETTING_KEYS: &[&str] = &[
     "gc-owner",
     "serial",
     "bridge",
+    "cycles_refill_source",
 ];
 pub const PRINCIPAL_TEXT: usize = 63;
 pub const TOKEN: usize = 128;
@@ -61,10 +62,10 @@ fn historical_pool_and_retained_row_sizes_fit() {
         + KEY_ROWS * KEY_ROW
         + CLEANUP_RECEIPTS * CLEANUP_ROW
         + KEY_CONTROL_ROWS * KEY_CONTROL_ROW;
-    assert_eq!(total, 19_120_128);
+    assert_eq!(total, 19_128_320);
     const { assert!(SETTING_SLOTS * SETTING_ROW + BILLING_CURSOR_ROW <= SETTINGS) };
     assert!(GLOBAL_SETTING_KEYS.len() <= SETTING_SLOTS);
-    assert_eq!(ACCOUNTING_POOL as usize - total, 802_816);
+    assert_eq!(ACCOUNTING_POOL as usize - total, 794_624);
     assert!(row_size(&[29, 16, 32, KEY_CONTROL_RESULT], 4).unwrap() <= KEY_CONTROL_ROW);
     assert!(
         KEY_OWNER_ROWS as u64 * KEY_OWNER_CHARGE

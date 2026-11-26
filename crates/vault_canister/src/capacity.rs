@@ -33,6 +33,11 @@ fn count_guard(
 ) {
     statements.push(format!("CREATE TRIGGER IF NOT EXISTS accounting_{table}_count BEFORE INSERT ON {table} WHEN NOT EXISTS(SELECT 1 FROM {table} WHERE {key}) AND (SELECT count(*) FROM {table})>={limit} {exception} BEGIN SELECT RAISE(ABORT,'accounting count capacity'); END;"));
 }
+pub(crate) fn global_settings_count_trigger(limit: usize) -> String {
+    let mut statements = Vec::with_capacity(1);
+    count_guard(&mut statements, "global_settings", "key=NEW.key", limit, "");
+    statements.pop().expect("global_settings count trigger")
+}
 pub(crate) fn schema_statements() -> Vec<String> {
     let mut statements = Vec::new();
     guard(
@@ -86,7 +91,7 @@ pub(crate) fn schema_statements() -> Vec<String> {
             "OR length(CAST(NEW.owner AS BLOB))>{PRINCIPAL_TEXT} OR length(CAST(NEW.kind AS BLOB))>{KIND} OR length(NEW.operation)>16"
         ),
     );
-    // Seven fixed global setting slots plus the billing cursor fit the prepaid pool.
+    // Eight fixed global setting slots plus the billing cursor fit the prepaid pool.
     guard(
         &mut statements,
         "global_settings",
@@ -95,13 +100,7 @@ pub(crate) fn schema_statements() -> Vec<String> {
         SETTING_ROW,
         "",
     );
-    count_guard(
-        &mut statements,
-        "global_settings",
-        "key=NEW.key",
-        SETTING_SLOTS,
-        "",
-    );
+    statements.push(global_settings_count_trigger(SETTING_SLOTS));
     guard(
         &mut statements,
         "vault_storage_billing_state",
