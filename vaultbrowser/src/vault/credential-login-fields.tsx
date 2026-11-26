@@ -1,8 +1,14 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Eye, EyeOff, Trash2 } from "lucide-react";
+import type { VaultClient } from "@kinic/vault-client";
 import { CopyPasswordButton } from "../copy-button";
 import { useConfirm } from "./confirm";
 import { type CredentialLogin } from "./credential";
+import {
+  CopyValueButton,
+  PasswordGeneratorPanel,
+  PasswordStrengthBadge,
+} from "./credential-tools";
 import { VaultButton, VaultField } from "./ui";
 
 /**
@@ -11,8 +17,9 @@ import { VaultButton, VaultField } from "./ui";
  * placeholders carry them visually so many logins fit on one screen.
  */
 export function CredentialLoginFields({
-  login, number, focusUsername, readOnly, disabled, onChange, onRemove,
+  client, login, number, focusUsername, readOnly, disabled, onChange, onRemove,
 }: {
+  client?: VaultClient;
   login: CredentialLogin;
   number: number;
   focusUsername?: boolean;
@@ -37,15 +44,24 @@ export function CredentialLoginFields({
     <fieldset className="vault-credential-login">
       <legend className="sr-only">Login {number}</legend>
       <span className="vault-credential-index" aria-hidden>{number}</span>
-      <VaultField
-        ref={usernameInput}
-        label="Username"
-        labelHidden
-        placeholder="Username"
-        value={login.username}
-        disabled={readOnly}
-        onChange={(e) => onChange({ ...login, username: e.target.value })}
-      />
+      <div className="vault-credential-row">
+        <VaultField
+          ref={usernameInput}
+          label="Username"
+          labelHidden
+          placeholder="Username"
+          value={login.username}
+          disabled={readOnly}
+          onChange={(e) => onChange({ ...login, username: e.target.value })}
+        />
+        <div className="vault-inline-actions">
+          <CopyValueButton
+            value={login.username}
+            label="Copy username"
+            disabled={disabled}
+          />
+        </div>
+      </div>
       <div className="vault-password">
         <VaultField
           label="Password"
@@ -70,7 +86,15 @@ export function CredentialLoginFields({
             {reveal ? <EyeOff aria-hidden /> : <Eye aria-hidden />}
           </VaultButton>
           <CopyPasswordButton value={login.password} disabled={disabled} />
+          <PasswordStrengthBadge password={login.password} />
         </div>
+        {client ? (
+          <PasswordGeneratorPanel
+            client={client}
+            disabled={readOnly}
+            onUse={(generated) => onChange({ ...login, password: generated })}
+          />
+        ) : null}
       </div>
       <VaultField
         fieldClassName="vault-credential-url"

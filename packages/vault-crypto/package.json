@@ -6,7 +6,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./documents": "./src/documents-v3.ts",
-    "./context": "./src/context.ts"
+    "./context": "./src/context.ts",
+    "./credential": "./src/credential.ts",
+    "./totp": "./src/totp.ts",
+    "./password": "./src/password-generator.ts",
+    "./portability": "./src/portability.ts"
   },
   "dependencies": {
     "@icp-sdk/core": "5.4.0",

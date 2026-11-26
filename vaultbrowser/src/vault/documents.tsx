@@ -1,30 +1,48 @@
 import { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
+  ArrowLeftRight,
   Check,
   Download,
   Eye,
   FileKey2,
   FileText,
   History,
+  KeyRound,
   LoaderCircle,
   Paperclip,
   Plus,
   Save,
+  Search,
+  Star,
   Upload,
 } from "lucide-react";
 import { bytes, type Item, type VaultClient } from "@kinic/vault-client";
 import { utf8 } from "@kinic/vault-crypto";
+import {
+  type CredentialCustomField,
+  buildCredentialMetadata,
+  extractDomains,
+  matchesMetadataQuery,
+  parseCredential,
+  parseTagsInput,
+  serializeCredential,
+  truncateMetadataText,
+} from "@kinic/vault-crypto/credential";
 import { b64, type Metadata } from "@kinic/vault-crypto/documents";
 import type { Revision } from "@kinic/vault-client/contracts";
 import { MarkdownEditor } from "@kinic/ui/editor";
-import { credentialProblem, emptyLogin, isBlankLogin, parseCredential, serializeCredential, type CredentialLogin } from "./credential";
+import { credentialProblem, emptyLogin, isBlankLogin, type CredentialLogin } from "./credential";
 import { CredentialLoginFields } from "./credential-login-fields";
+import { TotpLiveDisplay } from "./credential-tools";
+import { VaultPortabilityPanel } from "./portability";
 import { VaultPreview } from "./preview";
 import { VaultReadOnly } from "./read-only";
 import { DocumentActions } from "./document-actions";
 import { DraftGuardProvider, useDirtyDraft, useDraftGuard } from "../draft-guard";
 import { VaultButton, VaultField, VaultPanel } from "./ui";
 import type { VaultWork } from "./workspace";
+
+type CategoryFilter = "all" | "favorites" | "credential" | "note" | "attachment";
 function Documents({
   client,
   items,
@@ -50,17 +68,30 @@ function Documents({
     (wipe: () => void) => client.session.addLockCleanup(wipe),
     [client],
   );
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<CategoryFilter>("all");
+  const [portabilityOpen, setPortabilityOpen] = useState(false);
+  const [importPending, setImportPending] = useState(false);
+  const closePortability = useCallback(() => setPortabilityOpen(false), []);
   const [saving, setSaving] = useState(false);
   const [noteView, setNoteView] = useState<"edit" | "preview">("edit");
   const titleInput = useRef<HTMLInputElement>(null);
   const [saveStatus, setSaveStatus] = useState<"saved" | "renamed">();
   const pendingRename = useRef<Item | undefined>(undefined);
+  const pendingMetadata = useRef<Metadata | undefined>(undefined);
   useLayoutEffect(() => {
     const detach = client.session.addLockCleanup(() => {
+      setSearchOpen(false);
+      setQuery("");
+      setCategory("all");
+      setPortabilityOpen(false);
+      setImportPending(false);
       setSaving(false);
       setNoteView("edit");
       setSaveStatus(undefined);
       pendingRename.current = undefined;
+      pendingMetadata.current = undefined;
     });
     return () => { detach(); };
   }, [client]);
@@ -75,6 +106,11 @@ function Documents({
   const nextLoginId = useRef(1);
   const addLoginButton = useRef<HTMLButtonElement>(null);
   const [logins, setLogins] = useState<(CredentialLogin & { id: number; focusUsername?: boolean })[]>([{ ...emptyLogin, id: 0 }]);
+  const [extraUrls, setExtraUrls] = useState("");
+  const [totp, setTotp] = useState("");
+  const [customFields, setCustomFields] = useState<CredentialCustomField[]>([]);
+  const [favorite, setFavorite] = useState(false);
+  const [tagsText, setTagsText] = useState("");
   // Focus moves to Add login after the confirm dialog has closed and returned focus.
   const focusAddLogin = useRef(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -114,6 +150,11 @@ function Documents({
     setBody("");
     setSavedBody("");
     setLogins([{ ...emptyLogin, id: 0 }]);
+    setExtraUrls("");
+    setTotp("");
+    setCustomFields([]);
+    setFavorite(false);
+    setTagsText("");
     setNotesOpen(false);
     setFile(undefined);
     setHistory(undefined);
@@ -147,7 +188,7 @@ function Documents({
       client.session.check(g);
       if (editorEpoch.current !== epoch) return;
       const text = new TextDecoder().decode(doc.plaintext);
-      const credential = doc.metadata.kind === "credential" ? parseCredential(text) : undefined;
+      const record = doc.metadata.kind === "credential" ? parseCredential(text) : undefined;
       reset();
       setCurrent(item);
       setViewedRevision(revision);
@@ -155,12 +196,28 @@ function Documents({
       setHistory(retainedHistory);
       setTitle(doc.metadata.title);
       setKind(doc.metadata.kind);
-      if (credential) {
-        setLogins(credential.logins.map(login => ({ ...login, id: nextLoginId.current++ })));
-        setBody(credential.notes);
+      if (record) {
+        const parsedLogins: CredentialLogin[] = [
+          { username: record.username, password: record.password, url: record.URL },
+          ...(record.additionalLogins ?? []).map((entry) => ({
+            username: entry.username,
+            password: entry.password,
+            url: entry.URL,
+          })),
+        ];
+        setLogins(parsedLogins.map((login) => ({ ...login, id: nextLoginId.current++ })));
+        const others = record.urls.filter((entry) => entry !== record.URL);
+        setExtraUrls(others.join("\n"));
+        setTotp(record.totp);
+        setCustomFields(record.customFields);
+        setBody(record.notes);
+        setFavorite(record.favorite || doc.metadata.favorite === true);
+        setTagsText((record.tags.length ? record.tags : doc.metadata.tags ?? []).join(", "));
       } else if (doc.metadata.kind === "note") {
         setBody(text);
         setSavedBody(text);
+        setFavorite(doc.metadata.favorite === true);
+        setTagsText((doc.metadata.tags ?? []).join(", "));
       }
     } finally {
       doc.plaintext.fill(0);
@@ -242,20 +299,50 @@ function Documents({
       let plain: Uint8Array | undefined;
       setSaving(true);
       try {
-        let metadata: Metadata = { kind, title };
+        const documentTitle = truncateMetadataText(title, 512);
+        let metadata: Metadata = { kind, title: documentTitle };
+        const parsedTags = parseTagsInput(tagsText);
         if (kind === "attachment") {
           if (!file || file.size > 10 * 1024 * 1024) throw Error("SizeLimit");
           plain = new Uint8Array(await file.arrayBuffer());
           metadata = { ...metadata, filename: file.name, mime: file.type };
+        } else if (kind === "credential") {
+          const [primary = emptyLogin, ...additional] = logins.filter((login) => !isBlankLogin(login));
+          const extraUrlList = extraUrls
+            .split(/\r?\n/)
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+          const credentialPayload = {
+            label: documentTitle,
+            username: primary.username,
+            password: primary.password,
+            URL: primary.url,
+            urls: [primary.url, ...extraUrlList].filter(Boolean),
+            additionalLogins: additional.map(({ username, password, url }) => ({
+              username,
+              password,
+              URL: url,
+            })),
+            totp: totp.trim(),
+            customFields,
+            notes: body,
+            favorite,
+            tags: parsedTags,
+          };
+          metadata = buildCredentialMetadata(documentTitle, credentialPayload);
+          plain = utf8.encode(serializeCredential(credentialPayload));
         } else {
-          plain = utf8.encode(
-            kind === "credential"
-              ? serializeCredential(title, logins.filter(login => !isBlankLogin(login)), body)
-              : body,
-          );
-          if (plain.length > 256 * 1024) throw Error("SizeLimit");
+          metadata = {
+            kind: "note",
+            title: documentTitle,
+            ...(favorite ? { favorite: true } : {}),
+            ...(parsedTags.length > 0 ? { tags: parsedTags } : {}),
+          };
+          plain = utf8.encode(body);
         }
+        if (kind !== "attachment" && plain.length > 256 * 1024) throw Error("SizeLimit");
         client.session.check(g);
+        pendingMetadata.current = metadata;
         const revision = await client.save(metadata, plain, current, (n) => {
           client.session.check(g);
           setProgress(n);
@@ -265,6 +352,7 @@ function Documents({
         if (kind === "credential") setLogins(current => current.filter(login => !isBlankLogin(login)));
       } finally {
         plain?.fill(0);
+        if (!client.hasPendingSave) pendingMetadata.current = undefined;
         setSaving(false);
       }
     });
@@ -296,7 +384,16 @@ function Documents({
   const loginProblem = kind === "credential" ? credentialProblem(logins) : undefined;
   const showNotes = notesOpen || body !== "";
   const kindLabel = (k: Metadata["kind"]) =>
-    k === "credential" ? "Credential" : k === "attachment" ? "Attachment" : "Note";
+    k === "credential" ? "Login" : k === "attachment" ? "Attachment" : "Note";
+  const visibleItems = items.filter(({ metadata }) =>
+    (category === "all" ||
+      (category === "favorites" ? metadata.favorite === true : metadata.kind === category)) &&
+    matchesMetadataQuery(metadata, query)
+  );
+  const extractedDomains = extractDomains([
+    ...logins.map((entry) => entry.url),
+    ...extraUrls.split(/\r?\n/),
+  ]);
   return (
     <VaultPanel label="Private documents" sensitive className="vault-documents">
       {saveStatus === "renamed" ? (
@@ -305,7 +402,19 @@ function Documents({
       <output className="sr-only" aria-live="polite">
         {saving ? "Saving document…" : saved ? "Saved." : ""}
       </output>
-      {canEdit && pendingSave ? (
+      {canEdit && portabilityOpen ? (
+        <VaultPortabilityPanel
+          client={client}
+          items={items}
+          disabled={disabled || (pendingSave && !importPending)}
+          writesDisabled={writesDisabled}
+          run={run}
+          onPendingSaveChange={setImportPending}
+          onClose={closePortability}
+          refresh={refresh}
+        />
+      ) : null}
+      {canEdit && pendingSave && !importPending ? (
         <div className="vault-notice vault-notice--warn vault-pending-save">
           <output>
             {disabled
@@ -328,10 +437,13 @@ function Documents({
                       setProgress(n);
                     });
                     if (renamed) finishRename(ticket, renamed, revision);
-                    else confirmed(ticket, revision);
+                    else confirmed(ticket, revision, pendingMetadata.current);
                   } finally {
                     setSaving(false);
-                    if (!client.hasPendingSave) pendingRename.current = undefined;
+                    if (!client.hasPendingSave) {
+                      pendingRename.current = undefined;
+                      pendingMetadata.current = undefined;
+                    }
                   }
                 })
               }
@@ -353,7 +465,7 @@ function Documents({
                     if (!revision) throw Error("InvalidReceipt");
                     if (renamed) finishRename(ticket, renamed, revision);
                     else {
-                      onCommitted({ revision, metadata: editorMetadata() });
+                      onCommitted({ revision, metadata: pendingMetadata.current ?? editorMetadata() });
                       reset();
                       setSaveStatus("saved");
                     }
@@ -361,6 +473,7 @@ function Documents({
                     setProgress(0);
                     await refresh();
                   }
+                  pendingMetadata.current = undefined;
                 })
               }
             >
@@ -371,22 +484,93 @@ function Documents({
       ) : null}
       <div className="vault-document-grid">
         <div className="vault-document-list">
-          {canEdit ? (
-            <div className="vault-list-actions">
-              <VaultButton
-                tone="primary"
-                size="icon"
-                aria-label="New document"
-                title="New document"
-                disabled={disabled || pendingSave}
-                onClick={() => guard.protect(startNewDocument)}
+          <div className="vault-list-actions">
+            <VaultButton
+              tone="ghost"
+              size="icon"
+              aria-label="Search and filter documents"
+              title="Search and filter documents"
+              aria-expanded={searchOpen}
+              disabled={disabled}
+              onClick={() => {
+                setSearchOpen(!searchOpen);
+                if (searchOpen) {
+                  setQuery("");
+                  setCategory("all");
+                }
+              }}
+            >
+              <Search size={16} aria-hidden />
+            </VaultButton>
+            {canEdit ? (
+              <>
+                <VaultButton
+                  tone="ghost"
+                  size="icon"
+                  aria-label="Import / Export"
+                  title="Import / Export"
+                  aria-expanded={portabilityOpen}
+                  disabled={disabled || pendingSave}
+                  onClick={() => setPortabilityOpen((open) => !open)}
+                >
+                  <ArrowLeftRight size={16} aria-hidden />
+                </VaultButton>
+                <VaultButton
+                  tone="primary"
+                  size="icon"
+                  aria-label="New document"
+                  title="New document"
+                  disabled={disabled || pendingSave}
+                  onClick={() => guard.protect(startNewDocument)}
+                >
+                  <Plus size={16} aria-hidden />
+                </VaultButton>
+              </>
+            ) : null}
+          </div>
+          {searchOpen ? (
+            <div className="vault-search">
+              <div className="vault-search-input">
+                <Search size={15} aria-hidden />
+                <VaultField
+                  label="Search this Vault locally"
+                  labelHidden
+                  type="search"
+                  placeholder="Search titles, domains, usernames, tags…"
+                  value={query}
+                  disabled={disabled}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </div>
+              <fieldset
+                className="vault-category-filters"
+                aria-label="Filter by category"
               >
-                <Plus size={16} aria-hidden />
-              </VaultButton>
+                {(
+                  [
+                    ["all", "All"],
+                    ["favorites", "Favorites"],
+                    ["credential", "Logins"],
+                    ["note", "Notes"],
+                    ["attachment", "Files"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <VaultButton
+                    key={value}
+                    size="sm"
+                    tone={category === value ? "primary" : "ghost"}
+                    aria-pressed={category === value}
+                    disabled={disabled}
+                    onClick={() => setCategory(value)}
+                  >
+                    {label}
+                  </VaultButton>
+                ))}
+              </fieldset>
             </div>
           ) : null}
           <div className="vault-document-items">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <div className="vault-document-card" key={b64(bytes(item.revision.object))}>
               <VaultButton
                 disabled={disabled || pendingSave}
@@ -416,7 +600,17 @@ function Documents({
                     {item.metadata.title || "Untitled"}
                     {item.revision.deleted ? " (deleted)" : ""}
                   </span>
-                  <span aria-hidden>{kindLabel(item.metadata.kind)}</span>
+                  <span aria-hidden className="vault-document-meta">
+                    {item.metadata.favorite ? (
+                      <Star size={11} className="vault-meta-star" />
+                    ) : null}
+                    {item.metadata.username ||
+                      item.metadata.domains?.[0] ||
+                      kindLabel(item.metadata.kind)}
+                    {item.metadata.hasTotp ? (
+                      <KeyRound size={11} className="vault-meta-totp" />
+                    ) : null}
+                  </span>
                 </span>
               </VaultButton>
               {canEdit && (canPurge || !item.revision.deleted) ? <DocumentActions
@@ -674,36 +868,128 @@ function Documents({
                     {logins.map(({ id, focusUsername, ...login }, index) => (
                       <CredentialLoginFields
                         key={`${editorKey}:${id}`}
+                        client={client}
                         login={login}
                         number={index + 1}
                         focusUsername={focusUsername}
                         readOnly={readOnly}
                         disabled={disabled}
                         onChange={(value) => {
-                          setLogins(current => current.map(entry => entry.id === id ? { ...entry, ...value } : entry));
+                          setLogins((current) =>
+                            current.map((entry) =>
+                              entry.id === id ? { ...entry, ...value } : entry,
+                            ),
+                          );
                           changed();
                         }}
-                        onRemove={!historical && logins.length > 1 ? () => {
-                          focusAddLogin.current = true;
-                          setLogins(current => current.filter(entry => entry.id !== id));
-                          changed();
-                        } : undefined}
+                        onRemove={
+                          !historical && logins.length > 1
+                            ? () => {
+                                focusAddLogin.current = true;
+                                setLogins((current) =>
+                                  current.filter((entry) => entry.id !== id),
+                                );
+                                changed();
+                              }
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
-                  {!historical ? (
-                    <VaultButton ref={addLoginButton} size="sm" tone="ghost" className="vault-credential-add" disabled={readOnly} onClick={() => {
-                      const id = nextLoginId.current++;
-                      setLogins(current => [...current, { ...emptyLogin, id, focusUsername: true }]);
-                      changed();
-                    }}>
-                      <Plus size={14} aria-hidden />
-                      Add login
+                  <div className="vault-inline-actions vault-credential-wide">
+                    {!historical ? (
+                      <VaultButton
+                        ref={addLoginButton}
+                        size="sm"
+                        tone="ghost"
+                        className="vault-credential-add"
+                        disabled={readOnly}
+                        onClick={() => {
+                          const id = nextLoginId.current++;
+                          setLogins((current) => [
+                            ...current,
+                            { ...emptyLogin, id, focusUsername: true },
+                          ]);
+                          changed();
+                        }}
+                      >
+                        <Plus size={14} aria-hidden />
+                        Add login
+                      </VaultButton>
+                    ) : null}
+                    <VaultButton
+                      size="sm"
+                      tone={favorite ? "primary" : "default"}
+                      aria-pressed={favorite}
+                      disabled={readOnly}
+                      onClick={() => {
+                        setFavorite((prev) => !prev);
+                        changed();
+                      }}
+                    >
+                      <Star size={14} aria-hidden />
+                      {favorite ? "Favorited" : "Favorite"}
                     </VaultButton>
+                  </div>
+                  {dirty && loginProblem ? <output className="vault-field-hint vault-credential-wide">{loginProblem}</output> : null}
+                  <p className="vault-field-hint vault-credential-wide">
+                    The clipboard is not cleared automatically.
+                  </p>
+                  <div className="vault-credential-wide vault-totp-section">
+                    <VaultField
+                      label="Authenticator key (TOTP)"
+                      placeholder="Base32 secret or otpauth://totp/..."
+                      value={totp}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        setTotp(e.target.value);
+                        changed();
+                      }}
+                    />
+                    <TotpLiveDisplay
+                      client={client}
+                      secret={totp}
+                      disabled={disabled}
+                    />
+                  </div>
+                  <label className="vault-field vault-credential-wide">
+                    <span>Additional URLs (one per line)</span>
+                    <textarea
+                      className="vault-textarea vault-textarea--compact"
+                      placeholder="https://app.example.com"
+                      value={extraUrls}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        setExtraUrls(e.target.value);
+                        changed();
+                      }}
+                    />
+                  </label>
+                  {extractedDomains.length > 0 ? (
+                    <div
+                      className="vault-credential-wide vault-domain-pills"
+                      aria-label="Indexed AutoFill domains"
+                    >
+                      {extractedDomains.map((domain) => (
+                        <span key={domain} className="vault-domain-pill">
+                          {domain}
+                        </span>
+                      ))}
+                    </div>
                   ) : null}
-                  {dirty && loginProblem ? <output className="vault-field-hint">{loginProblem}</output> : null}
+                  <VaultField
+                    fieldClassName="vault-credential-wide"
+                    label="Tags (comma-separated)"
+                    placeholder="work, finance, dev"
+                    value={tagsText}
+                    disabled={readOnly}
+                    onChange={(e) => {
+                      setTagsText(e.target.value);
+                      changed();
+                    }}
+                  />
                   {showNotes ? (
-                    <label className="vault-field">
+                    <label className="vault-field vault-credential-wide">
                       <span>Credential notes</span>
                       <textarea
                         ref={notesInput}
@@ -717,15 +1003,19 @@ function Documents({
                       />
                     </label>
                   ) : !readOnly ? (
-                    <VaultButton size="sm" tone="ghost" className="vault-credential-add" onClick={() => {
-                      setNotesOpen(true);
-                      requestAnimationFrame(() => notesInput.current?.focus());
-                    }}>
+                    <VaultButton
+                      size="sm"
+                      tone="ghost"
+                      className="vault-credential-add vault-credential-wide"
+                      onClick={() => {
+                        setNotesOpen(true);
+                        requestAnimationFrame(() => notesInput.current?.focus());
+                      }}
+                    >
                       <Plus size={14} aria-hidden />
                       Add notes
                     </VaultButton>
                   ) : null}
-                  <p className="vault-field-hint">The clipboard is not cleared automatically.</p>
                 </div>
               ) : (
                 <div className="vault-attachment">
