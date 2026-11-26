@@ -394,7 +394,7 @@ fn capacity_settings_prepaid_slots_cover_every_existing_key_and_cursor_widening(
             let max=SETTING_ROW-8-key.len();
             db.execute("INSERT INTO global_settings VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,"x".repeat(max)]).unwrap();
         }
-        assert!(db.execute("INSERT INTO global_settings VALUES('eighth','x')",params![]).is_err());
+        assert!(db.execute("INSERT INTO global_settings VALUES('ninth','x')",params![]).is_err());
         for key in GLOBAL_SETTING_KEYS {
             db.execute("UPDATE global_settings SET value=?2 WHERE key=?1",params![key,i64::MAX.to_string()]).unwrap();
         }

@@ -50,7 +50,7 @@ fn integration_all_frozen_predecessors_migrate_and_reopen_at_fourteen() {
                 .unwrap();
         }
         schema::initialize_vault_schema(&db).unwrap();
-        assert_eq!(version(&db), 14, "predecessor {v}");
+        assert_eq!(version(&db), 15, "predecessor {v}");
         assert_eq!(
             db.query_row(
                 "SELECT balance_cycles FROM accounts WHERE owner='before'",
@@ -116,8 +116,70 @@ fn integration_schema_thirteen_reserves_space_only_for_unsettled_payments() {
         stored,
         "01010101010101010101010101010101,02020202020202020202020202020202"
     );
-    assert_eq!(version(&db), 14);
+    assert_eq!(version(&db), 15);
     schema::initialize_vault_schema(&db).unwrap();
+}
+
+#[test]
+fn integration_schema_fourteen_with_full_global_settings_migrates_and_admits_cycles_refill_source()
+{
+    use kinic_sqlite_compat::params;
+    let db = Connection::open_in_memory().unwrap();
+    schema::legacy_v14_for_test(&db);
+    let legacy_keys = [
+        "config",
+        "funding",
+        "generation",
+        "quote_fee_serial",
+        "gc-owner",
+        "serial",
+        "bridge",
+    ];
+    for key in legacy_keys {
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES(?1,?2)",
+            params![key, format!("val:{key}")],
+        )
+        .unwrap();
+    }
+    assert!(
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES('cycles_refill_source','6emaw-iyaaa-aaaay-aacka-cai')",
+            params![],
+        )
+        .is_err(),
+        "schema 14 rejects the eighth global setting slot"
+    );
+
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(version(&db), 15);
+    for key in legacy_keys {
+        let value: String = db
+            .query_row(
+                "SELECT value FROM global_settings WHERE key=?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, format!("val:{key}"));
+    }
+    db.execute(
+        "INSERT INTO global_settings(key,value) VALUES('cycles_refill_source','6emaw-iyaaa-aaaay-aacka-cai')
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![],
+    )
+    .unwrap();
+    assert!(
+        db.execute(
+            "INSERT INTO global_settings(key,value) VALUES('ninth','x')",
+            params![],
+        )
+        .is_err(),
+        "schema 15 still bounds global_settings at eight slots"
+    );
+    let changes = db.total_changes();
+    schema::initialize_vault_schema(&db).unwrap();
+    assert_eq!(db.total_changes(), changes);
 }
 
 #[test]

@@ -421,7 +421,7 @@ fn initial_release_creates_v14_and_reopens_without_rewriting_data() {
             kinic_sqlite_compat::row_get(r, 0)
         })
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','receipts')",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     assert_eq!(db.query_row("SELECT count(*) FROM pragma_table_info('vault_cycle_reservations') WHERE name='account_owner'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let before: i64 = db
@@ -555,7 +555,7 @@ fn current_schema_initialization_is_idempotent() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(
-        version, 14,
+        version, 15,
         "new installations must use exact storage accounting"
     );
     schema::initialize_vault_schema(&db).unwrap();
@@ -1806,7 +1806,7 @@ fn bridge_upgrade_accepts_v8_and_initializes_v14() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let account: (i64, i64) = db
         .query_row(
             "SELECT balance_cycles,storage_charge_remainder FROM accounts WHERE owner='owner'",
@@ -1844,7 +1844,7 @@ fn bridge_upgrade_from_schema_nine_preserves_records_and_fences_old_readers() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        14
+        15
     );
     assert_eq!(snapshot(), before);
     schema::initialize_vault_schema(&db).unwrap();
@@ -1874,7 +1874,7 @@ fn main_schema_ten_bridge_rows_migrate_without_null_beneficiaries_or_lost_state(
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        14
+        15
     );
     assert_eq!(
         db.query_row("SELECT record FROM payments", [], |r| r.get::<_, String>(0))
@@ -1971,7 +1971,7 @@ fn migrated_team_vault_resolves_original_owner_after_reopen() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        14
+        15
     );
     let owner = vault_store::OwnerContext::authenticated(p(8)).unwrap();
     owner

@@ -1,9 +1,10 @@
-//! Validate complete, frozen predecessor contracts before migrating to schema 14.
+//! Validate complete, frozen predecessor contracts before migrating to schema 15.
 use kinic_sqlite_compat::{self as sql, Connection, params};
 use std::collections::BTreeMap;
 use vault_types::{Error, Result};
 
-const CURRENT_VERSION: i64 = 14;
+const CURRENT_VERSION: i64 = 15;
+const V14_SETTING_SLOTS: usize = 7;
 const CAPACITY: &str = include_str!("sql/capacity-schema-v14.sql");
 const INDEXES: &str = "CREATE INDEX uploads_expiry ON uploads(owner,expires);";
 
@@ -65,7 +66,10 @@ fn initialize_inner(db: &Connection) -> Result<()> {
     let actual = read_contract(db)?;
     let latest = latest_statements();
     match version {
-        0 if actual.is_empty() => execute(db, &latest.join("\n"))?,
+        0 if actual.is_empty() => {
+            execute(db, &latest.join("\n"))?;
+            crate::funding::initialize_scan_slots(db)?;
+        }
         8..=12 => {
             // The branch markers only select the expected contract. Validate every
             // table, index and trigger before touching any predecessor data.
@@ -105,20 +109,36 @@ fn initialize_inner(db: &Connection) -> Result<()> {
                 execute(db, SUBSIDY)?;
                 exclude_existing(db)?;
             }
+            migrate_capacity(db)?;
+            migrate_global_settings_slots(db)?;
+            crate::funding::initialize_scan_slots(db)?;
         }
-        13 => validate(
-            &actual,
-            &split_ddl(&[ACCOUNTS_V9, COMMON, TEAM, GRANT, SUBSIDY].concat()),
-        )?,
+        13 => {
+            validate(
+                &actual,
+                &split_ddl(&[ACCOUNTS_V9, COMMON, TEAM, GRANT, SUBSIDY].concat()),
+            )?;
+            migrate_capacity(db)?;
+            migrate_global_settings_slots(db)?;
+            crate::funding::initialize_scan_slots(db)?;
+        }
+        14 => {
+            validate(&actual, &v14_statements())?;
+            migrate_global_settings_slots(db)?;
+        }
         CURRENT_VERSION => return validate(&actual, &latest),
         _ => return Err(Error::Storage),
     }
-    if version != 0 {
-        migrate_capacity(db)?;
-    }
-    crate::funding::initialize_scan_slots(db)?;
     validate(&read_contract(db)?, &latest)?;
     execute(db, &format!("PRAGMA user_version={CURRENT_VERSION};"))
+}
+
+fn migrate_global_settings_slots(db: &Connection) -> Result<()> {
+    execute(db, "DROP TRIGGER accounting_global_settings_count;")?;
+    execute(
+        db,
+        &crate::capacity::global_settings_count_trigger(vault_types::capacity::SETTING_SLOTS),
+    )
 }
 
 fn migrate_capacity(db: &Connection) -> Result<()> {
@@ -179,6 +199,22 @@ fn exclude_existing(db: &Connection) -> Result<()> {
         .map_err(|_| Error::Storage)?;
     }
     Ok(())
+}
+
+fn v14_statements() -> Vec<String> {
+    let current =
+        crate::capacity::global_settings_count_trigger(vault_types::capacity::SETTING_SLOTS);
+    let legacy = crate::capacity::global_settings_count_trigger(V14_SETTING_SLOTS);
+    latest_statements()
+        .into_iter()
+        .map(|stmt| {
+            if stmt == current {
+                legacy.clone()
+            } else {
+                stmt
+            }
+        })
+        .collect()
 }
 
 fn latest_statements() -> Vec<String> {
@@ -291,4 +327,10 @@ pub(crate) fn subsidy_v11_for_test(db: &Connection) {
     legacy_v10_for_test(db);
     db.execute_batch(&[SUBSIDY, "PRAGMA user_version=11;"].concat())
         .unwrap();
+}
+#[cfg(test)]
+pub(crate) fn legacy_v14_for_test(db: &Connection) {
+    db.execute_batch(&v14_statements().join("\n")).unwrap();
+    crate::funding::initialize_scan_slots(db).unwrap();
+    db.execute_batch("PRAGMA user_version=14;").unwrap();
 }
