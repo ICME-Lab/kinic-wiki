@@ -434,7 +434,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
             ) : (
               <span />
             )}
-            <Button variant="ghost" size="sm" onClick={() => void session.logout()}>
+            <Button variant="outline" size="sm" onClick={() => void session.logout()}>
               Sign out of Wiki
             </Button>
           </div>
@@ -500,7 +500,7 @@ export function VaultCreditClient({ canisterId }: { canisterId: string }) {
                 ) : null}
                 {link?.active ? (
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
                     className="ml-auto text-dangerText"
                     disabled={busy || !available}

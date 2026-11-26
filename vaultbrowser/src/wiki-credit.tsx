@@ -40,26 +40,26 @@ function linkView(
     return {
       label: "Unavailable",
       tone: "danger",
-      description: "Wiki link status could not be loaded. Check again in a moment.",
+      description: "Could not load Wiki link status.",
     };
   if (checking)
-    return { label: "Checking…", tone: "neutral", description: "Checking whether a Wiki account is linked." };
+    return { label: "Checking…", tone: "neutral", description: "" };
   if (link?.active)
     return {
       label: "Linked",
       tone: "positive",
-      description: "Vault can refill itself from one of your Wiki databases when the balance runs low, within limits you set in Wiki.",
+      description: "",
     };
   if (link)
     return {
       label: "Link revoked",
       tone: "warn",
-      description: "Transfers are turned off. You can link the same Wiki account again.",
+      description: "Transfers are off. Link again to resume.",
     };
   return {
     label: "Not linked",
     tone: "neutral",
-    description: "Link your Wiki account once to pay for Vault with Wiki database credits. Linking moves no credits.",
+    description: "Link your Wiki account to pay with Wiki credits.",
   };
 }
 export function WikiCreditFunding({
@@ -82,7 +82,6 @@ export function WikiCreditFunding({
   const autoRun = useRef({ running: false, lastAt: 0 });
   // True only after wiki_link_status answered, so "Not linked" never shows while checking.
   const [loaded, setLoaded] = useState(false);
-  const [channelOpen, setChannelOpen] = useState(false);
   const [handoff] = useState(() =>
     typeof window === "undefined" ? null : parseLaunch(window.location.hash),
   );
@@ -207,7 +206,6 @@ export function WikiCreditFunding({
       window.removeEventListener("message", receive);
       window.clearInterval(timer);
       popup.close();
-      if (live.current) setChannelOpen(false);
     };
     const receive = (event: MessageEvent) => {
       try {
@@ -273,7 +271,6 @@ export function WikiCreditFunding({
       }
     }, 500);
     stopChannel.current = stop;
-    setChannelOpen(true);
     work(async (checkWork) => {
       if (mode === "link") {
         const challenge = bridgeOk(
@@ -374,7 +371,9 @@ export function WikiCreditFunding({
           <StatusPill dot tone={view.tone} label={view.label} />
         </output>
       </div>
-      <p className="vault-wiki-credit-description">{view.description}</p>
+      {view.description ? (
+        <p className="vault-wiki-credit-description">{view.description}</p>
+      ) : null}
       {link?.active ? (
         <dl className="vault-wiki-credit-balance">
           <dt>Vault balance</dt>
@@ -392,8 +391,8 @@ export function WikiCreditFunding({
           />
           <span className="vault-wiki-credit-auto-text">
             {auto
-              ? `Adds ${formatCycles(auto.policy.amount_cycles)} from ${auto.database_name} when the balance is below ${formatCycles(auto.policy.threshold_cycles)} · ${formatCycles(auto.sent_today_cycles)} of ${formatCycles(auto.policy.daily_limit_cycles)} used today`
-              : "Refill this Vault from a Wiki database automatically when the balance runs low."}
+              ? `Adds ${formatCycles(auto.policy.amount_cycles)} from ${auto.database_name} below ${formatCycles(auto.policy.threshold_cycles)} · ${formatCycles(auto.sent_today_cycles)}/${formatCycles(auto.policy.daily_limit_cycles)} today`
+              : "Refill automatically when balance is low."}
           </span>
           <VaultButton
             size="sm"
@@ -402,22 +401,6 @@ export function WikiCreditFunding({
             onClick={() => openWiki("fund")}
           >
             {auto ? "Change in Wiki" : "Set up in Wiki"}
-          </VaultButton>
-        </div>
-      ) : null}
-      {channelOpen ? (
-        <div className="vault-notice vault-notice--info vault-wiki-credit-window">
-          <span>Wiki window is open. Finish there, then come back.</span>
-          <VaultButton
-            size="sm"
-            onClick={() => {
-              stopChannel.current();
-              setNotice(
-                "Window closed. Existing holds remain recoverable from Wiki.",
-              );
-            }}
-          >
-            Close Wiki window
           </VaultButton>
         </div>
       ) : null}
@@ -432,7 +415,7 @@ export function WikiCreditFunding({
           </VaultButton>
         )}
         <VaultButton
-          tone="ghost"
+          tone="default"
           size="icon"
           aria-label="Refresh Wiki link"
           title="Refresh Wiki link"
@@ -443,7 +426,7 @@ export function WikiCreditFunding({
         </VaultButton>
         {link?.active ? (
           <VaultButton
-            tone="ghost"
+            tone="default"
             className="vault-wiki-credit-revoke"
             disabled={busy}
             onClick={() => {
