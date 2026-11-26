@@ -118,15 +118,15 @@ export function AutoTopupPanel({
         <>
           <p className="text-sm text-muted">
             {policy && status
-              ? `When your Vault balance drops below ${formatCycles(policy.threshold_cycles)}, add ${formatCycles(policy.amount_cycles)} from ${status.database_name}. Up to ${formatCycles(policy.daily_limit_cycles)} a day, keeping at least ${formatCycles(policy.min_database_cycles)} in the database. Used today: ${status.sent_today_cycles === 0n ? "none" : formatCycles(status.sent_today_cycles)}.`
-              : "Let Vault refill itself from one of your databases when its balance runs low, within limits you set here."}
+              ? `Below ${formatCycles(policy.threshold_cycles)}: add ${formatCycles(policy.amount_cycles)} from ${status.database_name} (max ${formatCycles(policy.daily_limit_cycles)}/day, keep ${formatCycles(policy.min_database_cycles)}). Today: ${status.sent_today_cycles === 0n ? "none" : formatCycles(status.sent_today_cycles)}.`
+              : "Refill Vault automatically when balance is low."}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant={policy ? "outline" : "default"} disabled={disabled || busy || !databases.length} onClick={edit}>
               {policy ? "Change" : "Turn on auto top-up"}
             </Button>
             {policy ? (
-              <Button size="sm" variant="ghost" className="text-dangerText" disabled={disabled || busy} onClick={() => save(null)}>
+              <Button size="sm" variant="outline" className="text-dangerText" disabled={disabled || busy} onClick={() => save(null)}>
                 Turn off
               </Button>
             ) : null}
@@ -169,13 +169,13 @@ export function AutoTopupPanel({
             <Field label="Always keep in database" value={keep} onChange={setKeep} disabled={busy} />
           </div>
           <p className="text-xs text-muted">
-            Amounts are in billions of cycles (B). Refills run at most every 10 minutes, and never while another transfer is unresolved.
+            Values in billions of cycles (B). Max once every 10 min.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="sm" disabled={busy || invalid}>
               Save auto top-up
             </Button>
-            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setEditing(false)}>
               Cancel
             </Button>
           </div>
