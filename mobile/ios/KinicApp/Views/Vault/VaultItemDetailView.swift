@@ -80,6 +80,7 @@ struct VaultItemDetailView: View {
     @State private var isShowingEditor = false
     @State private var confirmsDelete = false
     @State private var isDeleting = false
+    @State private var revealedAdditionalLoginIndices: Set<Int> = []
 
     private var summary: VaultItemSummary? {
         model.items.first(where: { $0.objectIdBase64URL == objectId }) ?? decrypted?.summary
@@ -145,6 +146,7 @@ struct VaultItemDetailView: View {
             decrypted = nil
             isPasswordVisible = false
             revealedCustomFieldIndices.removeAll()
+            revealedAdditionalLoginIndices.removeAll()
         }
         .onChange(of: model.isUnlocked) { _, unlocked in
             if !unlocked {
@@ -306,6 +308,99 @@ struct VaultItemDetailView: View {
                 VaultTOTPLiveCard(secret: credential.totp) { code in
                     VaultClipboardHelper.copy(code, kind: .totp)
                     showToast("2FA code copied · clears in 90s")
+                }
+            }
+        }
+
+        if !credential.additionalLogins.isEmpty {
+            Section("Additional Logins") {
+                ForEach(Array(credential.additionalLogins.enumerated()), id: \.offset) { index, login in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Account \(index + 2)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            if !login.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text("·")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(VaultCredentialCodec.normalizeDomain(login.url) ?? login.url)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                        }
+
+                        if !login.username.isEmpty {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Username")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(login.username)
+                                        .font(.body)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                Button {
+                                    VaultClipboardHelper.copy(login.username, kind: .plain)
+                                    showToast("Username copied")
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .frame(width: 40, height: 40)
+                                }
+                                .buttonStyle(.borderless)
+                                .tint(KinicDesign.hotPink)
+                                .accessibilityLabel("Copy additional username \(index + 2)")
+                            }
+                        }
+
+                        if !login.password.isEmpty {
+                            let isRevealed = revealedAdditionalLoginIndices.contains(index)
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Password")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if isRevealed {
+                                        Text(login.password)
+                                            .font(.system(.body, design: .monospaced))
+                                            .textSelection(.enabled)
+                                    } else {
+                                        Text(String(repeating: "•", count: min(20, max(8, login.password.count))))
+                                            .font(.system(.body, design: .monospaced))
+                                    }
+                                }
+                                Spacer()
+                                Button {
+                                    if isRevealed {
+                                        revealedAdditionalLoginIndices.remove(index)
+                                    } else {
+                                        revealedAdditionalLoginIndices.insert(index)
+                                    }
+                                } label: {
+                                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                                        .frame(width: 36, height: 36)
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel(isRevealed ? "Hide additional password \(index + 2)" : "Show additional password \(index + 2)")
+
+                                Button {
+                                    VaultClipboardHelper.copy(login.password, kind: .password)
+                                    showToast("Password copied · clears in 60s")
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .frame(width: 40, height: 40)
+                                }
+                                .buttonStyle(.borderless)
+                                .tint(KinicDesign.hotPink)
+                                .accessibilityLabel("Copy additional password \(index + 2)")
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
                 }
             }
         }
