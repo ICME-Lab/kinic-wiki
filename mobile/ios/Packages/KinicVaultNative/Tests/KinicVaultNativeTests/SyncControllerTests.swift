@@ -6,7 +6,11 @@ import KinicVaultCore
 
 @MainActor final class TestKeys: VaultRootKeyStoring {
     var key: SymmetricKey?
-    func save(_ key: SymmetricKey, context: VaultContext) throws { self.key = key }
+    private(set) var saveCount = 0
+    func save(_ key: SymmetricKey, context: VaultContext) throws {
+        self.key = key
+        saveCount += 1
+    }
     func load(context: VaultContext) throws -> SymmetricKey { guard let key else { throw VaultCryptoError.invalidContext }; return key }
     func clear() throws { key = nil }
 }
@@ -111,4 +115,23 @@ func oversizedSnapshotClearsOfflineCache() async throws {
     #expect(!controller.hasOfflineSnapshot())
     #expect(keys.key == nil)
     #expect(identities.candidates.isEmpty)
+}
+
+@MainActor @Test("Cached unlock registers logins after AutoFill is enabled without rewriting the key")
+func enablingProviderRegistersCachedLogins() async throws {
+    let payload = try cachedPayload()
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = VaultAutoFillSnapshotStore(fileURL: url)
+    defer { try? store.clear() }
+    let keys = TestKeys()
+    let identities = TestIdentities()
+    identities.isEnabled = false
+    let controller = VaultAutoFillSyncController(snapshotStore: store, keys: keys, identities: identities)
+    await #expect(throws: VaultNativeError.providerDisabled) {
+        try await controller.synchronize(context: payload.snapshot.context) { payload }
+    }
+    identities.isEnabled = true
+    try await controller.registerCachedIdentities(payload)
+    #expect(identities.candidates.map(\.username) == ["alice"])
+    #expect(keys.saveCount == 1)
 }

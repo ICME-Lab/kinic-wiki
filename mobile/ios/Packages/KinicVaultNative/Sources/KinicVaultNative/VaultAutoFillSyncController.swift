@@ -92,6 +92,15 @@ public struct VaultAutoFillSyncPayload: Sendable {
 
     public func disable() async throws { try await invalidate().value }
 
+    public func registerCachedIdentities(_ payload: VaultAutoFillSyncPayload) async throws {
+        let ticket = epoch
+        guard try snapshotStore.load() == payload.snapshot else { throw CancellationError() }
+        guard await identities.isEnabled else { throw VaultNativeError.providerDisabled }
+        guard epoch == ticket, try snapshotStore.load() == payload.snapshot else { throw CancellationError() }
+        let candidates = try snapshotStore.listCandidates(rootKey: payload.rootKey)
+        try await publish(candidates, ticket: ticket)
+    }
+
     public func synchronize(context: VaultContext, load: @MainActor () async throws -> VaultAutoFillSyncPayload) async throws {
         epoch += 1
         let ticket = epoch

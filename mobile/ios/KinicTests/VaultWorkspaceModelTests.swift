@@ -92,6 +92,29 @@ struct VaultWorkspaceModelTests {
     }
 
     @MainActor
+    @Test func signOutFencesInFlightMutationRefresh() async {
+        let model = VaultWorkspaceModel.preview()
+        let started = AsyncStream.makeStream(of: Void.self)
+        let result = AsyncStream.makeStream(of: Void.self)
+        let refresh = Task {
+            try await model.refreshAfterMutation(ticket: 0, load: {
+                started.continuation.yield()
+                for await _ in result.stream { break }
+                throw VaultNativeError.invalidResponse
+            }, fallback: {
+                Issue.record("Stale refresh tried to republish the old snapshot")
+                throw VaultNativeError.invalidResponse
+            })
+        }
+        for await _ in started.stream { break }
+        model.signOut()
+        result.continuation.yield()
+        await #expect(throws: CancellationError.self) { try await refresh.value }
+        #expect(!model.hasOfflineSnapshot)
+        #expect(model.items.isEmpty)
+    }
+
+    @MainActor
     @Test func filtersByCategoryTagAndDomainAndSupportsCRUDAndLock() async throws {
         let model = VaultWorkspaceModel.preview()
         #expect(model.isUnlocked)

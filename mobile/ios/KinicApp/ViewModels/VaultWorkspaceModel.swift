@@ -340,7 +340,9 @@ final class VaultWorkspaceModel {
     func refreshAutoFillProviderState() async {
         guard let cache else { return }
         hasOfflineSnapshot = cache.hasOfflineSnapshot()
+        let ticket = generation
         let enabled = await cache.isProviderEnabled()
+        guard generation == ticket else { return }
         if case .syncing = autoFillStatus { return }
         if case .onlineOnly = autoFillStatus { return }
         let wasDisabled: Bool
@@ -357,15 +359,15 @@ final class VaultWorkspaceModel {
                 // iOS clears the credential identity store when the provider is disabled; re-register before reporting ready.
                 let payload = VaultAutoFillSyncPayload(snapshot: snapshot, rootKey: rootKey)
                 do {
-                    try await cache.synchronize(context: snapshot.context) { payload }
+                    try await cache.registerCachedIdentities(payload)
+                    guard generation == ticket else { return }
                     autoFillStatus = .ready(credentialCount: credCount, syncedAt: syncedAt)
                 } catch {
+                    guard generation == ticket else { return }
                     autoFillStatus = .error("AutoFill was re-enabled. Sync your Vault to re-register logins.")
                 }
-            } else {
-                autoFillStatus = enabled
-                    ? .ready(credentialCount: credCount, syncedAt: syncedAt)
-                    : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
+            } else if !enabled {
+                autoFillStatus = .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
             }
         } else if hasOfflineSnapshot {
             let existingCount: Int
@@ -455,7 +457,6 @@ final class VaultWorkspaceModel {
         }
         do {
             if let (snapshot, rootKey) = try cache.loadOfflineSnapshot(authenticationContext: authContext) {
-                let enabled = await cache.isProviderEnabled()
                 guard generation == ticket, unlockRevision == unlockTicket else { return }
                 if vaults.contains(where: { $0.id == snapshot.context.vault }) {
                     selectedVault = snapshot.context.vault
@@ -463,10 +464,20 @@ final class VaultWorkspaceModel {
                 let payload = VaultAutoFillSyncPayload(snapshot: snapshot, rootKey: rootKey)
                 let loadedItems = try snapshot.listItems(rootKey: rootKey)
                 showWorkspace(payload, items: loadedItems, unlockTicket: unlockTicket)
-                updateCachedStatus(payload, items: loadedItems, providerEnabled: enabled)
                 status = isSignedIn
                     ? "Vault unlocked."
                     : "Viewing offline Vault. Sign in to sync or edit items."
+                do {
+                    try await cache.registerCachedIdentities(payload)
+                    guard generation == ticket, unlockRevision == unlockTicket else { return }
+                    updateCachedStatus(payload, items: loadedItems, providerEnabled: true)
+                } catch VaultNativeError.providerDisabled {
+                    guard generation == ticket, unlockRevision == unlockTicket else { return }
+                    updateCachedStatus(payload, items: loadedItems, providerEnabled: false)
+                } catch {
+                    guard generation == ticket, unlockRevision == unlockTicket else { return }
+                    autoFillStatus = .error("Could not register AutoFill logins. Try syncing your Vault.")
+                }
                 return
             }
         } catch {
@@ -587,15 +598,19 @@ final class VaultWorkspaceModel {
         let ticket = generation
         isSaving = true
         defer { if generation == ticket { isSaving = false } }
-        try await native.renameVault(header: selected, name: trimmed, identity: identity)
-        guard generation == ticket else { return }
-        let updated = try await native.ownedVaults(identity: identity)
-        guard generation == ticket else { return }
-        vaults = updated
-        if !updated.contains(where: { $0.id == selected.id }) {
-            selectedVault = updated.first?.id
+        do {
+            try await native.renameVault(header: selected, name: trimmed, identity: identity)
+            guard generation == ticket else { throw CancellationError() }
+            let updated = try await native.ownedVaults(identity: identity)
+            guard generation == ticket else { throw CancellationError() }
+            vaults = updated
+            guard updated.contains(where: { $0.id == selected.id }) else { throw VaultNativeError.accessLost }
+            status = "Vault renamed to \(trimmed)."
+        } catch VaultNativeError.accessLost {
+            guard generation == ticket else { throw CancellationError() }
+            forgetInaccessibleVault(selected.id)
+            throw VaultNativeError.accessLost
         }
-        status = "Vault renamed to \(trimmed)."
     }
 
     func synchronize() async {
@@ -616,8 +631,7 @@ final class VaultWorkspaceModel {
         } catch {
             guard generation == ticket else { return }
             if case VaultNativeError.accessLost = error {
-                vaults.removeAll { $0.id == selected.id }; selectedVault = nil
-                revokeMaterial(message: "Access to this Vault was lost. Its offline data has been removed.")
+                forgetInaccessibleVault(selected.id)
             } else if case VaultNativeError.changedDuringSync = error {
                 revokeMaterial(message: "The Vault changed. Sync again to refresh it.", refreshList: true)
             } else {
@@ -647,10 +661,38 @@ final class VaultWorkspaceModel {
             : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
     }
 
+    func refreshAfterMutation(
+        ticket: Int,
+        load: () async throws -> VaultAutoFillSyncPayload,
+        fallback: () throws -> VaultAutoFillSyncPayload
+    ) async throws -> VaultAutoFillSyncPayload {
+        guard generation == ticket else { throw CancellationError() }
+        do {
+            let payload = try await load()
+            guard generation == ticket else { throw CancellationError() }
+            return payload
+        } catch {
+            guard generation == ticket else { throw CancellationError() }
+            switch error {
+            case is CancellationError:
+                throw error
+            case VaultNativeError.accessLost:
+                if let selectedVault { forgetInaccessibleVault(selectedVault) }
+                throw error
+            case VaultNativeError.changedDuringSync:
+                revokeMaterial(message: "The Vault changed. Sync again to refresh it.", refreshList: true)
+                throw error
+            default:
+                return try fallback()
+            }
+        }
+    }
+
     private func publishSnapshot(
         _ payload: VaultAutoFillSyncPayload, cache: VaultAutoFillSyncController,
         ticket: Int, unlockTicket: Int?
     ) async throws {
+        guard generation == ticket else { throw CancellationError() }
         let loadedItems = try payload.snapshot.listItems(rootKey: payload.rootKey)
         do {
             try await cache.synchronize(context: payload.snapshot.context) { payload }
@@ -810,25 +852,23 @@ final class VaultWorkspaceModel {
             )
         } catch VaultNativeError.accessLost {
             if generation == ticket {
-                vaults.removeAll { $0.id == selected.id }; selectedVault = nil
-                revokeMaterial(message: "Access to this Vault was lost. Its offline data has been removed.")
+                forgetInaccessibleVault(selected.id)
             }
             throw VaultNativeError.accessLost
         }
         guard generation == ticket else { throw CancellationError() }
 
         guard snapshot.context == saved.context else { throw VaultCryptoError.invalidContext }
-        if let refreshed = try? await native.fetchSnapshot(header: selected, identity: identity),
-           generation == ticket {
-            try await publishSnapshot(refreshed, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
-        } else {
+        let payload = try await refreshAfterMutation(ticket: ticket) {
+            try await native.fetchSnapshot(header: selected, identity: identity)
+        } fallback: {
             let updatedSnapshot = snapshot.upsertingRecord(
                 saved.snapshotRecord,
                 updatedAtEpochSeconds: snapshot.updatedAtEpochSeconds
             )
-            let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: saved.rootKey)
-            try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+            return VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: saved.rootKey)
         }
+        try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
         return saved.snapshotRecord.objectIdBase64URL
     }
 
@@ -862,24 +902,22 @@ final class VaultWorkspaceModel {
             )
         } catch VaultNativeError.accessLost {
             if generation == ticket {
-                vaults.removeAll { $0.id == selected.id }; selectedVault = nil
-                revokeMaterial(message: "Access to this Vault was lost. Its offline data has been removed.")
+                forgetInaccessibleVault(selected.id)
             }
             throw VaultNativeError.accessLost
         }
         guard generation == ticket else { throw CancellationError() }
 
-        if let refreshed = try? await native.fetchSnapshot(header: selected, identity: identity),
-           generation == ticket {
-            try await publishSnapshot(refreshed, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
-        } else {
+        let payload = try await refreshAfterMutation(ticket: ticket) {
+            try await native.fetchSnapshot(header: selected, identity: identity)
+        } fallback: {
             let updatedSnapshot = snapshot.removingRecord(
                 objectIdBase64URL: summary.objectIdBase64URL,
                 updatedAtEpochSeconds: snapshot.updatedAtEpochSeconds
             )
-            let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: rootKey)
-            try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+            return VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: rootKey)
         }
+        try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
     }
 
     private func savePreviewDocument(
@@ -913,6 +951,12 @@ final class VaultWorkspaceModel {
     }
 
     // MARK: - Selection & Revocation
+
+    private func forgetInaccessibleVault(_ id: Data) {
+        vaults.removeAll { $0.id == id }
+        if selectedVault == id { selectedVault = nil }
+        revokeMaterial(message: "Access to this Vault was lost. Its offline data has been removed.")
+    }
 
     private func revokeMaterial(message: String, refreshList: Bool = false) {
         generation += 1
