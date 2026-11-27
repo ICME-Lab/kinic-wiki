@@ -84,7 +84,11 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 cancelWith(code: .userCanceled)
                 return
             }
-            completeWithCredential(recordIdentifier: recordId, authenticationContext: authContext)
+            completeWithCredential(
+                recordIdentifier: recordId,
+                matchingHosts: [credentialIdentity.serviceIdentifier.identifier],
+                authenticationContext: authContext
+            )
         }
     }
 
@@ -141,9 +145,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 }
             embed(
                 AutoFillRootView(
-                    state: .ready(matched: matched, all: allCandidates),
+                    state: .ready(matched: matched, all: serviceHosts.isEmpty ? allCandidates : matched),
                     onSelect: { [weak self] recordId in
-                        self?.completeWithCredential(recordIdentifier: recordId, rootKey: rootKey)
+                        self?.completeWithCredential(recordIdentifier: recordId, matchingHosts: serviceHosts, rootKey: rootKey)
                     },
                     onCancel: { [weak self] in
                         self?.cancelWith(code: .userCanceled)
@@ -158,6 +162,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     @MainActor
     private func completeWithCredential(
         recordIdentifier: String,
+        matchingHosts: [String],
         authenticationContext: LAContext? = nil,
         rootKey preloadedRootKey: SymmetricKey? = nil
     ) {
@@ -186,7 +191,8 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         do {
             guard let decrypted = try store.decryptCredential(
                 recordIdentifier: recordIdentifier,
-                rootKey: rootKey
+                rootKey: rootKey,
+                matchingHosts: matchingHosts
             ) else {
                 logger.error("AutoFill failed: credential record not found in snapshot")
                 embedError("This login is no longer in your cached Vault. Open KinicWiki to refresh AutoFill.")

@@ -281,6 +281,56 @@ struct KinicVaultCoreTests {
         }
     }
 
+    @Test("Web credentials retain each login and fill only the selected account")
+    func multipleLoginsAreBoundToTheirDomainAndRevision() throws {
+        let context = try makeTestContext()
+        let key = SymmetricKey(data: Data(repeating: 9, count: 32))
+        let object = Data(repeating: 6, count: 16)
+        let primary = Data("""
+        {"username":"primary","password":"primary-value","URL":"https://primary.example","totp":"JBSWY3DPEHPK3PXP","additionalLogins":[{"username":"secondary","password":"secondary-value","URL":"https://secondary.example"},{"username":"another","password":"another-value","URL":"https://secondary.example"}]}
+        """.utf8)
+        var credential = VaultCredentialCodec.parse(primary)
+        credential.favorite = true
+        let plaintext = try VaultCredentialCodec.serialize(credential)
+        let wire = try #require(JSONSerialization.jsonObject(with: plaintext) as? [String: Any])
+        #expect((wire["additionalLogins"] as? [[String: String]])?.map { $0["username"] } == ["secondary", "another"])
+        let store = VaultAutoFillSnapshotStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? store.clear() }
+        func save(revision: UInt64) throws {
+            let encrypted = try VaultDocumentV3.encrypt(
+                rootKey: key, context: context, object: object, revision: revision,
+                metadata: VaultMetadata(kind: .credential, title: "Accounts", username: "primary", domains: ["primary.example", "secondary.example"]),
+                plaintext: primary
+            )
+            try store.save(VaultAutoFillSnapshot(context: context, records: [VaultAutoFillRecordSnapshot(
+                objectIdBase64URL: Base64URL.encode(object), revision: revision,
+                manifestBase64URL: Base64URL.encode(encrypted.manifest),
+                chunksBase64URL: encrypted.chunks.map(Base64URL.encode),
+                hashesBase64URL: encrypted.hashes.map(Base64URL.encode)
+            )]))
+        }
+        try save(revision: 1)
+        let matches = try store.listCandidates(rootKey: key, matchingHost: "secondary.example")
+        #expect(matches.map(\.username) == ["secondary", "another"])
+        let account = try #require(matches.last)
+        let filled = try store.decryptCredential(recordIdentifier: account.recordIdentifier, rootKey: key)
+        #expect(filled?.password == "another-value")
+        #expect(filled?.totpCode == nil)
+        try save(revision: 2)
+        #expect(try store.decryptCredential(recordIdentifier: account.recordIdentifier, rootKey: key) == nil)
+    }
+
+    @Test("Additional login fields are decoded with the same defaults as Web")
+    func readsPartialAdditionalLogins() throws {
+        let raw = Data("""
+        {"username":"primary","password":"primary-value","URL":"https://primary.example","additionalLogins":[{"password":"other-value","url":"https://secondary.example"},{"username":"only"},{"username":4,"password":"third-value","URL":"https://third.example"}]}
+        """.utf8)
+        let result = VaultCredentialCodec.parse(raw)
+        #expect(result.password == "primary-value")
+        #expect(result.additionalLogins.map(\.password) == ["other-value", "", "third-value"])
+        #expect(result.additionalLogins.map(\.url) == ["https://secondary.example", "", "https://third.example"])
+    }
+
     @Test("Malformed TOTP does not prevent filling the saved password")
     func fillsPasswordWithInvalidTotp() throws {
         let context = try makeTestContext()

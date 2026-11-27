@@ -12,12 +12,46 @@ public struct VaultCustomField: Codable, Equatable, Sendable {
     }
 }
 
+public struct VaultAdditionalLogin: Codable, Equatable, Sendable {
+    public var username: String
+    public var password: String
+    public var url: String
+
+    public init(username: String, password: String, url: String) {
+        self.username = username
+        self.password = password
+        self.url = url
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case username, password
+        case url = "URL"
+        case legacyURL = "url"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try? decoder.container(keyedBy: CodingKeys.self)
+        username = (try? values?.decode(String.self, forKey: .username)) ?? ""
+        password = (try? values?.decode(String.self, forKey: .password)) ?? ""
+        url = (try? values?.decode(String.self, forKey: .url))
+            ?? (try? values?.decode(String.self, forKey: .legacyURL)) ?? ""
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(username, forKey: .username)
+        try values.encode(password, forKey: .password)
+        try values.encode(url, forKey: .url)
+    }
+}
+
 public struct VaultCredentialRecord: Equatable, Sendable {
     public var label: String
     public var username: String
     public var password: String
     public var url: String
     public var urls: [String]
+    public var additionalLogins: [VaultAdditionalLogin]
     public var totp: String
     public var notes: String
     public var customFields: [VaultCustomField]
@@ -30,6 +64,7 @@ public struct VaultCredentialRecord: Equatable, Sendable {
         password: String = "",
         url: String = "",
         urls: [String] = [],
+        additionalLogins: [VaultAdditionalLogin] = [],
         totp: String = "",
         notes: String = "",
         customFields: [VaultCustomField] = [],
@@ -41,6 +76,7 @@ public struct VaultCredentialRecord: Equatable, Sendable {
         self.password = password
         self.url = url
         self.urls = urls
+        self.additionalLogins = additionalLogins
         self.totp = totp
         self.notes = notes
         self.customFields = customFields
@@ -56,6 +92,7 @@ private struct CredentialWirePayload: Codable {
     var URL: String?
     var url: String?
     var urls: [String]?
+    var additionalLogins: [VaultAdditionalLogin]?
     var totp: String?
     var notes: String?
     var customFields: [VaultCustomField]?
@@ -178,6 +215,7 @@ public enum VaultCredentialCodec {
             password: payload.password ?? "",
             url: primaryURL.isEmpty ? (urls.first ?? "") : primaryURL,
             urls: urls,
+            additionalLogins: payload.additionalLogins ?? [],
             totp: payload.totp ?? "",
             notes: payload.notes ?? "",
             customFields: payload.customFields ?? [],
@@ -206,6 +244,7 @@ public enum VaultCredentialCodec {
             URL: effectivePrimary,
             url: nil,
             urls: (urls.count > 1 || (urls.count == 1 && urls[0] != effectivePrimary)) ? urls : nil,
+            additionalLogins: record.additionalLogins.isEmpty ? nil : record.additionalLogins,
             totp: totp.isEmpty ? nil : totp,
             notes: record.notes,
             customFields: record.customFields.isEmpty ? nil : record.customFields,
@@ -216,7 +255,7 @@ public enum VaultCredentialCodec {
     }
 
     public static func buildMetadata(title: String, record: VaultCredentialRecord) -> VaultMetadata {
-        let domains = extractDomains([record.url] + record.urls)
+        let domains = extractDomains([record.url] + record.urls + record.additionalLogins.map(\.url))
         let trimmedUser = VaultMetadata.truncateText(record.username.trimmingCharacters(in: .whitespacesAndNewlines), limit: 256)
         let tags = record.tags.map { VaultMetadata.truncateText($0, limit: 64) }.filter { !$0.isEmpty }.prefix(32)
         let hasTotp = !record.totp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

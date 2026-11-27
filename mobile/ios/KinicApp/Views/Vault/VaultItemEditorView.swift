@@ -545,12 +545,19 @@ struct VaultItemEditorView: View {
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
                 let trimmedPrimary = primaryURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                let additionalLogins: [VaultAdditionalLogin]
+                if case .edit(let item) = mode {
+                    additionalLogins = item.credential?.additionalLogins ?? []
+                } else {
+                    additionalLogins = []
+                }
                 let record = VaultCredentialRecord(
                     label: title.trimmingCharacters(in: .whitespacesAndNewlines),
                     username: username.trimmingCharacters(in: .whitespacesAndNewlines),
                     password: password,
                     url: trimmedPrimary,
                     urls: ([trimmedPrimary] + cleanedExtraURLs).filter { !$0.isEmpty },
+                    additionalLogins: additionalLogins,
                     totp: totp.trimmingCharacters(in: .whitespacesAndNewlines),
                     notes: notes,
                     customFields: cleanedFields,
