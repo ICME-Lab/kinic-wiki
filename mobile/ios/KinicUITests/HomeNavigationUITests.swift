@@ -12,7 +12,14 @@ final class HomeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["database.choose"].firstMatch.waitForExistence(timeout: 10))
         return app
     }
+    /// Screenshots are review/demo output, not assertions. Each one blocks on a simulator capture that
+    /// can time out on a busy CI runner, so they are taken only when explicitly requested.
+    private static let capturesScreenshots: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["KINIC_UI_SCREENSHOTS"] == "1" || env["KINIC_DEMO_CAPTURE"] == "1"
+    }()
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
+        guard Self.capturesScreenshots else { return }
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -130,9 +137,15 @@ final class HomeNavigationUITests: XCTestCase {
         let hittable = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: author)
         wait(for: [hittable], timeout: 5)
         capture(app, "comment-author-compact")
-        // Give the context-menu recognizer enough hold time on busy CI simulators.
-        author.press(forDuration: 2)
-        XCTAssertTrue(app.buttons["Copy Principal ID"].waitForExistence(timeout: 5))
+        // A busy CI simulator can drop a synthesized long press before the context-menu recognizer
+        // fires (the press is logged but no menu appears). Pressing again is harmless while the menu
+        // is closed, so retry a bounded number of times instead of relying on incidental delays.
+        let copy = app.buttons["Copy Principal ID"]
+        for _ in 0..<3 where !copy.exists {
+            author.press(forDuration: 2)
+            _ = copy.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(copy.exists)
         capture(app, "comment-author-copy-menu")
     }
 
