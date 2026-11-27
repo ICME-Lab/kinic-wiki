@@ -343,13 +343,30 @@ final class VaultWorkspaceModel {
         let enabled = await cache.isProviderEnabled()
         if case .syncing = autoFillStatus { return }
         if case .onlineOnly = autoFillStatus { return }
+        let wasDisabled: Bool
+        if case .providerDisabled = autoFillStatus {
+            wasDisabled = true
+        } else {
+            wasDisabled = false
+        }
         if let snapshot = activeSnapshot, hasOfflineSnapshot {
             let credCount = items.count(where: { $0.kind == .credential && !$0.domains.isEmpty })
             let syncedAt = Date(timeIntervalSince1970: TimeInterval(snapshot.updatedAtEpochSeconds))
             lastSyncedAt = syncedAt
-            autoFillStatus = enabled
-                ? .ready(credentialCount: credCount, syncedAt: syncedAt)
-                : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
+            if enabled && wasDisabled, let rootKey = activeRootKey {
+                // iOS clears the credential identity store when the provider is disabled; re-register before reporting ready.
+                let payload = VaultAutoFillSyncPayload(snapshot: snapshot, rootKey: rootKey)
+                do {
+                    try await cache.synchronize(context: snapshot.context) { payload }
+                    autoFillStatus = .ready(credentialCount: credCount, syncedAt: syncedAt)
+                } catch {
+                    autoFillStatus = .error("AutoFill was re-enabled. Sync your Vault to re-register logins.")
+                }
+            } else {
+                autoFillStatus = enabled
+                    ? .ready(credentialCount: credCount, syncedAt: syncedAt)
+                    : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
+            }
         } else if hasOfflineSnapshot {
             let existingCount: Int
             let syncedAt: Date
@@ -361,9 +378,13 @@ final class VaultWorkspaceModel {
                 existingCount = 0
                 syncedAt = lastSyncedAt ?? Date()
             }
-            autoFillStatus = enabled
-                ? .ready(credentialCount: existingCount, syncedAt: syncedAt)
-                : .providerDisabled(cachedCount: existingCount, syncedAt: syncedAt)
+            if enabled && wasDisabled {
+                // Locked Vault cannot re-register identities without unlocking or syncing.
+                autoFillStatus = .notSynced
+                status = "AutoFill enabled. Unlock or sync your Vault to register logins."
+            } else if !enabled {
+                autoFillStatus = .providerDisabled(cachedCount: existingCount, syncedAt: syncedAt)
+            }
         } else {
             autoFillStatus = .notSynced
         }
@@ -381,9 +402,18 @@ final class VaultWorkspaceModel {
             session = restored
             principal = restored.principal
             vaults = list
+            let cachedVault = cache?.offlineSnapshotVaultId()
+            if let cachedVault, !list.contains(where: { $0.id == cachedVault }) {
+                // Cached Vault no longer exists or access was revoked; clear stale offline material before switching.
+                try? await cache?.disable()
+                guard generation == ticket else { return }
+                hasOfflineSnapshot = false
+                lastSyncedAt = nil
+                autoFillStatus = .notSynced
+            }
             if let existing = selectedVault, list.contains(where: { $0.id == existing }) {
                 selectedVault = existing
-            } else if let cachedVault = cache?.offlineSnapshotVaultId(),
+            } else if let cachedVault,
                       list.contains(where: { $0.id == cachedVault }) {
                 selectedVault = cachedVault
             } else {
@@ -755,6 +785,7 @@ final class VaultWorkspaceModel {
             throw isSignedIn ? VaultWorkspaceError.noSelectedVault : VaultWorkspaceError.notSignedIn
         }
         guard isUnlocked, let snapshot = activeSnapshot, let cache else { throw VaultWorkspaceError.locked }
+        guard snapshot.context.vault == selected.id else { throw VaultCryptoError.invalidContext }
         let unlockTicket = unlockRevision
         let existingObjectData: Data?
         if let existing {
@@ -787,9 +818,17 @@ final class VaultWorkspaceModel {
         guard generation == ticket else { throw CancellationError() }
 
         guard snapshot.context == saved.context else { throw VaultCryptoError.invalidContext }
-        let updatedSnapshot = snapshot.upsertingRecord(saved.snapshotRecord)
-        let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: saved.rootKey)
-        try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+        if let refreshed = try? await native.fetchSnapshot(header: selected, identity: identity),
+           generation == ticket {
+            try await publishSnapshot(refreshed, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+        } else {
+            let updatedSnapshot = snapshot.upsertingRecord(
+                saved.snapshotRecord,
+                updatedAtEpochSeconds: snapshot.updatedAtEpochSeconds
+            )
+            let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: saved.rootKey)
+            try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+        }
         return saved.snapshotRecord.objectIdBase64URL
     }
 
@@ -807,6 +846,7 @@ final class VaultWorkspaceModel {
         guard isUnlocked, let snapshot = activeSnapshot, let rootKey = activeRootKey, let cache else {
             throw VaultWorkspaceError.locked
         }
+        guard snapshot.context.vault == selected.id else { throw VaultCryptoError.invalidContext }
         let unlockTicket = unlockRevision
         let objectData = try Base64URL.decode(summary.objectIdBase64URL)
         let ticket = generation
@@ -829,9 +869,17 @@ final class VaultWorkspaceModel {
         }
         guard generation == ticket else { throw CancellationError() }
 
-        let updatedSnapshot = snapshot.removingRecord(objectIdBase64URL: summary.objectIdBase64URL)
-        let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: rootKey)
-        try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+        if let refreshed = try? await native.fetchSnapshot(header: selected, identity: identity),
+           generation == ticket {
+            try await publishSnapshot(refreshed, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+        } else {
+            let updatedSnapshot = snapshot.removingRecord(
+                objectIdBase64URL: summary.objectIdBase64URL,
+                updatedAtEpochSeconds: snapshot.updatedAtEpochSeconds
+            )
+            let payload = VaultAutoFillSyncPayload(snapshot: updatedSnapshot, rootKey: rootKey)
+            try await publishSnapshot(payload, cache: cache, ticket: ticket, unlockTicket: unlockTicket)
+        }
     }
 
     private func savePreviewDocument(

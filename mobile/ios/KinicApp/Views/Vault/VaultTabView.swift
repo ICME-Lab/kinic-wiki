@@ -18,6 +18,7 @@ struct VaultTabView: View {
     @State private var toastTask: Task<Void, Never>?
     @State private var itemPendingDelete: VaultItemSummary?
     @State private var showsSignOutConfirmation = false
+    @State private var pendingVaultSwitch: Data?
 
     var body: some View {
         NavigationStack {
@@ -127,6 +128,20 @@ struct VaultTabView: View {
         } message: {
             Text("This signs out of Kinic Vault and removes offline AutoFill data from this device. Your Kinic Wiki session stays signed in.")
         }
+        .alert("Switch AutoFill Vault?", isPresented: Binding(
+            get: { pendingVaultSwitch != nil },
+            set: { if !$0 { pendingVaultSwitch = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { pendingVaultSwitch = nil }
+            Button("Switch Vault", role: .destructive) {
+                if let target = pendingVaultSwitch {
+                    pendingVaultSwitch = nil
+                    model.selectVault(target)
+                }
+            }
+        } message: {
+            Text("Switching Vaults locks the current Vault and clears its offline AutoFill cache until you sync the newly selected Vault.")
+        }
     }
 
     private var navigationTitle: String {
@@ -182,7 +197,12 @@ struct VaultTabView: View {
                         Menu("Switch Vault") {
                             ForEach(model.vaults) { vault in
                                 Button {
-                                    model.selectVault(vault.id)
+                                    guard vault.id != model.selectedVault else { return }
+                                    if model.hasOfflineSnapshot {
+                                        pendingVaultSwitch = vault.id
+                                    } else {
+                                        model.selectVault(vault.id)
+                                    }
                                 } label: {
                                     if vault.id == model.selectedVault {
                                         Label(vault.name, systemImage: "checkmark")
