@@ -26,7 +26,14 @@ export type CredentialRecord = {
   tags: string[];
 };
 
-const MAX_DOMAINS = 32;
+export function credentialLogins(record: CredentialRecord) {
+  return [
+    { username: record.username, password: record.password, URL: record.URL, urls: [record.URL, ...record.urls], totp: record.totp },
+    ...(record.additionalLogins ?? []).map(login => ({ ...login, urls: [login.URL], totp: "" })),
+  ];
+}
+
+export const MAX_CREDENTIAL_DOMAINS = 32;
 const MAX_TAGS = 32;
 const MAX_TAG_LENGTH = 64;
 const MAX_USERNAME_META_LENGTH = 256;
@@ -106,7 +113,7 @@ export function extractDomains(urls: readonly string[]): string[] {
     if (!domain || seen.has(domain)) continue;
     seen.add(domain);
     domains.push(domain);
-    if (domains.length >= MAX_DOMAINS) break;
+    if (domains.length >= MAX_CREDENTIAL_DOMAINS) break;
   }
   return domains;
 }
@@ -235,7 +242,7 @@ export function parseCredential(text: string): CredentialRecord {
       : [];
     const urls = dedupeStrings(
       [primaryUrl, ...extraUrls].filter((entry) => entry.trim().length > 0),
-      MAX_DOMAINS,
+      MAX_CREDENTIAL_DOMAINS,
     );
     const customFields: CredentialCustomField[] = Array.isArray(
       obj.customFields,
@@ -309,7 +316,7 @@ export function serializeCredential(
     ...(typeof input.URL === "string" ? [input.URL] : []),
     ...(input.urls ?? []),
   ];
-  const urls = dedupeStrings(rawUrls, MAX_DOMAINS);
+  const urls = dedupeStrings(rawUrls, MAX_CREDENTIAL_DOMAINS);
   const primaryUrl = typeof input.URL === "string" && input.URL.trim()
     ? input.URL.trim()
     : urls[0] ?? "";

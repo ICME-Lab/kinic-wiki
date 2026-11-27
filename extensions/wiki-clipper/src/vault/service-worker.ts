@@ -14,6 +14,9 @@ import {
   type PendingSavePrompt,
   type VaultEngineState,
   type VaultExtensionSettings,
+  type LiveTotpView,
+  type VaultLoginMatch,
+  type VaultLoginTarget,
   type VaultItemSummary
 } from "./types.ts";
 
@@ -228,9 +231,13 @@ function requireTopFrameWebSender(sender: SenderLike | undefined): {
   if (typeof tabId !== "number" || typeof url !== "string" || !isWebOriginFillable(url)) {
     throw new Error("UNSUPPORTED_PAGE_ORIGIN");
   }
+  const documentUrl = sender.url ?? url;
+  if (!isWebOriginFillable(documentUrl) || new URL(documentUrl).origin !== new URL(url).origin) {
+    throw new Error("UNSUPPORTED_PAGE_ORIGIN");
+  }
   return {
     tabId,
-    url,
+    url: documentUrl,
     title: typeof sender.tab?.title === "string" ? sender.tab.title : ""
   };
 }
@@ -252,14 +259,9 @@ async function callOffscreenIfRunning<T>(
   return callOffscreen<T>(message);
 }
 
-function isSamePromptDomain(url: string, promptDomain: string): boolean {
-  const currentDomain = normalizeDomain(url);
-  if (!currentDomain || !promptDomain) return false;
-  return (
-    currentDomain === promptDomain ||
-    currentDomain.endsWith(`.${promptDomain}`) ||
-    promptDomain.endsWith(`.${currentDomain}`)
-  );
+function isSamePromptOrigin(url: string, submittedUrl: string): boolean {
+  return isWebOriginFillable(url) && isWebOriginFillable(submittedUrl) &&
+    new URL(url).origin === new URL(submittedUrl).origin;
 }
 
 export async function loadSettings(): Promise<VaultExtensionSettings> {
@@ -359,7 +361,7 @@ export async function clearPendingSaveIfNavigatedAway(
   const prompts = await readPendingSaves();
   const prompt = prompts[String(tabId)];
   if (!prompt) return;
-  if (!nextUrl || !isSamePromptDomain(nextUrl, prompt.domain)) {
+  if (!nextUrl || !isSamePromptOrigin(nextUrl, prompt.url)) {
     delete prompts[String(tabId)];
     await writePendingSaves(prompts);
   }
@@ -408,6 +410,22 @@ export async function handleAutoLockAlarm(): Promise<void> {
   }
 }
 
+function selectedLogin(message: Record<string, unknown>): VaultLoginTarget | null {
+  if (message.loginIndex === undefined && message.revision === undefined) return null;
+  if (typeof message.objectIdHex !== "string" || typeof message.revision !== "string" ||
+      typeof message.loginIndex !== "number" || !Number.isSafeInteger(message.loginIndex) ||
+      message.loginIndex < 0) {
+    throw new Error("INVALID_LOGIN_SELECTION");
+  }
+  return { objectIdHex: message.objectIdHex, revision: message.revision, loginIndex: message.loginIndex };
+}
+
+async function readSelectedLogin(target: VaultLoginTarget, url: string) {
+  return callOffscreen<{ username: string; password: string; totp: LiveTotpView | null }>({
+    type: "read-login-for-url", target, url
+  });
+}
+
 export async function handleMessage(
   message: Record<string, unknown>,
   sender?: SenderLike
@@ -424,9 +442,9 @@ export async function handleMessage(
     const result = await callOffscreenIfRunning<{
       unlocked: boolean;
       domain: string | null;
-      matches: VaultItemSummary[];
+      matches: VaultLoginMatch[];
     }>({
-      type: "get-matches-for-url",
+      type: "get-login-matches-for-url",
       url: tab.url
     });
     if (!result) {
@@ -456,6 +474,15 @@ export async function handleMessage(
     const objectIdHex =
       typeof message.objectIdHex === "string" ? message.objectIdHex : "";
     if (!objectIdHex) throw new Error("Item identifier is required.");
+
+    const target = selectedLogin(message);
+    if (target) {
+      const login = await readSelectedLogin(target, tab.url);
+      await bumpAutoLockIfUnlocked();
+      return { ok: true, result: {
+        username: login.username, password: login.password, totp: login.totp?.code ?? ""
+      } };
+    }
 
     // Re-verify the requested credential actually matches sender.tab.url.
     const lookup = await callOffscreen<{
@@ -509,6 +536,8 @@ export async function handleMessage(
       | {
           action: "create" | "update";
           existingObjectIdHex?: string;
+          existingRevision?: string;
+          existingLoginIndex?: number;
           domain: string;
           title: string;
         }
@@ -530,6 +559,8 @@ export async function handleMessage(
       tabId: tab.tabId,
       mode: evaluation.action,
       existingObjectIdHex: evaluation.existingObjectIdHex,
+      existingRevision: evaluation.existingRevision,
+      existingLoginIndex: evaluation.existingLoginIndex,
       domain: evaluation.domain,
       url: tab.url,
       title: evaluation.title,
@@ -562,7 +593,7 @@ export async function handleMessage(
     if (!prompt) {
       return { ok: true, result: { prompt: null } };
     }
-    if (!isSamePromptDomain(tab.url, prompt.domain)) {
+    if (!isSamePromptOrigin(tab.url, prompt.url)) {
       await clearPendingSaveForTab(tab.tabId);
       return { ok: true, result: { prompt: null } };
     }
@@ -588,7 +619,7 @@ export async function handleMessage(
     if (!prompt || prompt.id !== promptId) {
       throw new Error("SAVE_PROMPT_EXPIRED");
     }
-    if (!isSamePromptDomain(tab.url, prompt.domain)) {
+    if (!isSamePromptOrigin(tab.url, prompt.url)) {
       await clearPendingSaveForTab(tab.tabId);
       throw new Error("SAVE_PROMPT_DOMAIN_MISMATCH");
     }
@@ -603,7 +634,10 @@ export async function handleMessage(
         : prompt.username;
 
     let existingDetails: DecryptedItemView | null = null;
-    if (prompt.mode === "update" && prompt.existingObjectIdHex) {
+    if (prompt.mode === "update") {
+      if (!prompt.existingObjectIdHex || !prompt.existingRevision || prompt.existingLoginIndex === undefined) {
+        throw new Error("SAVE_PROMPT_EXPIRED");
+      }
       existingDetails = await callOffscreen<DecryptedItemView>({
         type: "read-item",
         objectIdHex: prompt.existingObjectIdHex
@@ -614,6 +648,9 @@ export async function handleMessage(
       type: "save-credential",
       input: {
         objectIdHex: prompt.existingObjectIdHex,
+        loginIndex: prompt.existingLoginIndex,
+        expectedRevision: prompt.existingRevision,
+        submittedUrl: prompt.url,
         title: customTitle,
         username: customUsername,
         password: prompt.password,
@@ -748,24 +785,31 @@ export async function handleMessage(
       if (!tab?.id || !tab.url || !isWebOriginFillable(tab.url)) {
         throw new Error("This page does not support autofill.");
       }
-      const decrypted = await callOffscreen<DecryptedItemView>({
-        type: "read-item",
-        objectIdHex: message.objectIdHex
-      });
+      const target = selectedLogin(message);
       const expectedOrigin = new URL(tab.url).origin;
-      const allowCrossDomain = message.confirmedOrigin === expectedOrigin;
-      if (
-        decrypted.summary.kind !== "credential" ||
-        (!allowCrossDomain && !matchesDomain([decrypted.url, ...decrypted.urls], tab.url))
-      ) {
-        throw new Error("CROSS_DOMAIN_CONFIRM_REQUIRED");
+      if (message.expectedOrigin !== expectedOrigin) {
+        throw new Error("Page origin changed before autofill completed. Try again.");
+      }
+      let login;
+      if (target) {
+        login = await readSelectedLogin(target, tab.url);
+      } else {
+        const decrypted = await callOffscreen<DecryptedItemView>({
+          type: "read-item", objectIdHex: message.objectIdHex
+        });
+        const allowCrossDomain = message.confirmedOrigin === expectedOrigin;
+        if (decrypted.summary.kind !== "credential" ||
+            (!allowCrossDomain && !matchesDomain([decrypted.url, ...decrypted.urls], tab.url))) {
+          throw new Error("CROSS_DOMAIN_CONFIRM_REQUIRED");
+        }
+        login = decrypted;
       }
       const response = (await deps.sendToTab(tab.id, {
         type: "fill-credentials",
         expectedOrigin,
-        username: decrypted.username,
-        password: decrypted.password,
-        totp: decrypted.totp?.code ?? ""
+        username: login.username,
+        password: login.password,
+        totp: login.totp?.code ?? ""
       })) as
         | {
             ok?: boolean;
@@ -794,7 +838,7 @@ export async function handleMessage(
         ok: true,
         result: {
           filled: true,
-          totp: decrypted.totp
+          totp: login.totp
         }
       };
     }

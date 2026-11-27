@@ -7,7 +7,10 @@ import { idlFactory } from "@kinic/vault-candid";
 import { VaultClient, bytes, type Item } from "@kinic/vault-client";
 import type { Header, VaultActor } from "@kinic/vault-client/contracts";
 import {
+  MAX_CREDENTIAL_DOMAINS,
   buildCredentialMetadata,
+  credentialLogins,
+  extractDomains,
   matchesDomain,
   matchesMetadataQuery,
   normalizeDomain,
@@ -32,6 +35,8 @@ import type {
   SaveCredentialInput,
   VaultEngineState,
   VaultItemSummary,
+  VaultLoginMatch,
+  VaultLoginTarget,
   VaultSummary
 } from "./types.ts";
 
@@ -545,15 +550,78 @@ export class VaultEngine {
     return { unlocked: true, domain, matches };
   }
 
+  private async readLoginCandidates(url: string) {
+    const { client } = this.requireUnlockedVault();
+    const ticket = client.session.capture();
+    const { items, matches } = this.listItems({ url, filter: "logins" });
+    const indexed = new Set(matches.map(item => item.objectIdHex));
+    const candidates = matches.concat(items.filter(item => !indexed.has(item.objectIdHex) &&
+      (item.domains.length === 0 || item.domains.length >= MAX_CREDENTIAL_DOMAINS)));
+    const readable: DecryptedItemView[] = [];
+    for (let start = 0; start < candidates.length; start += 4) {
+      const batch = candidates.slice(start, start + 4);
+      const results = await Promise.allSettled(batch.map(item => this.readItem(item.objectIdHex)));
+      client.session.check(ticket);
+      for (const result of results) {
+        if (result.status === "fulfilled" && result.value.summary.kind === "credential") {
+          readable.push(result.value);
+        }
+      }
+    }
+    return readable;
+  }
+
+  async getLoginMatchesForUrl(url: string) {
+    const unlocked = this.isVaultCurrentlyUnlocked();
+    const domain = normalizeDomain(url);
+    const matches: VaultLoginMatch[] = [];
+    if (!unlocked || !domain) return { unlocked, domain, matches };
+    for (const view of await this.readLoginCandidates(url)) {
+      for (const [loginIndex, login] of credentialLogins(parseCredential(view.rawText)).entries()) {
+        const domains = extractDomains(login.urls);
+        if (login.password && matchesDomain(domains, domain)) {
+          matches.push({
+            ...view.summary, loginIndex, username: login.username, domains, hasTotp: Boolean(login.totp)
+          });
+        }
+      }
+    }
+    return { unlocked, domain, matches };
+  }
+
+  async readLoginForUrl(target: VaultLoginTarget, url: string) {
+    const { client } = this.requireUnlockedVault();
+    const ticket = client.session.capture();
+    const item = this.cachedItems.get(target.objectIdHex);
+    if (!item || item.revision.revision.toString() !== target.revision) {
+      throw new Error("ITEM_CHANGED");
+    }
+    const view = await this.readItem(target.objectIdHex);
+    client.session.check(ticket);
+    const current = this.cachedItems.get(target.objectIdHex);
+    if (!current || current.revision.revision !== item.revision.revision ||
+        bytesToHex(current.revision.vault) !== view.summary.vaultIdHex) {
+      throw new Error("ITEM_CHANGED");
+    }
+    const login = credentialLogins(parseCredential(view.rawText))[target.loginIndex];
+    if (view.summary.kind !== "credential" || view.summary.revision !== target.revision ||
+        !login?.password || !matchesDomain(login.urls, url)) {
+      throw new Error("CREDENTIAL_DOMAIN_MISMATCH");
+    }
+    return { username: login.username, password: login.password, totp: target.loginIndex === 0 ? view.totp : null };
+  }
+
   async readItem(objectIdHex: string): Promise<DecryptedItemView> {
     const { client } = this.requireUnlockedVault();
     const item = this.cachedItems.get(objectIdHex);
     if (!item) {
       throw new Error("ITEM_NOT_FOUND");
     }
+    const ticket = client.session.capture();
     const doc = await client.read(item.revision);
     let rawText = "";
     try {
+      client.session.check(ticket);
       rawText = new TextDecoder().decode(doc.plaintext);
     } finally {
       doc.plaintext.fill(0);
@@ -594,6 +662,7 @@ export class VaultEngine {
       }
     }
 
+    client.session.check(ticket);
     return {
       summary,
       label: record.label || item.metadata.title,
@@ -626,9 +695,15 @@ export class VaultEngine {
     if (existing && existing.metadata.kind !== "credential") {
       throw new Error("ITEM_NOT_CREDENTIAL");
     }
-    const additionalLogins = input.objectIdHex
-      ? parseCredential((await this.readItem(input.objectIdHex)).rawText).additionalLogins
+    if (input.expectedRevision !== undefined &&
+        existing?.revision.revision.toString() !== input.expectedRevision) {
+      throw new Error("ITEM_CHANGED");
+    }
+    const ticket = client.session.capture();
+    const existingRecord = input.objectIdHex
+      ? parseCredential((await this.readItem(input.objectIdHex)).rawText)
       : undefined;
+    client.session.check(ticket);
 
     const title =
       input.title.trim() ||
@@ -636,7 +711,7 @@ export class VaultEngine {
       input.username.trim() ||
       "Untitled Login";
 
-    const record = {
+    let record = {
       label: title,
       username: input.username,
       password: input.password,
@@ -644,11 +719,28 @@ export class VaultEngine {
       urls: input.urls ?? (input.url.trim() ? [input.url.trim()] : []),
       totp: input.totp?.trim() ?? "",
       notes: input.notes ?? "",
-      additionalLogins,
+      additionalLogins: existingRecord?.additionalLogins,
       customFields: input.customFields ?? [],
       favorite: Boolean(input.favorite),
       tags: input.tags ?? []
     };
+
+    if (input.loginIndex !== undefined && input.loginIndex !== 0) {
+      const index = input.loginIndex - 1;
+      const login = existingRecord?.additionalLogins?.[index];
+      if (!existingRecord || !login || !matchesDomain([login.URL], input.submittedUrl ?? input.url)) {
+        throw new Error("CREDENTIAL_DOMAIN_MISMATCH");
+      }
+      record = {
+        ...existingRecord,
+        label: title,
+        additionalLogins: existingRecord.additionalLogins?.map((entry, i) =>
+          i === index ? { ...entry, username: input.username, password: input.password } : entry),
+      };
+    } else if (input.expectedRevision !== undefined &&
+               (!existingRecord || !matchesDomain([existingRecord.URL, ...existingRecord.urls], input.submittedUrl ?? input.url))) {
+      throw new Error("CREDENTIAL_DOMAIN_MISMATCH");
+    }
 
     const metadata = buildCredentialMetadata(title, record);
     const plaintext = new TextEncoder().encode(serializeCredential(record));
@@ -697,29 +789,29 @@ export class VaultEngine {
     const username = input.username.trim();
     if (!domain || !password) return { action: "ignore" };
 
-    const { matches } = this.listItems({ url: input.url });
     const normalizedUser = username.toLocaleLowerCase();
 
-    // Check credentials on this domain that share the same username (or blank username).
-    for (const candidate of matches) {
-      if (candidate.username.trim().toLocaleLowerCase() !== normalizedUser) {
-        continue;
-      }
-      try {
-        const decrypted = await this.readItem(candidate.objectIdHex);
-        if (decrypted.password === password) {
-          return { action: "ignore" };
-        }
-        return {
-          action: "update",
+    // Preserve an exact password match, even when multiple accounts share a username.
+    const updates = [];
+    for (const decrypted of await this.readLoginCandidates(input.url)) {
+      const candidate = decrypted.summary;
+      const matching = credentialLogins(parseCredential(decrypted.rawText)).entries();
+      for (const [loginIndex, login] of matching) {
+        if (!matchesDomain(login.urls, domain) ||
+            login.username.trim().toLocaleLowerCase() !== normalizedUser) continue;
+        if (login.password === password) return { action: "ignore" };
+        updates.push({
+          action: "update" as const,
           existingObjectIdHex: candidate.objectIdHex,
+          existingRevision: decrypted.summary.revision,
+          existingLoginIndex: loginIndex,
           domain,
           title: decrypted.label || candidate.title || domain
-        };
-      } catch {
-        // Skip unreadable candidate and continue.
+        });
       }
     }
+    if (updates.length === 1) return updates[0];
+    if (updates.length > 1) return { action: "ignore" };
 
     const cleanPageTitle = input.pageTitle?.trim();
     const title =

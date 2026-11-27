@@ -9,7 +9,7 @@ import {
   isWebOriginFillable
 } from "./form-detector.ts";
 import { fillGeneratedPassword, fillLoginFields } from "./form-filler.ts";
-import type { VaultItemSummary } from "./types.ts";
+import type { VaultLoginMatch } from "./types.ts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare const chrome: any;
@@ -105,7 +105,7 @@ function removeSaveBanner(): void {
 
 function showInlinePicker(
   anchor: HTMLInputElement,
-  matches: VaultItemSummary[]
+  matches: VaultLoginMatch[]
 ): void {
   removeInlinePicker();
   if (matches.length === 0) return;
@@ -219,7 +219,9 @@ function showInlinePicker(
           totp: string;
         }>({
           type: "fill-inline-item",
-          objectIdHex: item.objectIdHex
+          objectIdHex: item.objectIdHex,
+          revision: item.revision,
+          loginIndex: item.loginIndex
         });
         if (creds) {
           fillLoginFields(document, creds);
@@ -490,7 +492,7 @@ function initContentAutofill(): void {
         const result = await sendRuntimeMessage<{
           enabled: boolean;
           unlocked: boolean;
-          matches: VaultItemSummary[];
+          matches: VaultLoginMatch[];
         }>({ type: "get-inline-matches" });
         if (
           document.activeElement === target &&

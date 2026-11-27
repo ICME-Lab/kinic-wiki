@@ -474,7 +474,8 @@ export function VaultPortabilityPanel({
           <p className="vault-field-hint">
             Export all logins and notes from this Vault directly in your
             browser. Exported files are unencrypted — store them safely and
-            delete temporary copies when finished.
+            delete temporary copies when finished. CSV saves one row per login.
+          Use JSON to keep logins grouped with their Vault item.
           </p>
           <div className="vault-portability-actions">
             <VaultButton

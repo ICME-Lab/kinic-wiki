@@ -27,6 +27,7 @@ import {
   type ItemCategoryFilter,
   type VaultEngineState,
   type VaultExtensionSettings,
+  type VaultLoginMatch,
   type VaultItemSummary
 } from "../src/vault/types.ts";
 
@@ -196,10 +197,10 @@ function renderSettingsControls(): void {
 
 function createItemCard(
   item: VaultItemSummary,
-  suggested: boolean
+  suggestedLogin?: VaultLoginMatch
 ): HTMLElement {
   const card = document.createElement("div");
-  card.className = suggested ? "item-card suggested" : "item-card";
+  card.className = suggestedLogin ? "item-card suggested" : "item-card";
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
@@ -241,14 +242,15 @@ function createItemCard(
   actions.className = "item-actions";
 
   if (item.kind === "credential") {
-    if (suggested && isWebOriginFillable(activeTabUrl)) {
+    if (suggestedLogin && isWebOriginFillable(activeTabUrl)) {
+      const targetOrigin = new URL(activeTabUrl).origin;
       const fillBtn = document.createElement("button");
       fillBtn.className = "chip-btn primary";
       fillBtn.type = "button";
       fillBtn.textContent = "Fill";
       fillBtn.addEventListener("click", (event) => {
         event.stopPropagation();
-        void handleFillItem(item.objectIdHex);
+        void handleFillItem(item.objectIdHex, targetOrigin, { login: suggestedLogin });
       });
       actions.appendChild(fillBtn);
     }
@@ -266,16 +268,18 @@ function createItemCard(
       actions.appendChild(totpBtn);
     }
 
-    const pwBtn = document.createElement("button");
-    pwBtn.className = "chip-btn";
-    pwBtn.type = "button";
-    pwBtn.textContent = "Pass";
-    pwBtn.title = "Copy password";
-    pwBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      void handleQuickCopyPassword(item.objectIdHex);
-    });
-    actions.appendChild(pwBtn);
+    if (!suggestedLogin || suggestedLogin.loginIndex === 0) {
+      const pwBtn = document.createElement("button");
+      pwBtn.className = "chip-btn";
+      pwBtn.type = "button";
+      pwBtn.textContent = "Pass";
+      pwBtn.title = "Copy password";
+      pwBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void handleQuickCopyPassword(item.objectIdHex);
+      });
+      actions.appendChild(pwBtn);
+    }
   }
 
   card.append(avatar, meta, actions);
@@ -288,7 +292,7 @@ function createItemCard(
 async function refreshItemList(): Promise<void> {
   const seq = ++listRequestSeq;
   const result = await sendSw<{
-    matches: VaultItemSummary[];
+    matches: VaultLoginMatch[];
     items: VaultItemSummary[];
     domain: string | null;
   }>({
@@ -311,7 +315,7 @@ async function refreshItemList(): Promise<void> {
   if (showMatches && result.domain) {
     el("matches-domain").textContent = result.domain;
     for (const item of result.matches) {
-      matchesList.appendChild(createItemCard(item, true));
+      matchesList.appendChild(createItemCard(item, item));
     }
   }
 
@@ -320,13 +324,14 @@ async function refreshItemList(): Promise<void> {
   el("items-count").textContent = String(result.items.length);
   el("items-empty").hidden = result.items.length > 0;
   for (const item of result.items) {
-    itemsList.appendChild(createItemCard(item, false));
+    itemsList.appendChild(createItemCard(item));
   }
 }
 
 async function handleFillItem(
   objectIdHex: string,
-  confirmedOrigin?: string
+  expectedOrigin: string,
+  { allowCrossDomain = false, login }: { allowCrossDomain?: boolean; login?: VaultLoginMatch } = {}
 ): Promise<void> {
   try {
     const result = await sendSw<{
@@ -335,7 +340,10 @@ async function handleFillItem(
     }>({
       type: "fill-active-tab",
       objectIdHex,
-      confirmedOrigin
+      expectedOrigin,
+      confirmedOrigin: allowCrossDomain ? expectedOrigin : undefined,
+      revision: login?.revision,
+      loginIndex: login?.loginIndex
     });
     if (result.totp?.code) {
       await navigator.clipboard.writeText(result.totp.code).catch(() => {});
@@ -445,7 +453,7 @@ function renderDetail(): void {
         fillBtn.textContent = `Confirm: fill into ${activeDomain ?? "this site"}`;
         return;
       }
-      void handleFillItem(item.summary.objectIdHex, sameSite ? undefined : targetOrigin);
+      void handleFillItem(item.summary.objectIdHex, targetOrigin, { allowCrossDomain: !sameSite });
     });
     headerCard.appendChild(fillBtn);
   }

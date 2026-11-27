@@ -25,6 +25,12 @@ export type VaultItemSummary = {
   updatedAtMs: number;
 };
 
+export type VaultLoginTarget = Pick<VaultItemSummary, "objectIdHex" | "revision"> & {
+  loginIndex: number;
+};
+
+export type VaultLoginMatch = VaultItemSummary & VaultLoginTarget;
+
 export type LiveTotpView = {
   code: string;
   formattedCode: string;
@@ -62,6 +68,9 @@ export type VaultEngineState = {
 
 export type SaveCredentialInput = {
   objectIdHex?: string;
+  expectedRevision?: string;
+  loginIndex?: number;
+  submittedUrl?: string;
   title: string;
   username: string;
   password: string;
@@ -79,6 +88,8 @@ export type PendingSavePrompt = {
   tabId: number;
   mode: "create" | "update";
   existingObjectIdHex?: string;
+  existingRevision?: string;
+  existingLoginIndex?: number;
   domain: string;
   url: string;
   title: string;

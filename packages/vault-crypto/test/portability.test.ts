@@ -150,3 +150,27 @@ describe("vault import and bulk export portability", () => {
     expect(reimportedCsv.items[0].title).toBe("Linear");
   });
 });
+
+it("exports each additional login as a CSV row and keeps it grouped in JSON", () => {
+  const items = [{
+    kind: "credential" as const, title: "Accounts",
+    record: { label: "Accounts", username: "main", password: "main-password",
+      URL: "https://primary.example", urls: [], notes: "", tags: [], favorite: false,
+      customFields: [], totp: "JBSWY3DPEHPK3PXP",
+      additionalLogins: [
+        { username: "other", password: "other-password", URL: "https://secondary.example" },
+        { username: "another", password: "another-password", URL: "https://secondary.example" },
+      ],
+    },
+  }];
+  const csv = parseImportFile(exportCredentialsToCsv(items), "vault.csv");
+  expect(csv.items.map(item => item.kind === "credential" && [item.record.username, item.record.password, item.record.totp])).toEqual([
+    ["main", "main-password", "JBSWY3DPEHPK3PXP"],
+    ["other", "other-password", ""],
+    ["another", "another-password", ""],
+  ]);
+  const json = parseImportFile(exportVaultToJson(items), "vault.json");
+  expect(json.items).toHaveLength(1);
+  const first = json.items[0];
+  expect(first.kind === "credential" && first.record.additionalLogins).toEqual(items[0].record.additionalLogins);
+});
