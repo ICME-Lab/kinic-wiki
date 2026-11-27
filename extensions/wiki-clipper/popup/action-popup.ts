@@ -326,7 +326,7 @@ async function refreshItemList(): Promise<void> {
 
 async function handleFillItem(
   objectIdHex: string,
-  allowCrossDomain = false
+  confirmedOrigin?: string
 ): Promise<void> {
   try {
     const result = await sendSw<{
@@ -335,7 +335,7 @@ async function handleFillItem(
     }>({
       type: "fill-active-tab",
       objectIdHex,
-      allowCrossDomain
+      confirmedOrigin
     });
     if (result.totp?.code) {
       await navigator.clipboard.writeText(result.totp.code).catch(() => {});
@@ -429,7 +429,8 @@ function renderDetail(): void {
 
   if (item.summary.kind === "credential" && isWebOriginFillable(activeTabUrl)) {
     const activeDomain = normalizeDomain(activeTabUrl);
-    const sameSite = matchesDomain(item.summary.domains, activeTabUrl);
+    const sameSite = matchesDomain([item.url, ...item.urls], activeTabUrl);
+    const targetOrigin = new URL(activeTabUrl).origin;
     const fillBtn = document.createElement("button");
     fillBtn.className = sameSite ? "btn primary full" : "btn secondary full";
     fillBtn.type = "button";
@@ -444,7 +445,7 @@ function renderDetail(): void {
         fillBtn.textContent = `Confirm: fill into ${activeDomain ?? "this site"}`;
         return;
       }
-      void handleFillItem(item.summary.objectIdHex, !sameSite);
+      void handleFillItem(item.summary.objectIdHex, sameSite ? undefined : targetOrigin);
     });
     headerCard.appendChild(fillBtn);
   }

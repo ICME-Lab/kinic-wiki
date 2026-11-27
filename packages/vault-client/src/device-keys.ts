@@ -49,7 +49,9 @@ export class BrowserDeviceKeys implements DeviceKeys {
   private readonly listeners = new Set<() => void>();
   private channel?: BroadcastChannel;
   private poll?: number;
-  constructor(private readonly scope: string) {
+  private readonly scope: string;
+  constructor(scope: string) {
+    this.scope = scope;
     if (
       typeof window !== "undefined" &&
       typeof BroadcastChannel !== "undefined"

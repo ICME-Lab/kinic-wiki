@@ -623,6 +623,13 @@ export class VaultEngine {
       throw new Error("ITEM_NOT_FOUND");
     }
 
+    if (existing && existing.metadata.kind !== "credential") {
+      throw new Error("ITEM_NOT_CREDENTIAL");
+    }
+    const additionalLogins = input.objectIdHex
+      ? parseCredential((await this.readItem(input.objectIdHex)).rawText).additionalLogins
+      : undefined;
+
     const title =
       input.title.trim() ||
       normalizeDomain(input.url) ||
@@ -637,6 +644,7 @@ export class VaultEngine {
       urls: input.urls ?? (input.url.trim() ? [input.url.trim()] : []),
       totp: input.totp?.trim() ?? "",
       notes: input.notes ?? "",
+      additionalLogins,
       customFields: input.customFields ?? [],
       favorite: Boolean(input.favorite),
       tags: input.tags ?? []
