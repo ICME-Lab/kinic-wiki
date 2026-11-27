@@ -2,7 +2,7 @@
 // What: MV3 offscreen document entrypoint hosting the in-memory VaultEngine.
 // Why: Internet Identity AuthClient and IndexedDB BrowserDeviceKeys require a DOM context, not a service worker.
 import { VaultEngine } from "./vault-engine.ts";
-import type { ItemCategoryFilter, SaveCredentialInput } from "./types.ts";
+import type { ItemCategoryFilter, SaveCredentialInput, VaultLoginTarget } from "./types.ts";
 
 let engine = new VaultEngine();
 
@@ -32,12 +32,20 @@ export async function handleOffscreenMessage(message: Record<string, unknown>): 
       return engine.reloadAuthSession();
     case "forget-and-reset":
       return engine.forgetAndReset();
-    case "list-items":
-      return engine.listItems({
-        url: typeof message.url === "string" ? message.url : undefined,
+    case "list-items": {
+      const url = typeof message.url === "string" ? message.url : undefined;
+      const listed = engine.listItems({
+        url,
         query: typeof message.query === "string" ? message.query : undefined,
         filter: (message.filter as ItemCategoryFilter | undefined) ?? "all"
       });
+      const matches = url ? (await engine.getLoginMatchesForUrl(url)).matches : [];
+      return { ...listed, matches };
+    }
+    case "get-login-matches-for-url":
+      return engine.getLoginMatchesForUrl(typeof message.url === "string" ? message.url : "");
+    case "read-login-for-url":
+      return engine.readLoginForUrl(message.target as VaultLoginTarget, String(message.url ?? ""));
     case "get-matches-for-url":
       return engine.getMatchesForUrl(typeof message.url === "string" ? message.url : "");
     case "read-item":

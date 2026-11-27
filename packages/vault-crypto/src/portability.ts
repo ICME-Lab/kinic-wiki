@@ -1,6 +1,7 @@
 import type { Metadata } from "./documents-v3.ts";
 import {
   buildCredentialMetadata,
+  credentialLogins,
   normalizeTags,
   truncateMetadataText,
   parseCredential,
@@ -512,16 +513,18 @@ export function exportCredentialsToCsv(
   for (const item of items) {
     if (item.kind !== "credential") continue;
     const rec = item.record;
-    rows.push([
-      item.title,
-      rec.URL || rec.urls[0] || "",
-      rec.username,
-      rec.password,
-      rec.totp,
-      rec.notes,
-      rec.tags.join(", "),
-      rec.favorite ? "true" : "",
-    ]);
+    for (const login of credentialLogins(rec)) {
+      rows.push([
+        item.title,
+        login.URL || login.urls.find(Boolean) || "",
+        login.username,
+        login.password,
+        login.totp,
+        rec.notes,
+        rec.tags.join(", "),
+        rec.favorite ? "true" : "",
+      ]);
+    }
   }
   return formatCsv(rows);
 }
