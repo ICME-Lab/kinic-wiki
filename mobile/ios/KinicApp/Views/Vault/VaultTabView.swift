@@ -17,6 +17,7 @@ struct VaultTabView: View {
     @State private var toastMessage: String?
     @State private var toastTask: Task<Void, Never>?
     @State private var itemPendingDelete: VaultItemSummary?
+    @State private var showsSignOutConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -118,6 +119,14 @@ struct VaultTabView: View {
         } message: {
             Text("This removes \"\(itemPendingDelete?.title ?? "this item")\" from your Vault and AutoFill cache.")
         }
+        .alert("Sign out of Vault?", isPresented: $showsSignOutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign Out & Clear", role: .destructive) {
+                model.signOut()
+            }
+        } message: {
+            Text("This signs out of Kinic Vault and removes offline AutoFill data from this device. Your Kinic Wiki session stays signed in.")
+        }
     }
 
     private var navigationTitle: String {
@@ -202,8 +211,8 @@ struct VaultTabView: View {
                         }
                     }
                     Divider()
-                    Button("Sign Out & Clear Offline Data", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                        model.signOut()
+                    Button("Sign Out of Vault & Clear Offline Data", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                        showsSignOutConfirmation = true
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -223,6 +232,22 @@ struct VaultTabView: View {
                     categoryFilterBar
                     if !model.availableTags.isEmpty {
                         tagFilterBar
+                    }
+                    if !model.searchQuery.isEmpty || model.selectedCategory != .all || model.selectedTag != nil {
+                        HStack {
+                            Text("Filtered · \(model.filteredItems.count) shown")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Clear Filters") {
+                                model.searchQuery = ""
+                                model.selectedCategory = .all
+                                model.selectedTag = nil
+                            }
+                            .font(.caption.weight(.semibold))
+                            .tint(KinicDesign.hotPink)
+                        }
+                        .padding(.horizontal, 4)
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
@@ -443,7 +468,7 @@ struct VaultTabView: View {
         case .syncing:
             "Updating encrypted snapshot and Keychain"
         case .providerDisabled(let count, _):
-            "\(count) \(count == 1 ? "login" : "logins") cached · Turn on Kinic Vault in iOS Settings → AutoFill & Passwords"
+            "\(count) \(count == 1 ? "login" : "logins") ready · Turn on KinicWiki in iOS Settings → General → AutoFill & Passwords"
         case .onlineOnly:
             "This Vault exceeds the offline AutoFill cache limit."
         case .error(let message):
@@ -454,7 +479,7 @@ struct VaultTabView: View {
     }
 
     private var categoryFilterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal, showsIndicators: true) {
             HStack(spacing: 6) {
                 ForEach(VaultCategoryFilter.allCases) { category in
                     let isSelected = model.selectedCategory == category
@@ -482,6 +507,7 @@ struct VaultTabView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
             .padding(.trailing, 12)
@@ -517,62 +543,42 @@ struct VaultTabView: View {
 
     private var lockedOfflineView: some View {
         ScrollView {
-            VStack(spacing: 22) {
+            VStack(spacing: 18) {
                 ZStack {
                     Circle()
                         .fill(KinicDesign.hotPink.opacity(0.12))
-                        .frame(width: 96, height: 96)
+                        .frame(width: 76, height: 76)
                     Image(systemName: "faceid")
-                        .font(.system(size: 44, weight: .light))
+                        .font(.system(size: 36, weight: .light))
                         .foregroundStyle(KinicDesign.hotPink)
                 }
-                .padding(.top, 56)
+                .padding(.top, 20)
 
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     Text("Kinic Vault is Locked")
                         .font(.title2.bold())
-                    Text("Unlock with Face ID or your device passcode to access your encrypted logins and 2FA codes.")
+                    Text("Unlock with Face ID or passcode.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                .padding(.horizontal, 28)
+                .padding(.horizontal, 24)
 
-                VStack(spacing: 12) {
-                    Button {
-                        Task { await model.unlockWithDeviceAuthentication() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "lock.open.fill")
-                            Text("Unlock Vault")
-                        }
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                Button {
+                    Task { await model.unlockWithDeviceAuthentication() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.open.fill")
+                        Text("Unlock Vault")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
-                    .tint(KinicDesign.actionPink)
-
-                    if model.isSignedIn && model.selectedVaultHeader != nil {
-                        Button {
-                            Task { await model.synchronize() }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                Text("Refresh Vault")
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                        .tint(KinicDesign.hotPink)
-                        .disabled(model.busy)
-                    }
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                 }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .tint(KinicDesign.actionPink)
                 .padding(.horizontal, 24)
 
                 if !model.status.isEmpty {
@@ -694,18 +700,18 @@ struct VaultTabView: View {
 
     private var signedOutWelcomeView: some View {
         ScrollView {
-            VStack(spacing: 22) {
+            VStack(spacing: 18) {
                 ZStack {
                     Circle()
                         .fill(KinicDesign.hotPink.opacity(0.12))
-                        .frame(width: 96, height: 96)
+                        .frame(width: 76, height: 76)
                     Image(systemName: "lock.shield.fill")
-                        .font(.system(size: 44))
+                        .font(.system(size: 36))
                         .foregroundStyle(KinicDesign.hotPink)
                 }
-                .padding(.top, 28)
+                .padding(.top, 20)
 
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     Text("Kinic Vault")
                         .font(.title.bold())
                     Text("Zero-knowledge password manager with iOS AutoFill, live 2FA codes, and offline Face ID unlock.")
@@ -715,6 +721,38 @@ struct VaultTabView: View {
                 }
                 .padding(.horizontal, 24)
 
+                Button {
+                    Task { await model.signIn() }
+                } label: {
+                    if model.busy {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    } else {
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.crop.circle")
+                            Text("Sign in to Kinic Vault")
+                        }
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .tint(KinicDesign.actionPink)
+                .disabled(model.busy)
+                .padding(.horizontal, 24)
+
+                if !model.status.isEmpty {
+                    Text(model.status)
+                        .font(.footnote)
+                        .foregroundStyle(KinicDesign.errorRed)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+
                 VStack(alignment: .leading, spacing: 14) {
                     featureRow(icon: "key.fill", title: "End-to-End Encrypted", subtitle: "Your logins are encrypted on-device and protected in your iPhone Keychain.")
                     featureRow(icon: "rectangle.and.pencil.and.ellipsis", title: "System AutoFill & QuickType", subtitle: "Fill logins and auto-copy 2FA codes across Safari and every app.")
@@ -723,55 +761,6 @@ struct VaultTabView: View {
                 .padding(16)
                 .kinicCard()
                 .padding(.horizontal, 16)
-
-                VStack(spacing: 12) {
-                    Button {
-                        Task { await model.signIn() }
-                    } label: {
-                        if model.busy {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                        } else {
-                            HStack(spacing: 8) {
-                                Image(systemName: "person.crop.circle")
-                                Text("Sign in to Kinic Vault")
-                            }
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
-                    .tint(KinicDesign.actionPink)
-                    .disabled(model.busy)
-
-                    Button {
-                        isShowingGenerator = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wand.and.stars")
-                            Text("Open Password Generator")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                    .tint(KinicDesign.hotPink)
-                }
-                .padding(.horizontal, 24)
-
-                if !model.status.isEmpty {
-                    Text(model.status)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                }
             }
             .padding(.bottom, 24)
         }
@@ -907,13 +896,9 @@ private struct VaultItemRow: View {
                     }
                 }
 
-                if !item.username.isEmpty {
-                    Text(item.username)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if let domain = item.domains.first {
-                    Text(domain)
+                let subtitleParts = [item.username, item.domains.first ?? ""].filter { !$0.isEmpty }
+                if !subtitleParts.isEmpty {
+                    Text(subtitleParts.joined(separator: " · "))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

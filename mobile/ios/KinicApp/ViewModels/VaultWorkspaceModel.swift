@@ -323,6 +323,9 @@ final class VaultWorkspaceModel {
         activeSnapshot = nil
         items = []
         isUnlocked = false
+        if status == "Vault unlocked." || status == "Viewing offline Vault. Sign in to sync or edit items." {
+            status = ""
+        }
     }
 
     private func refreshOfflinePresence() {
@@ -341,13 +344,27 @@ final class VaultWorkspaceModel {
         if case .syncing = autoFillStatus { return }
         if case .onlineOnly = autoFillStatus { return }
         if let snapshot = activeSnapshot, hasOfflineSnapshot {
-            let credCount = items.count(where: { $0.kind == .credential })
+            let credCount = items.count(where: { $0.kind == .credential && !$0.domains.isEmpty })
             let syncedAt = Date(timeIntervalSince1970: TimeInterval(snapshot.updatedAtEpochSeconds))
             lastSyncedAt = syncedAt
             autoFillStatus = enabled
                 ? .ready(credentialCount: credCount, syncedAt: syncedAt)
                 : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
-        } else if !hasOfflineSnapshot {
+        } else if hasOfflineSnapshot {
+            let existingCount: Int
+            let syncedAt: Date
+            switch autoFillStatus {
+            case .ready(let count, let date), .providerDisabled(let count, let date):
+                existingCount = count
+                syncedAt = date
+            default:
+                existingCount = 0
+                syncedAt = lastSyncedAt ?? Date()
+            }
+            autoFillStatus = enabled
+                ? .ready(credentialCount: existingCount, syncedAt: syncedAt)
+                : .providerDisabled(cachedCount: existingCount, syncedAt: syncedAt)
+        } else {
             autoFillStatus = .notSynced
         }
     }
@@ -401,7 +418,11 @@ final class VaultWorkspaceModel {
         let authContext = await evaluateDeviceOwnerAuthentication(
             reason: "Unlock Kinic Vault to view your saved logins and codes"
         )
-        guard let authContext, generation == ticket, unlockRevision == unlockTicket else { return }
+        guard generation == ticket, unlockRevision == unlockTicket else { return }
+        guard let authContext else {
+            status = "Authentication was cancelled or did not complete. Tap Unlock Vault to try again on your iPhone."
+            return
+        }
         do {
             if let (snapshot, rootKey) = try cache.loadOfflineSnapshot(authenticationContext: authContext) {
                 let enabled = await cache.isProviderEnabled()
@@ -590,7 +611,7 @@ final class VaultWorkspaceModel {
         hasOfflineSnapshot = true
         let syncedAt = Date(timeIntervalSince1970: TimeInterval(payload.snapshot.updatedAtEpochSeconds))
         lastSyncedAt = syncedAt
-        let credCount = items.count(where: { $0.kind == .credential })
+        let credCount = items.count(where: { $0.kind == .credential && !$0.domains.isEmpty })
         autoFillStatus = providerEnabled
             ? .ready(credentialCount: credCount, syncedAt: syncedAt)
             : .providerDisabled(cachedCount: credCount, syncedAt: syncedAt)
@@ -608,11 +629,11 @@ final class VaultWorkspaceModel {
             updateCachedStatus(payload, items: loadedItems, providerEnabled: enabled)
             status = enabled
                 ? "Offline AutoFill and QuickType are ready."
-                : "Vault synced. Enable Kinic Vault in iOS AutoFill settings for QuickType."
+                : "Vault synced. Turn on KinicWiki in iOS Settings → General → AutoFill & Passwords."
         } catch VaultNativeError.providerDisabled {
             guard generation == ticket else { return }
             updateCachedStatus(payload, items: loadedItems, providerEnabled: false)
-            status = "Vault synced. Enable Kinic Vault in iOS AutoFill settings for QuickType."
+            status = "Vault synced. Turn on KinicWiki in iOS Settings → General → AutoFill & Passwords."
         } catch VaultNativeError.snapshotTooLarge {
             guard generation == ticket else { return }
             hasOfflineSnapshot = false

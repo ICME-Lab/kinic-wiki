@@ -8,6 +8,8 @@ import SwiftUI
 struct VaultAutoFillSettingsSection: View {
     @Bindable var model: VaultWorkspaceModel
     @State private var autoCopyTOTP: Bool = Self.loadAutoCopyTOTP()
+    @State private var showsVaultSignOutConfirmation = false
+    @State private var pendingVaultSelection: Data?? = nil
 
     private static let autoCopyTOTPKey = "vault.autofill.autoCopyTOTP"
     private static var sharedDefaults: UserDefaults? {
@@ -36,18 +38,6 @@ struct VaultAutoFillSettingsSection: View {
     var body: some View {
         if model.available {
             Section {
-                if let principal = model.principal {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Vault Principal")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(principal)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-
                 if model.canConnect && model.principal == nil {
                     Button(
                         model.connectionMode == .local ? "Sign in to local Vault" : "Sign in to Kinic Vault",
@@ -57,15 +47,35 @@ struct VaultAutoFillSettingsSection: View {
                     }
                     .disabled(model.busy)
                 } else if model.canConnect {
-                    Picker("Vault for AutoFill", selection: Binding(get: { model.selectedVault }, set: { model.selectVault($0) })) {
-                        Text("Select a Vault").tag(Optional<Data>.none)
-                        ForEach(model.vaults) { vault in
-                            Text(vault.name).tag(Optional(vault.id))
+                    if model.vaults.count > 1 || model.selectedVault == nil {
+                        Picker(
+                            "Vault for AutoFill",
+                            selection: Binding(
+                                get: { model.selectedVault },
+                                set: { newValue in
+                                    guard newValue != model.selectedVault else { return }
+                                    if model.hasOfflineSnapshot {
+                                        pendingVaultSelection = newValue
+                                    } else {
+                                        model.selectVault(newValue)
+                                    }
+                                }
+                            )
+                        ) {
+                            if model.selectedVault == nil {
+                                Text("Select a Vault").tag(Optional<Data>.none)
+                            }
+                            ForEach(model.vaults) { vault in
+                                Text(vault.name).tag(Optional(vault.id))
+                            }
                         }
+                        .disabled(model.busy)
                     }
-                    .disabled(model.busy)
 
-                    Button("Sync and enable offline AutoFill", systemImage: "arrow.triangle.2.circlepath") {
+                    Button(
+                        model.hasOfflineSnapshot ? "Sync Vault now" : "Sync and enable offline AutoFill",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    ) {
                         Task { await model.synchronize() }
                     }
                     .disabled(model.busy || model.selectedVault == nil)
@@ -88,26 +98,61 @@ struct VaultAutoFillSettingsSection: View {
                         }
                 }
 
-                if model.principal != nil || model.hasOfflineSnapshot {
-                    Button("Disable AutoFill and sign out", role: .destructive) {
-                        model.signOut()
-                    }
-                    .disabled(model.busy)
-                }
-
                 if model.busy {
-                    ProgressView("Updating Vault")
-                }
-
-                if !model.status.isEmpty {
+                    ProgressView("Updating Vault…")
+                } else if !model.status.isEmpty {
                     Text(model.status)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                if let principal = model.principal {
+                    DisclosureGroup("Vault Details") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Vault Principal")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(principal)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .font(.footnote)
+                }
+
+                if model.principal != nil || model.hasOfflineSnapshot {
+                    Button("Sign out of Vault & clear offline AutoFill", role: .destructive) {
+                        showsVaultSignOutConfirmation = true
+                    }
+                    .disabled(model.busy)
                 }
             } header: {
                 Text(sectionTitle)
             } footer: {
                 Text("Vault uses its own dedicated Internet Identity session, separate from Kinic Wiki. Your selected Vault stays available offline until you disable AutoFill or sign out.")
+            }
+            .alert("Sign out of Vault?", isPresented: $showsVaultSignOutConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Sign Out & Clear", role: .destructive) {
+                    model.signOut()
+                }
+            } message: {
+                Text("This signs out of Kinic Vault only and removes offline AutoFill data from this device. Your Kinic Wiki session stays signed in.")
+            }
+            .alert("Switch AutoFill Vault?", isPresented: Binding(
+                get: { pendingVaultSelection != nil },
+                set: { if !$0 { pendingVaultSelection = nil } }
+            )) {
+                Button("Cancel", role: .cancel) { pendingVaultSelection = nil }
+                Button("Switch Vault", role: .destructive) {
+                    if let target = pendingVaultSelection {
+                        pendingVaultSelection = nil
+                        model.selectVault(target)
+                    }
+                }
+            } message: {
+                Text("Switching Vaults locks the current Vault and clears its offline AutoFill cache until you sync the newly selected Vault.")
             }
         }
     }

@@ -44,6 +44,7 @@ struct VaultItemEditorView: View {
     let onSaved: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var title: String
     @State private var username: String
@@ -57,10 +58,12 @@ struct VaultItemEditorView: View {
     @State private var customFields: [EditableCustomField]
 
     @State private var isPasswordVisible = false
+    @State private var isTotpVisible = false
     @State private var isShowingGenerator = false
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var confirmsDiscard = false
+    @State private var isAdvancedExpanded = false
 
     private let initialFingerprint: String
 
@@ -136,6 +139,7 @@ struct VaultItemEditorView: View {
         _favorite = State(initialValue: initFavorite)
         _tagsText = State(initialValue: initTagsText)
         _customFields = State(initialValue: initCustomFields)
+        _isAdvancedExpanded = State(initialValue: !initCustomFields.isEmpty || !initNotes.isEmpty || !initTagsText.isEmpty)
 
         self.initialFingerprint = Self.fingerprint(
             title: initTitle,
@@ -214,6 +218,16 @@ struct VaultItemEditorView: View {
             && (mode.kind != .credential || totpValidationError == nil)
     }
 
+    private var validationHint: String? {
+        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter a title to enable Save."
+        }
+        if mode.kind == .credential, let totpValidationError {
+            return totpValidationError
+        }
+        return nil
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -221,6 +235,12 @@ struct VaultItemEditorView: View {
                     Section {
                         Label(saveError, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(KinicDesign.errorRed)
+                            .font(.footnote)
+                    }
+                } else if let validationHint, hasUnsavedChanges {
+                    Section {
+                        Label(validationHint, systemImage: "info.circle")
+                            .foregroundStyle(.secondary)
                             .font(.footnote)
                     }
                 }
@@ -292,8 +312,23 @@ struct VaultItemEditorView: View {
             .sheet(isPresented: $isShowingGenerator) {
                 VaultPasswordGeneratorSheet { generated in
                     password = generated
-                    isPasswordVisible = true
                 }
+            }
+        }
+        .overlay {
+            if scenePhase != .active {
+                ZStack {
+                    KinicDesign.appBackground
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(KinicDesign.hotPink)
+                        Text("Kinic Vault")
+                            .font(.title3.weight(.semibold))
+                    }
+                }
+                .accessibilityHidden(true)
             }
         }
     }
@@ -357,6 +392,7 @@ struct VaultItemEditorView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
+                .textContentType(.URL)
 
             ForEach(extraURLs.indices, id: \.self) { index in
                 HStack {
@@ -364,6 +400,7 @@ struct VaultItemEditorView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                        .textContentType(.URL)
                     Button(role: .destructive) {
                         extraURLs.remove(at: index)
                     } label: {
@@ -384,14 +421,35 @@ struct VaultItemEditorView: View {
         } footer: {
             if !extractedDomains.isEmpty {
                 Text("AutoFill domains: " + extractedDomains.joined(separator: ", "))
+            } else {
+                Text("Add a website domain so Safari and apps can suggest this login automatically.")
             }
         }
 
         Section {
-            TextField("Base32 secret or otpauth://totp/ URI", text: $totp)
-                .font(.system(.body, design: .monospaced))
+            HStack {
+                Group {
+                    if isTotpVisible {
+                        TextField("Paste setup key or otpauth://totp/ URI", text: $totp)
+                            .font(.system(.body, design: .monospaced))
+                    } else {
+                        SecureField("Paste setup key or otpauth://totp/ URI", text: $totp)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+
+                Button {
+                    isTotpVisible.toggle()
+                } label: {
+                    Image(systemName: isTotpVisible ? "eye.slash" : "eye")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isTotpVisible ? "Hide setup key" : "Show setup key")
+            }
 
             if let totpValidationError {
                 Text(totpValidationError)
@@ -404,47 +462,57 @@ struct VaultItemEditorView: View {
             }
         } header: {
             Text("Two-Factor Authentication (TOTP)")
+        } footer: {
+            Text("Paste the Base32 setup key or otpauth:// URI from your service's 2FA setup.")
         }
 
-        Section("Custom Fields") {
-            ForEach($customFields) { $field in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        TextField("Field label", text: $field.label)
-                            .font(.subheadline.weight(.medium))
-                        Button(role: .destructive) {
-                            customFields.removeAll { $0.id == field.id }
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.caption)
+        Section {
+            DisclosureGroup("Custom Fields & Notes", isExpanded: $isAdvancedExpanded) {
+                ForEach($customFields) { $field in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            TextField("Field label", text: $field.label)
+                                .font(.subheadline.weight(.medium))
+                            Button(role: .destructive) {
+                                customFields.removeAll { $0.id == field.id }
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Remove custom field")
                         }
-                        .buttonStyle(.borderless)
+                        if field.hidden {
+                            SecureField("Secret value", text: $field.value)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                        } else {
+                            TextField("Value", text: $field.value)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                        }
+                        Toggle("Hide value", isOn: $field.hidden)
+                            .font(.caption)
                     }
-                    if field.hidden {
-                        SecureField("Secret value", text: $field.value)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    } else {
-                        TextField("Value", text: $field.value)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
-                    Toggle("Hide value", isOn: $field.hidden)
-                        .font(.caption)
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
-            }
 
-            Button {
-                customFields.append(EditableCustomField(label: "", value: "", hidden: false))
-            } label: {
-                Label("Add Custom Field", systemImage: "plus.circle")
-            }
-        }
+                Button {
+                    customFields.append(EditableCustomField(label: "", value: "", hidden: false))
+                } label: {
+                    Label("Add Custom Field", systemImage: "plus.circle")
+                }
 
-        Section("Notes") {
-            TextEditor(text: $notes)
-                .frame(minHeight: 96)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notes")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $notes)
+                        .frame(minHeight: 88)
+                }
+            }
+        } footer: {
+            Text("Leaving the app locks the Vault and closes unsaved edits to protect your secrets.")
         }
     }
 

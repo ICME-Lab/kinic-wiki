@@ -46,11 +46,23 @@ struct VaultPasswordGeneratorSheet: View {
     let onUse: ((String) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var mode: Mode = .random
     @State private var passwordOptions = VaultPasswordOptions()
     @State private var passphraseOptions = VaultPassphraseOptions()
-    @State private var preview = ""
+    @State private var randomPreview = ""
+    @State private var passphrasePreview = ""
     @State private var copied = false
+
+    private var preview: String {
+        mode == .random ? randomPreview : passphrasePreview
+    }
+
+    private var activeCharacterSetCount: Int {
+        [passwordOptions.uppercase, passwordOptions.lowercase, passwordOptions.digits, passwordOptions.symbols]
+            .filter { $0 }
+            .count
+    }
 
     init(onUse: ((String) -> Void)? = nil) {
         self.onUse = onUse
@@ -76,7 +88,10 @@ struct VaultPasswordGeneratorSheet: View {
                             }
                         }
                         .pickerStyle(.segmented)
-                        .onChange(of: mode) { regenerate() }
+                        .onChange(of: mode) {
+                            copied = false
+                            if preview.isEmpty { regenerate() }
+                        }
 
                         styledPasswordText(preview)
                             .font(.system(.title3, design: .monospaced).weight(.semibold))
@@ -87,22 +102,16 @@ struct VaultPasswordGeneratorSheet: View {
                             .padding(.vertical, 12)
                             .background(KinicDesign.cardBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                        HStack(spacing: 8) {
-                            VaultPasswordStrengthBadge(password: preview, overrideStrength: activeStrength)
-                            Spacer(minLength: 8)
-                            Button {
-                                regenerate()
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "arrow.clockwise")
-                                    Text("Regenerate")
-                                }
-                                .font(.caption.weight(.semibold))
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                VaultPasswordStrengthBadge(password: preview, overrideStrength: activeStrength)
+                                Spacer(minLength: 8)
+                                regenerateButton
                             }
-                            .buttonStyle(.bordered)
-                            .buttonBorderShape(.capsule)
-                            .controlSize(.small)
-                            .tint(KinicDesign.hotPink)
+                            VStack(alignment: .leading, spacing: 8) {
+                                VaultPasswordStrengthBadge(password: preview, overrideStrength: activeStrength)
+                                regenerateButton
+                            }
                         }
                     }
                     .padding(.vertical, 4)
@@ -136,18 +145,22 @@ struct VaultPasswordGeneratorSheet: View {
                             get: { passwordOptions.uppercase },
                             set: { passwordOptions.uppercase = $0; regenerate() }
                         ))
+                        .disabled(passwordOptions.uppercase && activeCharacterSetCount <= 1)
                         Toggle("Lowercase (a–z)", isOn: Binding(
                             get: { passwordOptions.lowercase },
                             set: { passwordOptions.lowercase = $0; regenerate() }
                         ))
+                        .disabled(passwordOptions.lowercase && activeCharacterSetCount <= 1)
                         Toggle("Numbers (0–9)", isOn: Binding(
                             get: { passwordOptions.digits },
                             set: { passwordOptions.digits = $0; regenerate() }
                         ))
+                        .disabled(passwordOptions.digits && activeCharacterSetCount <= 1)
                         Toggle("Symbols (!@#…)", isOn: Binding(
                             get: { passwordOptions.symbols },
                             set: { passwordOptions.symbols = $0; regenerate() }
                         ))
+                        .disabled(passwordOptions.symbols && activeCharacterSetCount <= 1)
                         Toggle("Exclude ambiguous (0, O, 1, l, I)", isOn: Binding(
                             get: { passwordOptions.excludeAmbiguous },
                             set: { passwordOptions.excludeAmbiguous = $0; regenerate() }
@@ -197,6 +210,12 @@ struct VaultPasswordGeneratorSheet: View {
                         ))
                     }
                 }
+
+                Section {
+                    Text("Copied passwords stay on this device and clear after 60 seconds.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .safeAreaInset(edge: .bottom) {
                 bottomActionBar
@@ -212,56 +231,81 @@ struct VaultPasswordGeneratorSheet: View {
                 if preview.isEmpty { regenerate() }
             }
         }
+        .overlay {
+            if scenePhase != .active {
+                ZStack {
+                    KinicDesign.appBackground
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(KinicDesign.hotPink)
+                        Text("Kinic Vault")
+                            .font(.title3.weight(.semibold))
+                    }
+                }
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private var regenerateButton: some View {
+        Button {
+            regenerate()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.clockwise")
+                Text("Regenerate")
+            }
+            .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.small)
+        .tint(KinicDesign.hotPink)
     }
 
     private var bottomActionBar: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
+        HStack(spacing: 10) {
+            Button {
+                VaultClipboardHelper.copy(preview, kind: .password)
+                copied = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    Text(copied ? "Copied" : (onUse == nil ? "Copy Password" : "Copy"))
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(KinicDesign.hotPink)
+            .disabled(preview.isEmpty)
+
+            if let onUse {
                 Button {
-                    VaultClipboardHelper.copy(preview, kind: .password)
-                    copied = true
+                    onUse(preview)
+                    dismiss()
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        Text(copied ? "Copied" : (onUse == nil ? "Copy Password" : "Copy"))
+                        Image(systemName: "checkmark")
+                        Text("Use Password")
                     }
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
-                .tint(KinicDesign.hotPink)
+                .tint(KinicDesign.actionPink)
                 .disabled(preview.isEmpty)
-
-                if let onUse {
-                    Button {
-                        onUse(preview)
-                        dismiss()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark")
-                            Text("Use Password")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
-                    .tint(KinicDesign.actionPink)
-                    .disabled(preview.isEmpty)
-                }
             }
-
-            Text("Copied passwords stay on this device and clear after 60s.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.vertical, 10)
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) { Divider() }
     }
@@ -270,9 +314,9 @@ struct VaultPasswordGeneratorSheet: View {
         copied = false
         switch mode {
         case .random:
-            preview = (try? VaultPasswordGenerator.generate(passwordOptions)) ?? ""
+            randomPreview = (try? VaultPasswordGenerator.generate(passwordOptions)) ?? ""
         case .passphrase:
-            preview = (try? VaultPasswordGenerator.generatePassphrase(passphraseOptions)) ?? ""
+            passphrasePreview = (try? VaultPasswordGenerator.generatePassphrase(passphraseOptions)) ?? ""
         }
     }
 

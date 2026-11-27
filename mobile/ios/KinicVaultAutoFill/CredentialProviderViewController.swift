@@ -4,12 +4,14 @@ import Foundation
 import KinicVaultCore
 import KinicVaultNative
 import LocalAuthentication
+import os
 import SwiftUI
 import UIKit
 
 /// System-wide iOS AutoFill credential provider backed by the App Group encrypted Vault snapshot
 /// and Keychain-protected AES-256 root key. Never reads network or writes plaintext to disk.
 final class CredentialProviderViewController: ASCredentialProviderViewController {
+    private let logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki.AutoFill", category: "AutoFill")
     private var hostingController: UIHostingController<AutoFillRootView>?
 
     private var appGroupID: String {
@@ -159,33 +161,58 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         authenticationContext: LAContext? = nil,
         rootKey preloadedRootKey: SymmetricKey? = nil
     ) {
-        guard let store = makeSnapshotStore(),
-              let rootKey = preloadedRootKey ?? (try? loadRootKey(store: store, authenticationContext: authenticationContext)),
-              let decrypted = try? store.decryptCredential(
-                  recordIdentifier: recordIdentifier,
-                  rootKey: rootKey
-              )
-        else {
-            cancelWith(code: .credentialIdentityNotFound)
+        guard let store = makeSnapshotStore() else {
+            logger.error("AutoFill failed: App Group snapshot store unavailable")
+            embedError("Vault storage is unavailable. Open KinicWiki to sync your Vault again.")
             return
         }
-
-        if autoCopyTOTPOnFill, let totpCode = decrypted.totpCode {
-            let expiry = Date().addingTimeInterval(90)
-            UIPasteboard.general.setItems(
-                [[UIPasteboard.typeAutomatic: totpCode]],
-                options: [
-                    .localOnly: true,
-                    .expirationDate: expiry,
-                ]
-            )
+        let rootKey: SymmetricKey
+        if let preloadedRootKey {
+            rootKey = preloadedRootKey
+        } else {
+            do {
+                guard let loaded = try loadRootKey(store: store, authenticationContext: authenticationContext) else {
+                    logger.error("AutoFill failed: root key missing from Keychain")
+                    embedError("Could not unlock your cached Vault key. Open KinicWiki and sync your Vault again.")
+                    return
+                }
+                rootKey = loaded
+            } catch {
+                logger.error("AutoFill failed: Keychain root key read error: \(error.localizedDescription, privacy: .public)")
+                embedError("Could not read your Vault key from Keychain. Try again on your iPhone or re-sync in KinicWiki.")
+                return
+            }
         }
+        do {
+            guard let decrypted = try store.decryptCredential(
+                recordIdentifier: recordIdentifier,
+                rootKey: rootKey
+            ) else {
+                logger.error("AutoFill failed: credential record not found in snapshot")
+                embedError("This login is no longer in your cached Vault. Open KinicWiki to refresh AutoFill.")
+                return
+            }
 
-        let credential = ASPasswordCredential(
-            user: decrypted.username,
-            password: decrypted.password
-        )
-        extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
+            if autoCopyTOTPOnFill, let totpCode = decrypted.totpCode {
+                let expiry = Date().addingTimeInterval(90)
+                UIPasteboard.general.setItems(
+                    [[UIPasteboard.typeAutomatic: totpCode]],
+                    options: [
+                        .localOnly: true,
+                        .expirationDate: expiry,
+                    ]
+                )
+            }
+
+            let credential = ASPasswordCredential(
+                user: decrypted.username,
+                password: decrypted.password
+            )
+            extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
+        } catch {
+            logger.error("AutoFill failed: credential decrypt error: \(error.localizedDescription, privacy: .public)")
+            embedError("Could not decrypt this login. Open KinicWiki to sync your Vault again.")
+        }
     }
 
     private func authenticateBiometrics(reason: String) async -> LAContext? {
@@ -263,7 +290,7 @@ private struct AutoFillRootView: View {
             Group {
                 switch state {
                 case .configuration:
-                    ContentUnavailableView("Enable Kinic Vault AutoFill", systemImage: "lock.shield", description: Text("Finish enabling Kinic Vault, then open the Vault tab in Kinic to sign in and sync your Vault."))
+                    ContentUnavailableView("Enable KinicWiki AutoFill", systemImage: "lock.shield", description: Text("Tap Done to finish enabling KinicWiki in AutoFill & Passwords, then return to the KinicWiki app and open the Vault tab to sign in and sync."))
                 case .configurationNeeded:
                     ContentUnavailableView(
                         "Open Kinic to Sync Vault",
@@ -295,26 +322,45 @@ private struct AutoFillRootView: View {
         matched: [VaultAutoFillCandidate],
         all: [VaultAutoFillCandidate]
     ) -> some View {
-        let filteredAll = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? all
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchedIds = Set(matched.map(\.recordIdentifier))
+        let filteredAll = trimmedQuery.isEmpty
+            ? all.filter { !matchedIds.contains($0.recordIdentifier) }
             : all.filter { item in
-                let q = query.lowercased()
+                let q = trimmedQuery.lowercased()
                 return item.title.lowercased().contains(q)
                     || item.username.lowercased().contains(q)
                     || item.domains.contains { $0.lowercased().contains(q) }
             }
 
-        List {
-            if !matched.isEmpty && query.isEmpty {
-                Section("Suggested for this site") {
-                    ForEach(matched, id: \.recordIdentifier) { item in
-                        candidateRow(item)
+        Group {
+            if !trimmedQuery.isEmpty && filteredAll.isEmpty {
+                ContentUnavailableView {
+                    Label("No Matching Logins", systemImage: "magnifyingglass")
+                } description: {
+                    Text("No saved logins match \"\(trimmedQuery)\".")
+                } actions: {
+                    Button("Clear Search") {
+                        query = ""
                     }
+                    .buttonStyle(.bordered)
                 }
-            }
-            Section(matched.isEmpty ? "Saved logins" : "All logins") {
-                ForEach(filteredAll, id: \.recordIdentifier) { item in
-                    candidateRow(item)
+            } else {
+                List {
+                    if !matched.isEmpty && trimmedQuery.isEmpty {
+                        Section("Suggested for this site") {
+                            ForEach(matched, id: \.recordIdentifier) { item in
+                                candidateRow(item)
+                            }
+                        }
+                    }
+                    if !filteredAll.isEmpty {
+                        Section(matched.isEmpty || !trimmedQuery.isEmpty ? "Saved logins" : "Other logins") {
+                            ForEach(filteredAll, id: \.recordIdentifier) { item in
+                                candidateRow(item)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -330,14 +376,12 @@ private struct AutoFillRootView: View {
                     Text(item.title.isEmpty ? "Untitled" : item.title)
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    if !item.username.isEmpty {
-                        Text(item.username)
+                    let subtitleParts = [item.username, item.domains.first ?? ""].filter { !$0.isEmpty }
+                    if !subtitleParts.isEmpty {
+                        Text(subtitleParts.joined(separator: " · "))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                    } else if let firstDomain = item.domains.first {
-                        Text(firstDomain)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
                 Spacer()

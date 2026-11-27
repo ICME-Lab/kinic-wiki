@@ -319,6 +319,8 @@ struct VaultItemDetailView: View {
                             Text(rawURL)
                                 .font(.subheadline)
                                 .lineLimit(2)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             if let domain = VaultCredentialCodec.normalizeDomain(rawURL) {
                                 Text(domain)
                                     .font(.caption)
@@ -329,7 +331,7 @@ struct VaultItemDetailView: View {
                         if let openURL = launchableURL(rawURL) {
                             Link(destination: openURL) {
                                 Image(systemName: "safari")
-                                    .frame(width: 36, height: 36)
+                                    .frame(width: 44, height: 44)
                             }
                             .buttonStyle(.borderless)
                             .tint(KinicDesign.hotPink)
@@ -340,7 +342,7 @@ struct VaultItemDetailView: View {
                             showToast("URL copied")
                         } label: {
                             Image(systemName: "doc.on.doc")
-                                .frame(width: 36, height: 36)
+                                .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
@@ -379,20 +381,22 @@ struct VaultItemDetailView: View {
                                 }
                             } label: {
                                 Image(systemName: revealed ? "eye.slash" : "eye")
-                                    .frame(width: 36, height: 36)
+                                    .frame(width: 44, height: 44)
                             }
                             .buttonStyle(.borderless)
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel(revealed ? "Hide \(field.label.isEmpty ? "field" : field.label)" : "Show \(field.label.isEmpty ? "field" : field.label)")
                         }
                         Button {
                             VaultClipboardHelper.copy(field.value, kind: isHidden ? .secretField : .plain)
                             showToast(isHidden ? "\(field.label) copied · clears in 60s" : "\(field.label) copied")
                         } label: {
                             Image(systemName: "doc.on.doc")
-                                .frame(width: 36, height: 36)
+                                .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.borderless)
                         .tint(KinicDesign.hotPink)
+                        .accessibilityLabel("Copy \(field.label.isEmpty ? "field" : field.label)")
                     }
                 }
             }
