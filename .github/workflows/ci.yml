@@ -180,6 +180,11 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.5.app
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Install native Vault Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - name: Generate iOS project
         run: mobile/ios/scripts/ensure-xcodegen-project.sh
       - id: ios-simulator
@@ -212,6 +217,15 @@ jobs:
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
       - name: Run iOS tests
         run: xcodebuild test -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'platform=iOS Simulator,id=${{ steps.ios-simulator.outputs.id }}' CODE_SIGNING_ALLOWED=NO
+      - name: Run Vault native Rust & Swift package tests
+        run: |
+          cargo test --manifest-path mobile/ios/Native/VaultVetKeys/Cargo.toml --locked
+          swift test --package-path mobile/ios/Packages/KinicVaultCore
+          swift test --package-path mobile/ios/Packages/KinicVaultNative
+      - name: Verify Vault AutoFill configuration
+        run: |
+          node mobile/ios/scripts/check-vault-autofill-config.mjs
+          node --test mobile/ios/scripts/check-vault-autofill-config.test.mjs
       - name: Validate TestFlight upload inputs
         shell: bash
         run: |

@@ -50,6 +50,12 @@ struct HomeView: View {
             }
             .tag(AppTab.askAI)
 
+            VaultTabView(model: model.vaultAutoFill)
+            .tabItem {
+                Label("Vault", systemImage: "lock.shield")
+            }
+            .tag(AppTab.vault)
+
             NavigationStack {
                 ManageView(model: model)
             }
@@ -61,6 +67,23 @@ struct HomeView: View {
         .environment(\.openKinicSettings, { isShowingSettings = true })
         .sheet(isPresented: $isShowingSettings) {
             NavigationStack { AppSettingsView(model: model, askAIModel: askAIModel) }
+                .preferredColorScheme(model.isDarkAppearanceEnabled ? .dark : .light)
+        }
+        .overlay {
+            if scenePhase != .active && (selectedTab == .vault || model.vaultAutoFill.isUnlocked) {
+                ZStack {
+                    KinicDesign.appBackground
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(KinicDesign.hotPink)
+                        Text("Kinic Vault")
+                            .font(.title3.weight(.semibold))
+                    }
+                }
+                .accessibilityHidden(true)
+            }
         }
         .task { model.startRefreshDatabases() }
         .onChange(of: model.principalText) {
@@ -81,6 +104,8 @@ struct HomeView: View {
                 model.restoreSharedDatabaseSelection()
                 // Items the Share Extension queued wait here until the app can store and send them.
                 Task { await workItemModel.importQueuedCaptures() }
+            } else if phase == .background {
+                model.vaultAutoFill.appDidEnterBackground()
             }
             if phase != .inactive { model.assistantConversation.sceneChanged(active: phase == .active) }
         }

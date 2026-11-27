@@ -46,7 +46,7 @@ struct DatabaseContextBar: View {
         } label: {
             HStack(spacing: 8) {
                 if !compact { Image(systemName: "externaldrive") }
-                Text(model.selectedDatabase?.displayTitle ?? "Select a database")
+                Text(model.isSignedIn ? (model.selectedDatabase?.displayTitle ?? "Select a database") : "Select a database")
                     .font(compact ? .title3.weight(.semibold) : .headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)

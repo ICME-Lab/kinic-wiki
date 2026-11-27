@@ -9,6 +9,7 @@ struct AppSettingsView: View {
     let askAIModel: AskAIModel
     @Environment(\.dismiss) private var dismiss
     @State private var didCopyPrincipal = false
+    @State private var showsSignOutConfirmation = false
     @State private var showsDeleteAccountConfirmation = false
 
     private var account: InternetIdentityPresentation {
@@ -19,9 +20,8 @@ struct AppSettingsView: View {
         Form {
             Section("Session") {
                 if model.isSignedIn {
-                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
-                        model.signOut()
-                        dismiss()
+                    Button("Sign out of Wiki & Vault", systemImage: "rectangle.portrait.and.arrow.right") {
+                        showsSignOutConfirmation = true
                     }
                     .disabled(model.databaseSelectionLocked)
                 } else {
@@ -31,6 +31,7 @@ struct AppSettingsView: View {
                 }
                 if let message = model.statusMessage { Text(message).font(.footnote).foregroundStyle(.secondary) }
             }
+            VaultAutoFillSettingsSection(model: model.vaultAutoFill)
             if let principal = account.principal {
                 Section("Account") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -124,6 +125,15 @@ struct AppSettingsView: View {
             }
         }
         .interactiveDismissDisabled(model.isDeletingAccount)
+        .alert("Sign out of Wiki & Vault?", isPresented: $showsSignOutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign Out", role: .destructive) {
+                model.signOut()
+                dismiss()
+            }
+        } message: {
+            Text("This signs out of both Kinic Wiki and Kinic Vault, and removes offline AutoFill data from this device.")
+        }
         .alert("Delete Account?", isPresented: $showsDeleteAccountConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete Account", role: .destructive, action: deleteAccount)
