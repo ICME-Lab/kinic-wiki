@@ -476,6 +476,9 @@ export async function handleMessage(
       type: "read-item",
       objectIdHex
     });
+    if (decrypted.summary.kind !== "credential" || !matchesDomain([decrypted.url, ...decrypted.urls], tab.url)) {
+      throw new Error("CREDENTIAL_DOMAIN_MISMATCH");
+    }
     await bumpAutoLockIfUnlocked();
     return {
       ok: true,
@@ -749,14 +752,14 @@ export async function handleMessage(
         type: "read-item",
         objectIdHex: message.objectIdHex
       });
-      const allowCrossDomain = message.allowCrossDomain === true;
+      const expectedOrigin = new URL(tab.url).origin;
+      const allowCrossDomain = message.confirmedOrigin === expectedOrigin;
       if (
-        !allowCrossDomain &&
-        !matchesDomain(decrypted.summary.domains, tab.url)
+        decrypted.summary.kind !== "credential" ||
+        (!allowCrossDomain && !matchesDomain([decrypted.url, ...decrypted.urls], tab.url))
       ) {
         throw new Error("CROSS_DOMAIN_CONFIRM_REQUIRED");
       }
-      const expectedOrigin = new URL(tab.url).origin;
       const response = (await deps.sendToTab(tab.id, {
         type: "fill-credentials",
         expectedOrigin,
