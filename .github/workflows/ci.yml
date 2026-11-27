@@ -671,6 +671,7 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run build
       - run: pnpm test
+      - run: node --test tests/vault-popup.browser.mjs
       - run: pnpm run store-assets:generate
       - run: pnpm run release:package
       - run: pnpm run release:check

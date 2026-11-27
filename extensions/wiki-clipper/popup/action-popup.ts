@@ -41,7 +41,6 @@ let state: VaultEngineState | null = null;
 let settings: VaultExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
 let activeTabUrl = "";
 let activeTabTitle = "";
-let currentTab: PopupTab = "vault";
 let currentFilter: ItemCategoryFilter = "all";
 let searchQuery = "";
 let detailItem: DecryptedItemView | null = null;
@@ -120,11 +119,10 @@ function setVaultSubScreen(screen: "list" | "detail" | "editor"): void {
 }
 
 function switchMainTab(tab: PopupTab): void {
-  currentTab = tab;
   el("panel-vault").hidden = tab !== "vault";
   el("panel-generator").hidden = tab !== "generator";
   el("panel-settings").hidden = tab !== "settings";
-  for (const btn of document.querySelectorAll<HTMLButtonElement>(".tab-btn")) {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".nav-btn[data-tab]")) {
     btn.classList.toggle("active", btn.dataset.tab === tab);
   }
   if (tab !== "vault") {
@@ -602,8 +600,9 @@ function openEditor(existing: DecryptedItemView | null): void {
   pwInput.value = existing?.password ?? "";
   pwInput.type = "password";
   el("btn-ed-toggle-pw").textContent = "Show";
-  el<HTMLInputElement>("ed-url").value =
-    existing?.url ?? (isWebOriginFillable(activeTabUrl) ? activeTabUrl : "");
+  el<HTMLTextAreaElement>("ed-urls").value = existing
+    ? [...new Set([existing.url, ...existing.urls].filter(Boolean))].join("\n")
+    : isWebOriginFillable(activeTabUrl) ? activeTabUrl : "";
   el<HTMLInputElement>("ed-totp").value = existing?.totpSecret ?? "";
   el<HTMLInputElement>("ed-tags").value = existing?.tags.join(", ") ?? "";
   el<HTMLTextAreaElement>("ed-notes").value = existing?.notes ?? "";
@@ -629,8 +628,10 @@ async function handleSaveEditor(): Promise<void> {
         );
       }
     }
-    const urlValue = el<HTMLInputElement>("ed-url").value.trim();
-    const extraUrls = editingItem?.urls.filter((u) => u !== urlValue) ?? [];
+    const urls = el<HTMLTextAreaElement>("ed-urls").value
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean);
     const saved = await sendSw<VaultItemSummary>({
       type: "save-credential",
       input: {
@@ -638,8 +639,8 @@ async function handleSaveEditor(): Promise<void> {
         title: el<HTMLInputElement>("ed-title").value,
         username: el<HTMLInputElement>("ed-username").value,
         password: el<HTMLInputElement>("ed-password").value,
-        url: urlValue,
-        urls: urlValue ? [urlValue, ...extraUrls] : extraUrls,
+        url: urls[0] ?? "",
+        urls,
         totp: totpRaw,
         notes: el<HTMLTextAreaElement>("ed-notes").value,
         customFields: editingItem?.customFields ?? [],
@@ -661,15 +662,14 @@ async function handleSaveEditor(): Promise<void> {
 
 function refreshGenerator(): void {
   const out = el("gen-output");
-  const bar = el("gen-strength-bar");
-  const lbl = el("gen-strength-label");
+  const lbl = el("gen-strength");
 
   let value = "";
   let strength: { level: string; entropyBits: number };
 
   if (generatorMode === "password") {
     const length = Number(el<HTMLInputElement>("gen-length").value);
-    el("gen-len-val").textContent = String(length);
+    el("gen-length-val").textContent = String(length);
     value = generatePassword({
       length,
       uppercase: el<HTMLInputElement>("gen-upper").checked,
@@ -684,37 +684,20 @@ function refreshGenerator(): void {
     el("gen-words-val").textContent = String(words);
     const opts = {
       words,
-      separator: el<HTMLSelectElement>("gen-separator").value,
-      capitalize: el<HTMLInputElement>("gen-cap").checked,
-      includeNumber: el<HTMLInputElement>("gen-num").checked
+      separator: el<HTMLInputElement>("gen-separator").value,
+      capitalize: el<HTMLInputElement>("gen-capitalize").checked,
+      includeNumber: el<HTMLInputElement>("gen-include-number").checked
     };
     value = generatePassphrase(opts);
     strength = estimatePassphraseStrength(opts);
   }
 
   out.textContent = value;
-  const pct =
-    strength.level === "weak"
-      ? 25
-      : strength.level === "fair"
-        ? 50
-        : strength.level === "strong"
-          ? 78
-          : 100;
-  const color =
-    strength.level === "weak"
-      ? "var(--danger)"
-      : strength.level === "fair"
-        ? "var(--warn)"
-        : "var(--success)";
-  bar.style.width = `${pct}%`;
-  bar.style.background = color;
   const readable =
     strength.level === "very-strong"
       ? "Very strong"
       : strength.level[0].toUpperCase() + strength.level.slice(1);
   lbl.textContent = `${readable} (${Math.round(strength.entropyBits)} bits)`;
-  el<HTMLButtonElement>("btn-gen-fill").disabled = !isWebOriginFillable(activeTabUrl);
 }
 
 async function syncUiFromState(): Promise<void> {
@@ -761,8 +744,6 @@ function wireEvents(): void {
   document.getElementById("btn-settings-open-web")?.addEventListener("click", () => {
     void chrome.tabs.create({ url: RUNTIME_CONFIG.vaultWebOrigin });
   });
-  document.getElementById("btn-settings-lock")?.addEventListener("click", () => void handleLock());
-  document.getElementById("btn-settings-sign-out")?.addEventListener("click", () => void handleSignOut());
   document.getElementById("btn-settings-sync")?.addEventListener("click", () => {
     void (async () => {
       try {
@@ -886,9 +867,6 @@ function wireEvents(): void {
   el("btn-create-first-vault").addEventListener("click", (e) =>
     void handleCreateVault(e.currentTarget as HTMLButtonElement)
   );
-  el("btn-create-vault").addEventListener("click", (e) =>
-    void handleCreateVault(e.currentTarget as HTMLButtonElement)
-  );
 
   const handleLock = async () => {
     await sendSw({ type: "lock-vault" });
@@ -901,7 +879,7 @@ function wireEvents(): void {
   el("btn-settings-lock").addEventListener("click", () => void handleLock());
 
   // Main bottom tabs
-  for (const btn of document.querySelectorAll<HTMLButtonElement>(".tab-btn")) {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".nav-btn[data-tab]")) {
     btn.addEventListener("click", () => {
       switchMainTab((btn.dataset.tab as PopupTab) || "vault");
     });
@@ -973,22 +951,16 @@ function wireEvents(): void {
   });
 
   // Generator controls
-  el("gen-mode-password").addEventListener("click", () => {
-    generatorMode = "password";
-    el("gen-mode-password").classList.add("active");
-    el("gen-mode-passphrase").classList.remove("active");
-    el("gen-password-options").hidden = false;
-    el("gen-passphrase-options").hidden = true;
-    refreshGenerator();
-  });
-  el("gen-mode-passphrase").addEventListener("click", () => {
-    generatorMode = "passphrase";
-    el("gen-mode-passphrase").classList.add("active");
-    el("gen-mode-password").classList.remove("active");
-    el("gen-password-options").hidden = true;
-    el("gen-passphrase-options").hidden = false;
-    refreshGenerator();
-  });
+  const generatorButtons = document.querySelectorAll<HTMLButtonElement>(".seg-btn[data-gen-mode]");
+  for (const button of generatorButtons) {
+    button.addEventListener("click", () => {
+      generatorMode = button.dataset.genMode === "passphrase" ? "passphrase" : "password";
+      for (const option of generatorButtons) option.classList.toggle("active", option === button);
+      el("gen-password-opts").hidden = generatorMode !== "password";
+      el("gen-passphrase-opts").hidden = generatorMode !== "passphrase";
+      refreshGenerator();
+    });
+  }
   for (const id of [
     "gen-length",
     "gen-upper",
@@ -998,8 +970,8 @@ function wireEvents(): void {
     "gen-ambiguous",
     "gen-words",
     "gen-separator",
-    "gen-cap",
-    "gen-num"
+    "gen-capitalize",
+    "gen-include-number"
   ]) {
     el(id).addEventListener("input", refreshGenerator);
     el(id).addEventListener("change", refreshGenerator);
@@ -1009,20 +981,6 @@ function wireEvents(): void {
     const value = el("gen-output").textContent ?? "";
     if (value) void copyText(value, "Generated password");
   });
-  el("btn-gen-fill").addEventListener("click", () => {
-    const password = el("gen-output").textContent ?? "";
-    if (!password) return;
-    void (async () => {
-      try {
-        await sendSw({ type: "fill-generated-password", password });
-        showToast("Password filled on page");
-        window.setTimeout(() => window.close(), 650);
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : "Could not fill page");
-      }
-    })();
-  });
-
   // Settings controls
   el<HTMLSelectElement>("settings-vault-select").addEventListener(
     "change",
@@ -1040,17 +998,6 @@ function wireEvents(): void {
       })();
     }
   );
-  document.getElementById("btn-sync-now")?.addEventListener("click", () => {
-    void (async () => {
-      try {
-        await sendSw({ type: "refresh-items" });
-        await refreshItemList();
-        showToast("Vault synced");
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : "Sync failed");
-      }
-    })();
-  });
   const saveCurrentSettings = async () => {
     const inlineEl = document.getElementById("settings-inline") as HTMLInputElement | null;
     const bannerEl = document.getElementById("settings-save-banner") as HTMLInputElement | null;
